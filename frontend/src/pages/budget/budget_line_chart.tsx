@@ -1,6 +1,7 @@
 import type { SpendingGridRow } from "@/types"
-import { LineChart } from "@tremor/react"
-import { formatCurrency, formatMonthShort } from "@/lib/utils"
+import { StyledLineChart } from "@/components/charts"
+import { formatMonthShort } from "@/lib/utils"
+import { CATEGORY_COLORS } from "@/lib/colors"
 
 interface BudgetLineChartProps {
   rows: SpendingGridRow[]
@@ -14,7 +15,7 @@ export function BudgetLineChart({ rows, months }: BudgetLineChartProps) {
 
   const categories = Array.from(
     new Set(spendingRows.map((r) => r.category.split(":")[0].trim()))
-  ).slice(0, 8) // Limit to 8 categories for readability
+  ).slice(0, 8)
 
   const data = months.map((m) => {
     const entry: Record<string, string | number> = { month: formatMonthShort(m) }
@@ -31,17 +32,20 @@ export function BudgetLineChart({ rows, months }: BudgetLineChartProps) {
     return entry
   })
 
+  const colors = categories.map((c) => CATEGORY_COLORS[c] ?? "#78716c")
+
   return (
     <div className="rounded-lg border p-4">
-      <h3 className="mb-4 text-sm font-medium text-muted-foreground">
+      <h3 className="mb-2 text-sm font-medium text-muted-foreground">
         Spending Trends
       </h3>
-      <LineChart
+      <StyledLineChart
         data={data}
         index="month"
         categories={categories}
-        valueFormatter={(v) => formatCurrency(v.toString())}
-        className="h-80"
+        colors={colors}
+        height={340}
+        curved
       />
     </div>
   )

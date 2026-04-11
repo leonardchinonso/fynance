@@ -1,5 +1,5 @@
 import type { PortfolioHistoryRow } from "@/types"
-import { LineChart } from "@tremor/react"
+import { StyledLineChart } from "@/components/charts"
 import {
   Table,
   TableBody,
@@ -15,7 +15,10 @@ interface PortfolioHistoryProps {
 }
 
 export function PortfolioHistory({ history }: PortfolioHistoryProps) {
-  const chartData = history.map((row) => ({
+  // Filter out months where total wealth is 0 (no data yet)
+  const filtered = history.filter((row) => parseFloat(row.total_wealth) > 0)
+
+  const chartData = filtered.map((row) => ({
     month: formatMonthShort(row.month),
     Available: parseFloat(row.available_wealth),
     Unavailable: parseFloat(row.unavailable_wealth),
@@ -26,16 +29,16 @@ export function PortfolioHistory({ history }: PortfolioHistoryProps) {
     <div className="space-y-6">
       {/* Line chart */}
       <div className="rounded-lg border p-4">
-        <h3 className="mb-4 text-sm font-medium text-muted-foreground">
+        <h3 className="mb-2 text-sm font-medium text-muted-foreground">
           Portfolio History
         </h3>
-        <LineChart
+        <StyledLineChart
           data={chartData}
           index="month"
-          categories={["Available", "Unavailable", "Total"]}
-          valueFormatter={(v) => formatCurrency(v.toString())}
-          className="h-80"
-          colors={["blue", "orange", "green"]}
+          categories={["Total", "Available", "Unavailable"]}
+          colors={["#22c55e", "#3b82f6", "#f97316"]}
+          height={340}
+          curved
         />
       </div>
 
@@ -51,7 +54,7 @@ export function PortfolioHistory({ history }: PortfolioHistoryProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {history.map((row) => (
+            {filtered.map((row) => (
               <TableRow key={row.month}>
                 <TableCell>{formatMonthShort(row.month)}</TableCell>
                 <TableCell className="text-right tabular-nums">

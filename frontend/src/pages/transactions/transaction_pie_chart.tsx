@@ -1,21 +1,13 @@
 import type { Transaction } from "@/types"
-import { DonutChart } from "@tremor/react"
+import { InteractivePie } from "@/components/charts"
 import { formatCurrency } from "@/lib/utils"
-import { ChartLegend } from "@/components/chart_legend"
-
-const CHART_COLORS = [
-  "blue", "orange", "green", "violet", "pink",
-  "cyan", "yellow", "indigo", "teal", "red",
-  "amber", "emerald",
-]
+import { CATEGORY_COLORS } from "@/lib/colors"
 
 interface TransactionPieChartProps {
   transactions: Transaction[]
 }
 
-export function TransactionPieChart({
-  transactions,
-}: TransactionPieChartProps) {
+export function TransactionPieChart({ transactions }: TransactionPieChartProps) {
   const categorySpending = new Map<string, number>()
   for (const t of transactions) {
     const amt = parseFloat(t.amount)
@@ -34,32 +26,26 @@ export function TransactionPieChart({
 
   const data = Array.from(categorySpending.entries())
     .sort(([, a], [, b]) => b - a)
-    .map(([name, amount]) => ({
+    .map(([name, value]) => ({
       name,
-      value: parseFloat(amount.toFixed(2)),
+      value: parseFloat(value.toFixed(2)),
     }))
 
-  const legendItems = data.map((d, i) => ({
-    name: `${d.name} (${((d.value / totalSpending) * 100).toFixed(0)}%)`,
-    color: CHART_COLORS[i % CHART_COLORS.length],
-  }))
+  const colors = data.map((d) => CATEGORY_COLORS[d.name] ?? "#78716c")
 
   return (
     <div className="rounded-lg border p-4">
-      <h3 className="mb-4 text-sm font-medium text-muted-foreground">
+      <h3 className="mb-2 text-sm font-medium text-muted-foreground">
         Spending Distribution
       </h3>
-      <DonutChart
+      <InteractivePie
         data={data}
-        category="value"
-        index="name"
-        colors={CHART_COLORS.slice(0, data.length)}
-        valueFormatter={(v) => formatCurrency(v.toString())}
-        className="h-72"
-        showLabel
+        colors={colors}
         label={`Total: ${formatCurrency(totalSpending.toFixed(2))}`}
+        height={320}
+        innerRadius={70}
+        outerRadius={120}
       />
-      <ChartLegend items={legendItems} className="mt-4 justify-center" />
     </div>
   )
 }

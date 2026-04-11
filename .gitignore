@@ -5,6 +5,7 @@
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
 
 # Added by cargo
 #

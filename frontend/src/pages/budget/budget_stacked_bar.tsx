@@ -1,6 +1,7 @@
 import type { SpendingGridRow } from "@/types"
-import { BarChart } from "@tremor/react"
-import { formatCurrency, formatMonthShort } from "@/lib/utils"
+import { StyledBarChart } from "@/components/charts"
+import { formatMonthShort } from "@/lib/utils"
+import { CATEGORY_COLORS } from "@/lib/colors"
 
 interface BudgetStackedBarProps {
   rows: SpendingGridRow[]
@@ -8,17 +9,14 @@ interface BudgetStackedBarProps {
 }
 
 export function BudgetStackedBar({ rows, months }: BudgetStackedBarProps) {
-  // Only spending categories (not income or transfers)
   const spendingRows = rows.filter(
     (r) => r.section === "Spending" || r.section === "Bills"
   )
 
-  // Get unique parent categories
   const categories = Array.from(
     new Set(spendingRows.map((r) => r.category.split(":")[0].trim()))
   )
 
-  // Build chart data: one entry per month
   const data = months.map((m) => {
     const entry: Record<string, string | number> = { month: formatMonthShort(m) }
     for (const cat of categories) {
@@ -34,18 +32,20 @@ export function BudgetStackedBar({ rows, months }: BudgetStackedBarProps) {
     return entry
   })
 
+  const colors = categories.map((c) => CATEGORY_COLORS[c] ?? "#78716c")
+
   return (
     <div className="rounded-lg border p-4">
-      <h3 className="mb-4 text-sm font-medium text-muted-foreground">
+      <h3 className="mb-2 text-sm font-medium text-muted-foreground">
         Spending by Category Over Time
       </h3>
-      <BarChart
+      <StyledBarChart
         data={data}
         index="month"
         categories={categories}
+        colors={colors}
         stack
-        valueFormatter={(v) => formatCurrency(v.toString())}
-        className="h-80"
+        height={340}
       />
     </div>
   )

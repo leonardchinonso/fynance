@@ -101,6 +101,7 @@ export function PortfolioPage() {
           accounts={portfolio.accounts}
           onAccountClick={setSelectedAccountId}
           profiles={profiles}
+          startDate={start}
         />
       ) : activeView === "charts" ? (
         <PortfolioCharts portfolio={portfolio} />
