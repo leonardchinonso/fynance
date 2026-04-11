@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     category_source TEXT,                      -- 'rule' | 'claude' | 'manual'
     confidence      REAL,                      -- 0.0..1.0, NULL for rule/manual
     notes           TEXT,                      -- user annotation
+    is_recurring    INTEGER NOT NULL DEFAULT 0, -- 1 = recurring (salary, rent, subscriptions)
     fingerprint     TEXT NOT NULL UNIQUE,      -- SHA-256 for dedup
     fitid           TEXT,                      -- OFX FITID if present
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS import_log (
     rows_total      INTEGER NOT NULL,
     rows_inserted   INTEGER NOT NULL,
     rows_duplicate  INTEGER NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'csv',  -- 'csv' | 'screenshot' | 'api'
     imported_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
@@ -68,9 +70,12 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
 CREATE INDEX IF NOT EXISTS idx_snap_date ON portfolio_snapshots(snapshot_date);
 
 -- ── budgets ───────────────────────────────────────────────────────────────
+-- DISCUSS: Should budgets be standing targets (one per category) or per-month?
+-- Option A (current): per-month budgets allow varying targets (e.g., higher food budget in December).
+-- Option B (proposed): standing budgets are simpler; just query transactions for any month against the target.
 CREATE TABLE IF NOT EXISTS budgets (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    month           TEXT NOT NULL,             -- YYYY-MM
+    month           TEXT NOT NULL,             -- YYYY-MM (remove if standing budgets are adopted)
     category        TEXT NOT NULL,
     amount          TEXT NOT NULL,             -- Decimal string, monthly budget cap
     UNIQUE(month, category)
@@ -90,13 +95,14 @@ CREATE TABLE IF NOT EXISTS holdings (
     account_id      TEXT NOT NULL,
     symbol          TEXT NOT NULL,             -- ticker or ISIN (e.g. 'VWRL', 'AAPL')
     name            TEXT NOT NULL,             -- display name (e.g. 'Vanguard FTSE All-World')
-    holding_type    TEXT NOT NULL DEFAULT 'stock',  -- 'stock' | 'etf' | 'fund' | 'bond' | 'crypto' | 'cash'
+    holding_type    TEXT NOT NULL DEFAULT 'stock',  -- 'stock' | 'etf' | 'fund' | 'bond' | 'crypto'
     quantity        TEXT NOT NULL,             -- Decimal string (shares/units)
     price_per_unit  TEXT,                      -- Decimal string, price at snapshot time
     value           TEXT NOT NULL,             -- Decimal string, total value (quantity * price)
     currency        TEXT NOT NULL DEFAULT 'GBP',
     as_of           TEXT NOT NULL,             -- YYYY-MM-DD, when this snapshot was taken
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(account_id, symbol, as_of),
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
 
@@ -120,16 +126,18 @@ CREATE TABLE IF NOT EXISTS ingestion_checklist (
 
 CREATE INDEX IF NOT EXISTS idx_checklist_month ON ingestion_checklist(month);
 
--- ── category_rules ────────────────────────────────────────────────────────
--- Persisted cache of loaded YAML rules (for UI display/editing later).
--- Primary source of truth remains config/rules.yaml.
-CREATE TABLE IF NOT EXISTS category_rules (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    pattern         TEXT NOT NULL,
-    category        TEXT NOT NULL,
-    priority        INTEGER NOT NULL DEFAULT 0,
-    source          TEXT NOT NULL DEFAULT 'yaml'  -- 'yaml' | 'user'
-);
+-- ── category_rules (deferred) ────────────────────────────────────────────
+-- NOT included in the initial schema. Add this table later when the UI
+-- needs to display or edit rules. For MVP, rules live only in
+-- config/rules.yaml and are loaded into memory at startup.
+--
+-- CREATE TABLE IF NOT EXISTS category_rules (
+--     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+--     pattern         TEXT NOT NULL,
+--     category        TEXT NOT NULL,
+--     priority        INTEGER NOT NULL DEFAULT 0,
+--     source          TEXT NOT NULL DEFAULT 'yaml'  -- 'yaml' | 'user'
+-- );
 ```
 
 ## Rust Types
@@ -153,6 +161,7 @@ pub struct Transaction {
     pub category_source: Option<CategorySource>,
     pub confidence: Option<f64>,
     pub notes: Option<String>,
+    pub is_recurring: bool,     // recurring transactions (salary, rent, subscriptions)
     pub fingerprint: String,
     pub fitid: Option<String>,
 }
@@ -189,7 +198,7 @@ pub enum AccountType {
 
 #[derive(Debug, Clone)]
 pub struct Budget {
-    pub month: String,          // YYYY-MM
+    pub month: String,          // YYYY-MM (DISCUSS: remove if standing budgets adopted)
     pub category: String,
     pub amount: Decimal,
 }
@@ -338,8 +347,16 @@ Other
 
 6. **Holdings for stock-level portfolio detail**: The `holdings` table stores per-symbol snapshots within investment accounts. This enables drill-down from "Trading 212: £14,310" to "VWRL: £8,000, AAPL: £3,200, ..." and further into ETF composition. Holdings use the same carry-forward semantics as account balances.
 
-7. **No separate income table**: Income is not stored in a dedicated table. Income transactions are regular transactions with a positive amount and a category under the `Income` parent (e.g., `Income: Salary`). Monthly income figures are derived by summing positive transactions in the Income category for a given month. This avoids duplicating data and keeps the model simple: a recurring salary is just a transaction that happens to repeat.
+7. **No separate income table; recurring flag for projections**: Income is not stored in a dedicated table. Income transactions are regular transactions with a positive amount and a category under the `Income` parent (e.g., `Income: Salary`). Monthly income figures are derived by summing positive transactions in the Income category for a given month. Transactions can be marked `is_recurring = 1` to flag recurring income or expenses (salary, rent, subscriptions). This enables future budget projections: "you spend ~£X/month on recurring costs" without needing a separate recurring transactions table.
 
 8. **Holdings vs portfolio_snapshots**: These serve different levels of detail. `portfolio_snapshots` stores one balance per account per date for net worth trend charts (e.g., "Trading 212 was worth £14,310 on March 1"). `holdings` stores per-symbol detail within investment accounts (e.g., "VWRL: 50 units @ £160, AAPL: 20 units @ £160"). Portfolio snapshots aggregate up to net worth; holdings drill down into composition.
 
 9. **Guided ingestion checklist**: The `ingestion_checklist` table tracks which accounts have been updated each month. When the user starts their monthly review, the app pre-populates a checklist of all active accounts with `status = 'pending'`. As each account is updated (via CSV import, screenshot, or manual balance update), the status flips to `completed`. The UI shows a progress indicator: "3 of 7 accounts updated for March 2026".
+
+10. **Deferred tables**: The following tables are not in the MVP schema but are planned for future phases:
+    - `api_tokens`: Bearer token storage for programmatic API access. Deferred until the token auth feature is built.
+    - `settings`: Key-value store for user preferences (default currency, theme, etc.). Deferred to V1 (settings page).
+    - `categories`: Persistent category table for UI editing. MVP reads from `config/rules.yaml`; API exposes read-only. Deferred to V1.
+    - `stock_prices`: Historical price data for holdings valuation. MVP uses price at ingestion time only. Deferred to V1.
+
+Open questions related to the data model are tracked in the project-level Open Questions section of `docs/fynance-project-note.md`.

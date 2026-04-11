@@ -185,7 +185,10 @@ This allows agents (e.g., a Claude Code script) to push CSV files or screenshots
 
 Potential security enhancements for later phases, once the MVP is stable:
 
-1. **Optional browser UI authentication**: Add an optional password or PIN gate for the web UI. Currently loopback binding is the trust boundary, but this would add protection in shared-machine scenarios or when running in Docker with `0.0.0.0` binding. Could use a simple session cookie with a locally-set password.
+1. **Optional browser UI authentication**: Add an optional password or PIN gate for the web UI. Currently loopback binding is the trust boundary, but this would add protection in shared-machine scenarios or when running in Docker with `0.0.0.0` binding. Options include:
+   - A random token embedded in the server URL at startup (e.g., `http://localhost:7433/?token=<random>`)
+   - HTTP Basic Auth with a locally-generated password stored in the OS keychain
+   - A simple session cookie with a locally-set password or PIN
 
 2. **HTTPS support**: Add optional TLS termination for the Axum server, useful when accessing the Docker deployment over a LAN or through a reverse proxy.
 
@@ -205,5 +208,5 @@ Potential security enhancements for later phases, once the MVP is stable:
 | API key exposure | Env var or `chmod 600` config file; never logged or stored in DB |
 | Raw transaction data sent to Claude | Only normalized descriptions, never amounts or dates |
 | Programmatic API access | Bearer token auth; tokens stored as SHA-256 hashes |
-| Docker port exposure | Single port serves both the web UI and REST API. Only one port is exposed from the container. No separate API port needed. |
+| Single port for UI + API | One port serves the web UI and REST API. No need for multiple exposed ports. |
 | Telemetry | None. No calls except explicit Claude API categorization. |

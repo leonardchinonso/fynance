@@ -18,6 +18,8 @@ Active -- planning phase, no implementation yet.
 
 ## Open Questions
 - CSV format detection should be dynamic: auto-detect bank and format version from column headers rather than requiring the user to specify. Support all known versions and gracefully handle unknown formats with clear error messages.
+- **Budgets: standing vs per-month?** Current schema has per-month budgets (`UNIQUE(month, category)`). Proposal: budgets are standing targets (one per category), and you just query transactions for any month against the target. Per-month allows seasonal variation; standing is simpler. See `DISCUSS` comments in `docs/design/03_data_model.md`.
+- **HoldingType::Cash**: Should uninvested cash in brokerage accounts be a holding or only tracked via account balance in `portfolio_snapshots`? See Open Questions in `docs/design/03_data_model.md`.
 
 ## Contributors
 - Ope (Zaida-3dO): frontend focus, UI/UX requirements, Obsidian integration
