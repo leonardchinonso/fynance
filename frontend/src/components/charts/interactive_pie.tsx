@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import {
   PieChart,
   Pie,
@@ -28,10 +28,6 @@ interface InteractivePieProps {
   outerRadius?: number
 }
 
-/**
- * Recharts PieChart with activeShape hover zoom effect.
- * Styled to match Tremor's visual design but with proper interactivity.
- */
 export function InteractivePie({
   data,
   colors = DEFAULT_COLORS,
@@ -42,6 +38,8 @@ export function InteractivePie({
   outerRadius = 100,
 }: InteractivePieProps) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined)
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const total = data.reduce((sum, d) => sum + d.value, 0)
 
@@ -50,8 +48,17 @@ export function InteractivePie({
     color: colors[i % colors.length],
   }))
 
+  function handleMouseMove(e: React.MouseEvent) {
+    if (!containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    setMousePos({
+      x: e.clientX - rect.left + 15,
+      y: e.clientY - rect.top + 15,
+    })
+  }
+
   return (
-    <div className={className}>
+    <div className={className} ref={containerRef} onMouseMove={handleMouseMove}>
       <ResponsiveContainer width="100%" height={height}>
         <PieChart>
           <Pie
@@ -65,7 +72,7 @@ export function InteractivePie({
             activeIndex={activeIndex}
             activeShape={renderActiveShape}
             onMouseEnter={(_, index) => setActiveIndex(index)}
-            onMouseLeave={() => setActiveIndex(undefined)}
+            onMouseLeave={() => { setActiveIndex(undefined); setMousePos(null); }}
             animationBegin={0}
             animationDuration={400}
             animationEasing="ease-out"
@@ -79,8 +86,12 @@ export function InteractivePie({
               />
             ))}
           </Pie>
-          <Tooltip content={<PieTooltip />} />
-          {/* Center label - hidden when a segment is hovered (activeShape shows its own) */}
+          <Tooltip
+            content={<PieTooltip />}
+            position={mousePos ?? undefined}
+            wrapperStyle={{ pointerEvents: "none", zIndex: 50 }}
+          />
+          {/* Center label - hidden when a segment is hovered */}
           {label && activeIndex === undefined && (
             <text
               x="50%"
@@ -99,20 +110,9 @@ export function InteractivePie({
   )
 }
 
-/**
- * Active shape renderer: enlarges the hovered segment with a subtle outer ring.
- */
 function renderActiveShape(props: PieSectorDataItem) {
   const {
-    cx,
-    cy,
-    innerRadius,
-    outerRadius,
-    startAngle,
-    endAngle,
-    fill,
-    payload,
-    percent,
+    cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, percent,
   } = props
 
   const or = outerRadius as number
@@ -120,7 +120,6 @@ function renderActiveShape(props: PieSectorDataItem) {
 
   return (
     <g>
-      {/* Enlarged sector */}
       <Sector
         cx={cx}
         cy={cy}
@@ -131,7 +130,6 @@ function renderActiveShape(props: PieSectorDataItem) {
         fill={fill}
         style={{ filter: "brightness(1.15)", outline: "none" }}
       />
-      {/* Outer highlight ring */}
       <Sector
         cx={cx}
         cy={cy}
@@ -143,7 +141,6 @@ function renderActiveShape(props: PieSectorDataItem) {
         opacity={0.3}
         style={{ outline: "none" }}
       />
-      {/* Center text showing hovered item */}
       <text
         x={cx}
         y={(cy as number) - 8}

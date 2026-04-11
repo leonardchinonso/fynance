@@ -83,9 +83,8 @@ export function Navbar() {
                 <button
                   className={cn(
                     "absolute -right-1 -top-1 rounded-full p-0.5 transition-opacity",
-                    isHomepage(item.to)
-                      ? "opacity-100 text-yellow-500"
-                      : "opacity-0 group-hover:opacity-60 hover:!opacity-100 text-muted-foreground"
+                    "opacity-0 group-hover:opacity-60 hover:!opacity-100",
+                    isHomepage(item.to) ? "text-yellow-500" : "text-muted-foreground"
                   )}
                   onClick={(e) => {
                     e.preventDefault()
