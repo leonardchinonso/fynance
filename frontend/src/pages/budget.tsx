@@ -11,8 +11,9 @@ import { BudgetSpreadsheet } from "./budget/budget_spreadsheet"
 import { BudgetStackedBar } from "./budget/budget_stacked_bar"
 import { BudgetLineChart } from "./budget/budget_line_chart"
 import { BudgetPieChart } from "./budget/budget_pie_chart"
-import { List, Grid3X3, BarChart3, LineChart, PieChart } from "lucide-react"
-import { getMonthsInRange, getMonthFromDate } from "@/lib/utils"
+import { List, Grid3X3, BarChart3, LineChart, PieChart, Info } from "lucide-react"
+import { getMonthsInRange, getMonthFromDate, formatMonth } from "@/lib/utils"
+import { Card, CardContent } from "@/components/ui/card"
 
 const VIEW_MODES = [
   { value: "progress", label: "Progress", icon: <List className="h-4 w-4" /> },
@@ -36,18 +37,35 @@ export function BudgetPage() {
   const [budgetRows, setBudgetRows] = useState<BudgetRow[]>([])
   const [gridRows, setGridRows] = useState<SpendingGridRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [budgetMonth, setBudgetMonth] = useState<string | null>(null)
 
   const months = getMonthsInRange(start, end)
-  const currentMonth = getMonthFromDate(end)
 
-  // Fetch budget progress for current month
+  // For progress view, find the latest month that has budget data.
+  // Try the last month in range first, then walk backwards.
   useEffect(() => {
     setLoading(true)
-    api.getBudget(currentMonth).then((rows) => {
-      setBudgetRows(rows)
+
+    // Try months from end backwards until we find one with data
+    async function findBudgetMonth() {
+      const candidates = [...months].reverse()
+      for (const m of candidates) {
+        const rows = await api.getBudget(m)
+        if (rows.length > 0) {
+          setBudgetRows(rows)
+          setBudgetMonth(m)
+          setLoading(false)
+          return
+        }
+      }
+      // No data found for any month in range
+      setBudgetRows([])
+      setBudgetMonth(null)
       setLoading(false)
-    })
-  }, [currentMonth])
+    }
+
+    findBudgetMonth()
+  }, [start, end])
 
   // Fetch spending grid for spreadsheet and chart views
   useEffect(() => {
@@ -73,16 +91,52 @@ export function BudgetPage() {
       {loading ? (
         <LoadingSpinner />
       ) : activeView === "progress" ? (
-        <BudgetProgress rows={budgetRows} />
+        budgetRows.length > 0 && budgetMonth ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Showing budget for <span className="font-medium text-foreground">{formatMonth(budgetMonth)}</span>
+            </p>
+            <BudgetProgress rows={budgetRows} />
+          </div>
+        ) : (
+          <EmptyState message="No budget data for the selected date range. Try selecting a range that includes months with transactions." />
+        )
       ) : activeView === "spreadsheet" ? (
-        <BudgetSpreadsheet rows={gridRows} months={months} />
+        gridRows.length > 0 ? (
+          <BudgetSpreadsheet rows={gridRows} months={months} />
+        ) : (
+          <EmptyState message="No spending data for the selected date range." />
+        )
       ) : activeView === "stacked-bar" ? (
-        <BudgetStackedBar rows={gridRows} months={months} />
+        gridRows.length > 0 ? (
+          <BudgetStackedBar rows={gridRows} months={months} />
+        ) : (
+          <EmptyState message="No spending data for the selected date range." />
+        )
       ) : activeView === "line" ? (
-        <BudgetLineChart rows={gridRows} months={months} />
+        gridRows.length > 0 ? (
+          <BudgetLineChart rows={gridRows} months={months} />
+        ) : (
+          <EmptyState message="No spending data for the selected date range." />
+        )
       ) : activeView === "pie" ? (
-        <BudgetPieChart rows={gridRows} />
+        gridRows.length > 0 ? (
+          <BudgetPieChart rows={gridRows} />
+        ) : (
+          <EmptyState message="No spending data for the selected date range." />
+        )
       ) : null}
     </div>
+  )
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <Card className="py-12">
+      <CardContent className="flex flex-col items-center gap-3 text-center">
+        <Info className="h-8 w-8 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground max-w-md">{message}</p>
+      </CardContent>
+    </Card>
   )
 }
