@@ -1,0 +1,3 @@
+# Prompt 1: Initialization
+
+I want to build a project to track my finances. I should be able to provide statements for the last two-three years as a starter and it should organize it into sections or categories. Based on that data, we can then start with how to budget future income. Research all that is needed for this project to happen and write your results to `./research/` folder. Then come up with a plan to execute it in detail from beginning to end. Include design approaches, diagrams, code examples, pros and cons in great detail and write it to `./plans/`. The project should be written in Rust. Use this information to populate the CLAUDE.md file for this project too
