@@ -202,6 +202,22 @@ impl HoldingType {
     }
 }
 
+/// Which bank's dialect a CSV file came from. Used for bookkeeping / display
+/// only; the import path never branches on this value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "lowercase")]
+pub enum BankFormat {
+    Monzo,
+    Revolut,
+    Lloyds,
+    /// LLM could not confidently identify the bank, or it is an unrecognised
+    /// institution. The import still proceeds as long as detection_confidence
+    /// is above the threshold.
+    #[default]
+    Unknown,
+}
+
 /// Aggregated result of one file or payload import.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
@@ -211,6 +227,23 @@ pub struct ImportResult {
     pub rows_duplicate: u64,
     pub filename: String,
     pub account_id: String,
+    /// Bank detected by the LLM parser. `Unknown` if unrecognised or not yet
+    /// set (e.g. in the aggregated totals object in the CLI).
+    pub detected_bank: BankFormat,
+    /// LLM's own confidence in `detected_bank` [0.0, 1.0]. Zero for the
+    /// synthetic totals row produced by the CLI.
+    pub detection_confidence: f32,
+}
+
+impl BankFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Monzo => "monzo",
+            Self::Revolut => "revolut",
+            Self::Lloyds => "lloyds",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// Result of a single `INSERT OR IGNORE`. Lets the CSV importer count new
@@ -230,4 +263,6 @@ pub struct ImportLog {
     pub rows_inserted: u64,
     pub rows_duplicate: u64,
     pub source: String,
+    pub detected_bank: BankFormat,
+    pub detection_confidence: f32,
 }

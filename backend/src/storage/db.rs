@@ -22,6 +22,14 @@ use crate::model::{
 /// create a fresh DB on a new machine with no files on disk beside itself.
 const SCHEMA_SQL: &str = include_str!("../../../db/sql/schema.sql");
 
+/// Migration 001: adds detected_bank / detection_confidence to import_log.
+/// The individual ALTER statements are separated so they can be checked and
+/// applied one at a time in `ensure_migration_001`.
+const MIGRATION_001_STMTS: &[&str] = &[
+    "ALTER TABLE import_log ADD COLUMN detected_bank TEXT",
+    "ALTER TABLE import_log ADD COLUMN detection_confidence REAL",
+];
+
 /// Resolve the default DB path. On Linux this is
 /// `~/.local/share/fynance/fynance.db`; on macOS it's
 /// `~/Library/Application Support/fynance/fynance.db`.
@@ -71,6 +79,8 @@ impl Db {
         conn.execute_batch(SCHEMA_SQL)
             .context("running schema.sql")?;
 
+        ensure_migration_001(&conn)?;
+
         // Set file mode after the DB file has been created so the pragma
         // calls above don't race against the chmod.
         if path.exists() {
@@ -117,8 +127,9 @@ impl Db {
     pub fn log_import(&self, log: &ImportLog) -> Result<()> {
         self.conn.execute(
             r"INSERT INTO import_log (
-                filename, account_id, rows_total, rows_inserted, rows_duplicate, source
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                filename, account_id, rows_total, rows_inserted, rows_duplicate,
+                source, detected_bank, detection_confidence
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 log.filename,
                 log.account_id,
@@ -126,6 +137,8 @@ impl Db {
                 log.rows_inserted as i64,
                 log.rows_duplicate as i64,
                 log.source,
+                log.detected_bank.as_str(),
+                log.detection_confidence,
             ],
         )?;
         Ok(())
@@ -476,6 +489,34 @@ fn set_file_mode_600(path: &Path) -> Result<()> {
 fn set_file_mode_600(_path: &Path) -> Result<()> {
     Ok(())
 }
+
+/// Apply migration 001 (add detected_bank / detection_confidence to
+/// import_log) if the columns are not already present. Each ALTER TABLE
+/// statement is guarded by a PRAGMA table_info check so this is safe to
+/// run on every startup.
+fn ensure_migration_001(conn: &Connection) -> Result<()> {
+    for stmt in MIGRATION_001_STMTS {
+        // Extract the column name from the ALTER TABLE statement so we can
+        // check if it already exists. Format: "ALTER TABLE t ADD COLUMN col TYPE"
+        let col_name = stmt
+            .split_whitespace()
+            .nth(5)
+            .ok_or_else(|| anyhow!("malformed migration statement: {stmt}"))?;
+
+        let already_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('import_log') WHERE name = ?1",
+            params![col_name],
+            |row| row.get(0),
+        )?;
+        if !already_exists {
+            conn.execute_batch(stmt).with_context(|| {
+                format!("applying migration 001: {stmt}")
+            })?;
+        }
+    }
+    Ok(())
+}
+
 
 // Silence `HoldingType` unused warning if the holdings upsert is the only caller.
 #[allow(dead_code)]

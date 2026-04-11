@@ -71,9 +71,11 @@ This is the executable checklist for building the fynance backend. It is split i
 
 ### 1.5 Import trait and CSV importers
 
+> **Iteration note (prompt 3.3).** Implement this section per [`10_llm_csv_import.md`](10_llm_csv_import.md), not the header-sniffing bullets below. The bullets are kept for historical context so the diff against the original Phase 1 is reviewable. In short: there is no `detect_format`, no per-bank column mapping, and no per-bank branch inside `map_row`. `CsvImporter` is a thin adapter around `LlmStatementParser`, which produces `UnifiedStatementRow`s and a `(detected_bank, detection_confidence)` tag. Two confidence gates apply: file-level (hard fail below threshold) and row-level (skip + warn). Unknown banks pass through as `BankFormat::Unknown` provided file-level confidence clears the threshold.
+
 - [ ] `backend/src/importers/mod.rs`:
   - `Importer` trait: `fn import(&self, path: &Path, account_id: &str, db: &Db) -> Result<ImportResult>`
-  - `get_importer(path: &Path) -> Result<Box<dyn Importer>>` -- auto-detects format from column headers
+  - `get_importer(path: &Path) -> Result<Box<dyn Importer>>` -- extension-based dispatch only (`.csv` -> `CsvImporter`)
 - [ ] `backend/src/importers/csv_importer.rs`:
   - `BankFormat` enum: `Monzo | Revolut | Lloyds | Unknown`
   - `detect_format(headers: &StringRecord) -> BankFormat`

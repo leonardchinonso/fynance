@@ -1,0 +1,51 @@
+{
+  "detected_bank": "revolut",
+  "detection_confidence": 0.96,
+  "rows": [
+    {
+      "date": "2026-03-10",
+      "description": "Lidl",
+      "amount": "-5.50",
+      "currency": "GBP",
+      "fitid": null,
+      "category": null,
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "CARD_PAYMENT",
+      "balance_after": "1234.50",
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    },
+    {
+      "date": "2026-03-11",
+      "description": "TfL Travel",
+      "amount": "-2.80",
+      "currency": "GBP",
+      "fitid": null,
+      "category": null,
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "CARD_PAYMENT",
+      "balance_after": "1231.70",
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    },
+    {
+      "date": "2026-03-12",
+      "description": "Salary",
+      "amount": "2500.00",
+      "currency": "GBP",
+      "fitid": null,
+      "category": null,
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "TOPUP",
+      "balance_after": "3731.70",
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    }
+  ]
+}
