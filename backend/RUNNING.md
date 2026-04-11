@@ -10,7 +10,7 @@ This document covers everything you need to build, configure, and run the fynanc
 | `cargo` | ships with Rust | — |
 | `cargo-watch` (optional) | any | `cargo install cargo-watch` |
 
-No other system dependencies are required. The SQLite library is bundled via the `rusqlite` `bundled` feature and compiled into the binary automatically.
+No other system dependencies are required. The SQLite library is bundled via the `rusqlite` `bundled` feature and compiled into the binary automatically. The React frontend is compiled and embedded in the binary via `include_dir!`.
 
 ## Project layout
 
@@ -25,12 +25,25 @@ fynance/
 │   │   ├── model.rs          # Domain types (Transaction, Account, BankFormat, …)
 │   │   ├── util.rs           # Shared helpers (fingerprint, parse_date, parse_amount)
 │   │   ├── commands/         # One file per CLI subcommand
+│   │   │   ├── serve.rs      # HTTP server startup and browser launch
+│   │   │   ├── token.rs      # Token create / list / revoke
+│   │   │   └── (others)      # account, import, stats, budget
 │   │   ├── importers/        # CSV import pipeline
 │   │   │   ├── mod.rs        # Importer trait + get_importer
 │   │   │   ├── csv_importer.rs
 │   │   │   ├── llm_parser.rs # LLM-based statement parser
 │   │   │   └── unified.rs    # UnifiedStatementRow schema
 │   │   ├── server/           # Axum HTTP server
+│   │   │   ├── mod.rs        # Server setup, middleware wiring
+│   │   │   ├── auth.rs       # Loopback-trust bearer token auth middleware
+│   │   │   ├── error.rs      # Error type implementing IntoResponse
+│   │   │   ├── state.rs      # Shared server state (Db)
+│   │   │   ├── static_files.rs # Embedded React bundle serving
+│   │   │   └── routes/
+│   │   │       ├── mod.rs    # Router setup
+│   │   │       ├── health.rs # GET /health
+│   │   │       ├── docs.rs   # GET /api/docs (OpenAPI 3.1 spec)
+│   │   │       └── (future)  # API routes (transactions, budget, etc.)
 │   │   └── storage/          # SQLite persistence (Db type)
 │   ├── config/
 │   │   ├── categories.yaml   # Spending category taxonomy
@@ -103,6 +116,26 @@ There is no separate migration step. The database is created and initialized aut
 
 You do not need to do anything special to set up the database.
 
+## HTTP Server and API
+
+The server is started with `fynance serve`. It runs on `127.0.0.1:7433` by default and serves:
+
+- Embedded React UI at `/` and `/app/*`
+- Health check at `GET /health`
+- OpenAPI documentation at `GET /api/docs` (machine-readable schema for agents)
+- API routes at `/api/*` (transaction, budget, portfolio endpoints — phase 2+)
+
+### Authentication
+
+Use `FYNANCE_HOST=0.0.0.0` (or set in `.env`) to bind to a non-loopback address (Docker, network access). In this case, all requests require bearer token authentication:
+
+```bash
+# Browser will be prompted to auth, or use curl:
+curl -H "Authorization: Bearer fyn_abc123..." http://0.0.0.0:7433/api/health
+```
+
+See the `token create` / `token list` / `token revoke` commands above for token management.
+
 ## CLI subcommands
 
 All subcommands accept a global `--db <path>` flag to override the default database location.
@@ -118,6 +151,32 @@ fynance serve --no-open      # skip auto-opening the browser
 ```
 
 The server binds to `127.0.0.1` by default (loopback only). The compiled React frontend is embedded in the binary via `include_dir!` and served as static files; no separate frontend process is needed in production.
+
+#### Authentication
+
+The server uses a **loopback-trust auth model**:
+
+- **Loopback access** (from `127.0.0.1`): No authentication required. The browser UI is served and all API routes are accessible without a token.
+- **Non-loopback access** (Docker, remote, `0.0.0.0`): Requires bearer token auth. All API requests must include `Authorization: Bearer fyn_<token>` header.
+
+Browser requests are automatically trusted when the server is on loopback. Programmatic access (scripts, external agents) uses tokens generated with `fynance token create`. The full API is documented in machine-readable form at `GET /api/docs` (OpenAPI 3.1 schema with embedded category taxonomy).
+
+### `fynance token`
+
+Manage API bearer tokens for programmatic access.
+
+```bash
+# Generate a new token
+fynance token create --name my-agent
+
+# List all active tokens
+fynance token list
+
+# Revoke a token by name
+fynance token revoke --name my-agent
+```
+
+Tokens are generated as random strings (prefix `fyn_`) and stored as SHA-256 hashes in the database. The plaintext token is only shown once at creation time. Use `token list` to see which tokens are active; use `token revoke` to invalidate a token without deleting it (it remains in the DB but is marked revoked).
 
 ### `fynance account`
 
@@ -228,6 +287,8 @@ FYNANCE_ANTHROPIC_API_KEY=<your-key> cargo test -- --ignored
 
 The integration tests in `tests/import_csv.rs` use `MockStatementParser` seeded from JSON fixtures in `tests/fixtures/*.expected.json`, so they run without a network connection or API key. The `#[ignore]` live smoke test in `tests/llm_parser_live.rs` is the only test that hits the real API.
 
+The `tests/server_smoke.rs` contains smoke tests for the HTTP server, including auth middleware and static file serving. These run without special configuration.
+
 ## Development workflow
 
 ### Backend only (no frontend changes)
@@ -235,12 +296,16 @@ The integration tests in `tests/import_csv.rs` use `MockStatementParser` seeded 
 ```bash
 cd backend
 
-# Iterate quickly with live reload
+# Iterate quickly with live reload (for serve or any subcommand)
 cargo watch -x 'run -- serve --no-open'
 
-# Or run a single subcommand directly
+# Or test a single subcommand directly (no live reload)
 cargo run -- stats
 cargo run -- import ~/Downloads/monzo.csv --account monzo-current
+
+# Access the server at http://localhost:7433 or via API:
+curl http://localhost:7433/api/docs  # OpenAPI schema
+curl http://localhost:7433/health     # Health check
 ```
 
 ### Full stack (backend + frontend)
@@ -265,6 +330,22 @@ The system prompt is pinned in the repo at `backend/config/prompts/statement_par
    ```bash
    FYNANCE_ANTHROPIC_API_KEY=<key> cargo test -- --ignored
    ```
+
+### API Documentation for Agents
+
+External agents access the API at `GET /api/docs`. The OpenAPI 3.1 schema includes:
+
+- All endpoint definitions with request/response schemas
+- The full spending category taxonomy (two-level hierarchy: `Parent: Child`)
+- Bearer token authentication requirements
+- Examples for each endpoint
+
+Agents should read this schema on startup or at each session to stay in sync with the running server. The category taxonomy is embedded in the spec so agents always know the valid categories without a separate configuration request.
+
+Sample fetch:
+```bash
+curl http://localhost:7433/api/docs | jq '.components.schemas.Category'
+```
 
 ## Logging
 
@@ -324,3 +405,29 @@ FYNANCE_PORT=8080 fynance serve
 ### Database is locked
 
 The binary uses WAL journal mode. Only one writer is allowed at a time, but multiple readers are fine. If you see lock errors, make sure you do not have two instances of `fynance serve` running against the same database file.
+
+### Authentication errors: `missing or invalid bearer token`
+
+This happens when you bind to a non-loopback address (Docker, remote network, `0.0.0.0`). The server requires bearer token auth in this case.
+
+Generate a token:
+```bash
+fynance token create --name my-api
+```
+
+Use it in API requests:
+```bash
+curl -H "Authorization: Bearer fyn_abc123..." http://0.0.0.0:7433/api/health
+```
+
+For loopback-only access, no token is needed. The default `FYNANCE_HOST=127.0.0.1` requires no auth.
+
+### Remote access in Docker
+
+If you are running the server inside a container:
+
+1. Set `FYNANCE_HOST=0.0.0.0` in the `.env` file (or as a build argument).
+2. Generate an API token with `fynance token create`.
+3. Pass the token in all API requests: `Authorization: Bearer fyn_...`.
+
+The server will still open the browser on container startup, but that URL is only accessible from the container host (port mapping).
