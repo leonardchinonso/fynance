@@ -89,7 +89,8 @@ export function InteractivePie({
           <Tooltip
             content={<PieTooltip />}
             position={mousePos ?? undefined}
-            wrapperStyle={{ pointerEvents: "none", zIndex: 50 }}
+            wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
+            isAnimationActive={false}
           />
           {/* Center label - hidden when a segment is hovered */}
           {label && activeIndex === undefined && (
