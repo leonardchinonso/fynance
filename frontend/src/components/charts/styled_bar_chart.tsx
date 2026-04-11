@@ -1,3 +1,4 @@
+import { useState, useRef } from "react"
 import {
   BarChart,
   Bar,
@@ -29,10 +30,6 @@ const DEFAULT_COLORS = [
   "#f59e0b", "#10b981",
 ]
 
-/**
- * Styled Recharts BarChart with Tremor-like visual design.
- * Supports per-category colors and stacked mode.
- */
 export function StyledBarChart({
   data,
   index,
@@ -43,39 +40,32 @@ export function StyledBarChart({
   className,
   showLegend = true,
 }: StyledBarChartProps) {
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  function handleMouseMove(e: React.MouseEvent) {
+    if (!containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    setMousePos({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top + 15 })
+  }
+
   return (
-    <div className={className}>
+    <div className={className} ref={containerRef} onMouseMove={handleMouseMove} onMouseLeave={() => setMousePos(null)}>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 12 }}>
-          <CartesianGrid
-            strokeDasharray="3 3"
-            vertical={false}
-            className="stroke-border/50"
-          />
-          <XAxis
-            dataKey={index}
-            tick={{ fontSize: 12 }}
-            className="fill-muted-foreground text-xs"
-            tickLine={false}
-            axisLine={false}
-          />
-          <YAxis
-            tick={{ fontSize: 12 }}
-            className="fill-muted-foreground text-xs"
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(v) => formatCurrency(v.toString())}
-          />
+          <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
+          <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />
+          <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
           <Tooltip
             content={<ChartTooltip />}
-            cursor={{ fill: "hsl(var(--muted))", opacity: 0.3 }}
+            position={mousePos ?? undefined}
+            wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
+            isAnimationActive={false}
           />
           {showLegend && categories.length > 1 && (
             <Legend
               wrapperStyle={{ fontSize: "12px", paddingTop: "12px" }}
-              formatter={(value) => (
-                <span className="text-muted-foreground text-xs">{value}</span>
-              )}
+              formatter={(value) => <span className="text-muted-foreground text-xs">{value}</span>}
             />
           )}
           {categories.map((cat, i) => (
@@ -95,9 +85,6 @@ export function StyledBarChart({
   )
 }
 
-/**
- * Single-category bar chart with per-bar colors (each bar a different color).
- */
 export function ColoredBarChart({
   data,
   index,
@@ -113,32 +100,27 @@ export function ColoredBarChart({
   height?: number
   className?: string
 }) {
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  function handleMouseMove(e: React.MouseEvent) {
+    if (!containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    setMousePos({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top + 15 })
+  }
+
   return (
-    <div className={className}>
+    <div className={className} ref={containerRef} onMouseMove={handleMouseMove} onMouseLeave={() => setMousePos(null)}>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 12 }}>
-          <CartesianGrid
-            strokeDasharray="3 3"
-            vertical={false}
-            className="stroke-border/50"
-          />
-          <XAxis
-            dataKey={index}
-            tick={{ fontSize: 12 }}
-            className="fill-muted-foreground text-xs"
-            tickLine={false}
-            axisLine={false}
-          />
-          <YAxis
-            tick={{ fontSize: 12 }}
-            className="fill-muted-foreground text-xs"
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(v) => formatCurrency(v.toString())}
-          />
+          <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
+          <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />
+          <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
           <Tooltip
             content={<ChartTooltip />}
-            cursor={{ fill: "hsl(var(--muted))", opacity: 0.3 }}
+            position={mousePos ?? undefined}
+            wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
+            isAnimationActive={false}
           />
           <Bar dataKey={valueKey} radius={[4, 4, 0, 0]} animationDuration={400}>
             {data.map((_, i) => (

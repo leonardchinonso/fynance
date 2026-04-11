@@ -1,3 +1,4 @@
+import { useState, useRef } from "react"
 import {
   LineChart,
   Line,
@@ -33,10 +34,6 @@ interface StyledLineChartProps {
   onBrushChange?: (startIndex: number, endIndex: number) => void
 }
 
-/**
- * Styled Recharts LineChart with smooth curves, optional brush for
- * range selection, and highlighted index for table-chart sync.
- */
 export function StyledLineChart({
   data,
   index,
@@ -51,52 +48,41 @@ export function StyledLineChart({
   highlightIndex,
   onBrushChange,
 }: StyledLineChartProps) {
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  function handleMouseMove(e: React.MouseEvent) {
+    if (!containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    setMousePos({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top + 15 })
+  }
+
   const highlightLabel =
     highlightIndex !== null && highlightIndex !== undefined
       ? (data[highlightIndex]?.[index] as string)
       : undefined
 
   return (
-    <div className={className}>
+    <div className={className} ref={containerRef} onMouseMove={handleMouseMove} onMouseLeave={() => setMousePos(null)}>
       <ResponsiveContainer width="100%" height={height + (showBrush ? 40 : 0)}>
         <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 12 }}>
-          <CartesianGrid
-            strokeDasharray="3 3"
-            vertical={false}
-            className="stroke-border/50"
+          <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
+          <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />
+          <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
+          <Tooltip
+            content={<ChartTooltip />}
+            position={mousePos ?? undefined}
+            wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
+            isAnimationActive={false}
           />
-          <XAxis
-            dataKey={index}
-            tick={{ fontSize: 12 }}
-            className="fill-muted-foreground text-xs"
-            tickLine={false}
-            axisLine={false}
-          />
-          <YAxis
-            tick={{ fontSize: 12 }}
-            className="fill-muted-foreground text-xs"
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(v) => formatCurrency(v.toString())}
-          />
-          <Tooltip content={<ChartTooltip />} />
           {showLegend && categories.length > 1 && (
             <Legend
               wrapperStyle={{ fontSize: "12px", paddingTop: "12px" }}
-              formatter={(value) => (
-                <span className="text-muted-foreground text-xs">{value}</span>
-              )}
+              formatter={(value) => <span className="text-muted-foreground text-xs">{value}</span>}
             />
           )}
-          {/* Highlight line for table hover sync */}
           {highlightLabel && (
-            <ReferenceLine
-              x={highlightLabel}
-              stroke="hsl(var(--foreground))"
-              strokeWidth={1.5}
-              strokeDasharray="4 4"
-              opacity={0.5}
-            />
+            <ReferenceLine x={highlightLabel} stroke="hsl(var(--foreground))" strokeWidth={1.5} strokeDasharray="4 4" opacity={0.5} />
           )}
           {categories.map((cat, i) => (
             <Line
@@ -125,17 +111,9 @@ export function StyledLineChart({
                 }
               }}
             >
-              {/* Mini chart inside the brush */}
               <LineChart data={data}>
                 {categories.slice(0, 1).map((cat, i) => (
-                  <Line
-                    key={cat}
-                    type="monotone"
-                    dataKey={cat}
-                    stroke={colors[i % colors.length]}
-                    strokeWidth={1}
-                    dot={false}
-                  />
+                  <Line key={cat} type="monotone" dataKey={cat} stroke={colors[i % colors.length]} strokeWidth={1} dot={false} />
                 ))}
               </LineChart>
             </Brush>
