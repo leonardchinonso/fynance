@@ -119,6 +119,12 @@ export function TransactionsPage() {
   const [accountNameMap, setAccountNameMap] = useState<Record<string, string>>({})
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [pageSize, setPageSize] = useState(() => {
+    try {
+      const v = localStorage.getItem("fynance-page-size")
+      return v ? parseInt(v, 10) : 25
+    } catch { return 25 }
+  })
 
   // Serialize array deps to avoid infinite re-render loops
   const accountsKey = selectedAccounts.join(",")
@@ -136,7 +142,7 @@ export function TransactionsPage() {
           selectedCategories.length > 0 ? selectedCategories : undefined,
         search: search || undefined,
         page,
-        limit: 25,
+        limit: pageSize,
         profile_id: profileId,
       })
       .then((r) => {
@@ -144,7 +150,7 @@ export function TransactionsPage() {
         setLoading(false)
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, end, accountsKey, categoriesKey, search, page, profileId])
+  }, [start, end, accountsKey, categoriesKey, search, page, pageSize, profileId])
 
   // Fetch ALL transactions for chart views (no pagination)
   useEffect(() => {
@@ -253,6 +259,10 @@ export function TransactionsPage() {
           page={result.page}
           limit={result.limit}
           onPageChange={setPage}
+          onLimitChange={(newLimit) => {
+            setPageSize(newLimit)
+            setPage(1)
+          }}
           accountNames={accountNameMap}
         />
       ) : view === "bar" ? (
