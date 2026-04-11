@@ -1,45 +1,60 @@
 # Architecture
 
+> **Updated after Prompt 1.1.** The original Obsidian-based architecture is kept in the git history; this file reflects the current plan. See `../design/02_architecture.md` for the full component diagram and module layout.
+
 ## System Overview
 
-fynance is a Rust CLI binary that reads bank statements in CSV format, normalizes the data, stores it in SQLite, and surfaces insights through the existing Obsidian vault at ~/SecondBrain. Obsidian's SQLite DB plugin renders live SQL queries and charts inside notes.
+fynance is a single Rust binary that:
 
-## Component Diagram
+1. Runs a local-only Axum HTTP server on `127.0.0.1`
+2. Serves a compiled React frontend embedded via `include_dir!`
+3. Processes bank CSV imports (Monzo, Revolut, Lloyds) and stores transactions in SQLite
+4. Categorizes transactions using a rules-first pipeline with Claude API fallback
+5. Exposes four UI views: Transactions, Budget, Portfolio, Reports
+
+The user runs `fynance serve`, the default browser opens, and all interaction happens in the browser. CLI subcommands remain available for automation.
+
+## High-Level Component Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Input Sources                         │
-│                     [Bank CSVs]                          │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Importer Layer                          │
-│                                                         │
-│               ┌──────────────┐                          │
-│               │ CsvImporter  │                          │
-│               │  (csv crate) │                          │
-│               └──────┬───────┘                          │
-│                      │ Iterator<Item=Transaction>        │
-│            [normalize_description()]                     │
-│            [dedup: fingerprint hash]                     │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                  SQLite Database                         │
-│       (~/SecondBrain/financial/transactions.db)          │
-│                                                         │
-│          transactions  │  import_log                    │
-└──────────────────────────────────────────────────────────┘
-                       │
-              ┌────────┴────────┐
-              ▼                 ▼
-┌─────────────────┐      ┌───────────┐
-│  Obsidian Notes │      │  CSV      │
-│  SQLite DB      │      │  export   │
-│  plugin queries │      │           │
-└─────────────────┘      └───────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                   fynance binary                             │
+│                                                             │
+│  ┌────────────┐    ┌──────────────────────────────────┐    │
+│  │  CLI       │    │   Axum HTTP Server               │    │
+│  │  (clap)    │    │   (127.0.0.1:PORT, loopback)     │    │
+│  │            │    │                                  │    │
+│  │  import    │    │   /api/transactions              │    │
+│  │  serve     │    │   /api/budget/:month             │    │
+│  │  account   │    │   /api/portfolio                 │    │
+│  │  budget    │    │   /api/categorize                │    │
+│  │  categorize│    │   /assets/* (embedded React)     │    │
+│  └─────┬──────┘    └────────────────┬─────────────────┘    │
+│        │                            │                       │
+│        └──────────┬─────────────────┘                       │
+│                   │                                          │
+│           ┌───────▼────────┐                                │
+│           │  Core Services  │                               │
+│           │                │                                │
+│           │  importers/    │                                │
+│           │  categorizer/  │                                │
+│           │  budget/       │                                │
+│           │  portfolio/    │                                │
+│           │  storage/      │                                │
+│           └───────┬────────┘                                │
+│                   │                                          │
+│           ┌───────▼────────┐                                │
+│           │  SQLite         │                               │
+│           │  (per-user)     │                               │
+│           └────────────────┘                                │
+└─────────────────────────────────────────────────────────────┘
+              ▲
+              │ HTTP loopback
+              │
+       ┌──────┴──────┐
+       │   Browser    │
+       │   React UI   │
+       └──────────────┘
 ```
 
 ## Module Dependency Graph
@@ -47,37 +62,80 @@ fynance is a Rust CLI binary that reads bank statements in CSV format, normalize
 ```
 main.rs
   └── cli.rs (clap subcommands)
-       ├── commands/import.rs
-       │    └── importers/csv_importer.rs
-       └── commands/stats.rs
+       ├── commands/serve.rs ──► server/ (Axum)
+       │                           ├── routes/transactions.rs
+       │                           ├── routes/budget.rs
+       │                           ├── routes/portfolio.rs
+       │                           ├── routes/import.rs
+       │                           └── static_files.rs (include_dir!)
+       ├── commands/import.rs ──► importers/
+       │                            ├── csv_importer.rs
+       │                            ├── monzo.rs
+       │                            ├── revolut.rs
+       │                            └── lloyds.rs
+       ├── commands/categorize.rs ──► categorizer/
+       │                                ├── rules.rs
+       │                                ├── claude.rs
+       │                                └── pipeline.rs
+       ├── commands/account.rs ──► portfolio/
+       │                             ├── accounts.rs
+       │                             └── diversity.rs
+       └── commands/budget.rs ──► budget/
+                                    ├── analyzer.rs
+                                    └── advisor.rs
 
-All commands depend on:
-  model.rs       (Transaction, SourceFormat types)
-  storage/db.rs  (Db struct, queries)
+All modules depend on:
+  model.rs       (Transaction, Account, Budget, etc.)
+  storage/db.rs  (Db, all SQL)
   util.rs        (normalize_description, fingerprint, parse_date)
 ```
 
 ## CLI Surface
 
 ```bash
-# Import a single CSV file with an account ID
-fynance import statement.csv --account chase-checking
+# Start the web UI (primary workflow)
+fynance serve [--port 3000] [--no-open]
 
-# Batch import a directory of CSVs
-fynance import ~/Downloads/statements/
+# Data ingestion
+fynance import <file|dir> --account <id>
 
-# Quick terminal summary
+# Account management
+fynance account add --id <id> --name <name> --institution <inst> --type <type>
+fynance account set-balance <id> <amount> --date YYYY-MM-DD
+fynance account list
+
+# Categorization
+fynance categorize [--batch]
+
+# Budget management
+fynance budget set --month YYYY-MM --category <c> --amount N
+fynance budget status
+
+# Utilities
 fynance stats
+fynance export --year YYYY --format csv
+fynance monthly    # composite: import + categorize + snapshot
 ```
 
-## Configuration
+## Storage Location
 
-Account mappings are hardcoded in `src/importers/csv_importer.rs` for now via named constructors (`CsvImporter::chase`, etc.). YAML-based config is deferred to a later phase.
+SQLite database is per-OS-user, resolved via the `dirs` crate:
+
+| Platform | Path |
+|---|---|
+| macOS | `~/Library/Application Support/fynance/fynance.db` |
+| Linux | `~/.local/share/fynance/fynance.db` |
+| Windows | `%APPDATA%\fynance\fynance.db` |
+
+Data directory is created with mode `0o700`; DB file with `0o600` on Unix. No shared storage, no centralized server. Each OS user runs their own isolated instance.
 
 ## Design Principles
 
-1. **No UI**: Obsidian is the UI. Rust does data processing; Obsidian renders.
-2. **Incremental imports**: Deduplication by fingerprint hash means re-importing the same file is always safe.
-3. **Single binary**: `cargo build --release` produces one self-contained executable with SQLite bundled.
-4. **Offline-first**: No network calls. All data lives locally.
-5. **Auditable**: Every import logged to `import_log`.
+1. **Browser is the UI**. Rust handles data and API; React handles presentation and charts.
+2. **Loopback only**. The Axum server binds to `127.0.0.1` and never `0.0.0.0`. No LAN exposure, no auth needed.
+3. **Single binary**. `cargo build --release` produces one executable with SQLite bundled and React bundle embedded.
+4. **Per-user isolation**. DB path resolves from OS user home directory; file permissions restrict access.
+5. **Incremental imports**. Deduplication by fingerprint hash means re-importing is always safe.
+6. **Offline-first**. The UI works fully offline. Claude API calls are opt-in and only for categorization and monthly analysis.
+7. **Auditable**. Every import logged to `import_log`.
+8. **Money safety**. Decimals stored as TEXT in SQLite, parsed to `rust_decimal::Decimal` in Rust. Never `f32`/`f64`.

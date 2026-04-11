@@ -1,4 +1,12 @@
-# Implementation Phases
+# Implementation Phases [SUPERSEDED]
+
+> **This file is superseded by [08_mvp_phases_v2.md](08_mvp_phases_v2.md).**
+>
+> After Prompt 1.1 (2026-04-11), fynance pivoted from a CLI + Obsidian tool to a Rust + Axum + React local web app with portfolio tracking. The phased plan was rewritten. Use the v2 file for current work.
+>
+> The content below is kept for historical reference only. The Obsidian phase (Phase 4 here) is dropped entirely, and the UI is now Axum + React rather than Obsidian notes.
+
+---
 
 ## Phase 1: CSV Import Foundation
 
