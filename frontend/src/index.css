@@ -130,7 +130,90 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* Tremor chart fill utilities - Tailwind v4 doesn't auto-generate these for SVG */
+/* ── Tremor design tokens ── */
+/* Tremor v4 beta uses custom utility classes that need explicit definitions
+   since Tailwind v4 doesn't auto-generate them. */
+
+/* Light mode Tremor tokens */
+:root {
+  --tremor-brand: #3b82f6;
+  --tremor-brand-emphasis: #1d4ed8;
+  --tremor-brand-muted: #bfdbfe;
+  --tremor-brand-faint: #eff6ff;
+  --tremor-brand-inverted: #ffffff;
+  --tremor-brand-subtle: #60a5fa;
+  --tremor-background: #ffffff;
+  --tremor-background-muted: #f9fafb;
+  --tremor-background-subtle: #f3f4f6;
+  --tremor-background-emphasis: #374151;
+  --tremor-border: #e5e7eb;
+  --tremor-content: #6b7280;
+  --tremor-content-subtle: #9ca3af;
+  --tremor-content-default: #6b7280;
+  --tremor-content-emphasis: #374151;
+  --tremor-content-strong: #111827;
+  --tremor-content-inverted: #ffffff;
+}
+
+/* Dark mode Tremor tokens */
+.dark {
+  --tremor-brand: #3b82f6;
+  --tremor-brand-emphasis: #60a5fa;
+  --tremor-brand-muted: #1e3a5f;
+  --tremor-brand-faint: #0c1929;
+  --tremor-brand-inverted: #030712;
+  --tremor-brand-subtle: #1d4ed8;
+  --tremor-background: #111827;
+  --tremor-background-muted: #1f2937;
+  --tremor-background-subtle: #1f2937;
+  --tremor-background-emphasis: #d1d5db;
+  --tremor-border: #374151;
+  --tremor-content: #d1d5db;
+  --tremor-content-subtle: #9ca3af;
+  --tremor-content-default: #d1d5db;
+  --tremor-content-emphasis: #e5e7eb;
+  --tremor-content-strong: #f9fafb;
+  --tremor-content-inverted: #000000;
+}
+
+/* Tremor background utilities */
+.bg-tremor-background-default, .bg-tremor-background-defualt { background-color: var(--tremor-background); }
+.bg-tremor-background-muted { background-color: var(--tremor-background-muted); }
+.bg-tremor-background-subtle { background-color: var(--tremor-background-subtle); }
+.bg-tremor-background-emphasis { background-color: var(--tremor-background-emphasis); }
+.bg-tremor-brand-default { background-color: var(--tremor-brand); }
+.bg-tremor-brand-emphasis { background-color: var(--tremor-brand-emphasis); }
+.bg-tremor-brand-muted { background-color: var(--tremor-brand-muted); }
+.bg-tremor-brand-faint { background-color: var(--tremor-brand-faint); }
+.bg-tremor-brand-subtle { background-color: var(--tremor-brand-subtle); }
+.bg-tremor-border-default { background-color: var(--tremor-border); }
+.bg-tremor-content-subtle { background-color: var(--tremor-content-subtle); }
+
+/* Tremor text utilities */
+.text-tremor-default { color: var(--tremor-content); font-size: 0.875rem; line-height: 1.25rem; }
+.text-tremor-label { color: var(--tremor-content); font-size: 0.75rem; line-height: 1rem; }
+.text-tremor-content { color: var(--tremor-content); }
+.text-tremor-content-default { color: var(--tremor-content-default); }
+.text-tremor-content-subtle { color: var(--tremor-content-subtle); }
+.text-tremor-content-emphasis { color: var(--tremor-content-emphasis); }
+.text-tremor-content-strong { color: var(--tremor-content-strong); }
+.text-tremor-content-inverted { color: var(--tremor-content-inverted); }
+.text-tremor-brand-default { color: var(--tremor-brand); }
+.text-tremor-brand-emphasis { color: var(--tremor-brand-emphasis); }
+.text-tremor-brand-inverted { color: var(--tremor-brand-inverted); }
+
+/* Tremor fill utilities (SVG) */
+.fill-tremor-brand-default { fill: var(--tremor-brand); }
+.fill-tremor-content-default { fill: var(--tremor-content-default); }
+.fill-tremor-content-emphasis { fill: var(--tremor-content-emphasis); }
+
+/* Tremor stroke utilities (SVG) */
+.stroke-tremor-background-default { stroke: var(--tremor-background); }
+.stroke-tremor-border-default { stroke: var(--tremor-border); }
+.stroke-tremor-brand-default { stroke: var(--tremor-brand); }
+.stroke-tremor-brand-muted { stroke: var(--tremor-brand-muted); }
+
+/* Color fill/stroke/bg utilities for chart data series */
 .fill-blue-500 { fill: #3b82f6; }
 .fill-green-500 { fill: #22c55e; }
 .fill-violet-500 { fill: #a855f7; }
@@ -153,16 +236,15 @@
 .stroke-green-500 { stroke: #22c55e; }
 .stroke-violet-500 { stroke: #a855f7; }
 .stroke-red-500 { stroke: #ef4444; }
-.stroke-yellow-500 { stroke: #eab308; }
-.stroke-indigo-500 { stroke: #6366f1; }
 .stroke-orange-500 { stroke: #f97316; }
 .stroke-pink-500 { stroke: #ec4899; }
 .stroke-cyan-500 { stroke: #06b6d4; }
 .stroke-teal-500 { stroke: #14b8a6; }
 .stroke-emerald-500 { stroke: #10b981; }
 .stroke-amber-500 { stroke: #f59e0b; }
+.stroke-indigo-500 { stroke: #6366f1; }
+.stroke-yellow-500 { stroke: #eab308; }
 
-/* Tremor uses bg-* classes for legend items */
 .bg-blue-500 { background-color: #3b82f6; }
 .bg-green-500 { background-color: #22c55e; }
 .bg-violet-500 { background-color: #a855f7; }
@@ -175,24 +257,3 @@
 .bg-teal-500 { background-color: #14b8a6; }
 .bg-emerald-500 { background-color: #10b981; }
 .bg-amber-500 { background-color: #f59e0b; }
-
-/* Tremor chart dark mode visibility fixes */
-.dark .recharts-cartesian-axis-tick-value {
-  fill: oklch(0.708 0 0);
-}
-.dark .recharts-cartesian-grid line {
-  stroke: oklch(1 0 0 / 10%);
-}
-.dark .recharts-legend-item-text {
-  color: oklch(0.85 0 0) !important;
-}
-.dark .recharts-tooltip-wrapper .recharts-default-tooltip {
-  background-color: oklch(0.205 0 0) !important;
-  border-color: oklch(1 0 0 / 15%) !important;
-}
-.dark .recharts-sector {
-  stroke: oklch(0.145 0 0);
-}
-.dark .recharts-text.recharts-pie-label-text {
-  fill: oklch(0.85 0 0);
-}

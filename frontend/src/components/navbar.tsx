@@ -93,7 +93,11 @@ export function Navbar() {
           onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}
         >
           <SelectTrigger className="w-[140px]">
-            <SelectValue placeholder="All profiles" />
+            <span>
+              {profileId
+                ? profiles.find((p) => p.id === profileId)?.name ?? profileId
+                : "All profiles"}
+            </span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All profiles</SelectItem>

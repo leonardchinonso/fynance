@@ -11,3 +11,4 @@ frontend/dist/
 # already existing elements were commented out
 
 #/target
+.playwright-mcp/

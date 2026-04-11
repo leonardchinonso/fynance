@@ -65,9 +65,11 @@ export function PortfolioPage() {
     })
   }, [profileId, start, end])
 
-  // Get previous month net worth for delta
-  const previousNetWorth =
-    history.length >= 2 ? history[history.length - 2].total_wealth : undefined
+  // Delta is start-of-range vs end-of-range net worth
+  const startNetWorth =
+    history.length >= 1 ? history[0].total_wealth : undefined
+  const endNetWorth =
+    history.length >= 1 ? history[history.length - 1].total_wealth : undefined
 
   // Default to overview view
   const activeView = view === "table" ? "overview" : view
@@ -90,7 +92,9 @@ export function PortfolioPage() {
       ) : activeView === "overview" ? (
         <PortfolioOverview
           portfolio={portfolio}
-          previousNetWorth={previousNetWorth}
+          startNetWorth={startNetWorth}
+          endNetWorth={endNetWorth}
+          dateLabel={`${start} to ${end}`}
         />
       ) : activeView === "accounts" ? (
         <AccountsGrid

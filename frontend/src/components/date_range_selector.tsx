@@ -31,7 +31,7 @@ export function DateRangeSelector({
     <div className="flex flex-wrap items-center gap-3">
       <Select value={preset} onValueChange={(v) => setPreset(v as Preset)}>
         <SelectTrigger className="w-[180px]">
-          <SelectValue />
+          <span>{PRESETS.find((p) => p.value === preset)?.label ?? preset}</span>
         </SelectTrigger>
         <SelectContent>
           {PRESETS.map((p) => (

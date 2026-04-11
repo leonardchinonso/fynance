@@ -1,6 +1,13 @@
 import type { Transaction } from "@/types"
 import { DonutChart } from "@tremor/react"
 import { formatCurrency } from "@/lib/utils"
+import { ChartLegend } from "@/components/chart_legend"
+
+const CHART_COLORS = [
+  "blue", "orange", "green", "violet", "pink",
+  "cyan", "yellow", "indigo", "teal", "red",
+  "amber", "emerald",
+]
 
 interface TransactionPieChartProps {
   transactions: Transaction[]
@@ -9,7 +16,6 @@ interface TransactionPieChartProps {
 export function TransactionPieChart({
   transactions,
 }: TransactionPieChartProps) {
-  // Group spending by parent category
   const categorySpending = new Map<string, number>()
   for (const t of transactions) {
     const amt = parseFloat(t.amount)
@@ -31,8 +37,12 @@ export function TransactionPieChart({
     .map(([name, amount]) => ({
       name,
       value: parseFloat(amount.toFixed(2)),
-      percent: ((amount / totalSpending) * 100).toFixed(1),
     }))
+
+  const legendItems = data.map((d, i) => ({
+    name: `${d.name} (${((d.value / totalSpending) * 100).toFixed(0)}%)`,
+    color: CHART_COLORS[i % CHART_COLORS.length],
+  }))
 
   return (
     <div className="rounded-lg border p-4">
@@ -43,11 +53,13 @@ export function TransactionPieChart({
         data={data}
         category="value"
         index="name"
+        colors={CHART_COLORS.slice(0, data.length)}
         valueFormatter={(v) => formatCurrency(v.toString())}
-        className="h-80"
+        className="h-72"
         showLabel
         label={`Total: ${formatCurrency(totalSpending.toFixed(2))}`}
       />
+      <ChartLegend items={legendItems} className="mt-4 justify-center" />
     </div>
   )
 }

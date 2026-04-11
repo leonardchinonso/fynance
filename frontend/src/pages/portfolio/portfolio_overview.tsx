@@ -5,16 +5,24 @@ import { TrendingUp, TrendingDown } from "lucide-react"
 
 interface PortfolioOverviewProps {
   portfolio: PortfolioResponse
-  previousNetWorth?: string
+  startNetWorth?: string
+  endNetWorth?: string
+  dateLabel?: string
 }
 
 export function PortfolioOverview({
   portfolio,
-  previousNetWorth,
+  startNetWorth,
+  endNetWorth,
+  dateLabel,
 }: PortfolioOverviewProps) {
-  const netWorth = parseFloat(portfolio.net_worth)
-  const prevNw = previousNetWorth ? parseFloat(previousNetWorth) : null
-  const delta = prevNw !== null ? netWorth - prevNw : null
+  const startNw = startNetWorth ? parseFloat(startNetWorth) : null
+  const endNw = endNetWorth ? parseFloat(endNetWorth) : null
+  const delta = startNw !== null && endNw !== null ? endNw - startNw : null
+  const deltaPercent =
+    delta !== null && startNw !== null && startNw > 0
+      ? ((delta / startNw) * 100).toFixed(1)
+      : null
 
   return (
     <div className="space-y-4">
@@ -34,18 +42,30 @@ export function PortfolioOverview({
               />
             </span>
             {delta !== null && (
-              <span
-                className={`flex items-center gap-1 text-sm font-medium ${
-                  delta >= 0 ? "text-green-500" : "text-red-500"
-                }`}
-              >
-                {delta >= 0 ? (
-                  <TrendingUp className="h-4 w-4" />
-                ) : (
-                  <TrendingDown className="h-4 w-4" />
+              <div className="flex flex-col">
+                <span
+                  className={`flex items-center gap-1 text-sm font-medium ${
+                    delta >= 0 ? "text-green-500" : "text-red-500"
+                  }`}
+                >
+                  {delta >= 0 ? (
+                    <TrendingUp className="h-4 w-4" />
+                  ) : (
+                    <TrendingDown className="h-4 w-4" />
+                  )}
+                  <Currency amount={delta.toFixed(2)} />
+                  {deltaPercent && (
+                    <span className="text-xs opacity-75">
+                      ({deltaPercent}%)
+                    </span>
+                  )}
+                </span>
+                {dateLabel && (
+                  <span className="text-xs text-muted-foreground ml-5">
+                    over selected period
+                  </span>
                 )}
-                <Currency amount={delta.toFixed(2)} />
-              </span>
+              </div>
             )}
           </div>
           <div className="mt-2 flex gap-6 text-sm text-muted-foreground">
