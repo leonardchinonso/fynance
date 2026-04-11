@@ -223,13 +223,13 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 Token usage:
 ```bash
 # Bulk import via API (agent or script)
-curl -X POST http://localhost:3000/api/import \
+curl -X POST http://localhost:7433/api/import/csv \
   -H "Authorization: Bearer fyn_a1b2c3d4e5f6..." \
   -F "file=@monzo_march.csv" \
   -F "account=monzo-current"
 
 # Multiple files
-curl -X POST http://localhost:3000/api/import/bulk \
+curl -X POST http://localhost:7433/api/import/bulk \
   -H "Authorization: Bearer fyn_a1b2c3d4e5f6..." \
   -F "files=@monzo_march.csv" \
   -F "files=@revolut_march.csv" \
@@ -237,6 +237,29 @@ curl -X POST http://localhost:3000/api/import/bulk \
 ```
 
 Browser UI requests from localhost skip token auth (same loopback trust model as before). Tokens are only required for programmatic API access. This lets agents and scripts push data without exposing the full app.
+
+### Typed JSON Import API
+
+In addition to CSV upload, a typed JSON endpoint (`POST /api/import`) accepts structured transaction data. This is the opinionated import path for AI agents and external tools that extract data from unsupported sources, convert it to the fynance schema, and push it via the API.
+
+```bash
+curl -X POST http://localhost:7433/api/import \
+  -H "Authorization: Bearer fyn_a1b2c3d4e5f6..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_id": "monzo-current",
+    "transactions": [
+      {
+        "date": "2026-03-10",
+        "description": "LIDL GB LONDON",
+        "amount": "-5.50",
+        "currency": "GBP"
+      }
+    ]
+  }'
+```
+
+The JSON schema is documented in the OpenAPI spec at `GET /api/docs`. This enables a workflow where an external agent (e.g., a Claude Code script) reads data from an unsupported bank, extracts transactions into the typed format, and hits this endpoint directly.
 
 ### API Documentation
 
@@ -246,7 +269,7 @@ The REST API is documented inline via a `GET /api/docs` endpoint that returns an
 
 ```bash
 fynance serve
-# fynance: server started at http://localhost:3000
+# fynance: server started at http://localhost:7433
 # (browser opens automatically)
 ```
 
@@ -265,8 +288,7 @@ Browser shows a nav bar with four tabs. All tabs show "Coming soon." API token g
 - `GET /api/transactions/accounts` — list of accounts with transaction counts
 - `GET /api/budget/:month` — budget vs actual per category for a month
 - `POST /api/budget` — set a budget amount for a category+month
-- `GET /api/monthly-income/:month` — income for a month
-- `POST /api/monthly-income` — set income
+- `GET /api/income/:month` — derived from transactions in the Income category for that month (no separate table)
 
 ### React Transactions page
 
@@ -286,7 +308,7 @@ Browser shows a nav bar with four tabs. All tabs show "Coming soon." API token g
 - Category rows showing:
   - Progress bar: actual / budgeted
   - Amounts: `£278 / £300`
-  - Color: **red** for over budget (>100%), amber (80-100%), **green** for under budget (<80%)
+  - Color: **red** for over budget (>110%), **amber** for near budget (80-110%), **green** for under budget (<80%). Thresholds are configurable in the settings page (default: green < 80%, amber 80-110%, red > 110%)
 - "Edit budget" mode to set amounts per category
 - **Multiple view modes**:
   - **Table**: spreadsheet-style, spending per category per month with color coding
@@ -522,6 +544,7 @@ CREATE TABLE IF NOT EXISTS stock_prices (
 ### V1: Settings Page
 
 A settings page for advanced configuration:
+- Budget color thresholds (green/amber/red boundaries, default: 80%/110%)
 - Stock price fetch frequency (monthly/weekly/daily)
 - Stock price cache size limit
 - Default date range for visualizations
@@ -553,7 +576,7 @@ All configurable values are read from environment variables, with sensible defau
 
 ```env
 # .env.example
-FYNANCE_PORT=3000                          # HTTP server port
+FYNANCE_PORT=7433                          # HTTP server port
 FYNANCE_DB_PATH=                           # SQLite path (default: OS data dir)
 FYNANCE_HOST=127.0.0.1                     # Bind address (use 0.0.0.0 in Docker)
 ANTHROPIC_API_KEY=                          # Claude API key (optional)
@@ -564,7 +587,7 @@ In Rust, add `dotenvy = "0.15"` to `Cargo.toml` and call `dotenvy::dotenv().ok()
 
 | Variable | Default | Notes |
 |---|---|---|
-| `FYNANCE_PORT` | `3000` | |
+| `FYNANCE_PORT` | `7433` | |
 | `FYNANCE_DB_PATH` | `dirs::data_local_dir()/fynance/fynance.db` | Override for Docker volume mount |
 | `FYNANCE_HOST` | `127.0.0.1` | Set to `0.0.0.0` inside Docker so the port mapping works |
 | `ANTHROPIC_API_KEY` | (none) | Optional, categorization degrades gracefully without it |
@@ -607,7 +630,7 @@ server: {
   port: 5173,
   proxy: {
     "/api": {
-      target: "http://localhost:3000",
+      target: "http://localhost:7433",
       changeOrigin: true,
     },
   },
@@ -674,10 +697,10 @@ WORKDIR /home/fynance
 RUN mkdir -p /home/fynance/data
 
 ENV FYNANCE_HOST=0.0.0.0
-ENV FYNANCE_PORT=3000
+ENV FYNANCE_PORT=7433
 ENV FYNANCE_DB_PATH=/home/fynance/data/fynance.db
 
-EXPOSE 3000
+EXPOSE 7433
 
 CMD ["fynance", "serve", "--no-open"]
 ```
@@ -690,7 +713,7 @@ services:
   fynance:
     build: .
     ports:
-      - "${FYNANCE_PORT:-3000}:3000"
+      - "${FYNANCE_PORT:-7433}:7433"
     volumes:
       - fynance-data:/home/fynance/data
     env_file:
@@ -707,7 +730,7 @@ services:
   fynance:
     image: ghcr.io/<owner>/fynance:latest    # or pin to a version: :v0.3.0
     ports:
-      - "${FYNANCE_PORT:-3000}:3000"
+      - "${FYNANCE_PORT:-7433}:7433"
     volumes:
       - fynance-data:/home/fynance/data
     env_file:

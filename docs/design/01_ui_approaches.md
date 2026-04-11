@@ -156,7 +156,7 @@ The original plan used Obsidian as the UI layer via the SQLite DB plugin. Prompt
 - Backend: Axum + rusqlite + tokio
 - Frontend: React 18 + Vite + TypeScript + Recharts + shadcn-ui (Tailwind)
 - Embedding: `include_dir!` macro compiles the Vite build into the binary
-- Launch: `fynance serve [--port 3000]` — opens browser, binds only to `127.0.0.1`
+- Launch: `fynance serve [--port 7433]` — opens browser, binds only to `127.0.0.1`
 
 **Future migration**: When the product is stable, wrapping the same Axum backend + React frontend in Tauri is a straightforward upgrade path. The API surface stays identical; only the distribution mechanism changes.
 

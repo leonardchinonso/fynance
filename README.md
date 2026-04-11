@@ -24,7 +24,7 @@ The simplest way to run fynance. Requires only Docker and Docker Compose.
    docker compose up -d
    ```
 
-3. Open `http://localhost:3000` in your browser.
+3. Open `http://localhost:7433` in your browser.
 
 The database is created automatically on first run. Data persists in a Docker volume across restarts.
 
@@ -59,15 +59,16 @@ Configuration is managed through a `.env` file at the project root. The repo inc
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `FYNANCE_PORT` | `3000` | No | HTTP server port |
+| `FYNANCE_PORT` | `7433` | No | HTTP server port (serves both web UI and REST API) |
 | `FYNANCE_HOST` | `127.0.0.1` | No | Bind address. Set to `0.0.0.0` in Docker (done automatically by the Docker image) |
 | `FYNANCE_DB_PATH` | OS data dir | No | Full path to the SQLite database file. In Docker this is set to `/home/fynance/data/fynance.db` automatically |
 | `ANTHROPIC_API_KEY` | (none) | No | Your Claude API key from Anthropic. Needed for AI-powered transaction categorization and monthly report generation. The app works without it, but categorization falls back to rule-based matching only |
 | `FYNANCE_LOG_LEVEL` | `info` | No | Log verbosity. Options: `trace`, `debug`, `info`, `warn`, `error` |
+| `FYNANCE_ADDITIONAL_DOCS` | (none) | No | Path to additional documentation for AI agents building against this environment |
 
 Example `.env` for local development:
 ```env
-FYNANCE_PORT=3000
+FYNANCE_PORT=7433
 FYNANCE_HOST=127.0.0.1
 ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 FYNANCE_LOG_LEVEL=debug
@@ -75,7 +76,7 @@ FYNANCE_LOG_LEVEL=debug
 
 Example `.env` for Docker deployment:
 ```env
-FYNANCE_PORT=3000
+FYNANCE_PORT=7433
 ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 FYNANCE_LOG_LEVEL=info
 ```
@@ -114,7 +115,7 @@ FYNANCE_LOG_LEVEL=info
    ```bash
    cargo watch -x 'run -- serve --no-open'
    ```
-   The API server starts on `http://localhost:3000` and auto-restarts when `.rs` files change.
+   The API server starts on `http://localhost:7433` and auto-restarts when `.rs` files change.
 
 5. Start the React frontend (terminal 2):
    ```bash
@@ -132,7 +133,7 @@ You work against two servers: Vite for the frontend (instant hot reload) and Axu
 ```
 Browser (localhost:5173)
   |-- page/assets --> Vite (instant HMR)
-  |-- /api/*      --> proxied to Axum (localhost:3000)
+  |-- /api/*      --> proxied to Axum (localhost:7433)
 ```
 
 Frontend changes appear instantly. Backend changes take a few seconds to recompile.
@@ -150,7 +151,7 @@ cargo fmt            # format
 ## CLI
 
 ```bash
-fynance serve [--port 3000] [--no-open]      # Start local web UI
+fynance serve [--port 7433] [--no-open]      # Start local web UI
 fynance import <file|dir> --account <id>     # Import CSV statements
 fynance categorize [--batch]                  # Run categorization pipeline
 fynance account add --id <id> --name <name> --institution <inst> --type <type>

@@ -1,12 +1,12 @@
 # fynance — Claude Context
 
-Before starting any work, read `docs/fynance-project-note.md` for project goals, the design docs in `./design/`, and the current plan at `plans/08_mvp_phases_v2.md`.
+Before starting any work, read `docs/fynance-project-note.md` for project goals, the design docs in `docs/design/`, and the current plan at `docs/plans/08_mvp_phases_v2.md`.
 
 ## Overview
 
 Personal finance tracker with a Rust backend and a local React web UI. Ingests bank CSV exports (Monzo, Revolut, Lloyds), categorizes transactions (rules + Claude API), stores everything in a per-user local SQLite database, and surfaces four views in the browser: Transactions, Budget, Portfolio, Reports.
 
-Design documents live in `./design/`, research in `./research/`, implementation plans in `./plans/`. When picking up work, start at `plans/08_mvp_phases_v2.md` Phase 1. The older `plans/07_phases.md` is superseded.
+Design documents live in `docs/design/`, research in `docs/research/`, implementation plans in `docs/plans/`. When picking up work, start at `docs/plans/08_mvp_phases_v2.md` Phase 1. The older `docs/plans/07_phases.md` is superseded.
 
 ## Architecture
 
@@ -17,6 +17,31 @@ Single Rust binary that:
 4. Optionally calls Claude API for categorization and monthly analysis
 
 User runs `fynance serve`, the default browser opens, and all interaction happens in the browser. CLI subcommands remain available for scripting and automation.
+
+## Repo Structure
+
+```
+fynance/
+├── frontend/                # React 19 app (package.json, vite, etc.)
+│   └── src/
+│       └── bindings/        # auto-generated TypeScript types from Rust via ts-rs
+├── backend/                 # Rust crate (Cargo.toml lives here)
+│   ├── src/
+│   └── config/              # categories.yaml, rules.yaml (TODO: may move to db/ as seed data)
+├── db/                      # sql/schema.sql, migrations
+├── assets/                  # shared assets (logo, etc.)
+├── docs/                    # design docs, plans, research, prompts
+│   ├── design/
+│   ├── plans/
+│   └── research/
+├── .github/workflows/       # CI/CD
+├── docker-compose.yml
+├── Dockerfile
+├── Makefile
+├── .env.example
+├── CLAUDE.md
+└── README.md
+```
 
 ## Tech Stack
 
@@ -79,8 +104,8 @@ All runtime config via environment variables (loaded from `.env` via `dotenvy`).
 ## CLI Subcommands
 
 ```bash
-fynance serve [--port 3000] [--no-open]      # Start local web UI
-fynance import <file|dir> --account <id>     # Import CSV statements
+fynance serve [--port 7433] [--no-open]      # Start local web UI
+fynance import <file|dir> --account <id>     # Import CSV statements (auto-detects bank format)
 fynance categorize [--batch]                  # Run categorization pipeline
 fynance account add --id <id> --name <name> --institution <inst> --type <type>
 fynance account set-balance <id> <amount> --date YYYY-MM-DD
@@ -104,15 +129,15 @@ GET    /api/transactions?month=&category=&account=&page=&limit=
 GET    /api/transactions/categories
 GET    /api/transactions/accounts
 PATCH  /api/transactions/:id                 # edit category, notes
-POST   /api/import                           # upload CSV (single file)
+POST   /api/import                           # typed JSON API for structured transaction data (agents, scripts)
+POST   /api/import/csv                       # upload CSV (single file)
 POST   /api/import/bulk                      # upload multiple CSVs
 POST   /api/import/screenshot                # image -> Claude Vision -> transactions
 POST   /api/categorize
 
 GET    /api/budget/:month
 POST   /api/budget
-GET    /api/monthly-income/:month
-POST   /api/monthly-income
+GET    /api/income/:month                    # derived from Income-category transactions
 
 GET    /api/portfolio
 GET    /api/portfolio/history

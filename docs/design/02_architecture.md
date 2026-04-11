@@ -68,74 +68,92 @@ fynance is a single Rust binary that:
 
 ```
 fynance/
-├── Cargo.toml
-├── sql/
-│   └── schema.sql
-├── config/
-│   ├── categories.yaml
-│   └── rules.yaml
-├── src/
-│   ├── main.rs
-│   ├── cli.rs                   # clap subcommand definitions
-│   ├── model.rs                 # Transaction, Account, Budget types
-│   │
-│   ├── importers/
-│   │   ├── mod.rs               # Importer trait
-│   │   ├── csv_importer.rs      # Generic CSV with bank mappings
-│   │   ├── monzo.rs             # Monzo-specific mapping
-│   │   ├── revolut.rs           # Revolut-specific mapping
-│   │   └── lloyds.rs            # Lloyds-specific mapping
-│   │
-│   ├── categorizer/
-│   │   ├── mod.rs
-│   │   ├── rules.rs             # YAML rule-based categorization
-│   │   ├── claude.rs            # Claude API integration
-│   │   └── pipeline.rs          # rule-first then Claude
-│   │
-│   ├── budget/
-│   │   ├── mod.rs
-│   │   ├── analyzer.rs          # Budget vs actual calculations
-│   │   └── advisor.rs           # Claude-generated budget suggestions
-│   │
-│   ├── portfolio/
-│   │   ├── mod.rs
-│   │   ├── accounts.rs          # Account balance tracking
-│   │   └── diversity.rs         # Diversity calculations
-│   │
-│   ├── storage/
-│   │   ├── mod.rs
-│   │   └── db.rs                # Db struct, all SQL queries
-│   │
-│   ├── server/
-│   │   ├── mod.rs               # Axum router setup
-│   │   ├── routes/
-│   │   │   ├── transactions.rs
-│   │   │   ├── budget.rs
-│   │   │   ├── portfolio.rs
-│   │   │   └── import.rs
-│   │   └── static_files.rs      # include_dir! embedded frontend
-│   │
-│   └── util.rs                  # normalize_description, fingerprint, parse_date
+├── backend/                     # Rust crate
+│   ├── Cargo.toml
+│   ├── config/                  # TODO: may move to db/ as seed data
+│   │   ├── categories.yaml
+│   │   └── rules.yaml
+│   └── src/
+│       ├── main.rs
+│       ├── cli.rs               # clap subcommand definitions
+│       ├── model.rs             # Transaction, Account, Budget types (derives ts_rs::TS)
+│       │
+│       ├── importers/
+│       │   ├── mod.rs           # Importer trait
+│       │   ├── csv_importer.rs  # Generic CSV with bank mappings
+│       │   ├── monzo.rs         # Monzo-specific mapping
+│       │   ├── revolut.rs       # Revolut-specific mapping
+│       │   └── lloyds.rs        # Lloyds-specific mapping
+│       │
+│       ├── categorizer/
+│       │   ├── mod.rs
+│       │   ├── rules.rs         # YAML rule-based categorization
+│       │   ├── claude.rs        # Claude API integration
+│       │   └── pipeline.rs      # rule-first then Claude
+│       │
+│       ├── budget/
+│       │   ├── mod.rs
+│       │   ├── analyzer.rs      # Budget vs actual calculations
+│       │   └── advisor.rs       # Claude-generated budget suggestions
+│       │
+│       ├── portfolio/
+│       │   ├── mod.rs
+│       │   ├── accounts.rs      # Account balance tracking
+│       │   └── diversity.rs     # Diversity calculations
+│       │
+│       ├── storage/
+│       │   ├── mod.rs
+│       │   └── db.rs            # Db struct, all SQL queries
+│       │
+│       ├── server/
+│       │   ├── mod.rs           # Axum router setup
+│       │   ├── routes/
+│       │   │   ├── transactions.rs
+│       │   │   ├── budget.rs
+│       │   │   ├── portfolio.rs
+│       │   │   └── import.rs
+│       │   └── static_files.rs  # include_dir! embedded frontend
+│       │
+│       └── util.rs              # normalize_description, fingerprint, parse_date
 │
-└── frontend/
-    ├── package.json             # React + Vite + shadcn-ui + Recharts
-    ├── src/
-    │   ├── main.tsx
-    │   ├── App.tsx
-    │   ├── pages/
-    │   │   ├── Transactions.tsx
-    │   │   ├── Budget.tsx
-    │   │   ├── Portfolio.tsx
-    │   │   └── Reports.tsx
-    │   ├── components/
-    │   │   ├── TransactionTable.tsx
-    │   │   ├── SpendingChart.tsx
-    │   │   ├── BudgetProgress.tsx
-    │   │   ├── PortfolioCard.tsx
-    │   │   └── DiversityPieChart.tsx
-    │   └── api/
-    │       └── client.ts        # fetch wrappers for Axum endpoints
-    └── dist/                    # compiled output, embedded by Rust
+├── frontend/
+│   ├── package.json             # React 19 + Vite + shadcn-ui + Recharts
+│   ├── src/
+│   │   ├── main.tsx
+│   │   ├── App.tsx
+│   │   ├── bindings/            # auto-generated TypeScript types from Rust via ts-rs
+│   │   ├── pages/
+│   │   │   ├── Transactions.tsx
+│   │   │   ├── Budget.tsx
+│   │   │   ├── Portfolio.tsx
+│   │   │   └── Reports.tsx
+│   │   ├── components/
+│   │   │   ├── TransactionTable.tsx
+│   │   │   ├── SpendingChart.tsx
+│   │   │   ├── BudgetProgress.tsx
+│   │   │   ├── PortfolioCard.tsx
+│   │   │   └── DiversityPieChart.tsx
+│   │   └── api/
+│   │       └── client.ts        # fetch wrappers for Axum endpoints
+│   └── dist/                    # compiled output, embedded by Rust
+│
+├── db/
+│   └── schema.sql               # SQLite schema and migrations
+│
+├── assets/                      # shared assets (logo, etc.)
+│
+├── docs/                        # design docs, plans, research
+│   ├── design/
+│   ├── plans/
+│   └── research/
+│
+├── .github/workflows/           # CI/CD
+├── docker-compose.yml
+├── Dockerfile
+├── Makefile
+├── .env.example
+├── CLAUDE.md
+└── README.md
 ```
 
 ## Data Flow: CSV Import
@@ -161,8 +179,8 @@ User: fynance serve
   │
   ├─► Db::open() → verify schema migrations
   ├─► Axum router::new() with all routes
-  ├─► Bind to 127.0.0.1:3000 (or $PORT)
-  ├─► spawn_browser("http://localhost:3000")
+  ├─► Bind to 127.0.0.1:7433 (or $PORT)
+  ├─► spawn_browser("http://localhost:7433")
   └─► Server loop
 
 Browser → GET / → serve embedded index.html (React app)

@@ -94,7 +94,7 @@ All modules depend on:
 
 ```bash
 # Start the web UI (primary workflow)
-fynance serve [--port 3000] [--no-open]
+fynance serve [--port 7433] [--no-open]
 
 # Data ingestion
 fynance import <file|dir> --account <id>

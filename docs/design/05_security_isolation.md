@@ -90,7 +90,7 @@ This ensures:
 
 ### Port Selection
 
-Default port: `3000`. If taken, the server tries `3001`..`3009` and reports which port it bound to:
+Default port: `7433`. If taken, the server tries `7434`..`7442` and reports which port it bound to:
 
 ```
 fynance: server started at http://localhost:3001
@@ -167,7 +167,7 @@ fynance token create --name "import-script"
 
 Usage:
 ```bash
-curl -H "Authorization: Bearer fyn_..." http://localhost:3000/api/import -F file=@data.csv
+curl -H "Authorization: Bearer fyn_..." http://localhost:7433/api/import/csv -F file=@data.csv
 ```
 
 Token security:
@@ -181,6 +181,20 @@ This allows agents (e.g., a Claude Code script) to push CSV files or screenshots
 
 ---
 
+## Future Improvements
+
+Potential security enhancements for later phases, once the MVP is stable:
+
+1. **Optional browser UI authentication**: Add an optional password or PIN gate for the web UI. Currently loopback binding is the trust boundary, but this would add protection in shared-machine scenarios or when running in Docker with `0.0.0.0` binding. Could use a simple session cookie with a locally-set password.
+
+2. **HTTPS support**: Add optional TLS termination for the Axum server, useful when accessing the Docker deployment over a LAN or through a reverse proxy.
+
+3. **Token scoping**: Restrict API tokens to specific endpoints or actions (e.g., read-only tokens, import-only tokens) rather than full API access.
+
+4. **Audit log**: Record all data-modifying operations (imports, category changes, balance updates) with timestamps and source (UI, API token name, CLI).
+
+---
+
 ## Summary Checklist
 
 | Concern | Mitigation |
@@ -191,4 +205,5 @@ This allows agents (e.g., a Claude Code script) to push CSV files or screenshots
 | API key exposure | Env var or `chmod 600` config file; never logged or stored in DB |
 | Raw transaction data sent to Claude | Only normalized descriptions, never amounts or dates |
 | Programmatic API access | Bearer token auth; tokens stored as SHA-256 hashes |
+| Docker port exposure | Single port serves both the web UI and REST API. Only one port is exposed from the container. No separate API port needed. |
 | Telemetry | None. No calls except explicit Claude API categorization. |

@@ -1,7 +1,7 @@
 # fynance
 
 ## Goal
-Personal finance tracker for OJ and Nonso. Ingest bank CSVs, categorize spending, track budgets and net worth, all via a local web UI.
+Personal finance tracker. Ingest bank CSVs, categorize spending, track budgets and net worth, all via a local web UI.
 
 ## Status
 Active -- planning phase, no implementation yet.
@@ -9,25 +9,24 @@ Active -- planning phase, no implementation yet.
 ## Key Decisions
 - React 19 + React Compiler for frontend (no manual memoization)
 - REST API architecture (not SSR, not RPC)
-- Single Docker container for production deployment, SQLite on a volume
+- Single Docker container for production deployment, SQLite on a mounted Docker volume
 - Token-based auth for programmatic API access (agents, scripts)
 - Screenshot ingestion via Claude Vision for low-friction data entry
-- Obsidian-compatible markdown export for monthly summaries
+- Obsidian integration via a well-documented read/write REST API (OpenAPI spec at `/api/docs`), plus markdown export endpoint for monthly summaries
 - Shared GH repo, each contributor runs their own Docker instance (no shared DB)
 - Fully local, privacy-first: no data leaves the machine except opt-in Claude API calls
 
 ## Open Questions
-- Category taxonomy: finalize the two-level hierarchy for both users' spending patterns
-- Which Monzo/Revolut CSV format versions to support (formats may change over time)
+- CSV format detection should be dynamic: auto-detect bank and format version from column headers rather than requiring the user to specify. Support all known versions and gracefully handle unknown formats with clear error messages.
 
 ## Contributors
-- OJ (Wunderkind): frontend focus, UI/UX requirements, Obsidian integration
-- Nonso (Leonard): Rust backend, CLI, architecture, security
+- Ope (Zaida-3dO): frontend focus, UI/UX requirements, Obsidian integration
+- Nonso (leonardchinonso): Rust backend, CLI, architecture, security
 
 ## Links
 - Repo: this repo (fynance-be)
-- Plans: plans/08_mvp_phases_v2.md
-- Design docs: design/
+- Plans: docs/plans/08_mvp_phases_v2.md
+- Design docs: docs/design/
 
 ## Future Roadmap (Post-MVP)
 1. Tax planning for capital gains

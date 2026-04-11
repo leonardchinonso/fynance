@@ -53,7 +53,9 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 
 -- ── portfolio_snapshots ───────────────────────────────────────────────────
--- Historical net worth snapshots for trend charts.
+-- Historical account-level balance snapshots for net worth trend charts.
+-- One row per account per date. Used to plot "net worth over time".
+-- For per-symbol detail within investment accounts, see the "holdings" table.
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_date   TEXT NOT NULL,             -- YYYY-MM-DD
@@ -76,16 +78,13 @@ CREATE TABLE IF NOT EXISTS budgets (
 
 CREATE INDEX IF NOT EXISTS idx_budget_month ON budgets(month);
 
--- ── monthly_income ────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS monthly_income (
-    month           TEXT PRIMARY KEY,          -- YYYY-MM
-    amount          TEXT NOT NULL,             -- Decimal string, expected income
-    notes           TEXT
-);
-
 -- ── holdings ──────────────────────────────────────────────────────────────
 -- Individual holdings within investment accounts (stocks, ETFs, funds).
 -- Each row is a point-in-time snapshot of a single holding.
+-- NOTE: "holdings" stores per-symbol detail within investment accounts
+-- (e.g., VWRL: 50 units @ £160), while "portfolio_snapshots" stores
+-- account-level balance snapshots for net worth trend charts.
+-- Holdings drill down into an account; snapshots aggregate up to net worth.
 CREATE TABLE IF NOT EXISTS holdings (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id      TEXT NOT NULL,
@@ -339,4 +338,8 @@ Other
 
 6. **Holdings for stock-level portfolio detail**: The `holdings` table stores per-symbol snapshots within investment accounts. This enables drill-down from "Trading 212: £14,310" to "VWRL: £8,000, AAPL: £3,200, ..." and further into ETF composition. Holdings use the same carry-forward semantics as account balances.
 
-7. **Guided ingestion checklist**: The `ingestion_checklist` table tracks which accounts have been updated each month. When the user starts their monthly review, the app pre-populates a checklist of all active accounts with `status = 'pending'`. As each account is updated (via CSV import, screenshot, or manual balance update), the status flips to `completed`. The UI shows a progress indicator: "3 of 7 accounts updated for March 2026".
+7. **No separate income table**: Income is not stored in a dedicated table. Income transactions are regular transactions with a positive amount and a category under the `Income` parent (e.g., `Income: Salary`). Monthly income figures are derived by summing positive transactions in the Income category for a given month. This avoids duplicating data and keeps the model simple: a recurring salary is just a transaction that happens to repeat.
+
+8. **Holdings vs portfolio_snapshots**: These serve different levels of detail. `portfolio_snapshots` stores one balance per account per date for net worth trend charts (e.g., "Trading 212 was worth £14,310 on March 1"). `holdings` stores per-symbol detail within investment accounts (e.g., "VWRL: 50 units @ £160, AAPL: 20 units @ £160"). Portfolio snapshots aggregate up to net worth; holdings drill down into composition.
+
+9. **Guided ingestion checklist**: The `ingestion_checklist` table tracks which accounts have been updated each month. When the user starts their monthly review, the app pre-populates a checklist of all active accounts with `status = 'pending'`. As each account is updated (via CSV import, screenshot, or manual balance update), the status flips to `completed`. The UI shows a progress indicator: "3 of 7 accounts updated for March 2026".
