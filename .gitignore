@@ -1,10 +1,12 @@
 /target
+backend/target/
 /.claude/
 .env
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/src/bindings/
 
 # Added by cargo
 #

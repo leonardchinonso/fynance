@@ -119,3 +119,11 @@ These apply to every view in the app (budget, portfolio, reports):
 
 1. Iterate on the **data model** to ensure it supports all of the above (especially point-in-time carry-forward for portfolio, stock-level holdings, and the guided ingestion flow)
 2. Build out the **React frontend** with mock data: get the app to a state where you can click around, navigate between views, interact with charts, and validate the UX before wiring up real data
+
+# Prompt 2: Implementation
+
+Looking at the `/Users/leonard/projects/fynance/docs` folder, come up with an implementation plan for how we would build the backend MVP. The plan should be split into phases, with each phase outlining in detail what needs to be done to mark the phase as complete. Each phase should be self-contained and aim to build one part of the final service. Follow the outlined plans in `/Users/leonard/projects/fynance/docs/plans` while adhering to the designs in `/Users/leonard/projects/fynance/docs/design`. DO NOT WRITE ANY CODE YET. Write the implementation plan to the `/Users/leonard/projects/fynance/docs/plans/` folder and let me review it. The aim is to use this plan as a checklist and checkpoint for what is done and what is left to do, while referencing the plans and designs as a guide/blueprint.
+
+# Prompt 3.1: Backend Phase 1 Implementation
+
+Using the implementation plan in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`, implement phase 1. Add comments to explain complex code cases. If you're in doubt about whether the code is straightforward to understand to the average person, write a comment for it. When you're done implementing phase 1, create a new branch for the feature, commit the code and push it to that new branch. DO NOT move on to phase 2 until I tell you to do so. Implement phase 1 only and make changes to the backend only, do not make any frontend changes.
