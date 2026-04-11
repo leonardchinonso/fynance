@@ -1,5 +1,7 @@
 # Statement Importer
 
+Only CSV is supported. OFX/QFX and PDF importers are deferred to a later phase.
+
 ## Importer Trait (`src/importers/mod.rs`)
 
 ```rust
@@ -22,19 +24,25 @@ pub fn get_importer<'a>(
 
 ## CSV Importer (`src/importers/csv_importer.rs`)
 
+Each bank exports CSV with different column names and amount conventions. `BankMapping` captures those differences; named constructors provide one per supported bank.
+
 ```rust
 use crate::model::{SourceFormat, Transaction};
 use crate::util::{normalize_description, parse_date};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use csv::ReaderBuilder;
 use rust_decimal::Decimal;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::str::FromStr;
-use std::{collections::HashMap, fs::File};
+use std::fs::File;
 
 #[derive(Clone)]
-pub enum AmountSign { Signed, Negate, Split { debit: String, credit: String } }
+pub enum AmountSign {
+    Signed,                              // One column, sign already correct (Chase)
+    Negate,                              // One column, must negate (Apple Card)
+    Split { debit: String, credit: String }, // Two columns (BofA)
+}
 
 #[derive(Clone)]
 pub struct BankMapping {
@@ -42,7 +50,7 @@ pub struct BankMapping {
     pub desc_col: String,
     pub amount_col: Option<String>,
     pub amount_sign: AmountSign,
-    pub skip_rows: usize,
+    pub skip_rows: usize,       // Header rows before the CSV header (e.g. BofA has 6)
     pub date_format: &'static str,
 }
 
@@ -53,7 +61,7 @@ pub struct CsvImporter {
 }
 
 impl CsvImporter {
-    /// Build a Chase checking/credit importer.
+    /// Chase checking / credit: signed Amount column, MM/DD/YYYY dates.
     pub fn chase(account_id: &str) -> Self {
         Self {
             account_id: account_id.to_string(),
@@ -69,7 +77,7 @@ impl CsvImporter {
         }
     }
 
-    /// Build a Bank of America importer (separate debit/credit columns).
+    /// Bank of America: separate Debit/Credit columns, 6 metadata rows before the header.
     pub fn bofa(account_id: &str) -> Self {
         Self {
             account_id: account_id.to_string(),
@@ -88,7 +96,7 @@ impl CsvImporter {
         }
     }
 
-    /// Build an Apple Card importer (positive amounts for purchases).
+    /// Apple Card: positive amounts for purchases, must negate.
     pub fn apple(account_id: &str) -> Self {
         Self {
             account_id: account_id.to_string(),
@@ -114,7 +122,6 @@ impl super::Importer for CsvImporter {
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
 
-        // Skip configured metadata rows (e.g. BofA has 6)
         for _ in 0..self.mapping.skip_rows {
             let mut line = String::new();
             reader.read_line(&mut line)?;
@@ -128,7 +135,7 @@ impl super::Importer for CsvImporter {
         let headers = csv_rdr.headers()?.clone();
         let col_index = |name: &str| -> Result<usize> {
             headers.iter().position(|h| h.trim() == name)
-                .ok_or_else(|| anyhow!("column '{}' not found", name))
+                .ok_or_else(|| anyhow!("column '{}' not found in {:?}", name, path))
         };
 
         let date_idx = col_index(&self.mapping.date_col)?;
@@ -154,7 +161,10 @@ impl super::Importer for CsvImporter {
 
             let date = match parse_date(raw_date) {
                 Some(d) => d,
-                None => { continue; }
+                None => {
+                    tracing::warn!("skipping row with unparseable date: {}", raw_date);
+                    continue;
+                }
             };
 
             let amount = match &self.mapping.amount_sign {
@@ -195,228 +205,6 @@ impl super::Importer for CsvImporter {
 }
 ```
 
-## OFX / QFX Importer (`src/importers/ofx_importer.rs`)
-
-```rust
-use crate::model::{SourceFormat, Transaction};
-use crate::util::{normalize_description, parse_date};
-use anyhow::Result;
-use roxmltree::Document;
-use rust_decimal::Decimal;
-use std::fs;
-use std::path::Path;
-use std::str::FromStr;
-
-pub struct OfxImporter {
-    pub account_id: String,
-    pub bank: String,
-}
-
-impl super::Importer for OfxImporter {
-    fn can_handle(&self, path: &Path) -> bool {
-        matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("ofx") | Some("qfx") | Some("qbo")
-        )
-    }
-
-    fn parse(&self, path: &Path) -> Result<Vec<Transaction>> {
-        let raw = fs::read_to_string(path)?;
-
-        // OFX files may have an SGML header before the XML body.
-        // Find <OFX> or <ofx> and parse from there.
-        let xml_start = raw.find("<OFX>")
-            .or_else(|| raw.find("<ofx>"))
-            .unwrap_or(0);
-        let xml = &raw[xml_start..];
-
-        let doc = Document::parse(xml)?;
-        let mut transactions = Vec::new();
-
-        for stmttrn in doc.descendants().filter(|n| n.has_tag_name("STMTTRN")) {
-            let get = |tag: &str| -> Option<&str> {
-                stmttrn.descendants()
-                    .find(|n| n.has_tag_name(tag))
-                    .and_then(|n| n.text())
-                    .map(str::trim)
-            };
-
-            let dt_raw = get("DTPOSTED").unwrap_or("");
-            let amt_raw = get("TRNAMT").unwrap_or("0");
-            let fitid = get("FITID").unwrap_or("").to_string();
-            let name = get("NAME").unwrap_or("");
-            let memo = get("MEMO");
-
-            // DTPOSTED: YYYYMMDD or YYYYMMDDHHMMSS.mmm[tz]
-            let date_str = &dt_raw[..dt_raw.len().min(8)];
-            let date = match chrono::NaiveDate::parse_from_str(date_str, "%Y%m%d") {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
-            let amount = Decimal::from_str(amt_raw).unwrap_or_default();
-
-            let raw_desc = if memo.is_some_and(|m| m != name) {
-                format!("{} {}", name, memo.unwrap_or("")).trim().to_string()
-            } else {
-                name.to_string()
-            };
-
-            let mut txn = Transaction::new(
-                date,
-                normalize_description(&raw_desc),
-                raw_desc,
-                amount,
-                self.account_id.clone(),
-                self.bank.clone(),
-                SourceFormat::Ofx,
-            );
-            if !fitid.is_empty() {
-                txn.fitid = Some(fitid);
-            }
-
-            transactions.push(txn);
-        }
-
-        Ok(transactions)
-    }
-}
-```
-
-## PDF Importer (`src/importers/pdf_importer.rs`)
-
-```rust
-use crate::model::{SourceFormat, Transaction};
-use crate::util::{normalize_description, parse_date};
-use anyhow::Result;
-use regex::Regex;
-use rust_decimal::Decimal;
-use std::path::Path;
-use std::str::FromStr;
-
-pub struct PdfImporter {
-    pub account_id: String,
-    pub bank: String,
-    pub http: reqwest::Client,
-    pub api_key: String,
-}
-
-impl super::Importer for PdfImporter {
-    fn can_handle(&self, path: &Path) -> bool {
-        path.extension().and_then(|e| e.to_str()) == Some("pdf")
-    }
-
-    fn parse(&self, path: &Path) -> Result<Vec<Transaction>> {
-        // Try text extraction first (fast, free)
-        let text = pdf_extract::extract_text(path)?;
-        let mut txns = parse_pdf_text(&text, &self.account_id, &self.bank);
-
-        if txns.len() < 3 {
-            // Fallback to Claude vision (async, block here)
-            tracing::info!("pdf-extract found {} transactions, using Claude vision", txns.len());
-            txns = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(
-                    extract_via_claude(&self.http, &self.api_key, path, &self.account_id, &self.bank)
-                )
-            })?;
-        }
-
-        Ok(txns)
-    }
-}
-
-fn parse_pdf_text(text: &str, account: &str, bank: &str) -> Vec<Transaction> {
-    // Matches: "04/11/2026  WHOLE FOODS MKT  -87.23" or "04/11/2026  DEPOSIT  1000.00"
-    let re = Regex::new(
-        r"(?m)(\d{2}/\d{2}/\d{4})\s{2,}(.+?)\s{2,}(-?[\d,]+\.\d{2})"
-    ).unwrap();
-
-    re.captures_iter(text).filter_map(|cap| {
-        let raw_date = cap.get(1)?.as_str();
-        let raw_desc = cap.get(2)?.as_str().trim();
-        let raw_amt  = cap.get(3)?.as_str().replace(',', "");
-
-        let date   = parse_date(raw_date)?;
-        let amount = Decimal::from_str(&raw_amt).ok()?;
-
-        Some(Transaction::new(
-            date,
-            normalize_description(raw_desc),
-            raw_desc.to_string(),
-            amount,
-            account.to_string(),
-            bank.to_string(),
-            SourceFormat::Pdf,
-        ))
-    }).collect()
-}
-
-async fn extract_via_claude(
-    client: &reqwest::Client,
-    api_key: &str,
-    path: &Path,
-    account: &str,
-    bank: &str,
-) -> Result<Vec<Transaction>> {
-    use base64::{engine::general_purpose, Engine};
-    let pdf_b64 = general_purpose::STANDARD.encode(std::fs::read(path)?);
-
-    let body = serde_json::json!({
-        "model": "claude-sonnet-4-6",
-        "max_tokens": 4096,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": pdf_b64
-                    }
-                },
-                {
-                    "type": "text",
-                    "text": "Extract all transactions as JSON: {\"transactions\": [{\"date\": \"YYYY-MM-DD\", \"description\": \"...\", \"amount\": -0.00}]}. Negative = debit, positive = credit. Return ONLY valid JSON."
-                }
-            ]
-        }]
-    });
-
-    let resp: serde_json::Value = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .json(&body)
-        .send().await?
-        .error_for_status()?
-        .json().await?;
-
-    let text = resp["content"][0]["text"].as_str().unwrap_or("{}");
-    let parsed: serde_json::Value = serde_json::from_str(text)?;
-
-    let txns = parsed["transactions"].as_array()
-        .map(|arr| arr.iter().filter_map(|t| {
-            let date = parse_date(t["date"].as_str()?)?;
-            let raw_desc = t["description"].as_str()?.to_string();
-            let amount = Decimal::from_str(
-                &t["amount"].to_string()
-            ).ok()?;
-            Some(Transaction::new(
-                date,
-                normalize_description(&raw_desc),
-                raw_desc,
-                amount,
-                account.to_string(),
-                bank.to_string(),
-                SourceFormat::Pdf,
-            ))
-        }).collect())
-        .unwrap_or_default();
-
-    Ok(txns)
-}
-```
-
 ## Import Command (`src/commands/import.rs`)
 
 ```rust
@@ -424,10 +212,16 @@ use crate::storage::db::{Db, InsertResult};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::Path;
 
-pub fn run(path: &Path, account_id: &str, db: &Db, importers: &[Box<dyn crate::importers::Importer>]) -> anyhow::Result<()> {
+pub fn run(
+    path: &Path,
+    account_id: &str,
+    db: &Db,
+    importers: &[Box<dyn crate::importers::Importer>],
+) -> anyhow::Result<()> {
     let paths: Vec<_> = if path.is_dir() {
-        glob::glob(&format!("{}/**/*", path.display()))?
+        std::fs::read_dir(path)?
             .filter_map(|e| e.ok())
+            .map(|e| e.path())
             .filter(|p| p.is_file())
             .collect()
     } else {
@@ -435,8 +229,10 @@ pub fn run(path: &Path, account_id: &str, db: &Db, importers: &[Box<dyn crate::i
     };
 
     let pb = ProgressBar::new(paths.len() as u64);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{bar:40} {pos}/{len} {msg}")?);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40} {pos}/{len} {msg}")?,
+    );
 
     for p in &paths {
         pb.set_message(p.file_name().unwrap_or_default().to_string_lossy().to_string());
@@ -459,7 +255,7 @@ pub fn run(path: &Path, account_id: &str, db: &Db, importers: &[Box<dyn crate::i
                 pb.println(format!(
                     "  {} -> {} inserted, {} duplicates",
                     p.file_name().unwrap_or_default().to_string_lossy(),
-                    inserted, dupes
+                    inserted, dupes,
                 ));
             }
             Err(e) => {
@@ -469,6 +265,7 @@ pub fn run(path: &Path, account_id: &str, db: &Db, importers: &[Box<dyn crate::i
         }
         pb.inc(1);
     }
+
     pb.finish_with_message("Done");
     Ok(())
 }

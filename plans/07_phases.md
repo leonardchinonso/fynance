@@ -1,52 +1,75 @@
 # Implementation Phases
 
-## Phase 1: Foundation (Week 1)
+## Phase 1: CSV Import Foundation
 
-**Goal**: A working Rust binary that imports Chase CSV statements into SQLite.
+**Goal**: A working Rust binary that reads a CSV bank statement and stores transactions in SQLite. No AI, no LLM, no async, no other file formats.
+
+### Scope constraints
+
+- Input: CSV only. OFX, QFX, and PDF formats are out of scope for this phase.
+- No categorization pipeline (no rule engine, no Claude API calls).
+- No `tokio` or `reqwest` — no async needed without network calls.
+- No `serde_yaml` — no YAML config parsing yet.
+- The `SourceFormat` enum has only `Csv` for now.
+
+### Dependencies (`Cargo.toml`)
+
+Only include what Phase 1 actually needs:
+
+- `clap` (derive) — CLI argument parsing
+- `rusqlite` (bundled) — SQLite storage
+- `serde`, `serde_json` — serialization
+- `csv` — CSV parsing
+- `chrono` — date handling
+- `rust_decimal` — money math
+- `uuid` — transaction ID generation
+- `anyhow`, `thiserror` — error handling
+- `tracing`, `tracing-subscriber` — logging
+- `once_cell`, `regex`, `sha2`, `hex` — description normalization and fingerprinting
+- `indicatif` — progress bar during import
+- Dev: `tempfile`, `pretty_assertions`
 
 ### Tasks
 
-- [ ] Initialize the Rust project
-  ```bash
-  cd ~/projects/fynance
-  cargo init
-  ```
+- [ ] Initialize the Rust project (`cargo init`)
 
-- [ ] Add dependencies to `Cargo.toml`
-  - `clap`, `rusqlite` (bundled), `serde`, `serde_json`, `serde_yaml`
-  - `csv`, `chrono`, `rust_decimal`, `uuid`
-  - `anyhow`, `thiserror`, `tracing`, `tracing-subscriber`
-  - `tokio` (full), `reqwest` (json, rustls-tls)
-  - `once_cell`, `regex`, `sha2`, `hex`
-  - Dev: `tempfile`, `pretty_assertions`
+- [ ] Write `Cargo.toml` with Phase 1 dependencies only (see above)
 
-- [ ] Write `sql/schema.sql` with all table definitions
+- [ ] Write `sql/schema.sql` — `transactions` and `import_log` tables only
 
-- [ ] Implement `src/model.rs`: `Transaction`, `SourceFormat`, `BudgetEntry`
+- [ ] Implement `src/model.rs`:
+  - `Transaction` struct
+  - `SourceFormat` enum (Csv only for now)
 
-- [ ] Implement `src/util.rs`: `normalize_description()`, `fingerprint()`, `parse_date()`
+- [ ] Implement `src/util.rs`:
+  - `normalize_description()`
+  - `fingerprint()`
+  - `parse_date()`
 
 - [ ] Implement `src/storage/db.rs`:
   - `Db::open()` (WAL mode, runs schema.sql)
-  - `insert_transaction()` with dedup (UNIQUE constraint handling)
+  - `insert_transaction()` returning `InsertResult` (Inserted | Duplicate)
   - `log_import()`
-  - `get_uncategorized()`
-  - `set_category()`
 
-- [ ] Implement `src/importers/csv_importer.rs` for Chase format
+- [ ] Implement `src/importers/mod.rs`: `Importer` trait
 
-- [ ] Implement basic CLI in `src/main.rs` + `src/cli.rs`:
-  ```bash
-  fynance import <file> --account <id>
-  fynance stats
-  ```
+- [ ] Implement `src/importers/csv_importer.rs`:
+  - `BankMapping` / `AmountSign` types
+  - `CsvImporter` with constructor for Chase format
+  - Implement `Importer` trait
 
-- [ ] Test with a real Chase CSV export
+- [ ] Implement `src/commands/import.rs`: parse file, insert rows, print summary
+
+- [ ] Implement `src/cli.rs` + `src/main.rs`:
+  - `fynance import <file> --account <id>`
+  - `fynance stats` (total count, date range, count per account)
+
+- [ ] Test with a real CSV export
   - Verify row count matches source
   - Verify deduplication works (re-import same file)
   - Verify amounts have correct sign
 
-**Deliverable**: `cargo run -- import statement.csv --account chase-checking` works.
+**Deliverable**: `cargo run -- import statement.csv --account chase-checking` inserts transactions into SQLite.
 
 ---
 

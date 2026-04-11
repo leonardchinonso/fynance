@@ -18,18 +18,17 @@ pub struct Transaction {
     pub amount: Decimal,           // Negative = debit, positive = credit
     pub account: String,           // e.g. "chase-checking"
     pub bank: String,
-    pub category: Option<String>,
-    pub confidence: Option<f64>,
+    pub category: Option<String>,  // Set manually or by a future categorizer
     pub tags: Vec<String>,
     pub memo: Option<String>,
     pub source: SourceFormat,
-    pub fitid: Option<String>,     // OFX unique ID for dedup
-    pub fingerprint: String,       // SHA-256 hash for CSV/PDF dedup
+    pub fingerprint: String,       // SHA-256 hash for dedup
 }
 
+// Only CSV is supported for now. Additional formats added in later phases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SourceFormat { Csv, Ofx, Qfx, Pdf }
+pub enum SourceFormat { Csv }
 
 impl Transaction {
     pub fn new(
@@ -54,35 +53,13 @@ impl Transaction {
             account,
             bank,
             category: None,
-            confidence: None,
             tags: vec![],
             memo: None,
             source,
-            fitid: None,
             fingerprint,
         }
     }
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BudgetEntry {
-    pub year_month: String,    // YYYY-MM
-    pub category: String,
-    pub amount: Decimal,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Account {
-    pub id: String,
-    pub bank: String,
-    pub name: String,
-    pub account_type: AccountType,
-    pub last_import: Option<NaiveDate>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AccountType { Checking, Savings, Credit }
 ```
 
 ## Description Normalization (`src/util.rs`)
@@ -114,6 +91,16 @@ pub fn fingerprint(date: &str, amount: &rust_decimal::Decimal, description: &str
     let hash = Sha256::digest(key.as_bytes());
     hex::encode(&hash[..8])
 }
+
+pub fn parse_date(s: &str) -> Option<chrono::NaiveDate> {
+    // Try common bank date formats
+    for fmt in &["%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y"] {
+        if let Ok(d) = chrono::NaiveDate::parse_from_str(s, fmt) {
+            return Some(d);
+        }
+    }
+    None
+}
 ```
 
 Add to `Cargo.toml`:
@@ -124,6 +111,8 @@ hex = "0.4"
 ```
 
 ## SQLite Schema (`sql/schema.sql`)
+
+Only the tables needed for import. Budgets, review queue, and accounts are deferred.
 
 ```sql
 CREATE TABLE IF NOT EXISTS transactions (
@@ -136,46 +125,16 @@ CREATE TABLE IF NOT EXISTS transactions (
     account     TEXT NOT NULL,
     bank        TEXT NOT NULL,
     category    TEXT,
-    confidence  REAL,
     tags        TEXT NOT NULL DEFAULT '[]',
     memo        TEXT,
-    source      TEXT NOT NULL,        -- csv|ofx|qfx|pdf
-    fitid       TEXT,
-    fingerprint TEXT,
-    imported_at TEXT NOT NULL,
-    UNIQUE(fitid),
-    UNIQUE(fingerprint)
+    source      TEXT NOT NULL,        -- csv (only value for now)
+    fingerprint TEXT UNIQUE,
+    imported_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_date       ON transactions(date);
-CREATE INDEX IF NOT EXISTS idx_category   ON transactions(category);
-CREATE INDEX IF NOT EXISTS idx_account    ON transactions(account);
-
-CREATE TABLE IF NOT EXISTS budgets (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    year_month  TEXT NOT NULL,        -- YYYY-MM
-    category    TEXT NOT NULL,
-    amount      TEXT NOT NULL,        -- Decimal as string
-    UNIQUE(year_month, category) ON CONFLICT REPLACE
-);
-
-CREATE TABLE IF NOT EXISTS accounts (
-    id          TEXT PRIMARY KEY,
-    bank        TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    type        TEXT NOT NULL,
-    last_import TEXT,
-    created_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS review_queue (
-    transaction_id  TEXT PRIMARY KEY REFERENCES transactions(id),
-    suggested       TEXT,
-    confidence      REAL,
-    created_at      TEXT NOT NULL,
-    reviewed        INTEGER NOT NULL DEFAULT 0,
-    final_category  TEXT
-);
+CREATE INDEX IF NOT EXISTS idx_date     ON transactions(date);
+CREATE INDEX IF NOT EXISTS idx_category ON transactions(category);
+CREATE INDEX IF NOT EXISTS idx_account  ON transactions(account);
 
 CREATE TABLE IF NOT EXISTS import_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,95 +147,23 @@ CREATE TABLE IF NOT EXISTS import_log (
 );
 ```
 
-## Category Taxonomy (`config/categories.yaml`)
-
-```yaml
-categories:
-  income:
-    - "Income: Salary"
-    - "Income: Refund"
-    - "Income: Transfer In"
-
-  fixed:
-    - "Housing: Rent/Mortgage"
-    - "Housing: Utilities"
-    - "Housing: Insurance"
-    - "Finance: Loan Payment"
-
-  variable_needs:
-    - "Food: Groceries"
-    - "Transport: Gas"
-    - "Transport: Rideshare & Transit"
-    - "Transport: Parking & Tolls"
-    - "Health: Medical & Dental"
-    - "Health: Pharmacy"
-    - "Health: Fitness"
-
-  discretionary:
-    - "Food: Dining & Bars"
-    - "Food: Coffee"
-    - "Digital: Subscriptions"
-    - "Digital: Apps & Software"
-    - "Shopping: Clothing"
-    - "Shopping: Electronics"
-    - "Shopping: Amazon & Online"
-    - "Life: Entertainment"
-    - "Life: Travel"
-    - "Life: Personal Care"
-
-  financial:
-    - "Finance: Internal Transfer"
-    - "Finance: Fees & Interest"
-    - "Finance: Investment"
-
-  other:
-    - "Other"
-```
-
 ## Useful SQL Queries
 
 ```sql
--- Monthly spending by category
-SELECT category, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) as spent
+-- All transactions for a month
+SELECT date, description, amount, account, category
 FROM transactions
 WHERE date >= '2026-04-01' AND date <= '2026-04-30'
-  AND CAST(amount AS REAL) < 0
-  AND category NOT LIKE 'Finance: Internal%'
-GROUP BY category
-ORDER BY spent DESC;
+ORDER BY date DESC;
 
--- Net savings by month (last 12 months)
-SELECT
-    strftime('%Y-%m', date) as month,
-    ROUND(SUM(CASE WHEN CAST(amount AS REAL) > 0 THEN CAST(amount AS REAL) ELSE 0 END), 2) as income,
-    ROUND(SUM(CASE WHEN CAST(amount AS REAL) < 0 THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) as expenses,
-    ROUND(SUM(CAST(amount AS REAL)), 2) as net
+-- Total spending by account
+SELECT account, COUNT(*) as count,
+       ROUND(SUM(CAST(amount AS REAL)), 2) as net
 FROM transactions
-WHERE category NOT LIKE 'Finance: Internal%'
-  AND date >= date('now', '-12 months')
-GROUP BY month
-ORDER BY month DESC;
+GROUP BY account
+ORDER BY net ASC;
 
--- Budget vs actual (current month)
-SELECT
-    b.category,
-    CAST(b.amount AS REAL) as budget,
-    COALESCE(ROUND(SUM(CAST(t.amount AS REAL)) * -1, 2), 0) as spent,
-    ROUND(CAST(b.amount AS REAL) - COALESCE(SUM(CAST(t.amount AS REAL)) * -1, 0), 2) as remaining
-FROM budgets b
-LEFT JOIN transactions t
-    ON t.category = b.category
-    AND strftime('%Y-%m', t.date) = b.year_month
-    AND CAST(t.amount AS REAL) < 0
-WHERE b.year_month = strftime('%Y-%m', 'now')
-GROUP BY b.category
-ORDER BY remaining ASC;
-
--- Items needing review
-SELECT t.date, t.description, t.amount, r.suggested, r.confidence
-FROM review_queue r
-JOIN transactions t ON t.id = r.transaction_id
-WHERE r.reviewed = 0
-ORDER BY r.confidence ASC
-LIMIT 20;
+-- Date range and row count
+SELECT COUNT(*) as total, MIN(date) as earliest, MAX(date) as latest
+FROM transactions;
 ```
