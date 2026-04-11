@@ -46,7 +46,7 @@ export function StyledBarChart({
   return (
     <div className={className}>
       <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 12 }}>
           <CartesianGrid
             strokeDasharray="3 3"
             vertical={false}
@@ -116,7 +116,7 @@ export function ColoredBarChart({
   return (
     <div className={className}>
       <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 12 }}>
           <CartesianGrid
             strokeDasharray="3 3"
             vertical={false}

@@ -40,11 +40,13 @@ function MultiSelect({
   options,
   selected,
   onChange,
+  displayFn,
 }: {
   label: string
   options: string[]
   selected: string[]
   onChange: (selected: string[]) => void
+  displayFn?: (value: string) => string
 }) {
   const [open, setOpen] = useState(false)
 
@@ -82,7 +84,7 @@ function MultiSelect({
                       selected.includes(opt) ? "opacity-100" : "opacity-0"
                     )}
                   />
-                  {opt}
+                  {displayFn ? displayFn(opt) : opt}
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -111,6 +113,7 @@ export function TransactionsPage() {
   const [result, setResult] = useState<PaginatedResponse<Transaction> | null>(null)
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([])
   const [availableAccounts, setAvailableAccounts] = useState<string[]>([])
+  const [accountNameMap, setAccountNameMap] = useState<Record<string, string>>({})
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -160,6 +163,9 @@ export function TransactionsPage() {
   useEffect(() => {
     api.getAccounts(profileId).then((accs) => {
       setAvailableAccounts(accs.map((a) => a.id))
+      const nameMap: Record<string, string> = {}
+      for (const a of accs) nameMap[a.id] = a.name
+      setAccountNameMap(nameMap)
     })
     api.getCategories().then(setAvailableCategories)
   }, [profileId])
@@ -186,6 +192,7 @@ export function TransactionsPage() {
           options={availableAccounts}
           selected={selectedAccounts}
           onChange={setAccounts}
+          displayFn={(id) => accountNameMap[id] ?? id}
         />
         <MultiSelect
           label="Categories"
@@ -231,6 +238,7 @@ export function TransactionsPage() {
           page={result.page}
           limit={result.limit}
           onPageChange={setPage}
+          accountNames={accountNameMap}
         />
       ) : view === "bar" ? (
         <TransactionBarChart transactions={allTransactions} />

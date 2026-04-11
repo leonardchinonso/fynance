@@ -19,6 +19,7 @@ interface TransactionTableProps {
   page: number
   limit: number
   onPageChange: (page: number) => void
+  accountNames?: Record<string, string>
 }
 
 export function TransactionTable({
@@ -27,6 +28,7 @@ export function TransactionTable({
   page,
   limit,
   onPageChange,
+  accountNames = {},
 }: TransactionTableProps) {
   const totalPages = Math.ceil(total / limit)
 
@@ -65,7 +67,7 @@ export function TransactionTable({
                 <Currency amount={t.amount} currency={t.currency} />
               </TableCell>
               <TableCell className="text-sm text-muted-foreground">
-                {t.account_id}
+                {accountNames[t.account_id] ?? t.account_id}
               </TableCell>
               <TableCell>
                 {t.category_source === "claude" && t.confidence && (

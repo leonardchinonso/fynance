@@ -59,7 +59,7 @@ export function StyledLineChart({
   return (
     <div className={className}>
       <ResponsiveContainer width="100%" height={height + (showBrush ? 40 : 0)}>
-        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 12 }}>
           <CartesianGrid
             strokeDasharray="3 3"
             vertical={false}

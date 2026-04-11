@@ -3,7 +3,7 @@ import type { Account, PortfolioSnapshot } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Currency } from "@/components/currency"
-import { daysSince, formatCurrency } from "@/lib/utils"
+import { daysSince, formatCurrency, formatDate } from "@/lib/utils"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
 import { api } from "@/api/client"
@@ -181,7 +181,7 @@ function AccountCard({
         <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
           {stale && <AlertTriangle className="h-3 w-3 text-amber-500" />}
           <span className={stale ? "text-amber-500" : ""}>
-            Updated: {account.balance_date ?? "never"}
+            Updated: {account.balance_date ? formatDate(account.balance_date) : "never"}
           </span>
         </div>
       </CardContent>
@@ -230,7 +230,7 @@ function AccountDetailSheet({
             />
             <DetailRow
               label="Last Updated"
-              value={account.balance_date ?? "Never"}
+              value={account.balance_date ? formatDate(account.balance_date) : "Never"}
             />
             {account.notes && (
               <DetailRow label="Notes" value={account.notes} />

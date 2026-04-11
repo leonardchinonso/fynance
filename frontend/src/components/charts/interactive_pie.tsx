@@ -80,8 +80,8 @@ export function InteractivePie({
             ))}
           </Pie>
           <Tooltip content={<PieTooltip />} />
-          {/* Center label */}
-          {label && (
+          {/* Center label - hidden when a segment is hovered (activeShape shows its own) */}
+          {label && activeIndex === undefined && (
             <text
               x="50%"
               y="50%"

@@ -1,5 +1,6 @@
 import { useUrlFilters, type Preset } from "@/hooks/use_url_filters"
 import type { Granularity } from "@/types"
+import { formatDate } from "@/lib/utils"
 import {
   Select,
   SelectContent,
@@ -43,7 +44,7 @@ export function DateRangeSelector({
       </Select>
 
       <span className="text-sm text-muted-foreground">
-        {start} to {end}
+        {formatDate(start)} to {formatDate(end)}
       </span>
 
       {showGranularity && (
