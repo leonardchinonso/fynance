@@ -79,16 +79,22 @@ function SectionBlock({
   rows: SpendingGridRow[]
   months: string[]
 }) {
-  // Compute section totals per month
-  const totals: Record<string, number> = {}
-  for (const m of months) totals[m] = 0
+  // Compute section totals per month (only for months with data)
+  const totals: Record<string, number | null> = {}
+  for (const m of months) totals[m] = null
   for (const row of rows) {
     for (const m of months) {
-      totals[m] += Math.abs(parseFloat(row.months[m] ?? "0"))
+      const val = row.months[m]
+      if (val !== null) {
+        totals[m] = (totals[m] ?? 0) + Math.abs(parseFloat(val))
+      }
     }
   }
+  const monthsWithTotals = Object.values(totals).filter((v) => v !== null) as number[]
   const totalAvg =
-    Object.values(totals).reduce((s, v) => s + v, 0) / months.length
+    monthsWithTotals.length > 0
+      ? monthsWithTotals.reduce((s, v) => s + v, 0) / monthsWithTotals.length
+      : 0
 
   return (
     <>
@@ -108,7 +114,14 @@ function SectionBlock({
             {row.category.split(": ").pop()}
           </TableCell>
           {months.map((m) => {
-            const val = row.months[m] ?? "0"
+            const val = row.months[m]
+            if (val === null) {
+              return (
+                <TableCell key={m} className="text-right text-sm text-muted-foreground/30">
+                  -
+                </TableCell>
+              )
+            }
             return (
               <TableCell
                 key={m}
@@ -138,7 +151,7 @@ function SectionBlock({
         </TableCell>
         {months.map((m) => (
           <TableCell key={m} className="text-right text-sm tabular-nums font-medium">
-            {formatCurrency(totals[m].toFixed(2))}
+            {totals[m] !== null ? formatCurrency(totals[m]!.toFixed(2)) : <span className="text-muted-foreground/30">-</span>}
           </TableCell>
         ))}
         <TableCell className="text-right text-sm tabular-nums font-medium">

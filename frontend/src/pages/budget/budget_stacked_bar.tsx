@@ -17,7 +17,12 @@ export function BudgetStackedBar({ rows, months }: BudgetStackedBarProps) {
     new Set(spendingRows.map((r) => r.category.split(":")[0].trim()))
   )
 
-  const data = months.map((m) => {
+  // Only include months that have data
+  const monthsWithData = months.filter((m) =>
+    spendingRows.some((r) => r.months[m] !== null)
+  )
+
+  const data = monthsWithData.map((m) => {
     const entry: Record<string, string | number> = { month: formatMonthShort(m) }
     for (const cat of categories) {
       const catRows = spendingRows.filter(
@@ -25,7 +30,8 @@ export function BudgetStackedBar({ rows, months }: BudgetStackedBarProps) {
       )
       let total = 0
       for (const row of catRows) {
-        total += Math.abs(parseFloat(row.months[m] ?? "0"))
+        const val = row.months[m]
+        if (val !== null) total += Math.abs(parseFloat(val))
       }
       entry[cat] = parseFloat(total.toFixed(2))
     }

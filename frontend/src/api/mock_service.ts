@@ -163,14 +163,20 @@ export class MockApiService implements ApiService {
 
     const rows: SpendingGridRow[] = []
     for (const [cat, catMap] of grid) {
-      const monthValues: Record<string, string> = {}
+      const monthValues: Record<string, string | null> = {}
       let total = 0
+      let monthsWithData = 0
       for (const m of months) {
-        const val = catMap.get(m) ?? 0
-        monthValues[m] = val.toFixed(2)
-        total += val
+        if (catMap.has(m)) {
+          const val = catMap.get(m)!
+          monthValues[m] = val.toFixed(2)
+          total += val
+          monthsWithData++
+        } else {
+          monthValues[m] = null
+        }
       }
-      const avg = total / months.length
+      const avg = monthsWithData > 0 ? total / monthsWithData : 0
 
       // Find budget for this category
       const budget = MOCK_BUDGETS.find((b) => b.category === cat)
