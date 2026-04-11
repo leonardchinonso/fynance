@@ -1,0 +1,66 @@
+# Category taxonomy for fynance. Two-level hierarchy encoded as
+# "Parent: Child" strings. This file is the source of truth at MVP.
+# Matches docs/design/03_data_model.md.
+
+categories:
+  - parent: Income
+    children:
+      - Salary
+      - Freelance
+      - Investments
+      - Other Income
+  - parent: Housing
+    children:
+      - Rent / Mortgage
+      - Utilities
+      - Internet & Phone
+      - Home Maintenance
+  - parent: Food
+    children:
+      - Groceries
+      - Dining & Bars
+      - Coffee & Cafes
+  - parent: Transport
+    children:
+      - Public Transit
+      - Taxi & Rideshare
+      - Fuel
+      - Car Maintenance
+  - parent: Health
+    children:
+      - Gym & Fitness
+      - Medical & Dental
+      - Pharmacy
+  - parent: Shopping
+    children:
+      - Clothing
+      - Electronics
+      - General
+  - parent: Entertainment
+    children:
+      - Streaming Services
+      - Events & Concerts
+      - Hobbies
+  - parent: Travel
+    children:
+      - Flights
+      - Accommodation
+      - Holiday Spending
+  - parent: Finance
+    children:
+      - Savings Transfer
+      - Investment Transfer
+      - Fees & Charges
+      - Insurance
+  - parent: Personal Care
+    children:
+      - Haircut & Beauty
+  - parent: Gifts & Donations
+    children:
+      - Gifts
+  - parent: Education
+    children:
+      - Courses & Books
+  - parent: Other
+    children:
+      - Uncategorized

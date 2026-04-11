@@ -1,0 +1,4 @@
+Transaction ID,Date,Time,Type,Name,Emoji,Category,Amount,Currency,Local amount,Local currency,Notes and #tags,Address,Receipt,Description,Category split,Money Out,Money In
+tx_00001,2026-03-10,12:30:00,Payment,Lidl,,Groceries,-5.50,GBP,-5.50,GBP,,,,,,5.50,
+tx_00002,2026-03-11,09:15:00,Payment,TfL,,Transport,-2.80,GBP,-2.80,GBP,,,,,,2.80,
+tx_00003,2026-03-12,08:00:00,Income,Acme Ltd,,Income,2500.00,GBP,2500.00,GBP,,,,,,,2500.00

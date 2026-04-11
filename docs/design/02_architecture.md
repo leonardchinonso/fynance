@@ -79,11 +79,12 @@ fynance/
 │       ├── model.rs             # Transaction, Account, Budget types (derives ts_rs::TS)
 │       │
 │       ├── importers/
-│       │   ├── mod.rs           # Importer trait
-│       │   ├── csv_importer.rs  # Generic CSV with bank mappings
-│       │   ├── monzo.rs         # Monzo-specific mapping
-│       │   ├── revolut.rs       # Revolut-specific mapping
-│       │   └── lloyds.rs        # Lloyds-specific mapping
+│       │   ├── mod.rs           # Importer trait, extension dispatch
+│       │   ├── csv_importer.rs  # Thin adapter: reads file, calls LLM parser, inserts
+│       │   ├── llm_parser.rs    # StatementParser trait + LlmStatementParser (Claude)
+│       │   └── unified.rs       # UnifiedStatementRow + Transaction::from_unified
+│       │   # Per-bank files (monzo.rs / revolut.rs / lloyds.rs) are NOT created;
+│       │   # see plans/10_llm_csv_import.md — bank dispatch is handled by the LLM.
 │       │
 │       ├── categorizer/
 │       │   ├── mod.rs
@@ -158,18 +159,29 @@ fynance/
 
 ## Data Flow: CSV Import
 
+> See `plans/10_llm_csv_import.md` for the full design. In short: there is no
+> per-bank importer, a single LLM call turns raw CSV text into
+> `UnifiedStatementRow`s plus a `(detected_bank, detection_confidence)` tag.
+> File-level confidence below threshold is a hard fail; row-level confidence
+> below threshold skips the row and warns.
+
 ```
 User: fynance import monzo_2024.csv --account monzo-current
   │
   ├─► CLI parses args
-  ├─► get_importer("monzo") → MonzoImporter
-  ├─► CsvImporter::parse() → Iterator<Transaction>
-  │     each record:
-  │       normalize_description()
-  │       fingerprint()
+  ├─► get_importer(".csv") → CsvImporter (adapter)
+  ├─► fs::read_to_string(path)
+  ├─► LlmStatementParser::parse(raw, filename)
+  │     returns ParsedStatement {
+  │       detected_bank, detection_confidence, rows: [UnifiedStatementRow...]
+  │     }
+  ├─► if detection_confidence < FYNANCE_IMPORT_MIN_DETECT_CONF: hard fail
+  ├─► for row in rows:
+  │     if row.row_confidence < FYNANCE_IMPORT_MIN_ROW_CONF: skip + warn
+  │     else: Transaction::from_unified() → fingerprint() → insert
   ├─► storage::insert_transaction() → Inserted | Duplicate
-  ├─► storage::log_import()
-  └─► Print summary: "Imported 142 new, 0 duplicates"
+  ├─► storage::log_import(detected_bank, detection_confidence, counters)
+  └─► Print summary: "Imported 142 new, 0 duplicates (detected: Monzo, 0.97)"
 ```
 
 ## Data Flow: Serve Mode

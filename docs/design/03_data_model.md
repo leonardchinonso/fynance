@@ -28,15 +28,20 @@ CREATE INDEX IF NOT EXISTS idx_tx_category    ON transactions(category);
 CREATE INDEX IF NOT EXISTS idx_tx_month       ON transactions(substr(date, 1, 7));
 
 -- ── import_log ────────────────────────────────────────────────────────────
+-- `detected_bank` and `detection_confidence` are populated by the LLM-driven
+-- CSV parser (see plans/10_llm_csv_import.md). They are nullable so historic
+-- imports and non-CSV sources keep working unchanged.
 CREATE TABLE IF NOT EXISTS import_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename        TEXT NOT NULL,
-    account_id      TEXT NOT NULL,
-    rows_total      INTEGER NOT NULL,
-    rows_inserted   INTEGER NOT NULL,
-    rows_duplicate  INTEGER NOT NULL,
-    source          TEXT NOT NULL DEFAULT 'csv',  -- 'csv' | 'screenshot' | 'api'
-    imported_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename              TEXT NOT NULL,
+    account_id            TEXT NOT NULL,
+    rows_total            INTEGER NOT NULL,
+    rows_inserted         INTEGER NOT NULL,
+    rows_duplicate        INTEGER NOT NULL,
+    source                TEXT NOT NULL DEFAULT 'csv',  -- 'csv' | 'screenshot' | 'api'
+    detected_bank         TEXT,                          -- 'monzo' | 'revolut' | 'lloyds' | 'unknown'
+    detection_confidence  REAL,                          -- [0.0, 1.0], from the LLM parser
+    imported_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- ── accounts ──────────────────────────────────────────────────────────────

@@ -134,7 +134,30 @@ If the key is absent, categorization falls back to rules-only mode and a warning
 
 ## AI Data Flow
 
-For MVP, the fynance binary makes no outbound API calls. All AI processing (categorization, data extraction from screenshots) happens in external agents that push data through the REST API. The binary is a pure data store and UI server.
+For MVP, the fynance binary makes no outbound API calls **except** the
+LLM-driven CSV parser introduced in `plans/10_llm_csv_import.md`. That is
+the first and only outbound dependency in Phase 1.
+
+Privacy model for the CSV parser:
+
+1. **Opt-in by configuration.** The parser only runs when
+   `FYNANCE_ANTHROPIC_API_KEY` is set. No key, no outbound calls, `fynance
+   import` returns an actionable error.
+2. **Raw transaction text is sent.** The parser's job is to extract
+   structured rows from a messy file, so it has to see the file. This is
+   the single most privacy-sensitive call in the system and is
+   documented as such.
+3. **No prompt caching of user data.** Only the system prompt and JSON
+   schema are cached. User messages carry `cache_control: none`.
+4. **No logging of payloads at INFO.** Request/response bodies are
+   DEBUG-only and truncated.
+5. **Redaction opt-in is a follow-up.** `FYNANCE_IMPORT_REDACT=true`
+   will scrub sort codes and account numbers before sending; not
+   implemented in this iteration.
+
+All other AI processing (categorization, screenshot OCR) remains in
+external agents that push data through the REST API. The binary is
+otherwise a pure data store and UI server.
 
 <!-- DEFERRED: Claude API Data Minimization (for when internal AI is added post-MVP)
 
