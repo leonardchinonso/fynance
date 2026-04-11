@@ -2,6 +2,10 @@
 
 Before starting any work, read ~/SecondBrain/02-projects/fynance.md for the goal, decisions, and open questions behind this project.
 
+## Repo
+
+https://github.com/leonardchinonso/fynance
+
 ## Overview
 
 Personal finance tracker with a Rust backend and a local React web UI. Ingests bank CSV exports (Monzo, Revolut, Lloyds), categorizes transactions (rules + Claude API), stores everything in a per-user local SQLite database, and surfaces four views in the browser: Transactions, Budget, Portfolio, Reports.
