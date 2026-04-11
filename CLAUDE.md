@@ -1,6 +1,7 @@
 # fynance — Claude Context
 
 Before starting any work, read `docs/fynance-project-note.md` for project goals, the design docs in `docs/design/`, and the current plan at `docs/plans/08_mvp_phases_v2.md`.
+Do not make any changes to the code until you have 95% confidence in what you need to build. Ask me follow-up questions until you reach that confidence.
 
 ## Repo
 
@@ -15,11 +16,12 @@ Design documents live in `docs/design/`, research in `docs/research/`, implement
 ## Architecture
 
 Single Rust binary that:
+
 1. Exposes a loopback-only Axum HTTP server (`127.0.0.1`) with a REST JSON API
 2. Serves a compiled React frontend embedded via `include_dir!`
 3. Stores data in a per-user SQLite database at the OS data directory
-<!-- DEFERRED: 4. Optionally calls Claude API for categorization and monthly analysis -->
-<!-- Internal AI workflows are deferred. For MVP, external AI agents handle categorization and data extraction, then push results through the REST API. -->
+   <!-- DEFERRED: 4. Optionally calls Claude API for categorization and monthly analysis -->
+   <!-- Internal AI workflows are deferred. For MVP, external AI agents handle categorization and data extraction, then push results through the REST API. -->
 
 User runs `fynance serve`, the default browser opens, and all interaction happens in the browser. CLI subcommands remain available for scripting and automation.
 
@@ -68,36 +70,41 @@ fynance/
 
 ## Key Crates
 
-| Crate | Purpose |
-|---|---|
-| `clap` | CLI argument parsing (derive) |
-| `axum` | HTTP server |
-| `tokio` | Async runtime |
-| `tower-http` | CORS, static file middleware |
-| `include_dir` | Embed compiled frontend bundle |
-| `open` | Cross-platform browser launch |
-| `rusqlite` | SQLite driver with bundled feature |
-| `dirs` | Per-OS user data directory resolution |
-<!-- DEFERRED: | `reqwest` | HTTP client for Claude API | -->
-| `reqwest` | HTTP client (future: external API integrations) |
-| `serde`, `serde_json`, `serde_yaml` | Serialization and config |
-| `csv` | CSV statement parsing |
-| `regex` | Rule-based categorization patterns |
-| `chrono` | Date handling |
-| `rust_decimal` | Precise money math |
-| `uuid` | Transaction IDs |
-| `sha2`, `hex` | Fingerprint deduplication |
-| `anyhow` | Application error context |
-| `thiserror` | Library error enums |
-| `tracing`, `tracing-subscriber` | Structured logging |
-| `indicatif` | CLI progress bars during bulk imports |
-| `dotenvy` | Load `.env` file for configuration |
-| `ts-rs` | Auto-generate TypeScript types from Rust structs |
+| Crate                               | Purpose                                          |
+| ----------------------------------- | ------------------------------------------------ | -------------------------- | --- |
+| `clap`                              | CLI argument parsing (derive)                    |
+| `axum`                              | HTTP server                                      |
+| `tokio`                             | Async runtime                                    |
+| `tower-http`                        | CORS, static file middleware                     |
+| `include_dir`                       | Embed compiled frontend bundle                   |
+| `open`                              | Cross-platform browser launch                    |
+| `rusqlite`                          | SQLite driver with bundled feature               |
+| `dirs`                              | Per-OS user data directory resolution            |
+| <!-- DEFERRED:                      | `reqwest`                                        | HTTP client for Claude API | --> |
+| `reqwest`                           | HTTP client (future: external API integrations)  |
+| `serde`, `serde_json`, `serde_yaml` | Serialization and config                         |
+| `csv`                               | CSV statement parsing                            |
+| `regex`                             | Rule-based categorization patterns               |
+| `chrono`                            | Date handling                                    |
+| `rust_decimal`                      | Precise money math                               |
+| `uuid`                              | Transaction IDs                                  |
+| `sha2`, `hex`                       | Fingerprint deduplication                        |
+| `anyhow`                            | Application error context                        |
+| `thiserror`                         | Library error enums                              |
+| `tracing`, `tracing-subscriber`     | Structured logging                               |
+| `indicatif`                         | CLI progress bars during bulk imports            |
+| `dotenvy`                           | Load `.env` file for configuration               |
+| `ts-rs`                             | Auto-generate TypeScript types from Rust structs |
 
 ## Configuration
 
 All runtime config via environment variables (loaded from `.env` via `dotenvy`). See `.env.example` for the full list. Key variables: `FYNANCE_PORT`, `FYNANCE_DB_PATH`, `FYNANCE_HOST`, `FYNANCE_LOG_LEVEL`.
+
 <!-- DEFERRED: ANTHROPIC_API_KEY is not needed for MVP. Internal AI workflows are a future enhancement. -->
+
+## Running the Backend
+
+See `backend/RUNNING.md` for the full setup and run guide: prerequisites, configuration, all CLI subcommands with examples, dev workflow, testing, logging, and troubleshooting.
 
 ## Commands
 
@@ -173,7 +180,7 @@ This is a single-user local app. "Multi-user" means multiple OS users on the sam
 <!-- DEFERRED: Internal AI security (not needed for MVP, no internal Claude API calls)
 - Claude API key read from `ANTHROPIC_API_KEY` env var or `~/.config/fynance/config.yaml` (mode `600`). Never logged, never stored in DB.
 - Claude API receives only normalized merchant strings, never amounts, dates, or account IDs.
--->
+  -->
 - No telemetry. No outbound calls from the binary. All AI processing happens in external agents that push data through the API.
 - No auth for browser UI (loopback binding is the isolation boundary). Programmatic API access uses locally-generated bearer tokens (`fyn_` prefix, SHA-256 hashed in DB).
 

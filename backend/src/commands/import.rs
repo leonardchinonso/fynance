@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::importers::get_importer;
-use crate::model::{ImportLog, ImportResult};
+use crate::model::{BankFormat, ImportLog, ImportResult};
 use crate::storage::Db;
 
 pub fn run(db: &Db, path: &Path, account_id: &str) -> Result<()> {
@@ -33,11 +33,20 @@ pub fn run(db: &Db, path: &Path, account_id: &str) -> Result<()> {
             rows_inserted: result.rows_inserted,
             rows_duplicate: result.rows_duplicate,
             source: "csv".to_string(),
+            detected_bank: result.detected_bank,
+            detection_confidence: result.detection_confidence,
         })?;
 
+        let bank_tag = match result.detected_bank {
+            BankFormat::Unknown => format!(
+                "unknown bank ({:.0}% confidence)",
+                result.detection_confidence * 100.0
+            ),
+            b => format!("{} ({:.0}%)", b.as_str(), result.detection_confidence * 100.0),
+        };
         println!(
-            "Imported {} new, {} duplicates ({})",
-            result.rows_inserted, result.rows_duplicate, result.filename
+            "{}: {} new, {} duplicates [{}]",
+            result.filename, result.rows_inserted, result.rows_duplicate, bank_tag
         );
 
         totals.rows_total += result.rows_total;

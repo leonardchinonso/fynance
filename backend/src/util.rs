@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use chrono::NaiveDate;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 
 /// Regex that collapses any run of whitespace into a single space. Used by
@@ -90,6 +91,21 @@ pub fn parse_date(s: &str) -> Result<NaiveDate> {
         return Ok(d);
     }
     Err(anyhow!("unrecognized date format: {s:?}"))
+}
+
+/// Parse an amount from a raw bank string. Strips commas (thousands
+/// separators common on Lloyds exports) and optional currency symbols before
+/// handing off to `Decimal::from_str_exact` which refuses to accept floats.
+///
+/// This is kept as a utility for the `Transaction::from_unified` path in case
+/// the LLM returns an amount with a stray currency symbol despite being asked
+/// not to.
+pub fn parse_amount(raw: &str) -> Result<Decimal> {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != ',' && *c != '£' && *c != '$' && *c != '€')
+        .collect();
+    Decimal::from_str_exact(&cleaned).with_context(|| format!("parsing amount {raw:?}"))
 }
 
 /// Validate that a string looks like `YYYY-MM`. Used by budget CLI args.

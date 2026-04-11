@@ -1,0 +1,51 @@
+{
+  "detected_bank": "lloyds",
+  "detection_confidence": 0.95,
+  "rows": [
+    {
+      "date": "2026-03-10",
+      "description": "LIDL GB LONDON",
+      "amount": "-5.50",
+      "currency": "GBP",
+      "fitid": null,
+      "category": null,
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "DEB",
+      "balance_after": "1000.00",
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    },
+    {
+      "date": "2026-03-11",
+      "description": "TFL TRAVEL LONDON",
+      "amount": "-2.80",
+      "currency": "GBP",
+      "fitid": null,
+      "category": null,
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "DEB",
+      "balance_after": "997.20",
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    },
+    {
+      "date": "2026-03-12",
+      "description": "ACME LTD SALARY",
+      "amount": "2500.00",
+      "currency": "GBP",
+      "fitid": null,
+      "category": null,
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "FPI",
+      "balance_after": "3497.20",
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    }
+  ]
+}

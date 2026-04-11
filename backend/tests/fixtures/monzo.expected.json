@@ -1,0 +1,51 @@
+{
+  "detected_bank": "monzo",
+  "detection_confidence": 0.97,
+  "rows": [
+    {
+      "date": "2026-03-10",
+      "description": "Lidl",
+      "amount": "-5.50",
+      "currency": "GBP",
+      "fitid": "tx_00001",
+      "category": "Groceries",
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "Payment",
+      "balance_after": null,
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    },
+    {
+      "date": "2026-03-11",
+      "description": "TfL",
+      "amount": "-2.80",
+      "currency": "GBP",
+      "fitid": "tx_00002",
+      "category": "Transport",
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "Payment",
+      "balance_after": null,
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    },
+    {
+      "date": "2026-03-12",
+      "description": "Acme Ltd",
+      "amount": "2500.00",
+      "currency": "GBP",
+      "fitid": "tx_00003",
+      "category": "Income",
+      "merchant": null,
+      "counterparty": null,
+      "transaction_type": "Income",
+      "balance_after": null,
+      "notes": null,
+      "reference": null,
+      "row_confidence": 0.99
+    }
+  ]
+}
