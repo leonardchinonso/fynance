@@ -33,3 +33,13 @@ Nice-to-have improvements that are not in the MVP or V1 roadmap. These are ideas
 - Mobile-responsive PWA
 - Dark mode
 - Customizable dashboard widgets
+
+## Charting & Visualization
+The frontend currently uses Tremor (built on Recharts) for all charts. For advanced chart types, drop to raw Recharts directly (same engine, no new dependency):
+- Click-to-filter: clicking a pie slice to filter the transaction table view
+- Synchronized cursors: hovering one chart highlights the same data point on another chart
+- Custom animated transitions: chart morphing between view modes
+- Candlestick / OHLC charts: if stock price visualization is added
+- Waterfall charts: income-to-savings flow visualization
+- Sankey diagrams: money flow between accounts
+- Brush/zoom on charts: drag to select a time range on a chart to zoom in

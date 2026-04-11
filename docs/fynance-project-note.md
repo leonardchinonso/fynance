@@ -25,6 +25,11 @@ Active -- planning phase, no implementation yet.
 - **Docker for MVP: needed now?** Nonso questioned whether Docker is needed at this stage, since the app runs locally and SQLite is just a file. Docker adds complexity; could defer to post-MVP. Currently documented in README and plan. (PR #1)
 - **API-first vs internal AI**: Original plan (on master) had internal Claude API calls for categorization, screenshot extraction, and report generation. New proposal: defer all internal AI to post-MVP. The binary makes zero outbound calls. External AI agents handle categorization and data extraction, pushing results through the REST API. API docs at `/api/docs` are designed as an agent-readable system prompt. Internal AI becomes an optional V1 convenience layer. Needs Nonso's buy-in since this changes the Phase 5 architecture. (PR #1)
 
+- **RSU / stock-denominated income**: Vested RSUs are income valued in shares, not currency. Options: (a) Transaction with category "Income: RSU Vesting" + a `unit` field (currency vs shares), or (b) separate `stock_income` table. Implications for the Transaction model. Currently RSUs are tracked as holdings snapshots only.
+- **Liability account types**: Mortgage balance and credit card balance as negative-balance accounts. AccountType may need 'mortgage' or a general 'liability' type. Home equity = home value holding - mortgage account - HTB loan account. HoldingType may need 'property' for home value tracking.
+- **Tax calcs for RSU forecasting**: Employer NI rate, tax rate, NI charge applied to gross RSU vesting to project net shares/value. Future forecasting endpoint.
+- **Multi-profile data model**: Frontend currently adds a `profile_id` to Account. Need to decide if this is a first-class DB concept or handled in the application layer.
+
 ## Contributors
 - Ope (Zaida-3dO): frontend focus, UI/UX requirements, Obsidian integration
 - Nonso (leonardchinonso): Rust backend, CLI, architecture, security
