@@ -1,21 +1,29 @@
-import type { PortfolioResponse } from "@/types"
+import type { PortfolioResponse, CashFlowMonth, Holding } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Currency } from "@/components/currency"
-// Using plain divs for colored progress bars instead of Progress component
-import { TrendingUp, TrendingDown, Wallet, PiggyBank, Building2, Shield } from "lucide-react"
+import { InteractivePie } from "@/components/charts"
+import {
+  TrendingUp, TrendingDown, Wallet, PiggyBank, Building2, Shield,
+  ArrowUpRight, ArrowDownRight, BarChart3,
+} from "lucide-react"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
+import { formatCurrency } from "@/lib/utils"
 
 interface PortfolioOverviewProps {
   portfolio: PortfolioResponse
   startNetWorth?: string
   endNetWorth?: string
   dateLabel?: string
+  cashFlow?: CashFlowMonth[]
+  holdings?: Holding[]
 }
 
 export function PortfolioOverview({
   portfolio,
   startNetWorth,
   endNetWorth,
+  cashFlow = [],
+  holdings = [],
 }: PortfolioOverviewProps) {
   const startNw = startNetWorth ? parseFloat(startNetWorth) : null
   const endNw = endNetWorth ? parseFloat(endNetWorth) : null
@@ -30,11 +38,39 @@ export function PortfolioOverview({
   const unavailable = parseFloat(portfolio.unavailable_wealth)
   const availablePct = netWorth > 0 ? (available / netWorth) * 100 : 0
 
+  // Income/outgoing totals
+  const totalIncome = cashFlow.reduce((s, m) => s + parseFloat(m.income), 0)
+  const totalSpending = cashFlow.reduce((s, m) => s + parseFloat(m.spending), 0)
+  const monthCount = cashFlow.length || 1
+  const avgIncome = totalIncome / monthCount
+  const avgSpending = totalSpending / monthCount
+
+  // Stocks breakdown (aggregate holdings by symbol)
+  const holdingsBySymbol = new Map<string, { name: string; value: number }>()
+  for (const h of holdings) {
+    const existing = holdingsBySymbol.get(h.symbol)
+    if (existing) {
+      existing.value += parseFloat(h.value)
+    } else {
+      holdingsBySymbol.set(h.symbol, { name: h.name, value: parseFloat(h.value) })
+    }
+  }
+  const stocksData = Array.from(holdingsBySymbol.entries())
+    .map(([symbol, { name, value }]) => ({
+      name: `${symbol} (${name.length > 20 ? name.substring(0, 20) + "..." : name})`,
+      value: parseFloat(value.toFixed(2)),
+    }))
+    .sort((a, b) => b.value - a.value)
+
+  const STOCK_COLORS = [
+    "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
+    "#06b6d4", "#eab308", "#6366f1", "#14b8a6", "#ef4444",
+  ]
+
   return (
     <div className="space-y-4">
-      {/* Top row: Net worth + Available/Unavailable breakdown */}
+      {/* Top row: Net worth + Balance sheet */}
       <div className="grid gap-4 md:grid-cols-3">
-        {/* Net Worth */}
         <Card className="md:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -54,48 +90,29 @@ export function PortfolioOverview({
                       delta >= 0 ? "text-green-500" : "text-red-500"
                     }`}
                   >
-                    {delta >= 0 ? (
-                      <TrendingUp className="h-4 w-4" />
-                    ) : (
-                      <TrendingDown className="h-4 w-4" />
-                    )}
+                    {delta >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
                     <Currency amount={delta.toFixed(2)} />
-                    {deltaPercent && (
-                      <span className="text-xs opacity-75">
-                        ({deltaPercent}%)
-                      </span>
-                    )}
+                    {deltaPercent && <span className="text-xs opacity-75">({deltaPercent}%)</span>}
                   </span>
-                  <span className="text-xs text-muted-foreground ml-5">
-                    over selected period
-                  </span>
+                  <span className="text-xs text-muted-foreground ml-5">over selected period</span>
                 </div>
               )}
             </div>
-
-            {/* Available vs Unavailable bar */}
             <div className="mt-4 space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="flex items-center gap-1.5">
                   <PiggyBank className="h-3.5 w-3.5 text-blue-500" />
                   Available
-                  <span className="font-medium">
-                    <Currency amount={portfolio.available_wealth} colorize={false} />
-                  </span>
+                  <span className="font-medium"><Currency amount={portfolio.available_wealth} colorize={false} /></span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <Shield className="h-3.5 w-3.5 text-orange-500" />
                   Unavailable
-                  <span className="font-medium">
-                    <Currency amount={portfolio.unavailable_wealth} colorize={false} />
-                  </span>
+                  <span className="font-medium"><Currency amount={portfolio.unavailable_wealth} colorize={false} /></span>
                 </span>
               </div>
               <div className="h-3 rounded-full bg-orange-500/20 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-blue-500 transition-all duration-500"
-                  style={{ width: `${availablePct}%` }}
-                />
+                <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${availablePct}%` }} />
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>{availablePct.toFixed(0)}% liquid</span>
@@ -105,7 +122,6 @@ export function PortfolioOverview({
           </CardContent>
         </Card>
 
-        {/* Assets / Liabilities summary */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -136,7 +152,80 @@ export function PortfolioOverview({
         </Card>
       </div>
 
-      {/* Breakdown cards with visual bars */}
+      {/* Income/Outgoing + Stocks breakdown */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Income & Spending card */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Income & Spending
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <ArrowUpRight className="h-3 w-3 text-green-500" />
+                  Total Income
+                </div>
+                <p className="text-xl font-semibold text-green-500 tabular-nums">
+                  {formatCurrency(totalIncome.toFixed(2))}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  ~{formatCurrency(avgIncome.toFixed(2))}/mo
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <ArrowDownRight className="h-3 w-3 text-red-500" />
+                  Total Spending
+                </div>
+                <p className="text-xl font-semibold text-red-500 tabular-nums">
+                  {formatCurrency(totalSpending.toFixed(2))}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  ~{formatCurrency(avgSpending.toFixed(2))}/mo
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 border-t pt-3">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Net Savings</span>
+                <span className={`text-lg font-semibold tabular-nums ${totalIncome - totalSpending >= 0 ? "text-green-500" : "text-red-500"}`}>
+                  {formatCurrency((totalIncome - totalSpending).toFixed(2))}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                ~{formatCurrency(((totalIncome - totalSpending) / monthCount).toFixed(2))}/mo over {monthCount} months
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Stocks breakdown card */}
+        {stocksData.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Holdings by Stock
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <InteractivePie
+                data={stocksData}
+                colors={STOCK_COLORS}
+                height={220}
+                innerRadius={50}
+                outerRadius={85}
+                label={formatCurrency(stocksData.reduce((s, d) => s + d.value, 0).toFixed(2))}
+              />
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Breakdown cards */}
       <div className="grid gap-4 md:grid-cols-3">
         <BreakdownCard
           title="By Asset Type"
@@ -148,14 +237,8 @@ export function PortfolioOverview({
             ACCOUNT_TYPE_LABELS[label as keyof typeof ACCOUNT_TYPE_LABELS] ?? label
           }
         />
-        <BreakdownCard
-          title="By Institution"
-          items={portfolio.by_institution}
-        />
-        <BreakdownCard
-          title="By Sector"
-          items={portfolio.by_sector}
-        />
+        <BreakdownCard title="By Institution" items={portfolio.by_institution} />
+        <BreakdownCard title="By Sector" items={portfolio.by_sector} />
       </div>
     </div>
   )

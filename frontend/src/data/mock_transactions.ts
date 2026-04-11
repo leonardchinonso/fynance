@@ -54,11 +54,12 @@ const ALEX_RECURRING: TxTemplate[] = [
   { description: "TRADING 212 DEPOSIT", normalized: "Investment Deposit", category: "Finance: Investment Transfer", category_source: "rule", confidence: null, account: "monzo-current", is_recurring: true, amountMin: 500, amountMax: 500, isIncome: false, frequency: "monthly", dayOfMonth: 29 },
   { description: "COUNCIL TAX", normalized: "Council Tax", category: "Housing: Utilities", category_source: "rule", confidence: null, account: "monzo-current", is_recurring: true, amountMin: 165, amountMax: 165, isIncome: false, frequency: "monthly", dayOfMonth: 3 },
   { description: "WATER BILL DD", normalized: "Thames Water", category: "Housing: Utilities", category_source: "rule", confidence: null, account: "monzo-current", is_recurring: true, amountMin: 38, amountMax: 38, isIncome: false, frequency: "monthly", dayOfMonth: 7 },
+  { description: "RENTAL INCOME TENANT", normalized: "Rental Income", category: "Income: Other Income", category_source: "rule", confidence: null, account: "monzo-current", is_recurring: true, amountMin: 300, amountMax: 300, isIncome: true, frequency: "monthly", dayOfMonth: 5 },
 ]
 
 // ── Sam's recurring transactions ──
 const SAM_RECURRING: TxTemplate[] = [
-  { description: "EMPLOYER LTD SALARY", normalized: "Salary", category: "Income: Salary", category_source: "rule", confidence: null, account: "monzo-sam", is_recurring: true, amountMin: 3800, amountMax: 3800, isIncome: true, frequency: "monthly", dayOfMonth: 25 },
+  { description: "EMPLOYER LTD SALARY", normalized: "Salary", category: "Income: Salary", category_source: "rule", confidence: null, account: "monzo-sam", is_recurring: true, amountMin: 1800, amountMax: 1800, isIncome: true, frequency: "monthly", dayOfMonth: 25 },
   { description: "DISNEY+ SUBSCRIPTION", normalized: "Disney+", category: "Entertainment: Streaming Services", category_source: "rule", confidence: null, account: "monzo-sam", is_recurring: true, amountMin: 10.99, amountMax: 10.99, isIncome: false, frequency: "monthly", dayOfMonth: 20 },
   { description: "YOUTUBE PREMIUM", normalized: "YouTube Premium", category: "Entertainment: Streaming Services", category_source: "rule", confidence: null, account: "monzo-sam", is_recurring: true, amountMin: 12.99, amountMax: 12.99, isIncome: false, frequency: "monthly", dayOfMonth: 22 },
   { description: "DAVID LLOYD GYM", normalized: "David Lloyd", category: "Health: Gym & Fitness", category_source: "rule", confidence: null, account: "monzo-sam", is_recurring: true, amountMin: 89, amountMax: 89, isIncome: false, frequency: "monthly", dayOfMonth: 1 },

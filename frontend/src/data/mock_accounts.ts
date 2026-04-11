@@ -111,6 +111,32 @@ export const MOCK_ACCOUNTS: Account[] = [
     notes: null,
     profile_ids: ["sam"],
   },
+  // Property (home value as an asset)
+  {
+    id: "home-value",
+    name: "Home (Estimated Value)",
+    institution: "Property",
+    type: "savings",
+    currency: "GBP",
+    balance: "350000.00",
+    balance_date: "2026-01-01",
+    is_active: true,
+    notes: "Estimated home value",
+    profile_ids: ["alex"],
+  },
+  // Mortgage (liability)
+  {
+    id: "mortgage-alex",
+    name: "Mortgage",
+    institution: "Nationwide",
+    type: "credit",
+    currency: "GBP",
+    balance: "185000.00",
+    balance_date: "2026-03-01",
+    is_active: true,
+    notes: "Remaining mortgage balance",
+    profile_ids: ["alex"],
+  },
   // Joint accounts
   {
     id: "joint-savings",

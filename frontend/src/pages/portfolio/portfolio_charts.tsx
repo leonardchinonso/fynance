@@ -1,16 +1,21 @@
-import type { PortfolioResponse } from "@/types"
+import type { PortfolioResponse, Holding } from "@/types"
 import { InteractivePie } from "@/components/charts"
 import { ACCOUNT_TYPE_COLORS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
 
 const INST_COLORS = ["#3b82f6", "#f97316", "#22c55e", "#ec4899", "#06b6d4", "#eab308", "#6366f1"]
 const SECTOR_COLORS = ["#3b82f6", "#f97316", "#22c55e", "#ec4899", "#a855f7"]
+const STOCK_COLORS = [
+  "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
+  "#06b6d4", "#eab308", "#6366f1", "#14b8a6", "#ef4444",
+]
 
 interface PortfolioChartsProps {
   portfolio: PortfolioResponse
+  holdings?: Holding[]
 }
 
-export function PortfolioCharts({ portfolio }: PortfolioChartsProps) {
+export function PortfolioCharts({ portfolio, holdings = [] }: PortfolioChartsProps) {
   const byTypeData = portfolio.by_type.map((item) => ({
     name: item.label.charAt(0).toUpperCase() + item.label.slice(1),
     value: parseFloat(item.total),
@@ -29,43 +34,43 @@ export function PortfolioCharts({ portfolio }: PortfolioChartsProps) {
     value: parseFloat(item.total),
   }))
 
+  // Stocks breakdown
+  const holdingsBySymbol = new Map<string, { name: string; value: number }>()
+  for (const h of holdings) {
+    const existing = holdingsBySymbol.get(h.symbol)
+    if (existing) {
+      existing.value += parseFloat(h.value)
+    } else {
+      holdingsBySymbol.set(h.symbol, { name: h.name, value: parseFloat(h.value) })
+    }
+  }
+  const byStockData = Array.from(holdingsBySymbol.entries())
+    .map(([symbol, { value }]) => ({ name: symbol, value: parseFloat(value.toFixed(2)) }))
+    .sort((a, b) => b.value - a.value)
+
   const totalStr = formatCurrency(portfolio.net_worth)
+  const stocksTotal = formatCurrency(byStockData.reduce((s, d) => s + d.value, 0).toFixed(2))
 
   return (
-    <div className="grid gap-4 md:grid-cols-3">
+    <div className="grid gap-4 md:grid-cols-2">
       <div className="rounded-lg border p-4">
-        <h3 className="mb-2 text-sm font-medium text-muted-foreground">
-          By Account Type
-        </h3>
-        <InteractivePie
-          data={byTypeData}
-          colors={byTypeColors}
-          label={totalStr}
-          height={280}
-        />
+        <h3 className="mb-2 text-sm font-medium text-muted-foreground">By Account Type</h3>
+        <InteractivePie data={byTypeData} colors={byTypeColors} label={totalStr} height={260} />
       </div>
       <div className="rounded-lg border p-4">
-        <h3 className="mb-2 text-sm font-medium text-muted-foreground">
-          By Institution
-        </h3>
-        <InteractivePie
-          data={byInstData}
-          colors={INST_COLORS}
-          label={totalStr}
-          height={280}
-        />
+        <h3 className="mb-2 text-sm font-medium text-muted-foreground">By Institution</h3>
+        <InteractivePie data={byInstData} colors={INST_COLORS} label={totalStr} height={260} />
       </div>
       <div className="rounded-lg border p-4">
-        <h3 className="mb-2 text-sm font-medium text-muted-foreground">
-          By Sector
-        </h3>
-        <InteractivePie
-          data={bySectorData}
-          colors={SECTOR_COLORS}
-          label={totalStr}
-          height={280}
-        />
+        <h3 className="mb-2 text-sm font-medium text-muted-foreground">By Sector</h3>
+        <InteractivePie data={bySectorData} colors={SECTOR_COLORS} label={totalStr} height={260} />
       </div>
+      {byStockData.length > 0 && (
+        <div className="rounded-lg border p-4">
+          <h3 className="mb-2 text-sm font-medium text-muted-foreground">By Stock</h3>
+          <InteractivePie data={byStockData} colors={STOCK_COLORS} label={stocksTotal} height={260} />
+        </div>
+      )}
     </div>
   )
 }

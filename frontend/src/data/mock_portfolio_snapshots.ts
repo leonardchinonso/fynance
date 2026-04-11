@@ -20,6 +20,8 @@ const ACCOUNT_SEEDS: AccountSeed[] = [
   { account_id: "monzo-sam", startBalance: 1500, monthlyGrowth: 0.006, volatility: 0.18 },
   { account_id: "t212-isa-sam", startBalance: 12000, monthlyGrowth: 0.022, volatility: 0.05 },
   { account_id: "pension-sam", startBalance: 24000, monthlyGrowth: 0.013, volatility: 0.03 },
+  { account_id: "home-value", startBalance: 320000, monthlyGrowth: 0.003, volatility: 0.005 },
+  { account_id: "mortgage-alex", startBalance: 195000, monthlyGrowth: -0.005, volatility: 0.001 },
   { account_id: "joint-savings", startBalance: 2000, monthlyGrowth: 0.04, volatility: 0.03 },
   { account_id: "joint-current", startBalance: 1200, monthlyGrowth: 0.005, volatility: 0.12 },
 ]

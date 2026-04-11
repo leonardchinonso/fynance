@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import type { PortfolioResponse, PortfolioHistoryRow, PortfolioSnapshot } from "@/types"
+import type { PortfolioResponse, PortfolioHistoryRow, PortfolioSnapshot, CashFlowMonth, Holding } from "@/types"
 import { api } from "@/api/client"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { useProfiles } from "@/context/profile_context"
@@ -44,6 +44,8 @@ export function PortfolioPage() {
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null)
   const [history, setHistory] = useState<PortfolioHistoryRow[]>([])
   const [accountSnapshots, setAccountSnapshots] = useState<PortfolioSnapshot[]>([])
+  const [cashFlow, setCashFlow] = useState<CashFlowMonth[]>([])
+  const [allHoldings, setAllHoldings] = useState<Holding[]>([])
   const [loading, setLoading] = useState(true)
 
   // Holdings drill-down state
@@ -60,10 +62,19 @@ export function PortfolioPage() {
       api.getPortfolio(profileId),
       api.getPortfolioHistory(start, end),
       api.getAccountSnapshots(start, end),
-    ]).then(([p, h, snaps]) => {
+      api.getCashFlow(start, end),
+    ]).then(([p, h, snaps, cf]) => {
       setPortfolio(p)
       setHistory(h)
       setAccountSnapshots(snaps)
+      setCashFlow(cf)
+      // Fetch holdings for all investment + pension accounts
+      const holdingAccounts = p.accounts.filter(
+        (a) => a.type === "investment" || a.type === "pension"
+      )
+      Promise.all(holdingAccounts.map((a) => api.getHoldings(a.id))).then(
+        (results) => setAllHoldings(results.flat())
+      )
       setLoading(false)
     })
   }, [profileId, start, end])
@@ -98,6 +109,8 @@ export function PortfolioPage() {
           startNetWorth={startNetWorth}
           endNetWorth={endNetWorth}
           dateLabel={`${start} to ${end}`}
+          cashFlow={cashFlow}
+          holdings={allHoldings}
         />
       ) : activeView === "accounts" ? (
         <AccountsGrid
@@ -107,7 +120,7 @@ export function PortfolioPage() {
           snapshots={accountSnapshots}
         />
       ) : activeView === "charts" ? (
-        <PortfolioCharts portfolio={portfolio} />
+        <PortfolioCharts portfolio={portfolio} holdings={allHoldings} />
       ) : activeView === "history" ? (
         <PortfolioHistory history={history} granularity={granularity} />
       ) : null}

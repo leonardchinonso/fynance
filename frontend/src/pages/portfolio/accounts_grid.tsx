@@ -94,7 +94,7 @@ export function AccountsGrid({
                     account={account}
                     delta={deltas.get(account.id)}
                     onClick={() => {
-                      if (account.type === "investment") {
+                      if (account.type === "investment" || account.type === "pension") {
                         onAccountClick(account.id)
                       } else {
                         setSelectedNonInvestment(account)
