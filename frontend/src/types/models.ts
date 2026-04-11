@@ -61,6 +61,7 @@ export interface Holding {
   account_id: string
   symbol: string // ticker or ISIN
   name: string // display name
+  short_name: string // nickname for legends/compact views
   holding_type: HoldingType
   quantity: string // Decimal string
   price_per_unit: string | null // Decimal string

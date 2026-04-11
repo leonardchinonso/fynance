@@ -34,18 +34,13 @@ export function PortfolioCharts({ portfolio, holdings = [] }: PortfolioChartsPro
     value: parseFloat(item.total),
   }))
 
-  // Stocks breakdown
-  const holdingsBySymbol = new Map<string, { name: string; value: number }>()
+  // Stocks breakdown (aggregate by short_name)
+  const holdingsByName = new Map<string, number>()
   for (const h of holdings) {
-    const existing = holdingsBySymbol.get(h.symbol)
-    if (existing) {
-      existing.value += parseFloat(h.value)
-    } else {
-      holdingsBySymbol.set(h.symbol, { name: h.name, value: parseFloat(h.value) })
-    }
+    holdingsByName.set(h.short_name, (holdingsByName.get(h.short_name) ?? 0) + parseFloat(h.value))
   }
-  const byStockData = Array.from(holdingsBySymbol.entries())
-    .map(([symbol, { value }]) => ({ name: symbol, value: parseFloat(value.toFixed(2)) }))
+  const byStockData = Array.from(holdingsByName.entries())
+    .map(([name, value]) => ({ name, value: parseFloat(value.toFixed(2)) }))
     .sort((a, b) => b.value - a.value)
 
   const totalStr = formatCurrency(portfolio.net_worth)

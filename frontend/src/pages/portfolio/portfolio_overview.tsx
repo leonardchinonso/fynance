@@ -55,19 +55,20 @@ export function PortfolioOverview({
   const avgIncome = totalIncome / monthCount
   const avgSpending = totalSpending / monthCount
 
-  // Stocks breakdown (aggregate holdings by symbol)
-  const holdingsBySymbol = new Map<string, { name: string; value: number }>()
+  // Stocks breakdown (aggregate holdings by short_name)
+  const holdingsByName = new Map<string, { value: number; fullName: string }>()
   for (const h of holdings) {
-    const existing = holdingsBySymbol.get(h.symbol)
+    const key = h.short_name
+    const existing = holdingsByName.get(key)
     if (existing) {
       existing.value += parseFloat(h.value)
     } else {
-      holdingsBySymbol.set(h.symbol, { name: h.name, value: parseFloat(h.value) })
+      holdingsByName.set(key, { value: parseFloat(h.value), fullName: h.name })
     }
   }
-  const stocksData = Array.from(holdingsBySymbol.entries())
-    .map(([symbol, { name, value }]) => ({
-      name: `${symbol} (${name.length > 20 ? name.substring(0, 20) + "..." : name})`,
+  const stocksData = Array.from(holdingsByName.entries())
+    .map(([shortName, { value }]) => ({
+      name: shortName,
       value: parseFloat(value.toFixed(2)),
     }))
     .sort((a, b) => b.value - a.value)
