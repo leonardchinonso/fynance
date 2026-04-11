@@ -90,7 +90,7 @@ This ensures:
 
 ### Port Selection
 
-Default port: `3000`. If taken, the server tries `3001`..`3009` and reports which port it bound to:
+Default port: `7433`. If taken, the server tries `7434`..`7442` and reports which port it bound to:
 
 ```
 fynance: server started at http://localhost:3001
@@ -132,7 +132,11 @@ If the key is absent, categorization falls back to rules-only mode and a warning
 
 ---
 
-## Claude API Data Minimization
+## AI Data Flow
+
+For MVP, the fynance binary makes no outbound API calls. All AI processing (categorization, data extraction from screenshots) happens in external agents that push data through the REST API. The binary is a pure data store and UI server.
+
+<!-- DEFERRED: Claude API Data Minimization (for when internal AI is added post-MVP)
 
 When sending transactions to Claude for categorization:
 
@@ -147,18 +151,55 @@ Description: "LIDL GB LONDON"
 Categories: [Food: Groceries, Food: Dining & Bars, Shopping: General, ...]
 Return only the category name.
 ```
+-->
 
 ---
 
 ## Authentication
 
-For MVP: **no authentication**. The server is loopback-only; anyone who can reach `localhost` is the OS user. This is the same model as local dev servers (Vite, Rails, Django dev server).
+### Browser UI (No Auth)
 
-If authentication is needed in the future (e.g., a household with multiple OS users on the same account), options include:
-- A random token embedded in the server URL at startup (e.g., `http://localhost:3000/?token=<random>`)
-- HTTP Basic Auth with a locally-generated password stored in the OS keychain
+Browser requests from localhost require no authentication. The loopback binding is the trust boundary, same as local dev servers (Vite, Rails, Django). Anyone who can reach `localhost` is the OS user.
 
-These are out of scope for MVP.
+### Programmatic API Access (Token Auth)
+
+Scripts, agents, and automation tools authenticate via bearer tokens. Tokens are generated locally via the CLI and stored as SHA-256 hashes in the database.
+
+```bash
+fynance token create --name "import-script"
+# Token: fyn_a1b2c3d4e5f6...  (displayed once)
+```
+
+Usage:
+```bash
+curl -H "Authorization: Bearer fyn_..." http://localhost:7433/api/import/csv -F file=@data.csv
+```
+
+Token security:
+- Tokens are prefixed with `fyn_` for easy identification in logs and config
+- Only the SHA-256 hash is stored in the DB, never the raw token
+- Tokens can be revoked via `fynance token revoke --name <name>`
+- Token last-used timestamp is recorded for auditing
+- Tokens are scoped to the local instance only
+
+This allows agents (e.g., a Claude Code script) to push CSV files or screenshots to the API without exposing the full UI.
+
+---
+
+## Future Improvements
+
+Potential security enhancements for later phases, once the MVP is stable:
+
+1. **Optional browser UI authentication**: Add an optional password or PIN gate for the web UI. Currently loopback binding is the trust boundary, but this would add protection in shared-machine scenarios or when running in Docker with `0.0.0.0` binding. Options include:
+   - A random token embedded in the server URL at startup (e.g., `http://localhost:7433/?token=<random>`)
+   - HTTP Basic Auth with a locally-generated password stored in the OS keychain
+   - A simple session cookie with a locally-set password or PIN
+
+2. **HTTPS support**: Add optional TLS termination for the Axum server, useful when accessing the Docker deployment over a LAN or through a reverse proxy.
+
+3. **Token scoping**: Restrict API tokens to specific endpoints or actions (e.g., read-only tokens, import-only tokens) rather than full API access.
+
+4. **Audit log**: Record all data-modifying operations (imports, category changes, balance updates) with timestamps and source (UI, API token name, CLI).
 
 ---
 
@@ -169,6 +210,9 @@ These are out of scope for MVP.
 | DB readable by other OS users | `chmod 700` on data dir, `chmod 600` on DB file |
 | Server accessible from LAN | Bind to `127.0.0.1` only |
 | CORS from other origins | CORS limited to `localhost:<port>` |
-| API key exposure | Env var or `chmod 600` config file; never logged or stored in DB |
-| Raw transaction data sent to Claude | Only normalized descriptions, never amounts or dates |
-| Telemetry | None. No calls except explicit Claude API categorization. |
+<!-- DEFERRED: | API key exposure | Env var or `chmod 600` config file; never logged or stored in DB | -->
+<!-- DEFERRED: | Raw transaction data sent to Claude | Only normalized descriptions, never amounts or dates | -->
+| Outbound network calls | None. The binary makes zero outbound calls. All AI happens in external agents. |
+| Programmatic API access | Bearer token auth; tokens stored as SHA-256 hashes |
+| Single port for UI + API | One port serves the web UI and REST API. No need for multiple exposed ports. |
+| Telemetry | None. No outbound calls of any kind. |
