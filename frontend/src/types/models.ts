@@ -47,7 +47,7 @@ export interface Account {
   balance_date: string | null // YYYY-MM-DD
   is_active: boolean
   notes: string | null
-  profile_id: string
+  profile_ids: string[] // owners of this account (supports joint accounts)
 }
 
 export interface Budget {

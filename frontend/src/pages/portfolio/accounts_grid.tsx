@@ -38,12 +38,19 @@ export function AccountsGrid({
 }: AccountsGridProps) {
   const [selectedNonInvestment, setSelectedNonInvestment] = useState<Account | null>(null)
 
-  // Group by profile
+  // Group by profile, with joint accounts in their own section
   const byProfile = new Map<string, Account[]>()
   for (const a of accounts) {
-    const arr = byProfile.get(a.profile_id) ?? []
-    arr.push(a)
-    byProfile.set(a.profile_id, arr)
+    if (a.profile_ids.length > 1) {
+      const arr = byProfile.get("joint") ?? []
+      arr.push(a)
+      byProfile.set("joint", arr)
+    } else {
+      const pid = a.profile_ids[0] ?? "unknown"
+      const arr = byProfile.get(pid) ?? []
+      arr.push(a)
+      byProfile.set(pid, arr)
+    }
   }
 
   // Compute delta from earliest snapshot for each account
@@ -70,12 +77,15 @@ export function AccountsGrid({
   return (
     <>
       <div className="space-y-6">
-        {Array.from(byProfile.entries()).map(([profileId, accs]) => {
-          const profile = profiles.find((p) => p.id === profileId)
+        {Array.from(byProfile.entries()).map(([groupId, accs]) => {
+          const label =
+            groupId === "joint"
+              ? "Joint Accounts"
+              : profiles.find((p) => p.id === groupId)?.name ?? groupId
           return (
-            <div key={profileId}>
+            <div key={groupId}>
               <h3 className="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                {profile?.name ?? profileId}
+                {label}
               </h3>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {accs.map((account) => (

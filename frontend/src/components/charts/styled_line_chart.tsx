@@ -7,6 +7,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  Brush,
+  ReferenceLine,
 } from "recharts"
 import { ChartTooltip } from "./chart_tooltip"
 import { formatCurrency } from "@/lib/utils"
@@ -26,10 +28,14 @@ interface StyledLineChartProps {
   curved?: boolean
   showLegend?: boolean
   connectNulls?: boolean
+  showBrush?: boolean
+  highlightIndex?: number | null
+  onBrushChange?: (startIndex: number, endIndex: number) => void
 }
 
 /**
- * Styled Recharts LineChart with smooth curves and Tremor-like design.
+ * Styled Recharts LineChart with smooth curves, optional brush for
+ * range selection, and highlighted index for table-chart sync.
  */
 export function StyledLineChart({
   data,
@@ -41,10 +47,18 @@ export function StyledLineChart({
   curved = true,
   showLegend = true,
   connectNulls = false,
+  showBrush = false,
+  highlightIndex,
+  onBrushChange,
 }: StyledLineChartProps) {
+  const highlightLabel =
+    highlightIndex !== null && highlightIndex !== undefined
+      ? (data[highlightIndex]?.[index] as string)
+      : undefined
+
   return (
     <div className={className}>
-      <ResponsiveContainer width="100%" height={height}>
+      <ResponsiveContainer width="100%" height={height + (showBrush ? 40 : 0)}>
         <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid
             strokeDasharray="3 3"
@@ -74,6 +88,16 @@ export function StyledLineChart({
               )}
             />
           )}
+          {/* Highlight line for table hover sync */}
+          {highlightLabel && (
+            <ReferenceLine
+              x={highlightLabel}
+              stroke="hsl(var(--foreground))"
+              strokeWidth={1.5}
+              strokeDasharray="4 4"
+              opacity={0.5}
+            />
+          )}
           {categories.map((cat, i) => (
             <Line
               key={cat}
@@ -88,6 +112,34 @@ export function StyledLineChart({
               connectNulls={connectNulls}
             />
           ))}
+          {showBrush && (
+            <Brush
+              dataKey={index}
+              height={28}
+              stroke="hsl(var(--border))"
+              fill="hsl(var(--muted))"
+              travellerWidth={8}
+              onChange={(range) => {
+                if (onBrushChange && range.startIndex !== undefined && range.endIndex !== undefined) {
+                  onBrushChange(range.startIndex, range.endIndex)
+                }
+              }}
+            >
+              {/* Mini chart inside the brush */}
+              <LineChart data={data}>
+                {categories.slice(0, 1).map((cat, i) => (
+                  <Line
+                    key={cat}
+                    type="monotone"
+                    dataKey={cat}
+                    stroke={colors[i % colors.length]}
+                    strokeWidth={1}
+                    dot={false}
+                  />
+                ))}
+              </LineChart>
+            </Brush>
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>

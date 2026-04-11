@@ -45,7 +45,7 @@ export class MockApiService implements ApiService {
     // Filter by profile (via account ownership)
     if (filters.profile_id) {
       const profileAccounts = new Set(
-        MOCK_ACCOUNTS.filter((a) => a.profile_id === filters.profile_id).map(
+        MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(filters.profile_id!)).map(
           (a) => a.id
         )
       )
@@ -88,7 +88,7 @@ export class MockApiService implements ApiService {
   async getAccounts(profileId?: string): Promise<Account[]> {
     await delay(DELAY_MS)
     if (profileId) {
-      return MOCK_ACCOUNTS.filter((a) => a.profile_id === profileId)
+      return MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(profileId!))
     }
     return MOCK_ACCOUNTS
   }
@@ -216,7 +216,7 @@ export class MockApiService implements ApiService {
     await delay(DELAY_MS)
 
     const accounts = profileId
-      ? MOCK_ACCOUNTS.filter((a) => a.profile_id === profileId)
+      ? MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(profileId!))
       : MOCK_ACCOUNTS
 
     let totalAssets = 0

@@ -29,6 +29,7 @@ Active -- planning phase, no implementation yet.
 - **Liability account types**: Mortgage balance and credit card balance as negative-balance accounts. AccountType may need 'mortgage' or a general 'liability' type. Home equity = home value holding - mortgage account - HTB loan account. HoldingType may need 'property' for home value tracking.
 - **Tax calcs for RSU forecasting**: Employer NI rate, tax rate, NI charge applied to gross RSU vesting to project net shares/value. Future forecasting endpoint.
 - **Multi-profile data model**: Frontend currently adds a `profile_id` to Account. Need to decide if this is a first-class DB concept or handled in the application layer.
+- **Joint accounts**: Some accounts are owned jointly (e.g. a joint bank account, shared savings). A joint account should appear when filtering to either owner's profile, and should display in a separate "Joint" section in the accounts grid. Model change: `Account.profile_id` becomes `Account.profile_ids: string[]` (array of profile IDs), or a separate `account_owners` join table mapping account IDs to profile IDs. The frontend filters accounts by checking if the selected profile is in the owner list. A "Joint" section groups accounts with more than one owner.
 
 ## Contributors
 - Ope (Zaida-3dO): frontend focus, UI/UX requirements, Obsidian integration
