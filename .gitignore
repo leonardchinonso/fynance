@@ -2,9 +2,13 @@
 /.claude/
 .env
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
 
 # Added by cargo
 #
 # already existing elements were commented out
 
 #/target
+.playwright-mcp/
