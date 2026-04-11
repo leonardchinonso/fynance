@@ -7,10 +7,8 @@ import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
 import { LoadingSpinner } from "@/components/loading_spinner"
 import { BudgetSpreadsheet } from "./budget/budget_spreadsheet"
-import { BudgetStackedBar } from "./budget/budget_stacked_bar"
-import { BudgetLineChart } from "./budget/budget_line_chart"
-import { BudgetPieChart } from "./budget/budget_pie_chart"
-import { Grid3X3, BarChart3, LineChart, PieChart, Info } from "lucide-react"
+import { BudgetCharts } from "./budget/budget_charts"
+import { Grid3X3, BarChart3, Info } from "lucide-react"
 import { getMonthsInRange } from "@/lib/utils"
 import { Card, CardContent } from "@/components/ui/card"
 
@@ -21,12 +19,10 @@ const VIEW_MODES = [
     icon: <Grid3X3 className="h-4 w-4" />,
   },
   {
-    value: "stacked-bar",
-    label: "Stacked Bar",
+    value: "charts",
+    label: "Charts",
     icon: <BarChart3 className="h-4 w-4" />,
   },
-  { value: "line", label: "Line", icon: <LineChart className="h-4 w-4" /> },
-  { value: "pie", label: "Pie", icon: <PieChart className="h-4 w-4" /> },
 ]
 
 export function BudgetPage() {
@@ -37,7 +33,6 @@ export function BudgetPage() {
 
   const months = getMonthsInRange(start, end)
 
-  // Fetch spending grid for all views
   useEffect(() => {
     setLoading(true)
     api.getSpendingGrid(start, end, granularity, profileId).then((rows) => {
@@ -46,14 +41,19 @@ export function BudgetPage() {
     })
   }, [start, end, granularity, profileId])
 
-  // Default to spreadsheet view
+  // Map old view names to new ones
   const activeView =
-    view === "table" || view === "progress" ? "spreadsheet" : view
+    view === "stacked-bar" || view === "line" || view === "pie" || view === "charts"
+      ? "charts"
+      : "spreadsheet"
+
+  // Hide granularity on charts view (pie doesn't use it, and the charts handle it internally)
+  const showGranularity = activeView === "spreadsheet"
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <DateRangeSelector showGranularity={activeView !== "pie"} />
+        <DateRangeSelector showGranularity={showGranularity} />
         <div className="flex-1" />
         <ViewModeSwitcher
           modes={VIEW_MODES}
@@ -69,12 +69,8 @@ export function BudgetPage() {
         <EmptyState message="No spending data for the selected date range." />
       ) : activeView === "spreadsheet" ? (
         <BudgetSpreadsheet rows={gridRows} months={months} granularity={granularity} />
-      ) : activeView === "stacked-bar" ? (
-        <BudgetStackedBar rows={gridRows} months={months} granularity={granularity} />
-      ) : activeView === "line" ? (
-        <BudgetLineChart rows={gridRows} months={months} granularity={granularity} />
-      ) : activeView === "pie" ? (
-        <BudgetPieChart rows={gridRows} />
+      ) : activeView === "charts" ? (
+        <BudgetCharts rows={gridRows} months={months} granularity={granularity} />
       ) : null}
     </div>
   )
