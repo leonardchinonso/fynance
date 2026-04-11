@@ -30,7 +30,7 @@ const VIEW_MODES = [
 ]
 
 export function BudgetPage() {
-  const { start, end, view, setView, granularity } = useUrlFilters()
+  const { start, end, view, setView, granularity, profileId } = useUrlFilters()
 
   const [gridRows, setGridRows] = useState<SpendingGridRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,11 +40,11 @@ export function BudgetPage() {
   // Fetch spending grid for all views
   useEffect(() => {
     setLoading(true)
-    api.getSpendingGrid(start, end, granularity).then((rows) => {
+    api.getSpendingGrid(start, end, granularity, profileId).then((rows) => {
       setGridRows(rows)
       setLoading(false)
     })
-  }, [start, end, granularity])
+  }, [start, end, granularity, profileId])
 
   // Default to spreadsheet view
   const activeView =
@@ -53,7 +53,7 @@ export function BudgetPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <DateRangeSelector showGranularity />
+        <DateRangeSelector showGranularity={activeView !== "pie"} />
         <div className="flex-1" />
         <ViewModeSwitcher
           modes={VIEW_MODES}
@@ -68,11 +68,11 @@ export function BudgetPage() {
       ) : gridRows.length === 0 ? (
         <EmptyState message="No spending data for the selected date range." />
       ) : activeView === "spreadsheet" ? (
-        <BudgetSpreadsheet rows={gridRows} months={months} />
+        <BudgetSpreadsheet rows={gridRows} months={months} granularity={granularity} />
       ) : activeView === "stacked-bar" ? (
-        <BudgetStackedBar rows={gridRows} months={months} />
+        <BudgetStackedBar rows={gridRows} months={months} granularity={granularity} />
       ) : activeView === "line" ? (
-        <BudgetLineChart rows={gridRows} months={months} />
+        <BudgetLineChart rows={gridRows} months={months} granularity={granularity} />
       ) : activeView === "pie" ? (
         <BudgetPieChart rows={gridRows} />
       ) : null}

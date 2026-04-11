@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { PortfolioHistoryRow } from "@/types"
+import type { PortfolioHistoryRow, Granularity } from "@/types"
 import { StyledLineChart } from "@/components/charts"
 import {
   Table,
@@ -9,31 +9,73 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatCurrency, formatMonthShort } from "@/lib/utils"
+import { formatCurrency, getQuarter, getYear } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 
 interface PortfolioHistoryProps {
   history: PortfolioHistoryRow[]
+  granularity: Granularity
 }
 
-export function PortfolioHistory({ history }: PortfolioHistoryProps) {
+function aggregateHistory(
+  history: PortfolioHistoryRow[],
+  granularity: Granularity
+): PortfolioHistoryRow[] {
+  if (granularity === "monthly") return history
+
+  const keyFn = granularity === "quarterly" ? getQuarter : getYear
+  const groups = new Map<
+    string,
+    { available: number; unavailable: number; count: number }
+  >()
+  const orderedKeys: string[] = []
+
+  for (const row of history) {
+    const key = keyFn(row.month)
+    if (!groups.has(key)) {
+      groups.set(key, { available: 0, unavailable: 0, count: 0 })
+      orderedKeys.push(key)
+    }
+    const g = groups.get(key)!
+    // For quarterly/yearly, use the last month's values (point-in-time snapshot)
+    g.available = parseFloat(row.available_wealth)
+    g.unavailable = parseFloat(row.unavailable_wealth)
+    g.count++
+  }
+
+  return orderedKeys.map((key) => {
+    const g = groups.get(key)!
+    return {
+      month: key,
+      available_wealth: g.available.toFixed(2),
+      unavailable_wealth: g.unavailable.toFixed(2),
+      total_wealth: (g.available + g.unavailable).toFixed(2),
+    }
+  })
+}
+
+export function PortfolioHistory({ history, granularity }: PortfolioHistoryProps) {
   const [hoveredRowIndex, setHoveredRowIndex] = useState<number | null>(null)
-  const [brushRange, setBrushRange] = useState<{ start: number; end: number } | null>(null)
 
   // Filter out months where total wealth is 0 (no data yet)
   const filtered = history.filter((row) => parseFloat(row.total_wealth) > 0)
 
-  // Apply brush range filter
-  const displayed = brushRange
-    ? filtered.slice(brushRange.start, brushRange.end + 1)
-    : filtered
+  // Aggregate by granularity
+  const aggregated = aggregateHistory(filtered, granularity)
 
-  const chartData = filtered.map((row) => ({
-    month: formatMonthShort(row.month),
+  const chartData = aggregated.map((row) => ({
+    period: row.month,
     Available: parseFloat(row.available_wealth),
     Unavailable: parseFloat(row.unavailable_wealth),
     Total: parseFloat(row.total_wealth),
   }))
+
+  const periodLabel =
+    granularity === "monthly"
+      ? "Month"
+      : granularity === "quarterly"
+        ? "Quarter"
+        : "Year"
 
   return (
     <div className="space-y-6">
@@ -43,37 +85,28 @@ export function PortfolioHistory({ history }: PortfolioHistoryProps) {
           <h3 className="text-sm font-medium text-muted-foreground">
             Portfolio History
           </h3>
-          {brushRange && (
-            <button
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => setBrushRange(null)}
-            >
-              Reset zoom
-            </button>
-          )}
         </div>
         <StyledLineChart
           data={chartData}
-          index="month"
+          index="period"
           categories={["Total", "Available", "Unavailable"]}
           colors={["#22c55e", "#3b82f6", "#f97316"]}
           height={340}
           curved
           showBrush
           highlightIndex={hoveredRowIndex}
-          onBrushChange={(start, end) => setBrushRange({ start, end })}
         />
         <p className="mt-2 text-xs text-muted-foreground">
           Drag the handles below the chart to zoom into a date range. Hover over table rows to highlight on the chart.
         </p>
       </div>
 
-      {/* History table with hover sync */}
+      {/* History table */}
       <div className="overflow-x-auto rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Month</TableHead>
+              <TableHead>{periodLabel}</TableHead>
               <TableHead className="text-right">Available Wealth</TableHead>
               <TableHead className="text-right">Unavailable Wealth</TableHead>
               <TableHead className="text-right">Total Wealth</TableHead>
@@ -81,10 +114,8 @@ export function PortfolioHistory({ history }: PortfolioHistoryProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {displayed.map((row, i) => {
-              // Find the index in the full chartData array for highlight sync
-              const chartIndex = filtered.findIndex((r) => r.month === row.month)
-              const prevRow = i > 0 ? displayed[i - 1] : null
+            {aggregated.map((row, i) => {
+              const prevRow = i > 0 ? aggregated[i - 1] : null
               const change = prevRow
                 ? parseFloat(row.total_wealth) - parseFloat(prevRow.total_wealth)
                 : null
@@ -94,14 +125,12 @@ export function PortfolioHistory({ history }: PortfolioHistoryProps) {
                   key={row.month}
                   className={cn(
                     "cursor-pointer transition-colors",
-                    hoveredRowIndex === chartIndex && "bg-muted/50"
+                    hoveredRowIndex === i && "bg-muted/50"
                   )}
-                  onMouseEnter={() => setHoveredRowIndex(chartIndex)}
+                  onMouseEnter={() => setHoveredRowIndex(i)}
                   onMouseLeave={() => setHoveredRowIndex(null)}
                 >
-                  <TableCell className="font-medium">
-                    {formatMonthShort(row.month)}
-                  </TableCell>
+                  <TableCell className="font-medium">{row.month}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatCurrency(row.available_wealth)}
                   </TableCell>

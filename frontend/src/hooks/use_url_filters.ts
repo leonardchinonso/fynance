@@ -61,7 +61,10 @@ export function useUrlFilters() {
   const end = searchParams.get("end") || defaultRange.end
   const view = searchParams.get("view") || "table"
   const granularity = (searchParams.get("granularity") as Granularity) || "monthly"
-  const profileId = searchParams.get("profile") || undefined
+  // Profile persists across page navigation via localStorage
+  const urlProfile = searchParams.get("profile")
+  const storedProfile = typeof window !== "undefined" ? localStorage.getItem("fynance-profile") : null
+  const profileId = urlProfile || storedProfile || undefined
   const page = parseInt(searchParams.get("page") || "1", 10)
 
   const accounts = searchParams.get("accounts")
@@ -70,6 +73,7 @@ export function useUrlFilters() {
   const categories = searchParams.get("categories")
     ? searchParams.get("categories")!.split(",")
     : []
+  const search = searchParams.get("search") || ""
 
   const setFilter = useCallback(
     (updates: Record<string, string | undefined>) => {
@@ -112,7 +116,14 @@ export function useUrlFilters() {
   )
 
   const setProfileId = useCallback(
-    (id: string | undefined) => setFilter({ profile: id }),
+    (id: string | undefined) => {
+      if (id) {
+        localStorage.setItem("fynance-profile", id)
+      } else {
+        localStorage.removeItem("fynance-profile")
+      }
+      setFilter({ profile: id })
+    },
     [setFilter]
   )
 
@@ -128,6 +139,11 @@ export function useUrlFilters() {
     [setFilter]
   )
 
+  const setSearch = useCallback(
+    (q: string) => setFilter({ search: q || undefined, page: "1" }),
+    [setFilter]
+  )
+
   return {
     start,
     end,
@@ -138,8 +154,10 @@ export function useUrlFilters() {
     page,
     accounts,
     categories,
+    search,
     setFilter,
     setPreset,
+    setSearch,
     setView,
     setGranularity,
     setPage,

@@ -14,9 +14,9 @@ import { Button } from "@/components/ui/button"
 import { Sun, Moon, Monitor } from "lucide-react"
 
 const NAV_ITEMS = [
-  { to: "/transactions", label: "Transactions" },
-  { to: "/budget", label: "Budget" },
   { to: "/portfolio", label: "Portfolio" },
+  { to: "/budget", label: "Budget" },
+  { to: "/transactions", label: "Transactions" },
   { to: "/reports", label: "Reports" },
 ]
 

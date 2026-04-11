@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import type { PortfolioResponse, PortfolioHistoryRow } from "@/types"
+import type { PortfolioResponse, PortfolioHistoryRow, PortfolioSnapshot } from "@/types"
 import { api } from "@/api/client"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { useProfiles } from "@/context/profile_context"
@@ -38,11 +38,12 @@ const VIEW_MODES = [
 ]
 
 export function PortfolioPage() {
-  const { view, setView, profileId, start, end } = useUrlFilters()
+  const { view, setView, profileId, start, end, granularity } = useUrlFilters()
   const { profiles } = useProfiles()
 
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null)
   const [history, setHistory] = useState<PortfolioHistoryRow[]>([])
+  const [accountSnapshots, setAccountSnapshots] = useState<PortfolioSnapshot[]>([])
   const [loading, setLoading] = useState(true)
 
   // Holdings drill-down state
@@ -58,9 +59,11 @@ export function PortfolioPage() {
     Promise.all([
       api.getPortfolio(profileId),
       api.getPortfolioHistory(start, end),
-    ]).then(([p, h]) => {
+      api.getAccountSnapshots(start, end),
+    ]).then(([p, h, snaps]) => {
       setPortfolio(p)
       setHistory(h)
+      setAccountSnapshots(snaps)
       setLoading(false)
     })
   }, [profileId, start, end])
@@ -77,7 +80,7 @@ export function PortfolioPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <DateRangeSelector showGranularity />
+        <DateRangeSelector showGranularity={activeView === "history"} />
         <div className="flex-1" />
         <ViewModeSwitcher
           modes={VIEW_MODES}
@@ -101,12 +104,12 @@ export function PortfolioPage() {
           accounts={portfolio.accounts}
           onAccountClick={setSelectedAccountId}
           profiles={profiles}
-          startDate={start}
+          snapshots={accountSnapshots}
         />
       ) : activeView === "charts" ? (
         <PortfolioCharts portfolio={portfolio} />
       ) : activeView === "history" ? (
-        <PortfolioHistory history={history} />
+        <PortfolioHistory history={history} granularity={granularity} />
       ) : null}
 
       {/* Holdings drill-down sheet */}

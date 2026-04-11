@@ -212,11 +212,11 @@ function AccountDetailSheet({
 
   return (
     <Sheet open={!!account} onOpenChange={() => onClose()}>
-      <SheetContent className="w-full sm:max-w-md overflow-y-auto">
-        <SheetHeader>
+      <SheetContent className="w-full sm:max-w-md overflow-y-auto px-6">
+        <SheetHeader className="pb-4">
           <SheetTitle>{account.name}</SheetTitle>
         </SheetHeader>
-        <div className="mt-4 space-y-4">
+        <div className="space-y-4">
           <div className="space-y-2">
             <DetailRow label="Institution" value={account.institution} />
             <DetailRow

@@ -1,206 +1,67 @@
 import type { PortfolioSnapshot } from "@/types"
 
-interface SnapshotSeed {
+// Generate monthly snapshots from Jan 2024 to Mar 2026 for all accounts.
+// Each account has a base value and a growth pattern with some variation.
+
+interface AccountSeed {
   account_id: string
-  balances: Record<string, string>
+  startBalance: number // Jan 2024 value
+  monthlyGrowth: number // average monthly growth rate (0.01 = 1%)
+  volatility: number // random variation factor
 }
 
-const SNAPSHOT_SEEDS: SnapshotSeed[] = [
-  {
-    account_id: "monzo-current",
-    balances: {
-      "2025-04": "2800.00",
-      "2025-05": "3100.00",
-      "2025-06": "2950.00",
-      "2025-07": "3200.00",
-      "2025-08": "2700.00",
-      "2025-09": "3050.00",
-      "2025-10": "3300.00",
-      "2025-11": "2850.00",
-      "2025-12": "3400.00",
-      "2026-01": "2900.00",
-      "2026-02": "3000.00",
-      "2026-03": "3120.45",
-    },
-  },
-  {
-    account_id: "revolut-current",
-    balances: {
-      "2025-04": "1200.00",
-      "2025-05": "1350.00",
-      "2025-06": "1100.00",
-      "2025-07": "1480.00",
-      "2025-08": "1600.00",
-      "2025-09": "1320.00",
-      "2025-10": "1450.00",
-      "2025-11": "1700.00",
-      "2025-12": "1280.00",
-      "2026-01": "1550.00",
-      "2026-02": "1400.00",
-      "2026-03": "1540.80",
-    },
-  },
-  {
-    account_id: "lloyds-savings",
-    balances: {
-      "2025-04": "10000.00",
-      "2025-05": "10500.00",
-      "2025-06": "11000.00",
-      "2025-07": "11500.00",
-      "2025-08": "12000.00",
-      "2025-09": "12500.00",
-      "2025-10": "13000.00",
-      "2025-11": "13500.00",
-      "2025-12": "14000.00",
-      "2026-01": "14500.00",
-      "2026-02": "15000.00",
-      "2026-03": "15200.00",
-    },
-  },
-  {
-    account_id: "t212-isa-alex",
-    balances: {
-      "2025-04": "28000.00",
-      "2025-05": "30200.00",
-      "2025-06": "32500.00",
-      "2025-07": "31800.00",
-      "2025-08": "34100.00",
-      "2025-09": "36400.00",
-      "2025-10": "35200.00",
-      "2025-11": "38000.00",
-      "2025-12": "37100.00",
-      "2026-01": "39500.00",
-      "2026-02": "41200.00",
-      "2026-03": "42850.00",
-    },
-  },
-  {
-    account_id: "premium-bonds",
-    balances: {
-      "2025-04": "5000.00",
-      "2025-05": "5000.00",
-      "2025-06": "7500.00",
-      "2025-07": "7500.00",
-      "2025-08": "7500.00",
-      "2025-09": "10000.00",
-      "2025-10": "10000.00",
-      "2025-11": "10000.00",
-      "2025-12": "10000.00",
-      "2026-01": "10000.00",
-      "2026-02": "10000.00",
-      "2026-03": "10000.00",
-    },
-  },
-  {
-    account_id: "pension-alex",
-    balances: {
-      "2025-04": "48000.00",
-      "2025-05": "49200.00",
-      "2025-06": "50500.00",
-      "2025-07": "51800.00",
-      "2025-08": "53000.00",
-      "2025-09": "54300.00",
-      "2025-10": "55100.00",
-      "2025-11": "56000.00",
-      "2025-12": "56800.00",
-      "2026-01": "57200.00",
-      "2026-02": "57800.00",
-      "2026-03": "58400.00",
-    },
-  },
-  {
-    account_id: "monzo-sam",
-    balances: {
-      "2025-04": "2200.00",
-      "2025-05": "2400.00",
-      "2025-06": "2100.00",
-      "2025-07": "2550.00",
-      "2025-08": "2300.00",
-      "2025-09": "2650.00",
-      "2025-10": "2800.00",
-      "2025-11": "2500.00",
-      "2025-12": "2900.00",
-      "2026-01": "2700.00",
-      "2026-02": "2750.00",
-      "2026-03": "2870.33",
-    },
-  },
-  {
-    account_id: "t212-isa-sam",
-    balances: {
-      "2025-04": "18000.00",
-      "2025-05": "19500.00",
-      "2025-06": "21000.00",
-      "2025-07": "20500.00",
-      "2025-08": "22000.00",
-      "2025-09": "23500.00",
-      "2025-10": "24000.00",
-      "2025-11": "25200.00",
-      "2025-12": "24800.00",
-      "2026-01": "26500.00",
-      "2026-02": "27800.00",
-      "2026-03": "28600.00",
-    },
-  },
-  {
-    account_id: "pension-sam",
-    balances: {
-      "2025-04": "32000.00",
-      "2025-05": "33200.00",
-      "2025-06": "34500.00",
-      "2025-07": "35800.00",
-      "2025-08": "36500.00",
-      "2025-09": "37400.00",
-      "2025-10": "38200.00",
-      "2025-11": "39000.00",
-      "2025-12": "39800.00",
-      "2026-01": "40200.00",
-      "2026-02": "40700.00",
-      "2026-03": "41200.00",
-    },
-  },
-  {
-    account_id: "joint-savings",
-    balances: {
-      "2025-04": "5000.00",
-      "2025-05": "5500.00",
-      "2025-06": "6000.00",
-      "2025-07": "6200.00",
-      "2025-08": "6500.00",
-      "2025-09": "6800.00",
-      "2025-10": "7000.00",
-      "2025-11": "7300.00",
-      "2025-12": "7500.00",
-      "2026-01": "7800.00",
-      "2026-02": "8200.00",
-      "2026-03": "8500.00",
-    },
-  },
-  {
-    account_id: "joint-current",
-    balances: {
-      "2025-04": "1500.00",
-      "2025-05": "1600.00",
-      "2025-06": "1450.00",
-      "2025-07": "1700.00",
-      "2025-08": "1550.00",
-      "2025-09": "1650.00",
-      "2025-10": "1800.00",
-      "2025-11": "1750.00",
-      "2025-12": "1900.00",
-      "2026-01": "1700.00",
-      "2026-02": "1850.00",
-      "2026-03": "1820.50",
-    },
-  },
+const ACCOUNT_SEEDS: AccountSeed[] = [
+  { account_id: "monzo-current", startBalance: 2200, monthlyGrowth: 0.005, volatility: 0.15 },
+  { account_id: "revolut-current", startBalance: 900, monthlyGrowth: 0.008, volatility: 0.2 },
+  { account_id: "lloyds-savings", startBalance: 5000, monthlyGrowth: 0.03, volatility: 0.02 },
+  { account_id: "t212-isa-alex", startBalance: 18000, monthlyGrowth: 0.025, volatility: 0.06 },
+  { account_id: "premium-bonds", startBalance: 3000, monthlyGrowth: 0.02, volatility: 0.01 },
+  { account_id: "pension-alex", startBalance: 38000, monthlyGrowth: 0.012, volatility: 0.03 },
+  { account_id: "monzo-sam", startBalance: 1500, monthlyGrowth: 0.006, volatility: 0.18 },
+  { account_id: "t212-isa-sam", startBalance: 12000, monthlyGrowth: 0.022, volatility: 0.05 },
+  { account_id: "pension-sam", startBalance: 24000, monthlyGrowth: 0.013, volatility: 0.03 },
+  { account_id: "joint-savings", startBalance: 2000, monthlyGrowth: 0.04, volatility: 0.03 },
+  { account_id: "joint-current", startBalance: 1200, monthlyGrowth: 0.005, volatility: 0.12 },
 ]
 
-export const MOCK_PORTFOLIO_SNAPSHOTS: PortfolioSnapshot[] =
-  SNAPSHOT_SEEDS.flatMap((seed) =>
-    Object.entries(seed.balances).map(([month, balance]) => ({
-      snapshot_date: `${month}-01`,
-      account_id: seed.account_id,
-      balance,
-      currency: "GBP",
-    }))
-  )
+const MONTHS: string[] = []
+for (let y = 2024; y <= 2026; y++) {
+  const maxMonth = y === 2026 ? 3 : 12
+  for (let m = 1; m <= maxMonth; m++) {
+    MONTHS.push(`${y}-${m.toString().padStart(2, "0")}`)
+  }
+}
+
+// Deterministic pseudo-random
+function seededRandom(seed: number): () => number {
+  let s = seed
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff
+    return (s >>> 0) / 0xffffffff
+  }
+}
+
+function generateSnapshots(): PortfolioSnapshot[] {
+  const snapshots: PortfolioSnapshot[] = []
+  const rand = seededRandom(123)
+
+  for (const seed of ACCOUNT_SEEDS) {
+    let balance = seed.startBalance
+    for (const month of MONTHS) {
+      snapshots.push({
+        snapshot_date: `${month}-01`,
+        account_id: seed.account_id,
+        balance: balance.toFixed(2),
+        currency: "GBP",
+      })
+      // Grow with some randomness
+      const variation = 1 + (rand() - 0.5) * 2 * seed.volatility
+      balance = balance * (1 + seed.monthlyGrowth) * variation
+      balance = Math.max(balance, 100) // floor
+    }
+  }
+
+  return snapshots
+}
+
+export const MOCK_PORTFOLIO_SNAPSHOTS: PortfolioSnapshot[] = generateSnapshots()

@@ -1,14 +1,19 @@
-import type { SpendingGridRow } from "@/types"
+import type { SpendingGridRow, Granularity } from "@/types"
 import { StyledLineChart } from "@/components/charts"
-import { formatMonthShort } from "@/lib/utils"
+import {
+  groupMonthsByGranularity,
+  getMonthsForPeriod,
+  formatPeriodKey,
+} from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 
 interface BudgetLineChartProps {
   rows: SpendingGridRow[]
   months: string[]
+  granularity: Granularity
 }
 
-export function BudgetLineChart({ rows, months }: BudgetLineChartProps) {
+export function BudgetLineChart({ rows, months, granularity }: BudgetLineChartProps) {
   const spendingRows = rows.filter(
     (r) => r.section === "Spending" || r.section === "Bills"
   )
@@ -17,21 +22,31 @@ export function BudgetLineChart({ rows, months }: BudgetLineChartProps) {
     new Set(spendingRows.map((r) => r.category.split(":")[0].trim()))
   ).slice(0, 8)
 
-  // Only include months that have at least one category with data
-  const monthsWithData = months.filter((m) =>
-    spendingRows.some((r) => r.months[m] !== null)
-  )
+  const periods = groupMonthsByGranularity(months, granularity)
 
-  const data = monthsWithData.map((m) => {
-    const entry: Record<string, string | number> = { month: formatMonthShort(m) }
+  // Only include periods that have data
+  const periodsWithData = periods.filter((p) => {
+    const periodMonths = getMonthsForPeriod(months, p, granularity)
+    return spendingRows.some((r) =>
+      periodMonths.some((m) => r.months[m] !== null)
+    )
+  })
+
+  const data = periodsWithData.map((p) => {
+    const periodMonths = getMonthsForPeriod(months, p, granularity)
+    const entry: Record<string, string | number> = {
+      period: formatPeriodKey(p, granularity),
+    }
     for (const cat of categories) {
       const catRows = spendingRows.filter(
         (r) => r.category.split(":")[0].trim() === cat
       )
       let total = 0
       for (const row of catRows) {
-        const val = row.months[m]
-        if (val !== null) total += Math.abs(parseFloat(val))
+        for (const m of periodMonths) {
+          const val = row.months[m]
+          if (val !== null) total += Math.abs(parseFloat(val))
+        }
       }
       entry[cat] = parseFloat(total.toFixed(2))
     }
@@ -47,7 +62,7 @@ export function BudgetLineChart({ rows, months }: BudgetLineChartProps) {
       </h3>
       <StyledLineChart
         data={data}
-        index="month"
+        index="period"
         categories={categories}
         colors={colors}
         height={340}

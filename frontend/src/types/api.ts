@@ -16,6 +16,7 @@ export interface TransactionFilters {
   end?: string // YYYY-MM-DD
   accounts?: string[] // account IDs
   categories?: string[] // category strings
+  search?: string // free-text search across merchant, category, account, notes
   page?: number
   limit?: number
   profile_id?: string

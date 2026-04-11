@@ -10,7 +10,8 @@ import { Currency } from "@/components/currency"
 import { TransactionTable } from "./transactions/transaction_table"
 import { TransactionBarChart } from "./transactions/transaction_bar_chart"
 import { TransactionPieChart } from "./transactions/transaction_pie_chart"
-import { Table2, BarChart3, PieChart } from "lucide-react"
+import { Table2, BarChart3, PieChart, Search } from "lucide-react"
+import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {
   Command,
@@ -108,6 +109,8 @@ export function TransactionsPage() {
     categories: selectedCategories,
     setCategories,
     profileId,
+    search,
+    setSearch,
   } = useUrlFilters()
 
   const [result, setResult] = useState<PaginatedResponse<Transaction> | null>(null)
@@ -131,6 +134,7 @@ export function TransactionsPage() {
         accounts: selectedAccounts.length > 0 ? selectedAccounts : undefined,
         categories:
           selectedCategories.length > 0 ? selectedCategories : undefined,
+        search: search || undefined,
         page,
         limit: 25,
         profile_id: profileId,
@@ -140,7 +144,7 @@ export function TransactionsPage() {
         setLoading(false)
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, end, accountsKey, categoriesKey, page, profileId])
+  }, [start, end, accountsKey, categoriesKey, search, page, profileId])
 
   // Fetch ALL transactions for chart views (no pagination)
   useEffect(() => {
@@ -151,13 +155,14 @@ export function TransactionsPage() {
         accounts: selectedAccounts.length > 0 ? selectedAccounts : undefined,
         categories:
           selectedCategories.length > 0 ? selectedCategories : undefined,
+        search: search || undefined,
         page: 1,
         limit: 10000,
         profile_id: profileId,
       })
       .then((r) => setAllTransactions(r.data))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, end, accountsKey, categoriesKey, profileId])
+  }, [start, end, accountsKey, categoriesKey, search, profileId])
 
   // Fetch filter options
   useEffect(() => {
@@ -187,6 +192,15 @@ export function TransactionsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search transactions..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-8 w-[200px] pl-8 text-sm"
+          />
+        </div>
         <MultiSelect
           label="Accounts"
           options={availableAccounts}
@@ -200,13 +214,14 @@ export function TransactionsPage() {
           selected={selectedCategories}
           onChange={setCategories}
         />
-        {(selectedAccounts.length > 0 || selectedCategories.length > 0) && (
+        {(selectedAccounts.length > 0 || selectedCategories.length > 0 || search) && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
               setAccounts([])
               setCategories([])
+              setSearch("")
             }}
           >
             Clear filters

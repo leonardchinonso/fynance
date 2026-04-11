@@ -1,4 +1,4 @@
-import type { SpendingGridRow } from "@/types"
+import type { SpendingGridRow, Granularity } from "@/types"
 import {
   Table,
   TableBody,
@@ -7,11 +7,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { cn, formatMonthShort, formatCurrency } from "@/lib/utils"
+import {
+  cn,
+  formatCurrency,
+  groupMonthsByGranularity,
+  getMonthsForPeriod,
+  formatPeriodKey,
+} from "@/lib/utils"
 
 interface BudgetSpreadsheetProps {
   rows: SpendingGridRow[]
   months: string[]
+  granularity: Granularity
 }
 
 function cellColor(value: string, budget: string | null): string {
@@ -26,7 +33,32 @@ function cellColor(value: string, budget: string | null): string {
   return ""
 }
 
-export function BudgetSpreadsheet({ rows, months }: BudgetSpreadsheetProps) {
+export function BudgetSpreadsheet({ rows, months, granularity }: BudgetSpreadsheetProps) {
+  const periods = groupMonthsByGranularity(months, granularity)
+
+  // For quarterly/yearly budgets, multiply the monthly budget by the number of months in the period
+  function getPeriodBudget(monthlyBudget: string | null, periodKey: string): string | null {
+    if (!monthlyBudget) return null
+    const periodMonths = getMonthsForPeriod(months, periodKey, granularity)
+    const multiplier = periodMonths.length
+    return (parseFloat(monthlyBudget) * multiplier).toFixed(2)
+  }
+
+  // Aggregate a row's values for a period
+  function getPeriodValue(row: SpendingGridRow, periodKey: string): string | null {
+    const periodMonths = getMonthsForPeriod(months, periodKey, granularity)
+    let total = 0
+    let hasData = false
+    for (const m of periodMonths) {
+      const val = row.months[m]
+      if (val !== null) {
+        total += parseFloat(val)
+        hasData = true
+      }
+    }
+    return hasData ? total.toFixed(2) : null
+  }
+
   // Group rows by section
   const sections = ["Income", "Bills", "Spending", "Irregular", "Transfers"]
   const grouped = new Map<string, SpendingGridRow[]>()
@@ -41,10 +73,10 @@ export function BudgetSpreadsheet({ rows, months }: BudgetSpreadsheetProps) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="sticky left-0 bg-background">Category</TableHead>
-            {months.map((m) => (
-              <TableHead key={m} className="text-right whitespace-nowrap">
-                {formatMonthShort(m)}
+            <TableHead className="sticky left-0 bg-background z-10">Category</TableHead>
+            {periods.map((p) => (
+              <TableHead key={p} className="text-right whitespace-nowrap">
+                {formatPeriodKey(p, granularity)}
               </TableHead>
             ))}
             <TableHead className="text-right">Average</TableHead>
@@ -60,7 +92,11 @@ export function BudgetSpreadsheet({ rows, months }: BudgetSpreadsheetProps) {
                 key={section}
                 section={section}
                 rows={sectionRows}
+                periods={periods}
                 months={months}
+                granularity={granularity}
+                getPeriodValue={getPeriodValue}
+                getPeriodBudget={getPeriodBudget}
               />
             )
           })}
@@ -73,27 +109,35 @@ export function BudgetSpreadsheet({ rows, months }: BudgetSpreadsheetProps) {
 function SectionBlock({
   section,
   rows,
+  periods,
   months,
+  granularity,
+  getPeriodValue,
+  getPeriodBudget,
 }: {
   section: string
   rows: SpendingGridRow[]
+  periods: string[]
   months: string[]
+  granularity: Granularity
+  getPeriodValue: (row: SpendingGridRow, periodKey: string) => string | null
+  getPeriodBudget: (budget: string | null, periodKey: string) => string | null
 }) {
-  // Compute section totals per month (only for months with data)
+  // Compute section totals per period
   const totals: Record<string, number | null> = {}
-  for (const m of months) totals[m] = null
+  for (const p of periods) totals[p] = null
   for (const row of rows) {
-    for (const m of months) {
-      const val = row.months[m]
+    for (const p of periods) {
+      const val = getPeriodValue(row, p)
       if (val !== null) {
-        totals[m] = (totals[m] ?? 0) + Math.abs(parseFloat(val))
+        totals[p] = (totals[p] ?? 0) + Math.abs(parseFloat(val))
       }
     }
   }
-  const monthsWithTotals = Object.values(totals).filter((v) => v !== null) as number[]
+  const periodsWithTotals = Object.values(totals).filter((v) => v !== null) as number[]
   const totalAvg =
-    monthsWithTotals.length > 0
-      ? monthsWithTotals.reduce((s, v) => s + v, 0) / monthsWithTotals.length
+    periodsWithTotals.length > 0
+      ? periodsWithTotals.reduce((s, v) => s + v, 0) / periodsWithTotals.length
       : 0
 
   return (
@@ -101,57 +145,67 @@ function SectionBlock({
       {/* Section header */}
       <TableRow className="bg-muted/50">
         <TableCell
-          colSpan={months.length + 3}
+          colSpan={periods.length + 3}
           className="sticky left-0 font-semibold text-xs uppercase tracking-wider"
         >
           {section}
         </TableCell>
       </TableRow>
       {/* Data rows */}
-      {rows.map((row) => (
-        <TableRow key={row.category}>
-          <TableCell className="sticky left-0 bg-background text-sm">
-            {row.category.split(": ").pop()}
-          </TableCell>
-          {months.map((m) => {
-            const val = row.months[m]
-            if (val === null) {
+      {rows.map((row) => {
+        const rowValues = periods.map((p) => getPeriodValue(row, p))
+        const nonNullValues = rowValues.filter((v) => v !== null) as string[]
+        const rowAvg =
+          nonNullValues.length > 0
+            ? nonNullValues.reduce((s, v) => s + Math.abs(parseFloat(v)), 0) / nonNullValues.length
+            : null
+
+        return (
+          <TableRow key={row.category}>
+            <TableCell className="sticky left-0 bg-background text-sm z-10">
+              {row.category.split(": ").pop()}
+            </TableCell>
+            {periods.map((p, i) => {
+              const val = rowValues[i]
+              if (val === null) {
+                return (
+                  <TableCell key={p} className="text-right text-sm text-muted-foreground/30">
+                    -
+                  </TableCell>
+                )
+              }
+              const periodBudget = getPeriodBudget(row.budget, p)
               return (
-                <TableCell key={m} className="text-right text-sm text-muted-foreground/30">
-                  -
+                <TableCell
+                  key={p}
+                  className={cn(
+                    "text-right text-sm tabular-nums",
+                    row.section !== "Income" && cellColor(val, periodBudget)
+                  )}
+                >
+                  {formatCurrency(Math.abs(parseFloat(val)).toFixed(2))}
                 </TableCell>
               )
-            }
-            return (
-              <TableCell
-                key={m}
-                className={cn(
-                  "text-right text-sm tabular-nums",
-                  row.section !== "Income" && cellColor(val, row.budget)
-                )}
-              >
-                {formatCurrency(Math.abs(parseFloat(val)).toFixed(2))}
-              </TableCell>
-            )
-          })}
-          <TableCell className="text-right text-sm tabular-nums font-medium">
-            {row.average
-              ? formatCurrency(Math.abs(parseFloat(row.average)).toFixed(2))
-              : "-"}
-          </TableCell>
-          <TableCell className="text-right text-sm tabular-nums">
-            {row.budget ? formatCurrency(row.budget) : "-"}
-          </TableCell>
-        </TableRow>
-      ))}
+            })}
+            <TableCell className="text-right text-sm tabular-nums font-medium">
+              {rowAvg !== null
+                ? formatCurrency(rowAvg.toFixed(2))
+                : "-"}
+            </TableCell>
+            <TableCell className="text-right text-sm tabular-nums">
+              {row.budget ? formatCurrency(row.budget) : "-"}
+            </TableCell>
+          </TableRow>
+        )
+      })}
       {/* Section total */}
       <TableRow className="border-t-2">
-        <TableCell className="sticky left-0 bg-background font-medium text-sm">
+        <TableCell className="sticky left-0 bg-background font-medium text-sm z-10">
           Total {section}
         </TableCell>
-        {months.map((m) => (
-          <TableCell key={m} className="text-right text-sm tabular-nums font-medium">
-            {totals[m] !== null ? formatCurrency(totals[m]!.toFixed(2)) : <span className="text-muted-foreground/30">-</span>}
+        {periods.map((p) => (
+          <TableCell key={p} className="text-right text-sm tabular-nums font-medium">
+            {totals[p] !== null ? formatCurrency(totals[p]!.toFixed(2)) : <span className="text-muted-foreground/30">-</span>}
           </TableCell>
         ))}
         <TableCell className="text-right text-sm tabular-nums font-medium">
