@@ -1,6 +1,6 @@
 # fynance — Claude Context
 
-Before starting any work, read ~/SecondBrain/02-projects/fynance.md for the goal, decisions, and open questions behind this project.
+Before starting any work, read `docs/fynance-project-note.md` for project goals, the design docs in `./design/`, and the current plan at `plans/08_mvp_phases_v2.md`.
 
 ## Overview
 
@@ -24,7 +24,7 @@ User runs `fynance serve`, the default browser opens, and all interaction happen
 - **CLI**: `clap` with derive macros
 - **Web server**: `axum` on `tokio`, bound to `127.0.0.1` only
 - **Storage**: SQLite via `rusqlite` at `~/.local/share/fynance/fynance.db` (macOS: `~/Library/Application Support/fynance/`)
-- **Frontend**: React 18 + Vite + TypeScript + Tailwind + shadcn-ui + Recharts, embedded in the Rust binary via `include_dir!`
+- **Frontend**: React 19 + React Compiler + Vite + TypeScript + Tailwind + shadcn-ui + Recharts, embedded in the Rust binary via `include_dir!`
 - **AI**: Claude API via `reqwest` + `serde_json` (Haiku for categorization, Sonnet for analysis)
 - **Config**: YAML via `serde_yaml` for rules and categories; config file at `~/.config/fynance/config.yaml` mode `600`
 - **Money**: `rust_decimal::Decimal`, never `f32` / `f64`
@@ -53,6 +53,12 @@ User runs `fynance serve`, the default browser opens, and all interaction happen
 | `thiserror` | Library error enums |
 | `tracing`, `tracing-subscriber` | Structured logging |
 | `indicatif` | CLI progress bars during bulk imports |
+| `dotenvy` | Load `.env` file for configuration |
+| `ts-rs` | Auto-generate TypeScript types from Rust structs |
+
+## Configuration
+
+All runtime config via environment variables (loaded from `.env` via `dotenvy`). See `.env.example` for the full list. Key variables: `FYNANCE_PORT`, `FYNANCE_DB_PATH`, `FYNANCE_HOST`, `ANTHROPIC_API_KEY`, `FYNANCE_LOG_LEVEL`.
 
 ## Commands
 
@@ -60,12 +66,15 @@ User runs `fynance serve`, the default browser opens, and all interaction happen
 - Build frontend: `cd frontend && npm run build`
 - Build everything: `make build` (frontend first, then cargo)
 - Run: `cargo run --release -- <subcommand>`
-- Dev backend: `cargo run -- serve --no-open`
-- Dev frontend: `cd frontend && npm run dev` (proxies `/api/*` to backend)
+- Dev backend: `cargo watch -x 'run -- serve --no-open'` (live reload)
+- Dev frontend: `cd frontend && npm run dev` (HMR, proxies `/api/*` to backend)
 - Test: `cargo test`
 - Lint: `cargo clippy --all-targets -- -D warnings`
 - Format: `cargo fmt`
 - Binary: `./target/release/fynance`
+- Docker (local build): `docker compose up -d --build`
+- Docker (from GHCR): `docker compose pull && docker compose up -d`
+- Docker update: `docker compose pull && docker compose up -d`
 
 ## CLI Subcommands
 
@@ -81,16 +90,23 @@ fynance budget status
 fynance stats
 fynance export --year YYYY --format csv
 fynance monthly                               # import + categorize + snapshot
+fynance token create --name <name>           # generate API token for programmatic access
+fynance token list                            # list active tokens
+fynance token revoke --name <name>           # revoke a token
 ```
 
 ## REST API Surface (served by `fynance serve`)
+
+Browser UI requests from localhost need no auth. Programmatic access (scripts, agents) uses bearer token auth: `Authorization: Bearer fyn_...`
 
 ```
 GET    /api/transactions?month=&category=&account=&page=&limit=
 GET    /api/transactions/categories
 GET    /api/transactions/accounts
 PATCH  /api/transactions/:id                 # edit category, notes
-POST   /api/import                           # upload CSV
+POST   /api/import                           # upload CSV (single file)
+POST   /api/import/bulk                      # upload multiple CSVs
+POST   /api/import/screenshot                # image -> Claude Vision -> transactions
 POST   /api/categorize
 
 GET    /api/budget/:month
@@ -104,20 +120,21 @@ POST   /api/accounts
 PATCH  /api/accounts/:id/balance
 
 GET    /api/reports/:month
-GET    /api/export?year=&format=
+GET    /api/export?year=&format=             # csv or md (Obsidian-compatible)
+GET    /api/docs                             # OpenAPI spec
 ```
 
 ## Security Model
 
 This is a single-user local app. "Multi-user" means multiple OS users on the same machine, each running their own isolated instance.
 
-- Axum binds to `127.0.0.1` only, never `0.0.0.0`. No LAN or internet exposure.
+- Axum binds to `127.0.0.1` by default. In Docker, `FYNANCE_HOST=0.0.0.0` is set so the port mapping works (Docker's network isolation is the boundary instead).
 - Database path resolves from `dirs::data_local_dir()`, per OS user.
 - Data directory created with mode `0o700`; DB file `0o600` on Unix.
 - Claude API key read from `ANTHROPIC_API_KEY` env var or `~/.config/fynance/config.yaml` (mode `600`). Never logged, never stored in DB.
 - Claude API receives only normalized merchant strings, never amounts, dates, or account IDs.
 - No telemetry. Only outbound calls are explicit Claude API categorization.
-- No auth for MVP. Loopback binding is the isolation boundary, same as local dev servers.
+- No auth for browser UI (loopback binding is the isolation boundary). Programmatic API access uses locally-generated bearer tokens (`fyn_` prefix, SHA-256 hashed in DB).
 
 See `design/05_security_isolation.md` for details.
 
@@ -134,3 +151,4 @@ See `design/05_security_isolation.md` for details.
 - Claude API calls always go through `src/categorizer/claude.rs` so prompt caching and batch behavior stay consistent
 - Axum handlers return `Result<Json<T>, AppError>` where `AppError` implements `IntoResponse`
 - Frontend fetches through `src/api/client.ts`, never direct `fetch()` in components
+- All API response types are auto-generated from Rust via `ts-rs` into `frontend/src/bindings/`. Never manually duplicate types in TypeScript.

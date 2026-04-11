@@ -83,6 +83,44 @@ CREATE TABLE IF NOT EXISTS monthly_income (
     notes           TEXT
 );
 
+-- ── holdings ──────────────────────────────────────────────────────────────
+-- Individual holdings within investment accounts (stocks, ETFs, funds).
+-- Each row is a point-in-time snapshot of a single holding.
+CREATE TABLE IF NOT EXISTS holdings (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id      TEXT NOT NULL,
+    symbol          TEXT NOT NULL,             -- ticker or ISIN (e.g. 'VWRL', 'AAPL')
+    name            TEXT NOT NULL,             -- display name (e.g. 'Vanguard FTSE All-World')
+    holding_type    TEXT NOT NULL DEFAULT 'stock',  -- 'stock' | 'etf' | 'fund' | 'bond' | 'crypto' | 'cash'
+    quantity        TEXT NOT NULL,             -- Decimal string (shares/units)
+    price_per_unit  TEXT,                      -- Decimal string, price at snapshot time
+    value           TEXT NOT NULL,             -- Decimal string, total value (quantity * price)
+    currency        TEXT NOT NULL DEFAULT 'GBP',
+    as_of           TEXT NOT NULL,             -- YYYY-MM-DD, when this snapshot was taken
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_holdings_account ON holdings(account_id);
+CREATE INDEX IF NOT EXISTS idx_holdings_as_of   ON holdings(as_of);
+CREATE INDEX IF NOT EXISTS idx_holdings_symbol  ON holdings(symbol);
+
+-- ── ingestion_checklist ──────────────────────────────────────────────────
+-- Tracks the guided monthly ingestion flow.
+-- Each row represents whether an account has been updated for a given month.
+CREATE TABLE IF NOT EXISTS ingestion_checklist (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    month           TEXT NOT NULL,             -- YYYY-MM
+    account_id      TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'completed' | 'skipped'
+    completed_at    TEXT,
+    notes           TEXT,
+    UNIQUE(month, account_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_checklist_month ON ingestion_checklist(month);
+
 -- ── category_rules ────────────────────────────────────────────────────────
 -- Persisted cache of loaded YAML rules (for UI display/editing later).
 -- Primary source of truth remains config/rules.yaml.
@@ -164,6 +202,46 @@ pub struct PortfolioSnapshot {
     pub balance: Decimal,
     pub currency: String,
 }
+
+#[derive(Debug, Clone)]
+pub struct Holding {
+    pub id: i64,
+    pub account_id: String,
+    pub symbol: String,
+    pub name: String,
+    pub holding_type: HoldingType,
+    pub quantity: Decimal,
+    pub price_per_unit: Option<Decimal>,
+    pub value: Decimal,
+    pub currency: String,
+    pub as_of: NaiveDate,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HoldingType {
+    Stock,
+    Etf,
+    Fund,
+    Bond,
+    Crypto,
+    Cash,
+}
+
+#[derive(Debug, Clone)]
+pub struct IngestionChecklistItem {
+    pub month: String,          // YYYY-MM
+    pub account_id: String,
+    pub status: IngestionStatus,
+    pub completed_at: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IngestionStatus {
+    Pending,
+    Completed,
+    Skipped,
+}
 ```
 
 ## Category Taxonomy
@@ -242,3 +320,23 @@ Other
 3. **Fingerprint deduplication**: Every transaction gets a SHA-256 fingerprint of `(date, amount, description, account_id)`. This catches duplicates across re-imports even without an OFX FITID.
 
 4. **Category rules in YAML, not just DB**: `config/rules.yaml` is the source of truth for rules so they can be version-controlled. The DB table is a read cache for the UI.
+
+5. **Point-in-time carry-forward for portfolio**: Both `portfolio_snapshots` and `holdings` store data as point-in-time snapshots. When querying a date where no data was recorded, the system carries forward the most recent prior value. For example, if a balance was recorded on January 15 and the next update is April 1, queries for February and March return the January value with a staleness indicator. The query pattern is:
+   ```sql
+   -- Get the latest known balance for each account as of a target date
+   SELECT a.id, a.name, ps.balance, ps.snapshot_date
+   FROM accounts a
+   LEFT JOIN portfolio_snapshots ps ON ps.account_id = a.id
+     AND ps.snapshot_date = (
+       SELECT MAX(ps2.snapshot_date)
+       FROM portfolio_snapshots ps2
+       WHERE ps2.account_id = a.id
+         AND ps2.snapshot_date <= ?1  -- target date
+     )
+   WHERE a.is_active = 1;
+   ```
+   The frontend displays "as of Jan 2023" when showing carried-forward data, so the user knows the value may be stale.
+
+6. **Holdings for stock-level portfolio detail**: The `holdings` table stores per-symbol snapshots within investment accounts. This enables drill-down from "Trading 212: £14,310" to "VWRL: £8,000, AAPL: £3,200, ..." and further into ETF composition. Holdings use the same carry-forward semantics as account balances.
+
+7. **Guided ingestion checklist**: The `ingestion_checklist` table tracks which accounts have been updated each month. When the user starts their monthly review, the app pre-populates a checklist of all active accounts with `status = 'pending'`. As each account is updated (via CSV import, screenshot, or manual balance update), the status flips to `completed`. The UI shows a progress indicator: "3 of 7 accounts updated for March 2026".

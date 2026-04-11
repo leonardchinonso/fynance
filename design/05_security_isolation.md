@@ -152,13 +152,32 @@ Return only the category name.
 
 ## Authentication
 
-For MVP: **no authentication**. The server is loopback-only; anyone who can reach `localhost` is the OS user. This is the same model as local dev servers (Vite, Rails, Django dev server).
+### Browser UI (No Auth)
 
-If authentication is needed in the future (e.g., a household with multiple OS users on the same account), options include:
-- A random token embedded in the server URL at startup (e.g., `http://localhost:3000/?token=<random>`)
-- HTTP Basic Auth with a locally-generated password stored in the OS keychain
+Browser requests from localhost require no authentication. The loopback binding is the trust boundary, same as local dev servers (Vite, Rails, Django). Anyone who can reach `localhost` is the OS user.
 
-These are out of scope for MVP.
+### Programmatic API Access (Token Auth)
+
+Scripts, agents, and automation tools authenticate via bearer tokens. Tokens are generated locally via the CLI and stored as SHA-256 hashes in the database.
+
+```bash
+fynance token create --name "import-script"
+# Token: fyn_a1b2c3d4e5f6...  (displayed once)
+```
+
+Usage:
+```bash
+curl -H "Authorization: Bearer fyn_..." http://localhost:3000/api/import -F file=@data.csv
+```
+
+Token security:
+- Tokens are prefixed with `fyn_` for easy identification in logs and config
+- Only the SHA-256 hash is stored in the DB, never the raw token
+- Tokens can be revoked via `fynance token revoke --name <name>`
+- Token last-used timestamp is recorded for auditing
+- Tokens are scoped to the local instance only
+
+This allows agents (e.g., a Claude Code script) to push CSV files or screenshots to the API without exposing the full UI.
 
 ---
 
@@ -171,4 +190,5 @@ These are out of scope for MVP.
 | CORS from other origins | CORS limited to `localhost:<port>` |
 | API key exposure | Env var or `chmod 600` config file; never logged or stored in DB |
 | Raw transaction data sent to Claude | Only normalized descriptions, never amounts or dates |
+| Programmatic API access | Bearer token auth; tokens stored as SHA-256 hashes |
 | Telemetry | None. No calls except explicit Claude API categorization. |
