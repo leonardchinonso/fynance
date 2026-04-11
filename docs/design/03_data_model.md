@@ -84,12 +84,13 @@ CREATE TABLE IF NOT EXISTS budgets (
 CREATE INDEX IF NOT EXISTS idx_budget_month ON budgets(month);
 
 -- ── holdings ──────────────────────────────────────────────────────────────
--- Individual holdings within investment accounts (stocks, ETFs, funds).
--- Each row is a point-in-time snapshot of a single holding.
--- NOTE: "holdings" stores per-symbol detail within investment accounts
--- (e.g., VWRL: 50 units @ £160), while "portfolio_snapshots" stores
--- account-level balance snapshots for net worth trend charts.
--- Holdings drill down into an account; snapshots aggregate up to net worth.
+-- DISCUSS: Should holdings be a separate table or consolidated with portfolio_snapshots?
+-- Nonso raised whether these overlap. Current design: "holdings" stores per-symbol
+-- detail within investment accounts (e.g., VWRL: 50 units @ £160), while
+-- "portfolio_snapshots" stores account-level balance snapshots for net worth trend
+-- charts. Holdings drill down into an account; snapshots aggregate up to net worth.
+-- Ope asked how holdings differs from portfolio. May not be needed for MVP.
+-- See Open Questions in docs/fynance-project-note.md.
 CREATE TABLE IF NOT EXISTS holdings (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id      TEXT NOT NULL,
@@ -111,6 +112,9 @@ CREATE INDEX IF NOT EXISTS idx_holdings_as_of   ON holdings(as_of);
 CREATE INDEX IF NOT EXISTS idx_holdings_symbol  ON holdings(symbol);
 
 -- ── ingestion_checklist ──────────────────────────────────────────────────
+-- DISCUSS: Is this table needed for MVP? Nonso suggested starting small and
+-- adding as needed. Could track ingestion status in-memory or derive from
+-- import_log instead. See Open Questions in docs/fynance-project-note.md.
 -- Tracks the guided monthly ingestion flow.
 -- Each row represents whether an account has been updated for a given month.
 CREATE TABLE IF NOT EXISTS ingestion_checklist (
@@ -347,13 +351,15 @@ Other
 
 6. **Holdings for stock-level portfolio detail**: The `holdings` table stores per-symbol snapshots within investment accounts. This enables drill-down from "Trading 212: £14,310" to "VWRL: £8,000, AAPL: £3,200, ..." and further into ETF composition. Holdings use the same carry-forward semantics as account balances.
 
-7. **No separate income table; recurring flag for projections**: Income is not stored in a dedicated table. Income transactions are regular transactions with a positive amount and a category under the `Income` parent (e.g., `Income: Salary`). Monthly income figures are derived by summing positive transactions in the Income category for a given month. Transactions can be marked `is_recurring = 1` to flag recurring income or expenses (salary, rent, subscriptions). This enables future budget projections: "you spend ~£X/month on recurring costs" without needing a separate recurring transactions table.
+7. **No separate income table; recurring flag for projections**: Income is not stored in a dedicated table. Income transactions are regular transactions with a positive amount and a category under the `Income` parent (e.g., `Income: Salary`). Monthly income figures are derived by summing positive transactions in the Income category for a given month. The `is_recurring` flag distinguishes recurring income (salary, freelance retainers) from one-off income (gifts, refunds, bonuses). The UI should surface this split: "Recurring income: £4,000 | One-off: £500". The same flag applies to expenses (rent, subscriptions vs one-time purchases), enabling budget projections: "you spend ~£X/month on recurring costs" without needing a separate table.
 
 8. **Holdings vs portfolio_snapshots**: These serve different levels of detail. `portfolio_snapshots` stores one balance per account per date for net worth trend charts (e.g., "Trading 212 was worth £14,310 on March 1"). `holdings` stores per-symbol detail within investment accounts (e.g., "VWRL: 50 units @ £160, AAPL: 20 units @ £160"). Portfolio snapshots aggregate up to net worth; holdings drill down into composition.
 
-9. **Guided ingestion checklist**: The `ingestion_checklist` table tracks which accounts have been updated each month. When the user starts their monthly review, the app pre-populates a checklist of all active accounts with `status = 'pending'`. As each account is updated (via CSV import, screenshot, or manual balance update), the status flips to `completed`. The UI shows a progress indicator: "3 of 7 accounts updated for March 2026".
+9. **Portfolio breakdowns are always derived, never stored**: Groupings like "by type" (savings, investments, pensions), "by institution" (Monzo, Trading 212), or "by currency" are computed at query time from the accounts and holdings tables. This avoids dual-write complexity: when a user adds a new holding, they only update one place, and all breakdowns update automatically. The API returns pre-computed aggregations; the frontend never aggregates raw data.
 
-10. **Deferred tables**: The following tables are not in the MVP schema but are planned for future phases:
+10. **Guided ingestion checklist**: The `ingestion_checklist` table tracks which accounts have been updated each month. When the user starts their monthly review, the app pre-populates a checklist of all active accounts with `status = 'pending'`. As each account is updated (via CSV import, screenshot, or manual balance update), the status flips to `completed`. The UI shows a progress indicator: "3 of 7 accounts updated for March 2026".
+
+11. **Deferred tables**: The following tables are not in the MVP schema but are planned for future phases:
     - `api_tokens`: Bearer token storage for programmatic API access. Deferred until the token auth feature is built.
     - `settings`: Key-value store for user preferences (default currency, theme, etc.). Deferred to V1 (settings page).
     - `categories`: Persistent category table for UI editing. MVP reads from `config/rules.yaml`; API exposes read-only. Deferred to V1.

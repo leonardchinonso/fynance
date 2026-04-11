@@ -10,8 +10,8 @@ This supersedes `07_phases.md`. The architecture has changed: Obsidian integrati
 | 2 | Axum API server + embedded React shell + API tokens | Browser opens, blank UI served, programmatic API ready |
 | 3 | Transactions view + Budget tab | Core UI working with real data |
 | 4 | Portfolio overview + account management | Net worth view live |
-| 5 | Categorization pipeline | 90%+ transactions categorized |
-| 6 | Reports + polish | Monthly summaries, export, screenshot import, Obsidian export |
+| 5 | API-first categorization | Agent-readable API docs, external categorization workflow |
+| 6 | Reports + polish | Monthly summaries, export, Obsidian export |
 
 ---
 
@@ -101,6 +101,10 @@ cargo run -- stats
 ## Phase 2: Axum Server + React Shell (Week 2)
 
 **Goal**: A running local web server that serves a React app in the browser. No real data in the UI yet — just the shell with navigation working.
+
+### Single port for everything
+
+The Axum server exposes one HTTP port (`FYNANCE_PORT`, default 7433) that serves both the web UI and all REST API endpoints (`/api/import`, `/api/import/csv`, `/api/import/bulk`, `/api/import/screenshot`, `/api/categorize`, etc.). In Docker, this single port is mapped to the host. Scripts, agents, and the browser all hit the same URL and port. No separate API port is needed.
 
 ### Rust side
 
@@ -261,9 +265,17 @@ curl -X POST http://localhost:7433/api/import \
 
 The JSON schema is documented in the OpenAPI spec at `GET /api/docs`. This enables a workflow where an external agent (e.g., a Claude Code script) reads data from an unsupported bank, extracts transactions into the typed format, and hits this endpoint directly.
 
-### API Documentation
+### API Documentation (Agent-Readable)
 
-The REST API is documented inline via a `GET /api/docs` endpoint that returns an OpenAPI/Swagger JSON spec. This serves as the contract for anyone building scripts or agents against the API.
+The REST API is documented via a `GET /api/docs` endpoint. This is the primary interface for external AI agents, so the docs are designed to be usable as a system prompt:
+
+- **OpenAPI/Swagger JSON spec** with full request/response schemas, field descriptions, and example payloads
+- **Category taxonomy** included in the docs so agents know the valid categories and hierarchy
+- **Import schema** with explicit field definitions, required vs optional fields, and validation rules
+- **Categorization guidance**: the docs explain that agents should categorize transactions before pushing them (rule-based or AI), and include the `category_source` field (`'agent'`, `'manual'`, `'rule'`) so the app can track provenance
+- **Error responses** documented so agents can handle failures gracefully
+
+The goal is that an AI agent can fetch `GET /api/docs`, use the response as context, and immediately start interacting with the API without any additional documentation. Think of it as a CLAUDE.md for the API.
 
 ### Deliverable
 
@@ -406,29 +418,44 @@ Portfolio tab shows net worth, all account balances with staleness indicators, s
 
 ## Phase 5: Categorization Pipeline (Week 5)
 
-**Goal**: 90%+ of transactions categorized.
+**Goal**: 90%+ of transactions categorized via external AI agents pushing pre-categorized data through the API.
 
-### Work items
+<!-- DEFERRED: Internal categorization pipeline (rules + Claude API). For MVP, categorization
+happens externally. An AI agent reads the API docs, fetches uncategorized transactions, applies
+rules and/or AI categorization, and pushes results back via PATCH /api/transactions/:id.
 
-1. `config/categories.yaml` — full taxonomy
-2. `config/rules.yaml` — patterns for Monzo/Revolut/Lloyds merchant names
-3. `src/categorizer/rules.rs` — YAML rule loader + match_rules()
-4. `src/categorizer/claude.rs` — Claude Haiku API with prompt caching
-5. `src/categorizer/pipeline.rs` — rule-first, then Claude for unknowns
-6. CLI: `fynance categorize [--batch]`
-7. Axum: `POST /api/categorize` to trigger from UI
+Original internal work items:
+1. config/categories.yaml — full taxonomy
+2. config/rules.yaml — patterns for Monzo/Revolut/Lloyds merchant names
+3. src/categorizer/rules.rs — YAML rule loader + match_rules()
+4. src/categorizer/claude.rs — Claude Haiku API with prompt caching
+5. src/categorizer/pipeline.rs — rule-first, then Claude for unknowns
+6. CLI: fynance categorize [--batch]
+7. Axum: POST /api/categorize to trigger from UI
 8. React: "Run categorization" button with progress indicator
-9. Inline category editing in Transactions table (click to change)
+-->
+
+### MVP approach: API-first categorization
+
+For MVP, categorization is not built into the binary. Instead:
+
+1. `config/categories.yaml` -- full taxonomy (used by both the UI and external agents)
+2. The API docs at `GET /api/docs` include the category taxonomy, field schemas, and example payloads. The docs are written to be usable as a system prompt for AI agents (like a CLAUDE.md for the API).
+3. External agents (Claude Code scripts, MCP tools, etc.) read the API docs, fetch uncategorized transactions via `GET /api/transactions?category=uncategorized`, apply their own categorization logic (rules, AI, or both), and push results via `PATCH /api/transactions/:id` with `category` and `category_source = 'agent'`.
+4. The `POST /api/import` typed JSON endpoint accepts pre-categorized transactions: agents can extract data from unsupported sources, categorize it, and push it in one step.
+5. Inline category editing in Transactions table (click to change) -- manual override in the UI.
+
+This model means the fynance binary has zero outbound API calls. All AI processing happens outside, and the app is a clean data store + UI.
 
 ### Deliverable
 
+External agent workflow:
 ```bash
-fynance categorize
-# Rules: 1,640 matched (89%)
-# Claude: 182 sent, 180 returned
-# Total categorized: 1,820 / 1,842 (99%)
-# Remaining: 22 — run `fynance review`
+# Agent reads API docs, fetches uncategorized transactions, categorizes them, pushes back
+# Result: 90%+ of transactions categorized without any internal AI code
 ```
+
+Manual fallback: user clicks a transaction in the UI and assigns a category.
 
 ---
 
@@ -438,34 +465,26 @@ fynance categorize
 
 ### Work items
 
-- `GET /api/reports/:month` — Claude-generated monthly summary
-- `GET /api/export?year=2025&format=csv` — filtered CSV export
-- `GET /api/export?year=2025&format=md` — Obsidian-compatible markdown export (see below)
-- React Reports page: monthly narrative + key stats
-- `fynance monthly` composite command: import + categorize + snapshot
+<!-- DEFERRED: - `GET /api/reports/:month` — Claude-generated monthly summary (internal AI, deferred) -->
+- `GET /api/reports/:month` -- data-driven monthly summary (totals, category breakdown, budget status; no AI narrative for MVP)
+- `GET /api/export?year=2025&format=csv` -- filtered CSV export
+- `GET /api/export?year=2025&format=md` -- Obsidian-compatible markdown export (see below)
+- React Reports page: monthly stats + charts
+- `fynance monthly` composite command: import + snapshot (no internal categorize step for MVP)
 - Dark mode toggle (Tailwind `dark:` classes)
 - Mobile-responsive layout (Tailwind responsive prefixes)
 - Transaction notes field (click to annotate)
 - `--dry-run` flag on import
 
-### Screenshot Data Extraction
+<!-- DEFERRED: Screenshot Data Extraction (internal Claude Vision)
 
-An endpoint that accepts images (screenshots of banking apps, statements, receipts) and uses Claude Vision (Sonnet) to extract transaction data.
+An endpoint that accepts images and uses Claude Vision (Sonnet) to extract transaction data.
+POST /api/import/screenshot. This requires ANTHROPIC_API_KEY and internal AI.
 
-```
-POST /api/import/screenshot
-  Authorization: Bearer fyn_...
-  Content-Type: multipart/form-data
-  Body: file=<image>, account=<account_id>
-```
-
-Flow:
-1. Image is sent to Claude Sonnet with a prompt to extract structured transaction data (date, description, amount, currency)
-2. Response is parsed into the standard Transaction format
-3. Transactions are inserted with `category_source = 'claude'` and deduplication via fingerprint
-4. Returns a preview of extracted transactions for user confirmation before commit
-
-This is optional and requires `ANTHROPIC_API_KEY`. The UI includes an "Import from screenshot" button that opens a drag-and-drop zone. The API endpoint also accepts programmatic uploads from agents/scripts.
+For MVP, screenshot extraction is handled externally: an AI agent reads a screenshot,
+extracts transactions, and pushes them through POST /api/import as typed JSON.
+The API docs describe the expected schema so agents can do this without internal support.
+-->
 
 ### Obsidian Markdown Export
 
@@ -500,7 +519,7 @@ Output format:
 £28,450.00 (+£320 from last month)
 
 ## Notes
-(Claude-generated narrative if available)
+(User-written notes or externally generated narrative)
 ```
 
 The markdown format uses standard tables and headings so it renders well in Obsidian, GitHub, and any markdown viewer.
@@ -510,6 +529,20 @@ The markdown format uses standard tables and headings so it renders well in Obsi
 ## Future Roadmap (Post-MVP)
 
 These features are out of scope for the initial MVP but are planned for future iterations. Documenting them now so architectural decisions don't paint us into a corner.
+
+### V1: Internal AI Workflows (Optional)
+
+When/if we want the binary to handle AI internally rather than relying on external agents:
+
+- `ANTHROPIC_API_KEY` support in `.env`
+- `src/categorizer/claude.rs` -- Claude Haiku API with prompt caching for categorization
+- `src/categorizer/pipeline.rs` -- rule-first, then Claude for unknowns
+- `POST /api/categorize` -- trigger internal categorization from the UI
+- `POST /api/import/screenshot` -- Claude Vision (Sonnet) to extract transactions from images
+- `GET /api/reports/:month` -- Claude-generated narrative monthly summaries
+- CLI: `fynance categorize [--batch]`
+
+This is optional and additive. The external agent model remains the primary path. Internal AI is a convenience layer for users who want one-click categorization without running a separate agent.
 
 ### V1: Stock Price Service
 

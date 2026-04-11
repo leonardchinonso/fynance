@@ -132,7 +132,11 @@ If the key is absent, categorization falls back to rules-only mode and a warning
 
 ---
 
-## Claude API Data Minimization
+## AI Data Flow
+
+For MVP, the fynance binary makes no outbound API calls. All AI processing (categorization, data extraction from screenshots) happens in external agents that push data through the REST API. The binary is a pure data store and UI server.
+
+<!-- DEFERRED: Claude API Data Minimization (for when internal AI is added post-MVP)
 
 When sending transactions to Claude for categorization:
 
@@ -147,6 +151,7 @@ Description: "LIDL GB LONDON"
 Categories: [Food: Groceries, Food: Dining & Bars, Shopping: General, ...]
 Return only the category name.
 ```
+-->
 
 ---
 
@@ -205,8 +210,9 @@ Potential security enhancements for later phases, once the MVP is stable:
 | DB readable by other OS users | `chmod 700` on data dir, `chmod 600` on DB file |
 | Server accessible from LAN | Bind to `127.0.0.1` only |
 | CORS from other origins | CORS limited to `localhost:<port>` |
-| API key exposure | Env var or `chmod 600` config file; never logged or stored in DB |
-| Raw transaction data sent to Claude | Only normalized descriptions, never amounts or dates |
+<!-- DEFERRED: | API key exposure | Env var or `chmod 600` config file; never logged or stored in DB | -->
+<!-- DEFERRED: | Raw transaction data sent to Claude | Only normalized descriptions, never amounts or dates | -->
+| Outbound network calls | None. The binary makes zero outbound calls. All AI happens in external agents. |
 | Programmatic API access | Bearer token auth; tokens stored as SHA-256 hashes |
 | Single port for UI + API | One port serves the web UI and REST API. No need for multiple exposed ports. |
-| Telemetry | None. No calls except explicit Claude API categorization. |
+| Telemetry | None. No outbound calls of any kind. |

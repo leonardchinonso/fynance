@@ -1,12 +1,12 @@
 # fynance
 
-Personal finance tracker with a Rust backend and React web UI. Import bank CSV exports (Monzo, Revolut, Lloyds), categorize transactions with rules and Claude AI, track budgets and net worth, all from your browser.
+Personal finance tracker with a Rust backend and React web UI. Import bank CSV exports (Monzo, Revolut, Lloyds), track budgets and net worth, all from your browser. External AI agents handle categorization and data extraction via the REST API.
 
 ## Tech Stack
 
 - **Backend:** Rust, Axum, SQLite (rusqlite), Tokio
 - **Frontend:** React 19, React Compiler, Vite, TypeScript, Tailwind, shadcn-ui, Recharts
-- **AI:** Claude API (Haiku for categorization, Sonnet for analysis)
+- **AI:** External agents categorize and extract data, pushing results through the API. Agent-readable OpenAPI docs at `/api/docs`.
 - **Deployment:** Docker, single container, SQLite on a volume
 
 ## Deployment (Docker)
@@ -62,7 +62,7 @@ Configuration is managed through a `.env` file at the project root. The repo inc
 | `FYNANCE_PORT` | `7433` | No | HTTP server port (serves both web UI and REST API) |
 | `FYNANCE_HOST` | `127.0.0.1` | No | Bind address. Set to `0.0.0.0` in Docker (done automatically by the Docker image) |
 | `FYNANCE_DB_PATH` | OS data dir | No | Full path to the SQLite database file. In Docker this is set to `/home/fynance/data/fynance.db` automatically |
-| `ANTHROPIC_API_KEY` | (none) | No | Your Claude API key from Anthropic. Needed for AI-powered transaction categorization and monthly report generation. The app works without it, but categorization falls back to rule-based matching only |
+| `ANTHROPIC_API_KEY` | (none) | No | Not needed for MVP. Internal AI workflows are deferred. Categorization is handled by external AI agents that push data through the API |
 | `FYNANCE_LOG_LEVEL` | `info` | No | Log verbosity. Options: `trace`, `debug`, `info`, `warn`, `error` |
 | `FYNANCE_ADDITIONAL_DOCS` | (none) | No | Path to additional documentation for AI agents building against this environment |
 
@@ -70,14 +70,12 @@ Example `.env` for local development:
 ```env
 FYNANCE_PORT=7433
 FYNANCE_HOST=127.0.0.1
-ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 FYNANCE_LOG_LEVEL=debug
 ```
 
 Example `.env` for Docker deployment:
 ```env
 FYNANCE_PORT=7433
-ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 FYNANCE_LOG_LEVEL=info
 ```
 (Docker sets `FYNANCE_HOST` and `FYNANCE_DB_PATH` automatically via the Dockerfile, no need to override them.)

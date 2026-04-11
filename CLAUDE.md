@@ -8,7 +8,7 @@ https://github.com/leonardchinonso/fynance
 
 ## Overview
 
-Personal finance tracker with a Rust backend and a local React web UI. Ingests bank CSV exports (Monzo, Revolut, Lloyds), categorizes transactions (rules + Claude API), stores everything in a per-user local SQLite database, and surfaces four views in the browser: Transactions, Budget, Portfolio, Reports.
+Personal finance tracker with a Rust backend and a local React web UI. Ingests bank CSV exports (Monzo, Revolut, Lloyds), stores everything in a per-user local SQLite database, and surfaces four views in the browser: Transactions, Budget, Portfolio, Reports. Categorization and data extraction are handled by external AI agents that push pre-categorized data through the REST API.
 
 Design documents live in `docs/design/`, research in `docs/research/`, implementation plans in `docs/plans/`. When picking up work, start at `docs/plans/08_mvp_phases_v2.md` Phase 1. The older `docs/plans/07_phases.md` is superseded.
 
@@ -18,7 +18,8 @@ Single Rust binary that:
 1. Exposes a loopback-only Axum HTTP server (`127.0.0.1`) with a REST JSON API
 2. Serves a compiled React frontend embedded via `include_dir!`
 3. Stores data in a per-user SQLite database at the OS data directory
-4. Optionally calls Claude API for categorization and monthly analysis
+<!-- DEFERRED: 4. Optionally calls Claude API for categorization and monthly analysis -->
+<!-- Internal AI workflows are deferred. For MVP, external AI agents handle categorization and data extraction, then push results through the REST API. -->
 
 User runs `fynance serve`, the default browser opens, and all interaction happens in the browser. CLI subcommands remain available for scripting and automation.
 
@@ -54,7 +55,8 @@ fynance/
 - **Web server**: `axum` on `tokio`, bound to `127.0.0.1` only
 - **Storage**: SQLite via `rusqlite` at `~/.local/share/fynance/fynance.db` (macOS: `~/Library/Application Support/fynance/`)
 - **Frontend**: React 19 + React Compiler + Vite + TypeScript + Tailwind + shadcn-ui + Recharts, embedded in the Rust binary via `include_dir!`
-- **AI**: Claude API via `reqwest` + `serde_json` (Haiku for categorization, Sonnet for analysis)
+<!-- DEFERRED: - **AI**: Claude API via `reqwest` + `serde_json` (Haiku for categorization, Sonnet for analysis) -->
+- **AI**: External agents handle categorization and data extraction, pushing pre-processed data through the REST API. The API is documented as an agent-readable spec (OpenAPI at `/api/docs`).
 - **Config**: YAML via `serde_yaml` for rules and categories; config file at `~/.config/fynance/config.yaml` mode `600`
 - **Money**: `rust_decimal::Decimal`, never `f32` / `f64`
 
@@ -70,7 +72,8 @@ fynance/
 | `open` | Cross-platform browser launch |
 | `rusqlite` | SQLite driver with bundled feature |
 | `dirs` | Per-OS user data directory resolution |
-| `reqwest` | HTTP client for Claude API |
+<!-- DEFERRED: | `reqwest` | HTTP client for Claude API | -->
+| `reqwest` | HTTP client (future: external API integrations) |
 | `serde`, `serde_json`, `serde_yaml` | Serialization and config |
 | `csv` | CSV statement parsing |
 | `regex` | Rule-based categorization patterns |
@@ -87,7 +90,8 @@ fynance/
 
 ## Configuration
 
-All runtime config via environment variables (loaded from `.env` via `dotenvy`). See `.env.example` for the full list. Key variables: `FYNANCE_PORT`, `FYNANCE_DB_PATH`, `FYNANCE_HOST`, `ANTHROPIC_API_KEY`, `FYNANCE_LOG_LEVEL`.
+All runtime config via environment variables (loaded from `.env` via `dotenvy`). See `.env.example` for the full list. Key variables: `FYNANCE_PORT`, `FYNANCE_DB_PATH`, `FYNANCE_HOST`, `FYNANCE_LOG_LEVEL`.
+<!-- DEFERRED: ANTHROPIC_API_KEY is not needed for MVP. Internal AI workflows are a future enhancement. -->
 
 ## Commands
 
@@ -110,7 +114,7 @@ All runtime config via environment variables (loaded from `.env` via `dotenvy`).
 ```bash
 fynance serve [--port 7433] [--no-open]      # Start local web UI
 fynance import <file|dir> --account <id>     # Import CSV statements (auto-detects bank format)
-fynance categorize [--batch]                  # Run categorization pipeline
+# DEFERRED: fynance categorize [--batch]      # Run categorization pipeline (internal AI, deferred to post-MVP)
 fynance account add --id <id> --name <name> --institution <inst> --type <type>
 fynance account set-balance <id> <amount> --date YYYY-MM-DD
 fynance account list
@@ -136,8 +140,8 @@ PATCH  /api/transactions/:id                 # edit category, notes
 POST   /api/import                           # typed JSON API for structured transaction data (agents, scripts)
 POST   /api/import/csv                       # upload CSV (single file)
 POST   /api/import/bulk                      # upload multiple CSVs
-POST   /api/import/screenshot                # image -> Claude Vision -> transactions
-POST   /api/categorize
+# DEFERRED: POST   /api/import/screenshot      # image -> Claude Vision -> transactions (internal AI, deferred)
+# DEFERRED: POST   /api/categorize              # internal categorization pipeline (deferred, agents categorize externally)
 
 GET    /api/budget/:month
 POST   /api/budget
@@ -160,9 +164,11 @@ This is a single-user local app. "Multi-user" means multiple OS users on the sam
 - Axum binds to `127.0.0.1` by default. In Docker, `FYNANCE_HOST=0.0.0.0` is set so the port mapping works (Docker's network isolation is the boundary instead).
 - Database path resolves from `dirs::data_local_dir()`, per OS user.
 - Data directory created with mode `0o700`; DB file `0o600` on Unix.
+<!-- DEFERRED: Internal AI security (not needed for MVP, no internal Claude API calls)
 - Claude API key read from `ANTHROPIC_API_KEY` env var or `~/.config/fynance/config.yaml` (mode `600`). Never logged, never stored in DB.
 - Claude API receives only normalized merchant strings, never amounts, dates, or account IDs.
-- No telemetry. Only outbound calls are explicit Claude API categorization.
+-->
+- No telemetry. No outbound calls from the binary. All AI processing happens in external agents that push data through the API.
 - No auth for browser UI (loopback binding is the isolation boundary). Programmatic API access uses locally-generated bearer tokens (`fyn_` prefix, SHA-256 hashed in DB).
 
 See `design/05_security_isolation.md` for details.
@@ -177,7 +183,7 @@ See `design/05_security_isolation.md` for details.
 - Return `anyhow::Result<T>` at command / route boundaries, define `thiserror` enums inside modules
 - Every importer deduplicates by a stable fingerprint hash `sha256(date, amount, description, account_id)`
 - Never log raw transaction descriptions at INFO level (may leak merchant info)
-- Claude API calls always go through `src/categorizer/claude.rs` so prompt caching and batch behavior stay consistent
+<!-- DEFERRED: - Claude API calls always go through `src/categorizer/claude.rs` so prompt caching and batch behavior stay consistent -->
 - Axum handlers return `Result<Json<T>, AppError>` where `AppError` implements `IntoResponse`
 - Frontend fetches through `src/api/client.ts`, never direct `fetch()` in components
 - All API response types are auto-generated from Rust via `ts-rs` into `frontend/src/bindings/`. Never manually duplicate types in TypeScript.
