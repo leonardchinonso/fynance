@@ -102,6 +102,10 @@ All runtime config via environment variables (loaded from `.env` via `dotenvy`).
 
 <!-- DEFERRED: ANTHROPIC_API_KEY is not needed for MVP. Internal AI workflows are a future enhancement. -->
 
+## Running the Backend
+
+See `backend/RUNNING.md` for the full setup and run guide: prerequisites, configuration, all CLI subcommands with examples, dev workflow, testing, logging, and troubleshooting.
+
 ## Commands
 
 - Build backend: `cargo build --release`
