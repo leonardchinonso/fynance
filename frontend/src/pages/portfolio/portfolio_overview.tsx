@@ -9,6 +9,14 @@ import {
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
 
+interface InvestmentMetrics {
+  totalGrowth: number
+  newCashInvested: number
+  marketGrowth: number
+  startValue: number
+  endValue: number
+}
+
 interface PortfolioOverviewProps {
   portfolio: PortfolioResponse
   startNetWorth?: string
@@ -16,6 +24,7 @@ interface PortfolioOverviewProps {
   dateLabel?: string
   cashFlow?: CashFlowMonth[]
   holdings?: Holding[]
+  investmentMetrics?: InvestmentMetrics
 }
 
 export function PortfolioOverview({
@@ -24,6 +33,7 @@ export function PortfolioOverview({
   endNetWorth,
   cashFlow = [],
   holdings = [],
+  investmentMetrics,
 }: PortfolioOverviewProps) {
   const startNw = startNetWorth ? parseFloat(startNetWorth) : null
   const endNw = endNetWorth ? parseFloat(endNetWorth) : null
@@ -154,16 +164,16 @@ export function PortfolioOverview({
 
       {/* Income/Outgoing + Stocks breakdown */}
       <div className="grid gap-4 md:grid-cols-2">
-        {/* Income & Spending card */}
+        {/* Income, Spending & Investments card */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <BarChart3 className="h-4 w-4" />
-              Income & Spending
+              Income, Spending & Investments
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <ArrowUpRight className="h-3 w-3 text-green-500" />
@@ -188,18 +198,52 @@ export function PortfolioOverview({
                   ~{formatCurrency(avgSpending.toFixed(2))}/mo
                 </p>
               </div>
-            </div>
-            <div className="mt-4 border-t pt-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Net Savings</span>
-                <span className={`text-lg font-semibold tabular-nums ${totalIncome - totalSpending >= 0 ? "text-green-500" : "text-red-500"}`}>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  Net Savings
+                </div>
+                <p className={`text-xl font-semibold tabular-nums ${totalIncome - totalSpending >= 0 ? "text-green-500" : "text-red-500"}`}>
                   {formatCurrency((totalIncome - totalSpending).toFixed(2))}
-                </span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  ~{formatCurrency(((totalIncome - totalSpending) / monthCount).toFixed(2))}/mo
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                ~{formatCurrency(((totalIncome - totalSpending) / monthCount).toFixed(2))}/mo over {monthCount} months
-              </p>
             </div>
+
+            {/* Investment metrics */}
+            {investmentMetrics && investmentMetrics.startValue > 0 && (
+              <div className="mt-4 border-t pt-3">
+                <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Investments</p>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-0.5">
+                    <p className="text-xs text-muted-foreground">New Cash Invested</p>
+                    <p className="text-base font-semibold tabular-nums">
+                      {formatCurrency(investmentMetrics.newCashInvested.toFixed(2))}
+                    </p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-xs text-muted-foreground">Total Growth</p>
+                    <p className={`text-base font-semibold tabular-nums ${investmentMetrics.totalGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
+                      {investmentMetrics.totalGrowth >= 0 ? "+" : ""}
+                      {formatCurrency(investmentMetrics.totalGrowth.toFixed(2))}
+                    </p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-xs text-muted-foreground">Market Performance</p>
+                    <p className={`text-base font-semibold tabular-nums ${investmentMetrics.marketGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
+                      {investmentMetrics.marketGrowth >= 0 ? "+" : ""}
+                      {formatCurrency(investmentMetrics.marketGrowth.toFixed(2))}
+                    </p>
+                    {investmentMetrics.startValue > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {((investmentMetrics.marketGrowth / investmentMetrics.startValue) * 100).toFixed(1)}% return
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

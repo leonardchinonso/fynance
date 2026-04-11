@@ -85,6 +85,44 @@ export function PortfolioPage() {
   const endNetWorth =
     history.length >= 1 ? history[history.length - 1].total_wealth : undefined
 
+  // Investment metrics: compute from snapshots
+  const investmentAccountIds = new Set(
+    (portfolio?.accounts ?? [])
+      .filter((a) => a.type === "investment")
+      .map((a) => a.id)
+  )
+
+  // Start and end investment balances from snapshots
+  const investStartBalances = new Map<string, number>()
+  const investEndBalances = new Map<string, number>()
+  for (const snap of accountSnapshots) {
+    if (!investmentAccountIds.has(snap.account_id)) continue
+    const month = snap.snapshot_date.substring(0, 7)
+    if (!investStartBalances.has(snap.account_id) || month <= (start?.substring(0, 7) ?? "")) {
+      investStartBalances.set(snap.account_id, parseFloat(snap.balance))
+    }
+    investEndBalances.set(snap.account_id, parseFloat(snap.balance))
+  }
+  const investStart = Array.from(investStartBalances.values()).reduce((s, v) => s + v, 0)
+  const investEnd = Array.from(investEndBalances.values()).reduce((s, v) => s + v, 0)
+  const investTotalGrowth = investEnd - investStart
+
+  // New cash invested = sum of "Finance: Investment Transfer" spending
+  // This is tracked as negative amounts in transactions
+  const [newInvestments, setNewInvestments] = useState(0)
+  useEffect(() => {
+    if (!start || !end) return
+    api.getTransactions({
+      start, end, page: 1, limit: 10000, profile_id: profileId,
+      categories: ["Finance: Investment Transfer"],
+    }).then((r) => {
+      const total = r.data
+        .filter((t) => parseFloat(t.amount) < 0) // only outflows
+        .reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0)
+      setNewInvestments(total)
+    })
+  }, [start, end, profileId])
+
   // Default to overview view
   const activeView = view === "table" ? "overview" : view
 
@@ -111,6 +149,13 @@ export function PortfolioPage() {
           dateLabel={`${start} to ${end}`}
           cashFlow={cashFlow}
           holdings={allHoldings}
+          investmentMetrics={{
+            totalGrowth: investTotalGrowth,
+            newCashInvested: newInvestments,
+            marketGrowth: investTotalGrowth - newInvestments,
+            startValue: investStart,
+            endValue: investEnd,
+          }}
         />
       ) : activeView === "accounts" ? (
         <AccountsGrid
