@@ -5,5 +5,6 @@ pub mod cli;
 pub mod commands;
 pub mod importers;
 pub mod model;
+pub mod server;
 pub mod storage;
 pub mod util;

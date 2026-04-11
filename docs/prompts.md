@@ -127,3 +127,6 @@ Looking at the `/Users/leonard/projects/fynance/docs` folder, come up with an im
 # Prompt 3.1: Backend Phase 1 Implementation
 
 Using the implementation plan in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`, implement phase 1. Add comments to explain complex code cases. If you're in doubt about whether the code is straightforward to understand to the average person, write a comment for it. When you're done implementing phase 1, create a new branch for the feature, commit the code and push it to that new branch. DO NOT move on to phase 2 until I tell you to do so. Implement phase 1 only and make changes to the backend only, do not make any frontend changes.
+
+# Prompt 3.2: Backend Phase 2 Implementation
+Using the implementation plan in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`, implement phase 2. Add comments to explain complex code cases. If you're in doubt about whether the code is straightforward to understand to the average person, write a comment for it. When you're done implementing phase 2, create a new branch for the feature, commit the code and push it to that new branch. DO NOT move on to phase 3 until I tell you to do so. Implement phase 2 only and make changes to the backend only, do not make any frontend changes.

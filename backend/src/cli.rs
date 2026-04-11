@@ -46,6 +46,36 @@ pub enum Commands {
         #[command(subcommand)]
         command: BudgetCommand,
     },
+    /// Start the local Axum web server.
+    Serve {
+        /// Override the listen port. Defaults to `FYNANCE_PORT` or 7433.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Skip the automatic browser launch.
+        #[arg(long = "no-open")]
+        no_open: bool,
+    },
+    /// Manage API bearer tokens used by scripts and external agents.
+    Token {
+        #[command(subcommand)]
+        command: TokenCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TokenCommand {
+    /// Generate a new bearer token. The raw value is printed once.
+    Create {
+        #[arg(long)]
+        name: String,
+    },
+    /// List all known tokens with their active/revoked status.
+    List,
+    /// Revoke (deactivate) a token by name.
+    Revoke {
+        #[arg(long)]
+        name: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
