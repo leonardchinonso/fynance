@@ -354,6 +354,83 @@ impl Db {
         Ok(())
     }
 
+    // ── API tokens ──────────────────────────────────────────────────
+    //
+    // Tokens are generated as `fyn_` + 32 random hex bytes (64 chars of
+    // hex after the prefix). We only store the SHA-256 of the raw token
+    // so an attacker with read-only DB access cannot replay tokens. The
+    // raw token is shown to the user exactly once at creation time.
+
+    /// Create a new token and return the raw string to display. The
+    /// caller is responsible for telling the user this is their only
+    /// chance to copy it.
+    pub fn create_token(&self, name: &str) -> Result<String> {
+        let raw = generate_raw_token();
+        let hash = sha256_hex(&raw);
+        self.conn
+            .execute(
+                "INSERT INTO api_tokens (name, token_hash, is_active) VALUES (?1, ?2, 1)",
+                params![name, hash],
+            )
+            .with_context(|| format!("creating api token {name:?}"))?;
+        Ok(raw)
+    }
+
+    pub fn list_tokens(&self) -> Result<Vec<TokenInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, created_at, last_used, is_active FROM api_tokens ORDER BY created_at",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(TokenInfo {
+                    name: row.get(0)?,
+                    created_at: row.get(1)?,
+                    last_used: row.get(2)?,
+                    is_active: row.get::<_, i64>(3)? != 0,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn revoke_token(&self, name: &str) -> Result<()> {
+        let updated = self.conn.execute(
+            "UPDATE api_tokens SET is_active = 0 WHERE name = ?1",
+            params![name],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("unknown token: {name}"));
+        }
+        Ok(())
+    }
+
+    /// Return the token name if `raw_token` matches an active row, and
+    /// update `last_used` on success. Returns `Ok(None)` for unknown or
+    /// revoked tokens so the middleware can translate to `401` without
+    /// distinguishing "bad token" from "no token" (avoids user
+    /// enumeration).
+    pub fn validate_token(&self, raw_token: &str) -> Result<Option<String>> {
+        let hash = sha256_hex(raw_token);
+        let row: Option<(String, i64)> = self
+            .conn
+            .query_row(
+                "SELECT name, is_active FROM api_tokens WHERE token_hash = ?1",
+                params![hash],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+        match row {
+            Some((name, active)) if active != 0 => {
+                self.conn.execute(
+                    "UPDATE api_tokens SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1",
+                    params![name],
+                )?;
+                Ok(Some(name))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Headline stats for the CLI `stats` command.
     pub fn stats(&self) -> Result<Stats> {
         let (total, min_date, max_date): (i64, Option<String>, Option<String>) =
@@ -398,6 +475,14 @@ impl Db {
             per_account,
         })
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenInfo {
+    pub name: String,
+    pub created_at: String,
+    pub last_used: Option<String>,
+    pub is_active: bool,
 }
 
 #[derive(Debug)]
@@ -488,6 +573,23 @@ fn set_file_mode_600(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn set_file_mode_600(_path: &Path) -> Result<()> {
     Ok(())
+}
+
+/// Generate a fresh `fyn_`-prefixed token. 32 random bytes rendered as
+/// hex gives 256 bits of entropy, well above anything we need for a
+/// local bearer token.
+fn generate_raw_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    format!("fyn_{}", hex::encode(bytes))
+}
+
+fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 /// Apply migration 001 (add detected_bank / detection_confidence to

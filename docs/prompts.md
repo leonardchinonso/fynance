@@ -142,4 +142,5 @@ Currently, the exported CSVs by banks go through a `detect_format` method to det
 Do not write any code to make these changes yet. Come up with a plan for these changes in a single markdown document and write it to `/Users/leonard/projects/fynance/docs/plans` folder. The document should be in great detail and should contain code snippets/examples and diagrams showing design changes. Also update the design and plans folders with the proposed changes.
 
 # Prompt 4: How To Run Backend [DONE]
+
 Go through the code in the backend folder and write a comprehensive markdown document in the folder explaining how to set up and run the code. This document will be iterated on over time. Include a pointer to the document in the CLAUDE.md file for how to run the Rust backend.

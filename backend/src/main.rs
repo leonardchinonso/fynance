@@ -4,8 +4,8 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use fynance::cli::{AccountCommand, BudgetCommand, Cli, Commands};
-use fynance::commands::{account, budget, import, stats};
+use fynance::cli::{AccountCommand, BudgetCommand, Cli, Commands, TokenCommand};
+use fynance::commands::{account, budget, import, serve, stats, token};
 use fynance::storage::Db;
 use fynance::storage::db::default_db_path;
 
@@ -62,6 +62,12 @@ fn main() -> Result<()> {
                 amount,
             } => budget::set(&db, &month, &category, &amount),
             BudgetCommand::Status { month } => budget::status(&db, &month),
+        },
+        Commands::Serve { port, no_open } => serve::run(db, no_open, port),
+        Commands::Token { command } => match command {
+            TokenCommand::Create { name } => token::create(&db, &name),
+            TokenCommand::List => token::list(&db),
+            TokenCommand::Revoke { name } => token::revoke(&db, &name),
         },
     }
 }
