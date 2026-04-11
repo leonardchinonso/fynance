@@ -1,22 +1,20 @@
 import { useState, useEffect } from "react"
-import type { BudgetRow, SpendingGridRow } from "@/types"
+import type { SpendingGridRow } from "@/types"
 import { api } from "@/api/client"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
 import { LoadingSpinner } from "@/components/loading_spinner"
-import { BudgetProgress } from "./budget/budget_progress"
 import { BudgetSpreadsheet } from "./budget/budget_spreadsheet"
 import { BudgetStackedBar } from "./budget/budget_stacked_bar"
 import { BudgetLineChart } from "./budget/budget_line_chart"
 import { BudgetPieChart } from "./budget/budget_pie_chart"
-import { List, Grid3X3, BarChart3, LineChart, PieChart, Info } from "lucide-react"
-import { getMonthsInRange, getMonthFromDate, formatMonth } from "@/lib/utils"
+import { Grid3X3, BarChart3, LineChart, PieChart, Info } from "lucide-react"
+import { getMonthsInRange } from "@/lib/utils"
 import { Card, CardContent } from "@/components/ui/card"
 
 const VIEW_MODES = [
-  { value: "progress", label: "Progress", icon: <List className="h-4 w-4" /> },
   {
     value: "spreadsheet",
     label: "Spreadsheet",
@@ -34,46 +32,23 @@ const VIEW_MODES = [
 export function BudgetPage() {
   const { start, end, view, setView, granularity } = useUrlFilters()
 
-  const [budgetRows, setBudgetRows] = useState<BudgetRow[]>([])
   const [gridRows, setGridRows] = useState<SpendingGridRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [budgetMonth, setBudgetMonth] = useState<string | null>(null)
 
   const months = getMonthsInRange(start, end)
 
-  // For progress view, find the latest month that has budget data.
-  // Try the last month in range first, then walk backwards.
+  // Fetch spending grid for all views
   useEffect(() => {
     setLoading(true)
-
-    // Try months from end backwards until we find one with data
-    async function findBudgetMonth() {
-      const candidates = [...months].reverse()
-      for (const m of candidates) {
-        const rows = await api.getBudget(m)
-        if (rows.length > 0) {
-          setBudgetRows(rows)
-          setBudgetMonth(m)
-          setLoading(false)
-          return
-        }
-      }
-      // No data found for any month in range
-      setBudgetRows([])
-      setBudgetMonth(null)
+    api.getSpendingGrid(start, end, granularity).then((rows) => {
+      setGridRows(rows)
       setLoading(false)
-    }
-
-    findBudgetMonth()
-  }, [start, end])
-
-  // Fetch spending grid for spreadsheet and chart views
-  useEffect(() => {
-    api.getSpendingGrid(start, end, granularity).then(setGridRows)
+    })
   }, [start, end, granularity])
 
-  // Default to progress view
-  const activeView = view === "table" ? "progress" : view
+  // Default to spreadsheet view
+  const activeView =
+    view === "table" || view === "progress" ? "spreadsheet" : view
 
   return (
     <div className="space-y-4">
@@ -90,41 +65,16 @@ export function BudgetPage() {
 
       {loading ? (
         <LoadingSpinner />
-      ) : activeView === "progress" ? (
-        budgetRows.length > 0 && budgetMonth ? (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Showing budget for <span className="font-medium text-foreground">{formatMonth(budgetMonth)}</span>
-            </p>
-            <BudgetProgress rows={budgetRows} />
-          </div>
-        ) : (
-          <EmptyState message="No budget data for the selected date range. Try selecting a range that includes months with transactions." />
-        )
+      ) : gridRows.length === 0 ? (
+        <EmptyState message="No spending data for the selected date range." />
       ) : activeView === "spreadsheet" ? (
-        gridRows.length > 0 ? (
-          <BudgetSpreadsheet rows={gridRows} months={months} />
-        ) : (
-          <EmptyState message="No spending data for the selected date range." />
-        )
+        <BudgetSpreadsheet rows={gridRows} months={months} />
       ) : activeView === "stacked-bar" ? (
-        gridRows.length > 0 ? (
-          <BudgetStackedBar rows={gridRows} months={months} />
-        ) : (
-          <EmptyState message="No spending data for the selected date range." />
-        )
+        <BudgetStackedBar rows={gridRows} months={months} />
       ) : activeView === "line" ? (
-        gridRows.length > 0 ? (
-          <BudgetLineChart rows={gridRows} months={months} />
-        ) : (
-          <EmptyState message="No spending data for the selected date range." />
-        )
+        <BudgetLineChart rows={gridRows} months={months} />
       ) : activeView === "pie" ? (
-        gridRows.length > 0 ? (
-          <BudgetPieChart rows={gridRows} />
-        ) : (
-          <EmptyState message="No spending data for the selected date range." />
-        )
+        <BudgetPieChart rows={gridRows} />
       ) : null}
     </div>
   )
