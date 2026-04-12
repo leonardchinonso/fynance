@@ -131,3 +131,41 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     last_used   TEXT,
     is_active   INTEGER NOT NULL DEFAULT 1
 );
+
+-- ── profiles ──────────────────────────────────────────────────────────────────
+-- Represent people in a multi-person household. Accounts reference profiles
+-- via the `profile_ids` JSON array column. Seeded with a "default" row on
+-- first startup. See docs/plans/11_frontend_backend_consolidation.md §Profile Semantics.
+CREATE TABLE IF NOT EXISTS profiles (
+    id   TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+-- ── section_mappings ──────────────────────────────────────────────────────────
+-- Maps each budget category to a display section for the spending grid.
+-- Valid sections: Income | Bills | Spending | Irregular | Transfers.
+-- Seeded with defaults on first startup; user-customisable via PUT /api/sections.
+CREATE TABLE IF NOT EXISTS section_mappings (
+    section  TEXT NOT NULL,
+    category TEXT NOT NULL UNIQUE
+);
+
+-- ── standing_budgets ──────────────────────────────────────────────────────────
+-- One standing monthly target per category. Applies to every month unless
+-- a budget_overrides row exists for that (month, category) pair.
+CREATE TABLE IF NOT EXISTS standing_budgets (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL UNIQUE,
+    amount   TEXT NOT NULL
+);
+
+-- ── budget_overrides ──────────────────────────────────────────────────────────
+-- Per-month overrides on top of standing budgets (e.g. higher food budget
+-- in December). COALESCE(override.amount, standing.amount) is the effective value.
+CREATE TABLE IF NOT EXISTS budget_overrides (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    month    TEXT NOT NULL,
+    category TEXT NOT NULL,
+    amount   TEXT NOT NULL,
+    UNIQUE(month, category)
+);
