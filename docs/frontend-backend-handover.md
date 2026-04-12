@@ -56,7 +56,7 @@ ALTER TABLE holdings ADD COLUMN short_name TEXT;
 -- Default: derive from symbol or first word of name
 ```
 
-### 1.3 Budget: standing vs per-month (OPEN QUESTION RESOLVED)
+### 1.3 Budget: standing vs per-month (OPEN QUESTION RESOLVED) [SKIP]
 
 | | Backend Plan | Frontend |
 |---|---|---|
@@ -67,7 +67,7 @@ ALTER TABLE holdings ADD COLUMN short_name TEXT;
 
 **Recommendation**: Keep per-month in the schema (allows seasonal variation like higher December food budget), but add a `POST /api/budget/standing` endpoint that sets a budget for all future months. The frontend's current mock behavior (same targets every month) works well with per-month storage. No model change needed.
 
-### 1.4 Account types: property and mortgage
+### 1.4 Account types: property and mortgage [SKIP]
 
 | | Backend Plan | Frontend |
 |---|---|---|
@@ -77,15 +77,15 @@ ALTER TABLE holdings ADD COLUMN short_name TEXT;
 
 **Recommendation**: For MVP, the frontend's approach works. The mortgage-as-credit is slightly awkward (credit cards and mortgages behave differently), but adding `property` and `mortgage` types is a post-MVP concern. The frontend already handles credit balances as liabilities via the `AVAILABLE_TYPES` classification. **No change needed for MVP.** If the backend later adds `property` and `mortgage` types, the frontend AccountType union type just needs two new members.
 
-### 1.5 Transaction model: fully aligned
+### 1.5 Transaction model: fully aligned [SKIP]
 
 The frontend `Transaction` type matches the backend plan exactly. All fields present, same types, same semantics. No changes needed.
 
-### 1.6 PortfolioSnapshot model: fully aligned
+### 1.6 PortfolioSnapshot model: fully aligned [SKIP]
 
 The frontend `PortfolioSnapshot` matches the backend schema. No changes needed.
 
-### 1.7 HoldingType: `cash` variant removed
+### 1.7 HoldingType: `cash` variant removed [SKIP]
 
 | | Backend Plan | Frontend |
 |---|---|---|
