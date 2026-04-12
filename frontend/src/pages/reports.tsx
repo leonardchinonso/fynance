@@ -3,7 +3,7 @@ import { FileText } from "lucide-react"
 
 export function ReportsPage() {
   return (
-    <div className="flex items-center justify-center py-24">
+    <div className="flex items-center justify-center min-h-[60vh]">
       <Card className="w-full max-w-md text-center">
         <CardHeader>
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">

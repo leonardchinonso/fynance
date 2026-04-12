@@ -28,6 +28,8 @@ const DELAY_MS = 1000
 
 // Available/unavailable account type classification
 const AVAILABLE_TYPES = new Set(["checking", "savings", "investment", "cash", "credit"])
+// Liability types that subtract from unavailable wealth (e.g. mortgage offsets property value)
+const UNAVAILABLE_LIABILITY_TYPES = new Set(["mortgage"])
 
 export class MockApiService implements ApiService {
   async getProfiles(): Promise<Profile[]> {
@@ -253,13 +255,15 @@ export class MockApiService implements ApiService {
 
     for (const a of accounts) {
       const bal = parseFloat(a.balance ?? "0")
-      if (a.type === "credit" && bal > 0) {
+      if ((a.type === "credit" || a.type === "mortgage") && bal > 0) {
         totalLiabilities += bal
       } else {
         totalAssets += Math.abs(bal)
       }
       if (AVAILABLE_TYPES.has(a.type)) {
         availableWealth += a.type === "credit" ? -bal : bal
+      } else if (UNAVAILABLE_LIABILITY_TYPES.has(a.type)) {
+        unavailableWealth -= bal // Mortgage subtracts from unavailable (offsets property)
       } else {
         unavailableWealth += bal
       }
@@ -288,6 +292,7 @@ export class MockApiService implements ApiService {
       let sector: string
       if (a.type === "investment") sector = "Stocks"
       else if (a.type === "pension") sector = "Pension"
+      else if (a.type === "property" || a.type === "mortgage") sector = "Property"
       else if (a.type === "savings" || a.type === "checking" || a.type === "cash")
         sector = "Cash"
       else sector = "Other"
@@ -355,6 +360,8 @@ export class MockApiService implements ApiService {
 
       if (AVAILABLE_TYPES.has(account.type)) {
         entry.available += bal
+      } else if (UNAVAILABLE_LIABILITY_TYPES.has(account.type)) {
+        entry.unavailable -= bal // Mortgage subtracts from unavailable
       } else {
         entry.unavailable += bal
       }

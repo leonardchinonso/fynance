@@ -130,7 +130,7 @@ const OCCASIONAL_SAM: TxTemplate[] = [
 ]
 
 const MONTHS: string[] = []
-for (let y = 2024; y <= 2026; y++) {
+for (let y = 2023; y <= 2026; y++) {
   const maxMonth = y === 2026 ? 3 : 12
   for (let m = 1; m <= maxMonth; m++) {
     MONTHS.push(`${y}-${m.toString().padStart(2, "0")}`)

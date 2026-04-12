@@ -21,7 +21,7 @@ function Layout() {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <main className="mx-auto max-w-7xl px-4 py-6">
+      <main className="mx-auto max-w-[1600px] px-6 py-6">
         <Routes>
           <Route path="/" element={<Navigate to={homepage} replace />} />
           <Route path="/portfolio" element={<PortfolioPage />} />

@@ -73,6 +73,8 @@ export function InteractivePie({
             activeShape={renderActiveShape}
             onMouseEnter={(_, index) => setActiveIndex(index)}
             onMouseLeave={() => { setActiveIndex(undefined); setMousePos(null); }}
+            onClick={undefined}
+            onMouseDown={(e) => e.preventDefault()}
             animationBegin={0}
             animationDuration={400}
             animationEasing="ease-out"
@@ -82,7 +84,12 @@ export function InteractivePie({
                 key={i}
                 fill={colors[i % colors.length]}
                 stroke="transparent"
-                style={{ outline: "none", cursor: "pointer" }}
+                style={{
+                  outline: "none",
+                  cursor: "pointer",
+                  filter: activeIndex !== undefined && activeIndex !== i ? "brightness(0.85)" : "none",
+                  transition: "filter 150ms ease-out",
+                }}
               />
             ))}
           </Pie>

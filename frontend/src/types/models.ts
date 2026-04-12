@@ -10,6 +10,8 @@ export type AccountType =
   | "credit"
   | "cash"
   | "pension"
+  | "property"
+  | "mortgage"
 
 export type HoldingType = "stock" | "etf" | "fund" | "bond" | "crypto"
 

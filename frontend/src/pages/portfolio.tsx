@@ -9,7 +9,7 @@ import { ExportButton } from "@/components/export_button"
 import {
   PortfolioOverviewSkeleton,
   AccountsGridSkeleton,
-  ChartSkeleton,
+  PortfolioChartsSkeleton,
   PortfolioHistorySkeleton,
 } from "@/components/skeletons"
 import { PortfolioOverview } from "./portfolio/portfolio_overview"
@@ -148,7 +148,7 @@ export function PortfolioPage() {
       {loading || !portfolio ? (
         activeView === "overview" ? <PortfolioOverviewSkeleton /> :
         activeView === "accounts" ? <AccountsGridSkeleton /> :
-        activeView === "charts" ? <div className="grid gap-4 md:grid-cols-2">{[1,2,3,4].map(i => <ChartSkeleton key={i} height={260} />)}</div> :
+        activeView === "charts" ? <PortfolioChartsSkeleton /> :
         activeView === "history" ? <PortfolioHistorySkeleton /> :
         <PortfolioOverviewSkeleton />
       ) : activeView === "overview" ? (

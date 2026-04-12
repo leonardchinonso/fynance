@@ -32,6 +32,7 @@ interface StyledLineChartProps {
   showBrush?: boolean
   highlightIndex?: number | null
   onBrushChange?: (startIndex: number, endIndex: number) => void
+  onActiveIndexChange?: (index: number | null) => void
 }
 
 export function StyledLineChart({
@@ -47,6 +48,7 @@ export function StyledLineChart({
   showBrush = false,
   highlightIndex,
   onBrushChange,
+  onActiveIndexChange,
 }: StyledLineChartProps) {
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -63,9 +65,18 @@ export function StyledLineChart({
       : undefined
 
   return (
-    <div className={className} ref={containerRef} onMouseMove={handleMouseMove} onMouseLeave={() => setMousePos(null)}>
+    <div className={className} ref={containerRef} onMouseMove={handleMouseMove} onMouseLeave={() => setMousePos(null)} onMouseDown={(e) => e.preventDefault()}>
       <ResponsiveContainer width="100%" height={height + (showBrush ? 40 : 0)}>
-        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 12 }}>
+        <LineChart
+          data={data}
+          margin={{ top: 8, right: 16, bottom: 0, left: 16 }}
+          onMouseMove={(state) => {
+            if (onActiveIndexChange && state?.activeTooltipIndex !== undefined) {
+              onActiveIndexChange(state.activeTooltipIndex)
+            }
+          }}
+          onMouseLeave={() => onActiveIndexChange?.(null)}
+        >
           <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
           <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />
           <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
@@ -82,7 +93,7 @@ export function StyledLineChart({
             />
           )}
           {highlightLabel && (
-            <ReferenceLine x={highlightLabel} stroke="hsl(var(--foreground))" strokeWidth={1.5} strokeDasharray="4 4" opacity={0.5} />
+            <ReferenceLine x={highlightLabel} stroke="#ffffff" strokeWidth={2} strokeDasharray="4 4" opacity={0.6} />
           )}
           {categories.map((cat, i) => (
             <Line
@@ -93,8 +104,7 @@ export function StyledLineChart({
               strokeWidth={2.5}
               dot={{ r: 3, fill: colors[i % colors.length], strokeWidth: 0 }}
               activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
-              animationDuration={500}
-              animationEasing="ease-out"
+              isAnimationActive={false}
               connectNulls={connectNulls}
             />
           ))}

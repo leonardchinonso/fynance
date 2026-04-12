@@ -9,12 +9,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatCurrency, getQuarter, getYear } from "@/lib/utils"
+import { formatCurrency, formatMonth, getQuarter, getYear } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 
 interface PortfolioHistoryProps {
   history: PortfolioHistoryRow[]
   granularity: Granularity
+}
+
+function formatPeriodLabel(key: string, granularity: Granularity): string {
+  if (granularity === "monthly") return formatMonth(key)
+  return key // Q1 2024 or 2024 are already readable
 }
 
 function aggregateHistory(
@@ -37,7 +42,6 @@ function aggregateHistory(
       orderedKeys.push(key)
     }
     const g = groups.get(key)!
-    // For quarterly/yearly, use the last month's values (point-in-time snapshot)
     g.available = parseFloat(row.available_wealth)
     g.unavailable = parseFloat(row.unavailable_wealth)
     g.count++
@@ -55,16 +59,13 @@ function aggregateHistory(
 }
 
 export function PortfolioHistory({ history, granularity }: PortfolioHistoryProps) {
-  const [hoveredRowIndex, setHoveredRowIndex] = useState<number | null>(null)
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
-  // Filter out months where total wealth is 0 (no data yet)
   const filtered = history.filter((row) => parseFloat(row.total_wealth) > 0)
-
-  // Aggregate by granularity
   const aggregated = aggregateHistory(filtered, granularity)
 
   const chartData = aggregated.map((row) => ({
-    period: row.month,
+    period: formatPeriodLabel(row.month, granularity),
     Available: parseFloat(row.available_wealth),
     Unavailable: parseFloat(row.unavailable_wealth),
     Total: parseFloat(row.total_wealth),
@@ -79,7 +80,6 @@ export function PortfolioHistory({ history, granularity }: PortfolioHistoryProps
 
   return (
     <div className="space-y-6">
-      {/* Line chart with brush */}
       <div className="rounded-lg border p-4">
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-sm font-medium text-muted-foreground">
@@ -93,15 +93,11 @@ export function PortfolioHistory({ history, granularity }: PortfolioHistoryProps
           colors={["#22c55e", "#3b82f6", "#f97316"]}
           height={340}
           curved
-          showBrush
-          highlightIndex={hoveredRowIndex}
+          highlightIndex={hoveredIndex}
+          onActiveIndexChange={setHoveredIndex}
         />
-        <p className="mt-2 text-xs text-muted-foreground">
-          Drag the handles below the chart to zoom into a date range. Hover over table rows to highlight on the chart.
-        </p>
       </div>
 
-      {/* History table */}
       <div className="overflow-x-auto rounded-lg border">
         <Table>
           <TableHeader>
@@ -125,12 +121,14 @@ export function PortfolioHistory({ history, granularity }: PortfolioHistoryProps
                   key={row.month}
                   className={cn(
                     "cursor-pointer transition-colors",
-                    hoveredRowIndex === i && "bg-muted/50"
+                    hoveredIndex === i && "bg-muted/50"
                   )}
-                  onMouseEnter={() => setHoveredRowIndex(i)}
-                  onMouseLeave={() => setHoveredRowIndex(null)}
+                  onMouseEnter={() => setHoveredIndex(i)}
+                  onMouseLeave={() => setHoveredIndex(null)}
                 >
-                  <TableCell className="font-medium">{row.month}</TableCell>
+                  <TableCell className="font-medium">
+                    {formatPeriodLabel(row.month, granularity)}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatCurrency(row.available_wealth)}
                   </TableCell>
