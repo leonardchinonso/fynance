@@ -114,6 +114,8 @@ pub enum AccountType {
     Credit,
     Cash,
     Pension,
+    Property,
+    Mortgage,
 }
 
 impl AccountType {
@@ -125,6 +127,8 @@ impl AccountType {
             Self::Credit => "credit",
             Self::Cash => "cash",
             Self::Pension => "pension",
+            Self::Property => "property",
+            Self::Mortgage => "mortgage",
         }
     }
 
@@ -136,6 +140,8 @@ impl AccountType {
             "credit" => Some(Self::Credit),
             "cash" => Some(Self::Cash),
             "pension" => Some(Self::Pension),
+            "property" => Some(Self::Property),
+            "mortgage" => Some(Self::Mortgage),
             _ => None,
         }
     }

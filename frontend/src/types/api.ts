@@ -1,15 +1,15 @@
 // API request and response types matching the REST API surface.
 // These define the contract between frontend and backend.
+// Types shared with backend are imported from generated bindings.
 
-import type {
-  Account,
-  AccountType,
-  Holding,
-  PortfolioSnapshot,
-  Transaction,
-} from "./models"
+import type { Account } from "./models"
 
-export type Granularity = "monthly" | "quarterly" | "yearly"
+// ── From backend bindings ───────────────────────────────────────────
+export type { BudgetRow } from "@/bindings/BudgetRow"
+export type { Granularity } from "@/bindings/Granularity"
+export type { SpendingGridRow } from "@/bindings/SpendingGridRow"
+
+// ── Frontend-only API types ─────────────────────────────────────────
 
 export interface TransactionFilters {
   start?: string // YYYY-MM-DD
@@ -27,13 +27,6 @@ export interface PaginatedResponse<T> {
   total: number
   page: number
   limit: number
-}
-
-export interface BudgetRow {
-  category: string
-  budgeted: string // Decimal string
-  actual: string // Decimal string (absolute value of spending)
-  percent: number // actual / budgeted * 100
 }
 
 export interface BudgetUpdateRequest {
@@ -80,20 +73,5 @@ export interface CashFlowMonth {
   spending: string // Decimal string
 }
 
-export interface SpendingGridRow {
-  category: string
-  section: string // "Income" | "Bills" | "Spending" | "Irregular" | "Transfers"
-  months: Record<string, string | null> // YYYY-MM -> Decimal string, null = no data
-  average: string | null
-  budget: string | null
-  total: string | null
-}
-
 // Re-export model types used in API responses
-export type {
-  Account,
-  AccountType,
-  Holding,
-  PortfolioSnapshot,
-  Transaction,
-}
+export type { Account, AccountType, Holding, PortfolioSnapshot, Transaction } from "./models"

@@ -72,7 +72,7 @@ export function HoldingsDetail({
                     (a, b) => parseFloat(b.value) - parseFloat(a.value)
                   )
                   .map((h) => (
-                    <TableRow key={h.id}>
+                    <TableRow key={`${h.account_id}-${h.symbol}`}>
                       <TableCell className="font-medium">{h.symbol}</TableCell>
                       <TableCell className="text-sm">{h.name}</TableCell>
                       <TableCell>

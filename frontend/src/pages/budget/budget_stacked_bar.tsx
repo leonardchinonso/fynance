@@ -28,7 +28,7 @@ export function BudgetStackedBar({ rows, months, granularity }: BudgetStackedBar
   const periodsWithData = periods.filter((p) => {
     const periodMonths = getMonthsForPeriod(months, p, granularity)
     return spendingRows.some((r) =>
-      periodMonths.some((m) => r.months[m] !== null)
+      periodMonths.some((m) => r.periods[m] !== null)
     )
   })
 
@@ -44,7 +44,7 @@ export function BudgetStackedBar({ rows, months, granularity }: BudgetStackedBar
       let total = 0
       for (const row of catRows) {
         for (const m of periodMonths) {
-          const val = row.months[m]
+          const val = row.periods[m]
           if (val !== null) total += Math.abs(parseFloat(val))
         }
       }
