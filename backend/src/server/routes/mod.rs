@@ -1,8 +1,11 @@
 //! Route handler modules, one per resource group.
-//!
-//! Phase 2 only wires up `docs` (agent-readable OpenAPI spec) and
-//! `health` (readiness probe). Phases 3+ add `transactions`, `budget`,
-//! `portfolio`, `reports`, and `export` modules here.
 
+pub mod accounts;
+pub mod budget;
 pub mod docs;
 pub mod health;
+pub mod import_api;
+pub mod ingestion;
+pub mod profiles;
+pub mod sections;
+pub mod transactions;

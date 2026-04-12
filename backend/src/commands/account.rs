@@ -35,6 +35,7 @@ pub fn add(
         balance_date: None,
         is_active: true,
         notes: None,
+        profile_ids: vec!["default".to_string()],
     };
     db.upsert_account(&account)?;
     println!("Added account {id}");
@@ -52,7 +53,7 @@ pub fn set_balance(db: &Db, id: &str, amount: &str, date: &str) -> Result<()> {
 }
 
 pub fn list(db: &Db) -> Result<()> {
-    let accounts = db.get_accounts()?;
+    let accounts = db.get_accounts(None)?;
     if accounts.is_empty() {
         println!("(no accounts registered)");
         return Ok(());

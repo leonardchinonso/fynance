@@ -4,6 +4,8 @@
 //! structs derive `ts_rs::TS` so a future `cargo test`-driven step can emit
 //! matching TypeScript interfaces into `frontend/src/bindings/`.
 
+use std::collections::HashMap;
+
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -83,6 +85,14 @@ pub struct Account {
     pub balance_date: Option<NaiveDate>,
     pub is_active: bool,
     pub notes: Option<String>,
+    /// JSON array of profile IDs, e.g. `["alex", "sam"]`.
+    /// Defaults to `["default"]` when not specified.
+    #[serde(default = "default_profile_ids")]
+    pub profile_ids: Vec<String>,
+}
+
+fn default_profile_ids() -> Vec<String> {
+    vec!["default".to_string()]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -122,6 +132,156 @@ impl AccountType {
     }
 }
 
+/// A profile represents one person in a multi-person household.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+}
+
+/// Time granularity used by spending-grid and portfolio-history endpoints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "lowercase")]
+pub enum Granularity {
+    Monthly,
+    Quarterly,
+    Yearly,
+}
+
+impl Granularity {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "monthly" => Some(Self::Monthly),
+            "quarterly" => Some(Self::Quarterly),
+            "yearly" => Some(Self::Yearly),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Monthly => "monthly",
+            Self::Quarterly => "quarterly",
+            Self::Yearly => "yearly",
+        }
+    }
+}
+
+/// One row in the spending-grid response. `periods` maps period strings
+/// (e.g. "2026-01", "2026-Q1", "2026") to the spending total as a Decimal
+/// string, or null if there were no transactions in that period.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct SpendingGridRow {
+    pub category: String,
+    pub section: String,
+    /// Period key -> decimal string (or null). Amounts are signed:
+    /// negative = expense, positive = income/credit.
+    #[ts(type = "Record<string, string | null>")]
+    pub periods: HashMap<String, Option<String>>,
+    /// Average spend per period that had any transactions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average: Option<String>,
+    /// Standing budget amount for this category (decimal string).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<String>,
+    /// Sum across all periods.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<String>,
+}
+
+/// One row in the `GET /api/budget/:month` response.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct BudgetRow {
+    pub category: String,
+    /// Effective budget for this month (standing or override). Null if not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budgeted: Option<String>,
+    /// Actual spend this month (absolute value of negative transactions).
+    pub actual: String,
+    /// `actual / budgeted * 100`. Null when `budgeted` is null or zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent: Option<f64>,
+}
+
+/// Aggregate spend per category, used by `GET /api/transactions/by-category`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct CategoryTotal {
+    pub category: String,
+    /// Signed sum of `amount` for this category (negative = net spend).
+    pub total: String,
+}
+
+/// Maps one budget category to a spending-grid section.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct SectionMapping {
+    /// One of: Income | Bills | Spending | Irregular | Transfers
+    pub section: String,
+    pub category: String,
+}
+
+/// A standing monthly budget target for one category.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct StandingBudget {
+    pub category: String,
+    pub amount: String,
+}
+
+/// Per-month override for a standing budget.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct BudgetOverride {
+    pub month: String,
+    pub category: String,
+    pub amount: String,
+}
+
+/// Input record for `POST /api/import` (structured JSON from external agents).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ImportTransaction {
+    #[ts(type = "string")]
+    pub date: NaiveDate,
+    pub description: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    #[serde(default)]
+    pub currency: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub category_source: Option<CategorySource>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub is_recurring: Option<bool>,
+}
+
+/// Request body for `POST /api/import`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ImportPayload {
+    pub account_id: String,
+    pub transactions: Vec<ImportTransaction>,
+}
+
+/// Per-row error detail in a partial-success import response.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ImportRowError {
+    /// Zero-based index into the `transactions` array.
+    pub index: usize,
+    pub reason: String,
+}
+
+/// A standing budget (old model). Kept for CLI backward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct Budget {
@@ -130,6 +290,43 @@ pub struct Budget {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub amount: Decimal,
+}
+
+/// One row in the ingestion checklist for a given month.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ChecklistItem {
+    pub account_id: String,
+    pub account_name: String,
+    pub status: ChecklistStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "lowercase")]
+pub enum ChecklistStatus {
+    Pending,
+    Complete,
+}
+
+impl ChecklistStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Complete => "complete",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "complete" => Self::Complete,
+            _ => Self::Pending,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -163,6 +360,9 @@ pub struct Holding {
     pub currency: String,
     #[ts(type = "string")]
     pub as_of: NaiveDate,
+    /// Optional short display name (e.g. ticker alias).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -233,6 +433,9 @@ pub struct ImportResult {
     /// LLM's own confidence in `detected_bank` [0.0, 1.0]. Zero for the
     /// synthetic totals row produced by the CLI.
     pub detection_confidence: f32,
+    /// Per-row errors from a partial-success import (API path only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<ImportRowError>,
 }
 
 impl BankFormat {
