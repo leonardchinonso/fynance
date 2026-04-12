@@ -235,23 +235,25 @@ export function TransactionsPage() {
         )}
       </div>
 
-      {/* Summary */}
-      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-        <span>
-          {result?.total ?? 0} transactions
-        </span>
-        <span>
-          Total spending:{" "}
-          <Currency
-            amount={totalSpending.toFixed(2)}
-            className="font-medium"
-          />
-        </span>
-      </div>
+      {/* Summary - hidden while loading */}
+      {!loading && (
+        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+          <span>
+            {result?.total ?? 0} transactions
+          </span>
+          <span>
+            Total spending:{" "}
+            <Currency
+              amount={totalSpending.toFixed(2)}
+              className="font-medium"
+            />
+          </span>
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (
-        view === "table" ? <TableSkeleton rows={10} cols={5} /> : <ChartSkeleton height={320} />
+        view === "table" ? <TableSkeleton rows={25} cols={5} /> : <ChartSkeleton height={320} />
       ) : view === "table" && result ? (
         <TransactionTable
           transactions={result.data}

@@ -86,32 +86,40 @@ export function PortfolioOverviewSkeleton() {
   )
 }
 
-/** Skeleton for a table with rows */
-export function TableSkeleton({ rows = 10, cols = 5 }: { rows?: number; cols?: number }) {
+/** Skeleton for a transaction table */
+export function TableSkeleton({ rows = 25, cols = 5 }: { rows?: number; cols?: number }) {
   return (
-    <div className="space-y-4">
-      {/* Filters placeholder */}
-      <div className="flex gap-3">
-        <Bone className="h-8 w-[180px]" />
-        <Bone className="h-8 w-[200px]" />
-        <Bone className="h-8 w-20" />
-      </div>
-      {/* Table */}
-      <div className="rounded-lg border">
-        {/* Header */}
-        <div className="flex gap-4 border-b px-4 py-3">
-          {Array.from({ length: cols }).map((_, i) => (
-            <Bone key={i} className="h-3 flex-1" />
-          ))}
-        </div>
-        {/* Rows */}
-        {Array.from({ length: rows }).map((_, i) => (
-          <div key={i} className="flex gap-4 border-b px-4 py-3 last:border-0">
-            {Array.from({ length: cols }).map((_, j) => (
-              <Bone key={j} className={cn("h-4 flex-1", j === 0 && "max-w-[100px]")} />
+    <div>
+      <table className="w-full">
+        <thead>
+          <tr className="border-b">
+            {Array.from({ length: cols }).map((_, i) => (
+              <th key={i} className="px-4 py-3 text-left">
+                <Bone className={cn("h-3", i === 0 ? "w-10" : i === 1 ? "w-16" : i === 2 ? "w-16" : "w-14")} />
+              </th>
             ))}
-          </div>
-        ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }).map((_, i) => (
+            <tr key={i} className="border-b">
+              <td className="px-4 py-3"><Bone className="h-3 w-20" /></td>
+              <td className="px-4 py-3"><Bone className={cn("h-3", i % 3 === 0 ? "w-24" : "w-20")} /></td>
+              <td className="px-4 py-3"><Bone className="h-5 w-28 rounded-full" /></td>
+              <td className="px-4 py-3 text-right"><Bone className="h-3 w-16 ml-auto" /></td>
+              <td className="px-4 py-3"><Bone className={cn("h-3", i % 2 === 0 ? "w-24" : "w-20")} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {/* Pagination skeleton */}
+      <div className="flex items-center justify-between border-t px-4 py-3">
+        <Bone className="h-3 w-28" />
+        <div className="flex items-center gap-2">
+          <Bone className="h-3 w-20" />
+          <Bone className="h-7 w-7 rounded-md" />
+          <Bone className="h-7 w-7 rounded-md" />
+        </div>
       </div>
     </div>
   )
@@ -156,23 +164,71 @@ export function AccountsGridSkeleton() {
   )
 }
 
-/** Skeleton for budget spreadsheet */
+/** Skeleton for budget spreadsheet with section headers and cells */
 export function SpreadsheetSkeleton() {
+  const cols = 7
+  const sections = [
+    { rows: 1 },
+    { rows: 4 },
+    { rows: 6 },
+    { rows: 2 },
+  ]
+
   return (
-    <div className="rounded-lg border overflow-hidden">
-      <div className="flex gap-2 border-b px-3 py-2">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <Bone key={i} className="h-3 flex-1" />
-        ))}
-      </div>
-      {Array.from({ length: 12 }).map((_, i) => (
-        <div key={i} className="flex gap-2 border-b px-3 py-2.5 last:border-0">
-          {Array.from({ length: 8 }).map((_, j) => (
-            <Bone key={j} className={cn("h-4 flex-1", j === 0 && "max-w-[120px]")} />
+    <div className="rounded-lg border overflow-hidden overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b">
+            <th className="px-4 py-2 text-left w-[120px]"><Bone className="h-2.5 w-14" /></th>
+            {Array.from({ length: cols }).map((_, i) => (
+              <th key={i} className="px-3 py-2 text-right"><Bone className="h-2.5 w-8 ml-auto" /></th>
+            ))}
+            <th className="px-3 py-2 text-right"><Bone className="h-2.5 w-10 ml-auto" /></th>
+            <th className="px-3 py-2 text-right"><Bone className="h-2.5 w-10 ml-auto" /></th>
+          </tr>
+        </thead>
+        <tbody>
+          {sections.map((section, si) => (
+            <SectionSkeleton key={si} rows={section.rows} cols={cols} />
           ))}
-        </div>
-      ))}
+        </tbody>
+      </table>
     </div>
+  )
+}
+
+function SectionSkeleton({ rows, cols }: { rows: number; cols: number }) {
+  return (
+    <>
+      {/* Section header */}
+      <tr className="bg-muted/50 border-b">
+        <td colSpan={cols + 3} className="px-4 py-1.5">
+          <Bone className="h-2.5 w-16" />
+        </td>
+      </tr>
+      {/* Data rows */}
+      {Array.from({ length: rows }).map((_, ri) => (
+        <tr key={ri} className="border-b">
+          <td className="px-4 py-2"><Bone className={cn("h-2.5", ri % 2 === 0 ? "w-16" : "w-20")} /></td>
+          {Array.from({ length: cols }).map((_, ci) => (
+            <td key={ci} className="px-3 py-2 text-right">
+              <Bone className={cn("h-2.5 ml-auto", ci % 3 === 0 ? "w-12" : "w-10")} />
+            </td>
+          ))}
+          <td className="px-3 py-2 text-right"><Bone className="h-2.5 w-10 ml-auto" /></td>
+          <td className="px-3 py-2 text-right"><Bone className="h-2.5 w-8 ml-auto" /></td>
+        </tr>
+      ))}
+      {/* Total row */}
+      <tr className="border-b-2">
+        <td className="px-4 py-2"><Bone className="h-2.5 w-14" /></td>
+        {Array.from({ length: cols }).map((_, ci) => (
+          <td key={ci} className="px-3 py-2 text-right"><Bone className="h-2.5 w-12 ml-auto" /></td>
+        ))}
+        <td className="px-3 py-2 text-right"><Bone className="h-2.5 w-12 ml-auto" /></td>
+        <td className="px-3 py-2" />
+      </tr>
+    </>
   )
 }
 
