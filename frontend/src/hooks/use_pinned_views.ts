@@ -46,5 +46,16 @@ export function usePinnedViews() {
     [pinnedViews]
   )
 
-  return { pinnedViews, pinCurrentView, unpinView }
+  const renamePinnedView = useCallback(
+    (url: string, newLabel: string) => {
+      const next = pinnedViews.map((v) =>
+        v.url === url ? { ...v, label: newLabel } : v
+      )
+      setPinnedViews(next)
+      savePinned(next)
+    },
+    [pinnedViews]
+  )
+
+  return { pinnedViews, pinCurrentView, unpinView, renamePinnedView }
 }
