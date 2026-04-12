@@ -32,8 +32,7 @@ import { cn } from "@/lib/utils"
 
 const VIEW_MODES = [
   { value: "table", label: "Table", icon: <Table2 className="h-4 w-4" /> },
-  { value: "bar", label: "Bar Chart", icon: <BarChart3 className="h-4 w-4" /> },
-  { value: "pie", label: "Pie Chart", icon: <PieChart className="h-4 w-4" /> },
+  { value: "charts", label: "Charts", icon: <BarChart3 className="h-4 w-4" /> },
 ]
 
 function MultiSelect({
@@ -267,10 +266,11 @@ export function TransactionsPage() {
           }}
           accountNames={accountNameMap}
         />
-      ) : view === "bar" ? (
-        <TransactionBarChart transactions={allTransactions} />
-      ) : view === "pie" ? (
-        <TransactionPieChart transactions={allTransactions} />
+      ) : (view === "charts" || view === "bar" || view === "pie") ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TransactionBarChart transactions={allTransactions} />
+          <TransactionPieChart transactions={allTransactions} />
+        </div>
       ) : null}
     </div>
   )
