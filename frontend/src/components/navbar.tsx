@@ -102,70 +102,19 @@ export function Navbar() {
                 </button>
               </div>
             ))}
-            {/* Pinned views dropdown */}
-            {pinnedViews.length > 0 && (
-              <Popover>
-                <PopoverTrigger className="rounded-md px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors flex items-center gap-1.5 whitespace-nowrap">
-                  <Pin className="h-3 w-3 opacity-50" />
-                  Saved
-                  <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] rounded-full">{pinnedViews.length}</Badge>
-                </PopoverTrigger>
-                <PopoverContent className="w-[220px] p-2" align="start">
-                  <p className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Saved Views</p>
-                  {pinnedViews.map((view, idx) => (
-                    <div
-                      key={view.url}
-                      className={cn(
-                        "flex items-center gap-0.5 group rounded-md transition-all duration-150",
-                        dragIndex === idx && "bg-muted border border-border shadow-md scale-[1.02] z-10 relative",
-                        dragIndex !== null && dragIndex !== idx && "opacity-70"
-                      )}
-                      draggable
-                      onDragStart={(e) => {
-                        setDragIndex(idx)
-                        // Create a minimal drag image
-                        const ghost = document.createElement("div")
-                        ghost.style.cssText = "position:fixed;top:-1000px;opacity:0"
-                        document.body.appendChild(ghost)
-                        e.dataTransfer.setDragImage(ghost, 0, 0)
-                        requestAnimationFrame(() => document.body.removeChild(ghost))
-                      }}
-                      onDragOver={(e) => { e.preventDefault(); if (dragIndex !== null && dragIndex !== idx) { reorderPinnedViews(dragIndex, idx); setDragIndex(idx) } }}
-                      onDragEnd={() => setDragIndex(null)}
-                    >
-                      {/* Drag handle */}
-                      <span className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground opacity-30 group-hover:opacity-70 shrink-0" title="Drag to reorder">
-                        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="3" cy="2" r="1"/><circle cx="7" cy="2" r="1"/><circle cx="3" cy="5" r="1"/><circle cx="7" cy="5" r="1"/><circle cx="3" cy="8" r="1"/><circle cx="7" cy="8" r="1"/></svg>
-                      </span>
-                      <button
-                        onClick={() => setHomepage(view.url)}
-                        className="p-1 rounded hover:bg-muted transition-colors shrink-0"
-                        title={isHomepage(view.url) ? "This is your homepage" : "Set as homepage"}
-                      >
-                        <Star className={cn("h-3 w-3", isHomepage(view.url) ? "text-yellow-500" : "text-muted-foreground opacity-40 group-hover:opacity-100")} fill={isHomepage(view.url) ? "currentColor" : "none"} />
-                      </button>
-                      <button
-                        onClick={() => navigate(view.url)}
-                        className={cn(
-                          "flex-1 text-left rounded-md px-2 py-1.5 text-sm transition-colors truncate",
-                          location.pathname + location.search === view.url
-                            ? "bg-secondary text-secondary-foreground"
-                            : "text-foreground hover:bg-muted"
-                        )}
-                      >
-                        {view.label}
-                      </button>
-                      <button
-                        onClick={() => { unpinView(view.url); if (isHomepage(view.url)) setHomepage("/portfolio") }}
-                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/20 transition-opacity shrink-0"
-                      >
-                        <X className="h-3 w-3 text-muted-foreground" />
-                      </button>
-                    </div>
-                  ))}
-                </PopoverContent>
-              </Popover>
-            )}
+            {/* Saved views dropdown - always visible */}
+            <SavedViewsPopover
+              pinnedViews={pinnedViews}
+              dragIndex={dragIndex}
+              setDragIndex={setDragIndex}
+              reorderPinnedViews={reorderPinnedViews}
+              isHomepage={isHomepage}
+              setHomepage={setHomepage}
+              unpinView={unpinView}
+              navigate={navigate}
+              location={location}
+              onSaveNew={() => { setPinLabel(""); setShowPinDialog(true) }}
+            />
           </div>
 
           {/* Mobile nav tabs - compact, no overflow */}
@@ -192,10 +141,6 @@ export function Navbar() {
 
           {/* Desktop actions */}
           <div className="hidden md:flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-8 w-8"
-              onClick={() => { setPinLabel(""); setShowPinDialog(true) }} title="Save current view">
-              <Bookmark className="h-4 w-4" />
-            </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8"
               onClick={() => { const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light"; setTheme(next) }}
               title={`Theme: ${theme}`}>
@@ -305,6 +250,101 @@ export function Navbar() {
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+function SavedViewsPopover({
+  pinnedViews, dragIndex, setDragIndex, reorderPinnedViews,
+  isHomepage, setHomepage, unpinView, navigate, location, onSaveNew,
+}: {
+  pinnedViews: { label: string; url: string; createdAt: string }[]
+  dragIndex: number | null
+  setDragIndex: (i: number | null) => void
+  reorderPinnedViews: (from: number, to: number) => void
+  isHomepage: (path: string) => boolean
+  setHomepage: (path: string) => void
+  unpinView: (url: string) => void
+  navigate: (url: string) => void
+  location: { pathname: string; search: string }
+  onSaveNew: () => void
+}) {
+  const currentUrl = location.pathname + location.search
+  const existingMatch = pinnedViews.find((v) => v.url === currentUrl)
+
+  return (
+    <Popover>
+      <PopoverTrigger className="rounded-md px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors flex items-center gap-1.5 whitespace-nowrap">
+        <Bookmark className="h-3.5 w-3.5" />
+        Saved
+        {pinnedViews.length > 0 && (
+          <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] rounded-full">{pinnedViews.length}</Badge>
+        )}
+      </PopoverTrigger>
+      <PopoverContent className="w-[240px] p-2" align="start">
+        {pinnedViews.length > 0 && (
+          <>
+            <p className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Saved Views</p>
+            <div className="space-y-0.5 mb-2">
+              {pinnedViews.map((view, idx) => (
+                <div
+                  key={view.url}
+                  className={cn(
+                    "flex items-center gap-0.5 group rounded-md transition-all duration-150",
+                    dragIndex === idx && "bg-muted border border-border shadow-md scale-[1.02] z-10 relative",
+                    dragIndex !== null && dragIndex !== idx && "opacity-70"
+                  )}
+                  draggable
+                  onDragStart={(e) => {
+                    setDragIndex(idx)
+                    const ghost = document.createElement("div")
+                    ghost.style.cssText = "position:fixed;top:-1000px;opacity:0"
+                    document.body.appendChild(ghost)
+                    e.dataTransfer.setDragImage(ghost, 0, 0)
+                    requestAnimationFrame(() => document.body.removeChild(ghost))
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); if (dragIndex !== null && dragIndex !== idx) { reorderPinnedViews(dragIndex, idx); setDragIndex(idx) } }}
+                  onDragEnd={() => setDragIndex(null)}
+                >
+                  <span className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground opacity-30 group-hover:opacity-70 shrink-0" title="Drag to reorder">
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="3" cy="2" r="1"/><circle cx="7" cy="2" r="1"/><circle cx="3" cy="5" r="1"/><circle cx="7" cy="5" r="1"/><circle cx="3" cy="8" r="1"/><circle cx="7" cy="8" r="1"/></svg>
+                  </span>
+                  <button onClick={() => setHomepage(view.url)}
+                    className="p-1 rounded hover:bg-muted transition-colors shrink-0"
+                    title={isHomepage(view.url) ? "This is your homepage" : "Set as homepage"}>
+                    <Star className={cn("h-3 w-3", isHomepage(view.url) ? "text-yellow-500" : "text-muted-foreground opacity-40 group-hover:opacity-100")} fill={isHomepage(view.url) ? "currentColor" : "none"} />
+                  </button>
+                  <button onClick={() => navigate(view.url)}
+                    className={cn("flex-1 text-left rounded-md px-2 py-1.5 text-sm transition-colors truncate",
+                      view.url === currentUrl ? "bg-secondary text-secondary-foreground" : "text-foreground hover:bg-muted")}>
+                    {view.label}
+                  </button>
+                  <button onClick={() => { unpinView(view.url); if (isHomepage(view.url)) setHomepage("/portfolio") }}
+                    className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/20 transition-opacity shrink-0">
+                    <X className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-border my-1" />
+          </>
+        )}
+        {/* Save current view button */}
+        <button
+          onClick={existingMatch ? undefined : onSaveNew}
+          disabled={!!existingMatch}
+          className={cn(
+            "w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+            existingMatch
+              ? "text-muted-foreground/50 cursor-not-allowed"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          )}
+          title={existingMatch ? `Current view is already saved as "${existingMatch.label}"` : "Save the current page and filters as a view"}
+        >
+          <Bookmark className="h-3.5 w-3.5 shrink-0" />
+          {existingMatch ? `Already saved as "${existingMatch.label}"` : "Save current view"}
+        </button>
+      </PopoverContent>
+    </Popover>
   )
 }
 
