@@ -45,14 +45,6 @@ const ALL_COLUMNS: Column[] = [
   { id: "source", label: "Source", defaultVisible: false },
 ]
 
-function getStoredPageSize(): number {
-  try {
-    const v = localStorage.getItem(PAGE_SIZE_KEY)
-    if (v) return parseInt(v, 10)
-  } catch { /* ignore */ }
-  return 25
-}
-
 function getStoredColumns(): Set<string> {
   try {
     const v = localStorage.getItem(COLUMNS_KEY)

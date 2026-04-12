@@ -45,7 +45,6 @@ export function PortfolioOverview({
 
   const netWorth = parseFloat(portfolio.net_worth)
   const available = parseFloat(portfolio.available_wealth)
-  const unavailable = parseFloat(portfolio.unavailable_wealth)
   const availablePct = netWorth > 0 ? (available / netWorth) * 100 : 0
 
   // Income/outgoing totals
