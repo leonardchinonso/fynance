@@ -16,9 +16,10 @@ use rust_decimal::Decimal;
 
 use crate::model::{
     Account, AccountType, BudgetRow, CategorySource, CategoryTotal, ChecklistItem,
-    ChecklistStatus, Granularity, Holding, HoldingType, ImportLog, ImportResult, ImportRowError,
-    ImportTransaction, InsertOutcome, PortfolioSnapshot, Profile, SectionMapping, SpendingGridRow,
-    StandingBudget, Transaction,
+    ChecklistStatus, CashFlowMonth, Granularity, Holding, HoldingType, ImportLog, ImportResult,
+    ImportRowError, ImportTransaction, InsertOutcome, InvestmentMetrics, PortfolioHistoryRow,
+    PortfolioSnapshot, Profile, SectionMapping, SnapshotDelta, SpendingGridRow, StandingBudget,
+    Transaction,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -1172,6 +1173,444 @@ impl Db {
         }
     }
 
+    // ── Portfolio queries ─────────────────────────────────────────────────────
+
+    /// Returns all accounts with their carry-forward balance as of `as_of`.
+    /// Each returned `Account` has:
+    /// - `balance`: the most recent portfolio_snapshots balance <= `as_of`, or `None`
+    /// - `balance_date`: the snapshot_date that was carried forward
+    /// - `is_stale`: `Some(true)` if snapshot_date is > 45 days before `as_of`
+    pub fn get_portfolio_as_of(
+        &self,
+        as_of: NaiveDate,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<Account>> {
+        let as_of_str = as_of.format("%Y-%m-%d").to_string();
+        let stale_days = 45i64;
+
+        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
+        {
+            let pattern = format!("%\"{pid}\"%");
+            (
+                "AND a.profile_ids LIKE ?2".to_string(),
+                Some(pattern),
+            )
+        } else {
+            (String::new(), None)
+        };
+
+        let sql = format!(
+            r"SELECT
+                a.id, a.name, a.institution, a.type, a.currency,
+                a.is_active, a.notes, a.profile_ids,
+                ps.balance AS snap_balance,
+                ps.snapshot_date
+              FROM accounts a
+              LEFT JOIN (
+                  SELECT ps1.account_id, ps1.balance, ps1.snapshot_date
+                  FROM portfolio_snapshots ps1
+                  WHERE ps1.snapshot_date <= ?1
+                    AND ps1.snapshot_date = (
+                        SELECT MAX(ps2.snapshot_date)
+                        FROM portfolio_snapshots ps2
+                        WHERE ps2.account_id = ps1.account_id
+                          AND ps2.snapshot_date <= ?1
+                    )
+              ) ps ON ps.account_id = a.id
+              WHERE a.is_active = 1
+              {profile_filter}
+              ORDER BY a.institution, a.name"
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows: Vec<Account> = if let Some(ref pat) = profile_arg {
+            stmt.query_map(rusqlite::params![as_of_str, pat], |row| {
+                row_to_portfolio_account(row, as_of, stale_days)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(rusqlite::params![as_of_str], |row| {
+                row_to_portfolio_account(row, as_of, stale_days)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        Ok(rows)
+    }
+
+    /// Returns one `PortfolioHistoryRow` per period between `from` and `to`.
+    /// Uses carry-forward semantics: point-in-time balance at period end.
+    pub fn get_monthly_net_worth(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+        granularity: &Granularity,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<PortfolioHistoryRow>> {
+        let periods = generate_period_end_dates(from, to, granularity);
+        let mut rows = Vec::new();
+
+        for (label, period_end) in periods {
+            let accounts = self.get_portfolio_as_of(period_end, profile_id)?;
+            let available: Decimal = accounts
+                .iter()
+                .filter(|a| is_available_account(&a.account_type))
+                .filter_map(|a| a.balance)
+                .sum();
+            let unavailable: Decimal = accounts
+                .iter()
+                .filter(|a| !is_available_account(&a.account_type))
+                .filter_map(|a| a.balance)
+                .sum();
+            rows.push(PortfolioHistoryRow {
+                month: label,
+                available_wealth: available,
+                unavailable_wealth: unavailable,
+                total_wealth: available + unavailable,
+            });
+        }
+
+        Ok(rows)
+    }
+
+    /// Returns the first and last snapshot per account within `[start, end]`,
+    /// and the delta between them.
+    pub fn get_snapshot_summary(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<SnapshotDelta>> {
+        let start_str = start.format("%Y-%m-%d").to_string();
+        let end_str = end.format("%Y-%m-%d").to_string();
+
+        // Get all account IDs that have at least one snapshot in range.
+        let account_ids: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT DISTINCT account_id FROM portfolio_snapshots WHERE snapshot_date >= ?1 AND snapshot_date <= ?2",
+            )?;
+            stmt.query_map(rusqlite::params![start_str, end_str], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut result = Vec::new();
+        for account_id in account_ids {
+            // First snapshot >= start
+            let start_balance: Option<String> = self
+                .conn
+                .query_row(
+                    r"SELECT balance FROM portfolio_snapshots
+                      WHERE account_id = ?1 AND snapshot_date >= ?2
+                      ORDER BY snapshot_date ASC LIMIT 1",
+                    rusqlite::params![account_id, start_str],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            // Last snapshot <= end
+            let end_balance: Option<String> = self
+                .conn
+                .query_row(
+                    r"SELECT balance FROM portfolio_snapshots
+                      WHERE account_id = ?1 AND snapshot_date <= ?2
+                      ORDER BY snapshot_date DESC LIMIT 1",
+                    rusqlite::params![account_id, end_str],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            let start_dec = start_balance.as_deref().and_then(|s| s.parse::<Decimal>().ok());
+            let end_dec = end_balance.as_deref().and_then(|s| s.parse::<Decimal>().ok());
+            let delta = start_dec.zip(end_dec).map(|(s, e)| e - s);
+
+            result.push(SnapshotDelta {
+                account_id,
+                start_balance: start_dec,
+                end_balance: end_dec,
+                delta,
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Returns all portfolio snapshots in `[start, end]`, ordered by date and account.
+    pub fn get_snapshots_in_range(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<PortfolioSnapshot>> {
+        let mut stmt = self.conn.prepare(
+            r"SELECT snapshot_date, account_id, balance, currency
+              FROM portfolio_snapshots
+              WHERE snapshot_date >= ?1 AND snapshot_date <= ?2
+              ORDER BY snapshot_date, account_id",
+        )?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params![
+                    start.format("%Y-%m-%d").to_string(),
+                    end.format("%Y-%m-%d").to_string()
+                ],
+                |row| {
+                    let date_str: String = row.get(0)?;
+                    let balance_str: String = row.get(2)?;
+                    Ok((date_str, row.get::<_, String>(1)?, balance_str, row.get::<_, String>(3)?))
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|(date_str, account_id, balance_str, currency)| {
+                let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
+                let balance = balance_str.parse::<Decimal>().ok()?;
+                Some(PortfolioSnapshot {
+                    snapshot_date: date,
+                    account_id,
+                    balance,
+                    currency,
+                })
+            })
+            .collect())
+    }
+
+    /// Returns income and spending aggregated by period.
+    pub fn get_cash_flow(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+        granularity: &Granularity,
+    ) -> Result<Vec<CashFlowMonth>> {
+        let period_expr = match granularity {
+            Granularity::Monthly => "substr(t.date, 1, 7)".to_string(),
+            Granularity::Quarterly => concat!(
+                "CASE ",
+                "WHEN CAST(substr(t.date,6,2) AS INTEGER) BETWEEN 1 AND 3 ",
+                "  THEN substr(t.date,1,4)||'-Q1' ",
+                "WHEN CAST(substr(t.date,6,2) AS INTEGER) BETWEEN 4 AND 6 ",
+                "  THEN substr(t.date,1,4)||'-Q2' ",
+                "WHEN CAST(substr(t.date,6,2) AS INTEGER) BETWEEN 7 AND 9 ",
+                "  THEN substr(t.date,1,4)||'-Q3' ",
+                "ELSE substr(t.date,1,4)||'-Q4' END"
+            )
+            .to_string(),
+            Granularity::Yearly => "substr(t.date, 1, 4)".to_string(),
+        };
+
+        let mut conditions = vec![
+            "t.date >= ?1".to_string(),
+            "t.date <= ?2".to_string(),
+        ];
+        let mut extra_args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        let join = if let Some(pid) = profile_id {
+            let pattern = format!("%\"{pid}\"%");
+            extra_args.push(Box::new(pattern));
+            conditions.push(format!("a.profile_ids LIKE ?{}", 2 + extra_args.len()));
+            "JOIN accounts a ON a.id = t.account_id"
+        } else {
+            ""
+        };
+
+        let where_clause = conditions.join(" AND ");
+
+        let sql = format!(
+            r"SELECT
+                {period_expr} AS period,
+                SUM(CASE WHEN CAST(t.amount AS REAL) > 0 THEN CAST(t.amount AS REAL) ELSE 0 END) AS income,
+                SUM(CASE WHEN CAST(t.amount AS REAL) < 0 THEN ABS(CAST(t.amount AS REAL)) ELSE 0 END) AS spending
+              FROM transactions t
+              {join}
+              WHERE {where_clause}
+              GROUP BY period
+              ORDER BY period"
+        );
+
+        let start_str = start.format("%Y-%m-%d").to_string();
+        let end_str = end.format("%Y-%m-%d").to_string();
+
+        let mut base_args: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(start_str), Box::new(end_str)];
+        base_args.extend(extra_args);
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let raw: Vec<(String, f64, f64)> = stmt
+            .query_map(
+                rusqlite::params_from_iter(base_args.iter().map(|b| b.as_ref())),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(raw
+            .into_iter()
+            .map(|(period, income_f, spending_f)| CashFlowMonth {
+                month: period,
+                income: Decimal::try_from(income_f).unwrap_or_default(),
+                spending: Decimal::try_from(spending_f).unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// Returns the latest holdings (carry-forward) for all specified accounts.
+    pub fn get_holdings_batch(&self, account_ids: &[String]) -> Result<Vec<Holding>> {
+        if account_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let placeholders: String = account_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let sql = format!(
+            r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
+                     h.quantity, h.price_per_unit, h.value, h.currency,
+                     h.as_of, h.short_name
+              FROM holdings h
+              WHERE h.account_id IN ({placeholders})
+                AND h.as_of = (
+                    SELECT MAX(h2.as_of) FROM holdings h2
+                    WHERE h2.account_id = h.account_id
+                )
+              ORDER BY h.account_id, h.symbol"
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(account_ids.iter()),
+                row_to_holding,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Replace all holdings for `account_id` on the dates present in `holdings`.
+    /// For each distinct `as_of` date in the payload: delete existing rows for
+    /// (account_id, as_of), then insert the new ones.
+    pub fn replace_holdings(&self, account_id: &str, holdings: &[Holding]) -> Result<u32> {
+        if holdings.is_empty() {
+            return Ok(0);
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+
+        // Collect distinct as_of dates to replace.
+        let mut dates: Vec<String> = holdings
+            .iter()
+            .map(|h| h.as_of.format("%Y-%m-%d").to_string())
+            .collect();
+        dates.sort();
+        dates.dedup();
+
+        for date in &dates {
+            tx.execute(
+                "DELETE FROM holdings WHERE account_id = ?1 AND as_of = ?2",
+                rusqlite::params![account_id, date],
+            )?;
+        }
+
+        let mut inserted = 0u32;
+        for h in holdings {
+            tx.execute(
+                r"INSERT INTO holdings (
+                    account_id, symbol, name, holding_type, quantity, price_per_unit,
+                    value, currency, as_of, short_name
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                rusqlite::params![
+                    account_id,
+                    h.symbol,
+                    h.name,
+                    h.holding_type.as_str(),
+                    h.quantity.to_string(),
+                    h.price_per_unit.map(|p| p.to_string()),
+                    h.value.to_string(),
+                    h.currency,
+                    h.as_of.format("%Y-%m-%d").to_string(),
+                    h.short_name,
+                ],
+            )?;
+            inserted += 1;
+        }
+
+        tx.commit()?;
+        Ok(inserted)
+    }
+
+    /// Compute investment performance metrics for `[start, end]`.
+    ///
+    /// Uses carry-forward for start and end values on investment accounts.
+    /// `new_cash_invested` = signed sum of `Finance: Investment Transfer` transactions.
+    pub fn compute_investment_metrics(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+    ) -> Result<InvestmentMetrics> {
+        // Fetch investment accounts only.
+        let all_accounts = self.get_accounts(profile_id)?;
+        let investment_ids: Vec<String> = all_accounts
+            .into_iter()
+            .filter(|a| matches!(a.account_type, AccountType::Investment))
+            .map(|a| a.id)
+            .collect();
+
+        let sum_carry_forward = |date: NaiveDate| -> Result<Decimal> {
+            let date_str = date.format("%Y-%m-%d").to_string();
+            let mut total = Decimal::ZERO;
+            for id in &investment_ids {
+                let balance: Option<String> = self
+                    .conn
+                    .query_row(
+                        r"SELECT balance FROM portfolio_snapshots
+                          WHERE account_id = ?1 AND snapshot_date <= ?2
+                          ORDER BY snapshot_date DESC LIMIT 1",
+                        rusqlite::params![id, date_str],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                if let Some(b) = balance.and_then(|s| s.parse::<Decimal>().ok()) {
+                    total += b;
+                }
+            }
+            Ok(total)
+        };
+
+        let start_value = sum_carry_forward(start)?;
+        let end_value = sum_carry_forward(end)?;
+
+        // Net cash moved into investment accounts.
+        let new_cash_invested: Decimal = {
+            let start_str = start.format("%Y-%m-%d").to_string();
+            let end_str = end.format("%Y-%m-%d").to_string();
+            let raw: Option<f64> = self
+                .conn
+                .query_row(
+                    r"SELECT SUM(CAST(amount AS REAL)) FROM transactions
+                      WHERE category = 'Finance: Investment Transfer'
+                        AND date >= ?1 AND date <= ?2",
+                    rusqlite::params![start_str, end_str],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+            Decimal::try_from(raw.unwrap_or(0.0)).unwrap_or_default()
+        };
+
+        let total_growth = end_value - start_value;
+        let market_growth = total_growth - new_cash_invested;
+
+        Ok(InvestmentMetrics {
+            start_value,
+            end_value,
+            total_growth,
+            new_cash_invested,
+            market_growth,
+        })
+    }
+
     // ── Stats ─────────────────────────────────────────────────────────────────
 
     pub fn stats(&self) -> Result<Stats> {
@@ -1248,6 +1687,67 @@ pub struct AccountStats {
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
+/// Map a row from the carry-forward portfolio query into an Account.
+/// Columns: id(0) name(1) institution(2) type(3) currency(4) is_active(5)
+///          notes(6) profile_ids(7) snap_balance(8) snapshot_date(9)
+fn row_to_portfolio_account(
+    row: &rusqlite::Row<'_>,
+    as_of: NaiveDate,
+    stale_days: i64,
+) -> rusqlite::Result<Account> {
+    let type_str: String = row.get(3)?;
+    let profile_ids_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
+    let profile_ids: Vec<String> =
+        serde_json::from_str(&profile_ids_str).unwrap_or_else(|_| vec!["default".to_string()]);
+
+    let snap_balance: Option<String> = row.get(8)?;
+    let snap_date_str: Option<String> = row.get(9)?;
+
+    let balance = snap_balance.as_deref().and_then(|s| s.parse::<Decimal>().ok());
+    let balance_date =
+        snap_date_str.as_deref().and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+
+    let is_stale = balance_date
+        .map(|d| (as_of - d).num_days() > stale_days)
+        .unwrap_or(false);
+
+    Ok(Account {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        institution: row.get(2)?,
+        account_type: AccountType::parse(&type_str).unwrap_or(AccountType::Checking),
+        currency: row.get(4)?,
+        balance,
+        balance_date,
+        is_active: row.get::<_, i64>(5)? != 0,
+        notes: row.get(6)?,
+        profile_ids,
+        is_stale: Some(is_stale),
+    })
+}
+
+fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
+    let holding_type_str: String = row.get(3)?;
+    let quantity_str: String = row.get(4)?;
+    let price_str: Option<String> = row.get(5)?;
+    let value_str: String = row.get(6)?;
+    let as_of_str: String = row.get(8)?;
+    Ok(Holding {
+        account_id: row.get(0)?,
+        symbol: row.get(1)?,
+        name: row.get(2)?,
+        holding_type: HoldingType::parse(&holding_type_str).unwrap_or(HoldingType::Stock),
+        quantity: quantity_str.parse::<Decimal>().unwrap_or_default(),
+        price_per_unit: price_str.and_then(|s| s.parse::<Decimal>().ok()),
+        value: value_str.parse::<Decimal>().unwrap_or_default(),
+        currency: row.get(7)?,
+        as_of: NaiveDate::parse_from_str(&as_of_str, "%Y-%m-%d").unwrap_or_else(|_| {
+            chrono::Local::now().date_naive()
+        }),
+        short_name: row.get(9)?,
+    })
+}
+
 fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> {
     let date: String = row.get(1)?;
     let amount: String = row.get(4)?;
@@ -1290,7 +1790,114 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         is_active: row.get::<_, i64>(7)? != 0,
         notes: row.get(8)?,
         profile_ids,
+        is_stale: None,
     })
+}
+
+// ── Portfolio helpers ─────────────────────────────────────────────────────────
+
+/// Returns `true` for account types counted in "available wealth".
+pub fn is_available_account(t: &AccountType) -> bool {
+    matches!(
+        t,
+        AccountType::Checking
+            | AccountType::Savings
+            | AccountType::Investment
+            | AccountType::Cash
+            | AccountType::Credit
+    )
+}
+
+/// Map an account type to a broad asset class label for `by_asset_class`.
+pub fn account_type_to_asset_class(t: &AccountType) -> &'static str {
+    match t {
+        AccountType::Investment => "Stocks",
+        AccountType::Pension => "Pension",
+        AccountType::Checking | AccountType::Savings | AccountType::Cash => "Cash",
+        AccountType::Credit => "Credit",
+    }
+}
+
+/// Generate (label, period_end_date) pairs for a date range and granularity.
+/// Each period_end is clamped to `to` if it exceeds it.
+pub fn generate_period_end_dates(
+    from: NaiveDate,
+    to: NaiveDate,
+    granularity: &Granularity,
+) -> Vec<(String, NaiveDate)> {
+    use chrono::Datelike;
+
+    let mut periods = Vec::new();
+
+    match granularity {
+        Granularity::Monthly => {
+            let mut year = from.year();
+            let mut month = from.month();
+            loop {
+                // Last day of this month.
+                let next = if month == 12 {
+                    NaiveDate::from_ymd_opt(year + 1, 1, 1)
+                } else {
+                    NaiveDate::from_ymd_opt(year, month + 1, 1)
+                }
+                .unwrap();
+                let period_end = next.pred_opt().unwrap().min(to);
+                let label = format!("{year}-{month:02}");
+                periods.push((label, period_end));
+                if period_end >= to {
+                    break;
+                }
+                // Advance one month.
+                if month == 12 {
+                    year += 1;
+                    month = 1;
+                } else {
+                    month += 1;
+                }
+            }
+        }
+        Granularity::Quarterly => {
+            let start_q = (from.month() - 1) / 3 + 1;
+            let mut year = from.year();
+            let mut quarter = start_q;
+            loop {
+                let end_month = quarter * 3;
+                let next_year = if end_month == 12 { year + 1 } else { year };
+                let next_month = if end_month == 12 { 1 } else { end_month + 1 };
+                let period_end = NaiveDate::from_ymd_opt(next_year, next_month, 1)
+                    .unwrap()
+                    .pred_opt()
+                    .unwrap()
+                    .min(to);
+                let label = format!("{year}-Q{quarter}");
+                periods.push((label, period_end));
+                if period_end >= to {
+                    break;
+                }
+                if quarter == 4 {
+                    year += 1;
+                    quarter = 1;
+                } else {
+                    quarter += 1;
+                }
+            }
+        }
+        Granularity::Yearly => {
+            let mut year = from.year();
+            loop {
+                let period_end =
+                    NaiveDate::from_ymd_opt(year, 12, 31).unwrap().min(to);
+                let label = format!("{year}");
+                periods.push((label, period_end));
+                if period_end >= to {
+                    break;
+                }
+                year += 1;
+            }
+        }
+    }
+
+    periods
 }
 
 // ── Taxonomy helpers ──────────────────────────────────────────────────────────

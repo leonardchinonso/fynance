@@ -89,6 +89,11 @@ pub struct Account {
     /// Defaults to `["default"]` when not specified.
     #[serde(default = "default_profile_ids")]
     pub profile_ids: Vec<String>,
+    /// Set in portfolio responses to indicate whether the carried-forward
+    /// balance is stale (snapshot > 45 days before the query date).
+    /// Absent (`None`) in non-portfolio contexts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_stale: Option<bool>,
 }
 
 fn default_profile_ids() -> Vec<String> {
@@ -447,6 +452,120 @@ impl BankFormat {
             Self::Unknown => "unknown",
         }
     }
+}
+
+/// Full portfolio snapshot returned by `GET /api/portfolio`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PortfolioResponse {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub net_worth: Decimal,
+    pub currency: String,
+    /// ISO 8601 date the response was computed for (the `as_of` parameter or today).
+    pub as_of: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total_assets: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total_liabilities: Decimal,
+    /// Sum of checking, savings, investment, cash, and credit accounts.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub available_wealth: Decimal,
+    /// Sum of pension (and future: property) accounts.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub unavailable_wealth: Decimal,
+    /// All accounts with carry-forward balances. `is_stale` set per account.
+    pub accounts: Vec<Account>,
+    pub by_type: Vec<BreakdownItem>,
+    pub by_institution: Vec<BreakdownItem>,
+    pub by_asset_class: Vec<BreakdownItem>,
+    pub investment_metrics: InvestmentMetrics,
+}
+
+/// One slice of a portfolio breakdown (by type, institution, or asset class).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct BreakdownItem {
+    pub label: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub value: Decimal,
+    pub percentage: f64,
+}
+
+/// One row in the `GET /api/portfolio/history` response.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PortfolioHistoryRow {
+    /// Period label: "YYYY-MM" for monthly, "YYYY-Qn" for quarterly, "YYYY" for yearly.
+    pub month: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub available_wealth: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub unavailable_wealth: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total_wealth: Decimal,
+}
+
+/// One row in the `GET /api/cash-flow` response.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct CashFlowMonth {
+    /// Period label: "YYYY-MM", "YYYY-Qn", or "YYYY".
+    pub month: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub income: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub spending: Decimal,
+}
+
+/// Start/end balance delta for one account. Used by `GET /api/portfolio/snapshots?summary=true`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct SnapshotDelta {
+    pub account_id: String,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(type = "string | null")]
+    pub start_balance: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(type = "string | null")]
+    pub end_balance: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(type = "string | null")]
+    pub delta: Option<Decimal>,
+}
+
+/// Investment performance metrics included in `GET /api/portfolio`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentMetrics {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub start_value: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub end_value: Decimal,
+    /// `end_value - start_value`
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total_growth: Decimal,
+    /// Net cash moved into investment accounts over the period (positive = in).
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub new_cash_invested: Decimal,
+    /// `total_growth - new_cash_invested` (pure price appreciation).
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub market_growth: Decimal,
 }
 
 /// Result of a single `INSERT OR IGNORE`. Lets the CSV importer count new

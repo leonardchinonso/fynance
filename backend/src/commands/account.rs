@@ -36,6 +36,7 @@ pub fn add(
         is_active: true,
         notes: None,
         profile_ids: vec!["default".to_string()],
+        is_stale: None,
     };
     db.upsert_account(&account)?;
     println!("Added account {id}");
