@@ -28,7 +28,7 @@ interface TxTemplate {
   description: string
   normalized: string
   category: string | null
-  category_source: "rule" | "claude" | "manual" | null
+  category_source: "rule" | "agent" | "manual" | null
   confidence: number | null
   account: string
   is_recurring: boolean
@@ -78,54 +78,54 @@ const JOINT_RECURRING: TxTemplate[] = [
 // ── Alex's variable spending ──
 const ALEX_VARIABLE: TxTemplate[] = [
   { description: "LIDL GB LONDON", normalized: "Lidl", category: "Food: Groceries", category_source: "rule", confidence: null, account: "monzo-current", is_recurring: false, amountMin: 15, amountMax: 75, isIncome: false, frequency: "weekly" },
-  { description: "SAINSBURYS", normalized: "Sainsbury's", category: "Food: Groceries", category_source: "claude", confidence: 0.92, account: "revolut-current", is_recurring: false, amountMin: 10, amountMax: 60, isIncome: false, frequency: "biweekly" },
-  { description: "NANDOS", normalized: "Nando's", category: "Food: Dining & Bars", category_source: "claude", confidence: 0.95, account: "revolut-current", is_recurring: false, amountMin: 15, amountMax: 40, isIncome: false, frequency: "biweekly" },
-  { description: "WAGAMAMA", normalized: "Wagamama", category: "Food: Dining & Bars", category_source: "claude", confidence: 0.91, account: "revolut-current", is_recurring: false, amountMin: 18, amountMax: 35, isIncome: false, frequency: "occasional" },
-  { description: "PIZZA EXPRESS", normalized: "Pizza Express", category: "Food: Dining & Bars", category_source: "claude", confidence: 0.88, account: "monzo-current", is_recurring: false, amountMin: 25, amountMax: 55, isIncome: false, frequency: "occasional" },
+  { description: "SAINSBURYS", normalized: "Sainsbury's", category: "Food: Groceries", category_source: "agent", confidence: 0.92, account: "revolut-current", is_recurring: false, amountMin: 10, amountMax: 60, isIncome: false, frequency: "biweekly" },
+  { description: "NANDOS", normalized: "Nando's", category: "Food: Dining & Bars", category_source: "agent", confidence: 0.95, account: "revolut-current", is_recurring: false, amountMin: 15, amountMax: 40, isIncome: false, frequency: "biweekly" },
+  { description: "WAGAMAMA", normalized: "Wagamama", category: "Food: Dining & Bars", category_source: "agent", confidence: 0.91, account: "revolut-current", is_recurring: false, amountMin: 18, amountMax: 35, isIncome: false, frequency: "occasional" },
+  { description: "PIZZA EXPRESS", normalized: "Pizza Express", category: "Food: Dining & Bars", category_source: "agent", confidence: 0.88, account: "monzo-current", is_recurring: false, amountMin: 25, amountMax: 55, isIncome: false, frequency: "occasional" },
   { description: "PRET A MANGER", normalized: "Pret A Manger", category: "Food: Coffee & Cafes", category_source: "rule", confidence: null, account: "monzo-current", is_recurring: false, amountMin: 3.50, amountMax: 7.50, isIncome: false, frequency: "weekly" },
   { description: "COSTA COFFEE", normalized: "Costa Coffee", category: "Food: Coffee & Cafes", category_source: "rule", confidence: null, account: "revolut-current", is_recurring: false, amountMin: 3, amountMax: 6, isIncome: false, frequency: "weekly" },
   { description: "TFL TRAVEL CHARGE", normalized: "TfL", category: "Transport: Public Transit", category_source: "rule", confidence: null, account: "monzo-current", is_recurring: false, amountMin: 2.50, amountMax: 8.50, isIncome: false, frequency: "weekly" },
-  { description: "UBER *TRIP", normalized: "Uber", category: "Transport: Taxi & Rideshare", category_source: "claude", confidence: 0.97, account: "revolut-current", is_recurring: false, amountMin: 8, amountMax: 25, isIncome: false, frequency: "occasional" },
-  { description: "AMAZON UK", normalized: "Amazon", category: "Shopping: General", category_source: "claude", confidence: 0.72, account: "monzo-current", is_recurring: false, amountMin: 8, amountMax: 120, isIncome: false, frequency: "occasional" },
-  { description: "UNIQLO UK", normalized: "Uniqlo", category: "Shopping: Clothing", category_source: "claude", confidence: 0.85, account: "revolut-current", is_recurring: false, amountMin: 25, amountMax: 100, isIncome: false, frequency: "occasional" },
+  { description: "UBER *TRIP", normalized: "Uber", category: "Transport: Taxi & Rideshare", category_source: "agent", confidence: 0.97, account: "revolut-current", is_recurring: false, amountMin: 8, amountMax: 25, isIncome: false, frequency: "occasional" },
+  { description: "AMAZON UK", normalized: "Amazon", category: "Shopping: General", category_source: "agent", confidence: 0.72, account: "monzo-current", is_recurring: false, amountMin: 8, amountMax: 120, isIncome: false, frequency: "occasional" },
+  { description: "UNIQLO UK", normalized: "Uniqlo", category: "Shopping: Clothing", category_source: "agent", confidence: 0.85, account: "revolut-current", is_recurring: false, amountMin: 25, amountMax: 100, isIncome: false, frequency: "occasional" },
   { description: "THE BARBER SHOP", normalized: "Barber", category: "Personal Care: Haircut & Beauty", category_source: "manual", confidence: null, account: "monzo-current", is_recurring: false, amountMin: 25, amountMax: 35, isIncome: false, frequency: "occasional" },
-  { description: "BOOTS PHARMACY", normalized: "Boots", category: "Health: Pharmacy", category_source: "claude", confidence: 0.90, account: "monzo-current", is_recurring: false, amountMin: 5, amountMax: 30, isIncome: false, frequency: "occasional" },
-  { description: "WATERSTONES", normalized: "Waterstones", category: "Education: Courses & Books", category_source: "claude", confidence: 0.82, account: "revolut-current", is_recurring: false, amountMin: 8, amountMax: 25, isIncome: false, frequency: "occasional" },
-  { description: "ODEON CINEMA", normalized: "Odeon Cinema", category: "Entertainment: Events & Concerts", category_source: "claude", confidence: 0.93, account: "monzo-current", is_recurring: false, amountMin: 10, amountMax: 20, isIncome: false, frequency: "occasional" },
+  { description: "BOOTS PHARMACY", normalized: "Boots", category: "Health: Pharmacy", category_source: "agent", confidence: 0.90, account: "monzo-current", is_recurring: false, amountMin: 5, amountMax: 30, isIncome: false, frequency: "occasional" },
+  { description: "WATERSTONES", normalized: "Waterstones", category: "Education: Courses & Books", category_source: "agent", confidence: 0.82, account: "revolut-current", is_recurring: false, amountMin: 8, amountMax: 25, isIncome: false, frequency: "occasional" },
+  { description: "ODEON CINEMA", normalized: "Odeon Cinema", category: "Entertainment: Events & Concerts", category_source: "agent", confidence: 0.93, account: "monzo-current", is_recurring: false, amountMin: 10, amountMax: 20, isIncome: false, frequency: "occasional" },
   { description: "PAYPAL *UNKNOWN", normalized: "PayPal Payment", category: null, category_source: null, confidence: null, account: "monzo-current", is_recurring: false, amountMin: 5, amountMax: 50, isIncome: false, frequency: "occasional" },
-  { description: "APPLE.COM/BILL", normalized: "Apple", category: "Shopping: Electronics", category_source: "claude", confidence: 0.78, account: "revolut-current", is_recurring: false, amountMin: 0.99, amountMax: 12.99, isIncome: false, frequency: "occasional" },
+  { description: "APPLE.COM/BILL", normalized: "Apple", category: "Shopping: Electronics", category_source: "agent", confidence: 0.78, account: "revolut-current", is_recurring: false, amountMin: 0.99, amountMax: 12.99, isIncome: false, frequency: "occasional" },
 ]
 
 // ── Sam's variable spending ──
 const SAM_VARIABLE: TxTemplate[] = [
   { description: "TESCO STORES", normalized: "Tesco", category: "Food: Groceries", category_source: "rule", confidence: null, account: "monzo-sam", is_recurring: false, amountMin: 20, amountMax: 90, isIncome: false, frequency: "weekly" },
-  { description: "ALDI STORES UK", normalized: "Aldi", category: "Food: Groceries", category_source: "claude", confidence: 0.94, account: "monzo-sam", is_recurring: false, amountMin: 15, amountMax: 65, isIncome: false, frequency: "biweekly" },
-  { description: "FIVE GUYS", normalized: "Five Guys", category: "Food: Dining & Bars", category_source: "claude", confidence: 0.96, account: "monzo-sam", is_recurring: false, amountMin: 12, amountMax: 28, isIncome: false, frequency: "biweekly" },
+  { description: "ALDI STORES UK", normalized: "Aldi", category: "Food: Groceries", category_source: "agent", confidence: 0.94, account: "monzo-sam", is_recurring: false, amountMin: 15, amountMax: 65, isIncome: false, frequency: "biweekly" },
+  { description: "FIVE GUYS", normalized: "Five Guys", category: "Food: Dining & Bars", category_source: "agent", confidence: 0.96, account: "monzo-sam", is_recurring: false, amountMin: 12, amountMax: 28, isIncome: false, frequency: "biweekly" },
   { description: "STARBUCKS", normalized: "Starbucks", category: "Food: Coffee & Cafes", category_source: "rule", confidence: null, account: "monzo-sam", is_recurring: false, amountMin: 4, amountMax: 8, isIncome: false, frequency: "weekly" },
   { description: "TFL CONTACTLESS", normalized: "TfL", category: "Transport: Public Transit", category_source: "rule", confidence: null, account: "monzo-sam", is_recurring: false, amountMin: 3, amountMax: 9, isIncome: false, frequency: "weekly" },
-  { description: "BOLT RIDE", normalized: "Bolt", category: "Transport: Taxi & Rideshare", category_source: "claude", confidence: 0.94, account: "monzo-sam", is_recurring: false, amountMin: 6, amountMax: 20, isIncome: false, frequency: "occasional" },
-  { description: "ZARA UK", normalized: "Zara", category: "Shopping: Clothing", category_source: "claude", confidence: 0.87, account: "monzo-sam", is_recurring: false, amountMin: 20, amountMax: 80, isIncome: false, frequency: "occasional" },
-  { description: "H&M ONLINE", normalized: "H&M", category: "Shopping: Clothing", category_source: "claude", confidence: 0.89, account: "monzo-sam", is_recurring: false, amountMin: 15, amountMax: 60, isIncome: false, frequency: "occasional" },
-  { description: "JOHN LEWIS", normalized: "John Lewis", category: "Shopping: General", category_source: "claude", confidence: 0.80, account: "monzo-sam", is_recurring: false, amountMin: 15, amountMax: 150, isIncome: false, frequency: "occasional" },
-  { description: "SUPERDRUG", normalized: "Superdrug", category: "Health: Pharmacy", category_source: "claude", confidence: 0.88, account: "monzo-sam", is_recurring: false, amountMin: 4, amountMax: 25, isIncome: false, frequency: "occasional" },
+  { description: "BOLT RIDE", normalized: "Bolt", category: "Transport: Taxi & Rideshare", category_source: "agent", confidence: 0.94, account: "monzo-sam", is_recurring: false, amountMin: 6, amountMax: 20, isIncome: false, frequency: "occasional" },
+  { description: "ZARA UK", normalized: "Zara", category: "Shopping: Clothing", category_source: "agent", confidence: 0.87, account: "monzo-sam", is_recurring: false, amountMin: 20, amountMax: 80, isIncome: false, frequency: "occasional" },
+  { description: "H&M ONLINE", normalized: "H&M", category: "Shopping: Clothing", category_source: "agent", confidence: 0.89, account: "monzo-sam", is_recurring: false, amountMin: 15, amountMax: 60, isIncome: false, frequency: "occasional" },
+  { description: "JOHN LEWIS", normalized: "John Lewis", category: "Shopping: General", category_source: "agent", confidence: 0.80, account: "monzo-sam", is_recurring: false, amountMin: 15, amountMax: 150, isIncome: false, frequency: "occasional" },
+  { description: "SUPERDRUG", normalized: "Superdrug", category: "Health: Pharmacy", category_source: "agent", confidence: 0.88, account: "monzo-sam", is_recurring: false, amountMin: 4, amountMax: 25, isIncome: false, frequency: "occasional" },
   { description: "SALON HAIRCUT", normalized: "Hair Salon", category: "Personal Care: Haircut & Beauty", category_source: "manual", confidence: null, account: "monzo-sam", is_recurring: false, amountMin: 40, amountMax: 80, isIncome: false, frequency: "occasional" },
-  { description: "UDEMY COURSE", normalized: "Udemy", category: "Education: Courses & Books", category_source: "claude", confidence: 0.91, account: "monzo-sam", is_recurring: false, amountMin: 10, amountMax: 50, isIncome: false, frequency: "occasional" },
-  { description: "TICKETMASTER UK", normalized: "Ticketmaster", category: "Entertainment: Events & Concerts", category_source: "claude", confidence: 0.95, account: "monzo-sam", is_recurring: false, amountMin: 30, amountMax: 120, isIncome: false, frequency: "occasional" },
+  { description: "UDEMY COURSE", normalized: "Udemy", category: "Education: Courses & Books", category_source: "agent", confidence: 0.91, account: "monzo-sam", is_recurring: false, amountMin: 10, amountMax: 50, isIncome: false, frequency: "occasional" },
+  { description: "TICKETMASTER UK", normalized: "Ticketmaster", category: "Entertainment: Events & Concerts", category_source: "agent", confidence: 0.95, account: "monzo-sam", is_recurring: false, amountMin: 30, amountMax: 120, isIncome: false, frequency: "occasional" },
   { description: "SQ *MARKET STALL", normalized: "Square Payment", category: null, category_source: null, confidence: null, account: "monzo-sam", is_recurring: false, amountMin: 3, amountMax: 20, isIncome: false, frequency: "occasional" },
   { description: "GIFT CARD PURCHASE", normalized: "Gift", category: "Gifts & Donations: Gifts", category_source: "manual", confidence: null, account: "monzo-sam", is_recurring: false, amountMin: 20, amountMax: 50, isIncome: false, frequency: "occasional" },
 ]
 
 // ── Occasional one-off templates (shared) ──
 const OCCASIONAL_ALEX: TxTemplate[] = [
-  { description: "EASYJET FLIGHTS", normalized: "EasyJet", category: "Travel: Flights", category_source: "claude", confidence: 0.98, account: "revolut-current", is_recurring: false, amountMin: 60, amountMax: 250, isIncome: false, frequency: "occasional" },
-  { description: "BOOKING.COM", normalized: "Booking.com", category: "Travel: Accommodation", category_source: "claude", confidence: 0.96, account: "revolut-current", is_recurring: false, amountMin: 80, amountMax: 300, isIncome: false, frequency: "occasional" },
-  { description: "CURRYS PC WORLD", normalized: "Currys", category: "Shopping: Electronics", category_source: "claude", confidence: 0.90, account: "monzo-current", is_recurring: false, amountMin: 30, amountMax: 400, isIncome: false, frequency: "occasional" },
+  { description: "EASYJET FLIGHTS", normalized: "EasyJet", category: "Travel: Flights", category_source: "agent", confidence: 0.98, account: "revolut-current", is_recurring: false, amountMin: 60, amountMax: 250, isIncome: false, frequency: "occasional" },
+  { description: "BOOKING.COM", normalized: "Booking.com", category: "Travel: Accommodation", category_source: "agent", confidence: 0.96, account: "revolut-current", is_recurring: false, amountMin: 80, amountMax: 300, isIncome: false, frequency: "occasional" },
+  { description: "CURRYS PC WORLD", normalized: "Currys", category: "Shopping: Electronics", category_source: "agent", confidence: 0.90, account: "monzo-current", is_recurring: false, amountMin: 30, amountMax: 400, isIncome: false, frequency: "occasional" },
   { description: "FREELANCE PAYMENT", normalized: "Freelance Income", category: "Income: Freelance", category_source: "manual", confidence: null, account: "revolut-current", is_recurring: false, amountMin: 200, amountMax: 800, isIncome: true, frequency: "occasional" },
 ]
 
 const OCCASIONAL_SAM: TxTemplate[] = [
-  { description: "RYANAIR", normalized: "Ryanair", category: "Travel: Flights", category_source: "claude", confidence: 0.97, account: "monzo-sam", is_recurring: false, amountMin: 40, amountMax: 200, isIncome: false, frequency: "occasional" },
-  { description: "AIRBNB", normalized: "Airbnb", category: "Travel: Accommodation", category_source: "claude", confidence: 0.95, account: "monzo-sam", is_recurring: false, amountMin: 60, amountMax: 250, isIncome: false, frequency: "occasional" },
+  { description: "RYANAIR", normalized: "Ryanair", category: "Travel: Flights", category_source: "agent", confidence: 0.97, account: "monzo-sam", is_recurring: false, amountMin: 40, amountMax: 200, isIncome: false, frequency: "occasional" },
+  { description: "AIRBNB", normalized: "Airbnb", category: "Travel: Accommodation", category_source: "agent", confidence: 0.95, account: "monzo-sam", is_recurring: false, amountMin: 60, amountMax: 250, isIncome: false, frequency: "occasional" },
   { description: "HOLIDAY SPENDING", normalized: "Holiday Spending", category: "Travel: Holiday Spending", category_source: "manual", confidence: null, account: "monzo-sam", is_recurring: false, amountMin: 20, amountMax: 100, isIncome: false, frequency: "occasional" },
 ]
 

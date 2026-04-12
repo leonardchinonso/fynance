@@ -50,7 +50,7 @@ export function BudgetSpreadsheet({ rows, months, granularity }: BudgetSpreadshe
     let total = 0
     let hasData = false
     for (const m of periodMonths) {
-      const val = row.months[m]
+      const val = row.periods[m]
       if (val !== null) {
         total += parseFloat(val)
         hasData = true

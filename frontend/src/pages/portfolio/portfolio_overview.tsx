@@ -57,7 +57,7 @@ export function PortfolioOverview({
   // Stocks breakdown (aggregate holdings by short_name)
   const holdingsByName = new Map<string, { value: number; fullName: string }>()
   for (const h of holdings) {
-    const key = h.short_name
+    const key = h.short_name ?? h.symbol
     const existing = holdingsByName.get(key)
     if (existing) {
       existing.value += parseFloat(h.value)

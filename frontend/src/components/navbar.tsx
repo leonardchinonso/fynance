@@ -26,7 +26,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Sun, Moon, Monitor, Star, Pin, X, Bookmark, Menu } from "lucide-react"
+import { Sun, Moon, Monitor, Star, Pin, X, Bookmark, Menu, Database, TestTube2 } from "lucide-react"
+import { getApiMode, setApiMode, type ApiMode } from "@/api/client"
 import { Badge } from "@/components/ui/badge"
 import {
   Popover,
@@ -53,6 +54,14 @@ export function Navbar() {
   const [showPinDialog, setShowPinDialog] = useState(false)
   const [pinLabel, setPinLabel] = useState("")
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [apiMode, setApiModeState] = useState<ApiMode>(getApiMode)
+
+  function toggleApiMode() {
+    const next: ApiMode = apiMode === "mock" ? "live" : "mock"
+    setApiMode(next)
+    setApiModeState(next)
+    window.location.reload()
+  }
 
   const nameExists = pinnedViews.some((v) => v.label.toLowerCase() === pinLabel.trim().toLowerCase())
 
@@ -144,6 +153,12 @@ export function Navbar() {
 
           {/* Desktop actions */}
           <div className="hidden md:flex items-center gap-1">
+            <Button variant={apiMode === "live" ? "default" : "ghost"} size="sm" className="h-8 gap-1.5 px-2 text-xs"
+              onClick={toggleApiMode}
+              title={`API: ${apiMode} (click to toggle)`}>
+              {apiMode === "live" ? <Database className="h-3.5 w-3.5" /> : <TestTube2 className="h-3.5 w-3.5" />}
+              <span className="hidden lg:inline">{apiMode === "live" ? "Live" : "Mock"}</span>
+            </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8"
               onClick={() => { const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light"; setTheme(next) }}
               title={`Theme: ${theme}`}>
@@ -195,6 +210,15 @@ export function Navbar() {
                   {profiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
                 </SelectContent>
               </Select>
+            </div>
+            {/* API mode */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Data source</span>
+              <Button variant={apiMode === "live" ? "default" : "outline"} size="sm" className="h-7 gap-1.5 px-2 text-xs"
+                onClick={toggleApiMode}>
+                {apiMode === "live" ? <Database className="h-3.5 w-3.5" /> : <TestTube2 className="h-3.5 w-3.5" />}
+                {apiMode === "live" ? "Live" : "Mock"}
+              </Button>
             </div>
             {/* Theme */}
             <div className="flex items-center justify-between">
