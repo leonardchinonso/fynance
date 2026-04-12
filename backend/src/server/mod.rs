@@ -82,8 +82,8 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             get(routes::portfolio::get_portfolio_history),
         )
         .route(
-            "/portfolio/snapshots",
-            get(routes::portfolio::get_portfolio_snapshots),
+            "/portfolio/balances",
+            get(routes::portfolio::get_portfolio_balances),
         )
         // ── Cash flow ──────────────────────────────────────────────────────
         .route("/cash-flow", get(routes::portfolio::get_cash_flow))

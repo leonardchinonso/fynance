@@ -58,20 +58,6 @@ CREATE TABLE IF NOT EXISTS accounts (
     notes           TEXT
 );
 
--- ── portfolio_snapshots ───────────────────────────────────────────────────
--- Point-in-time balance per account. Queries carry forward the most recent
--- row on or before a target date to produce a stable net-worth series.
-CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    snapshot_date   TEXT NOT NULL,
-    account_id      TEXT NOT NULL,
-    balance         TEXT NOT NULL,
-    currency        TEXT NOT NULL DEFAULT 'GBP',
-    UNIQUE(snapshot_date, account_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_snap_date ON portfolio_snapshots(snapshot_date);
-
 -- ── budgets ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS budgets (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,8 +70,8 @@ CREATE TABLE IF NOT EXISTS budgets (
 CREATE INDEX IF NOT EXISTS idx_budget_month ON budgets(month);
 
 -- ── holdings ──────────────────────────────────────────────────────────────
--- Per-symbol detail within investment accounts. Carries forward like
--- portfolio_snapshots.
+-- Per-symbol detail within investment accounts. Also stores cash balances as
+-- rows with symbol='_CASH' and holding_type='cash'. Carries forward by date.
 CREATE TABLE IF NOT EXISTS holdings (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id      TEXT NOT NULL,
