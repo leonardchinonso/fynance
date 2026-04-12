@@ -29,10 +29,10 @@ import {
 import { Sun, Moon, Monitor, Star, Pin, X, Bookmark, Menu } from "lucide-react"
 
 const NAV_ITEMS = [
-  { to: "/portfolio", label: "Portfolio" },
-  { to: "/budget", label: "Budget" },
-  { to: "/transactions", label: "Transactions" },
-  { to: "/reports", label: "Reports" },
+  { to: "/portfolio", label: "Portfolio", shortLabel: "Portfolio" },
+  { to: "/budget", label: "Budget", shortLabel: "Budget" },
+  { to: "/transactions", label: "Transactions", shortLabel: "Txns" },
+  { to: "/reports", label: "Reports", shortLabel: "Reports" },
 ]
 
 export function Navbar() {
@@ -58,7 +58,7 @@ export function Navbar() {
   return (
     <>
       <nav className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-4 px-4 sm:px-6">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-2 sm:gap-4 px-3 sm:px-6 overflow-hidden">
           {/* Logo */}
           <NavLink to={homepage} className="flex items-center gap-2 shrink-0">
             <img src="/favicon.png" alt="fynance logo" className="h-7 w-7 rounded" />
@@ -66,7 +66,7 @@ export function Navbar() {
           </NavLink>
 
           {/* Desktop nav tabs */}
-          <div className="hidden md:flex items-center gap-0.5">
+          <div className="hidden md:flex items-center gap-0.5 min-w-0 overflow-hidden">
             {NAV_ITEMS.map((item) => (
               <div key={item.to} className="group relative flex items-center">
                 <NavLink
@@ -110,22 +110,22 @@ export function Navbar() {
             ))}
           </div>
 
-          {/* Mobile nav tabs - compact horizontal scroll */}
-          <div className="flex md:hidden items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0">
+          {/* Mobile nav tabs - compact, no overflow */}
+          <div className="flex md:hidden items-center gap-0.5 flex-1 min-w-0">
             {NAV_ITEMS.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
                   cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0",
+                    "rounded-md px-2 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0",
                     isActive
                       ? "bg-secondary text-secondary-foreground"
                       : "text-muted-foreground"
                   )
                 }
               >
-                {item.label}
+                {item.shortLabel}
               </NavLink>
             ))}
           </div>
@@ -145,18 +145,20 @@ export function Navbar() {
             </Button>
           </div>
 
-          {/* Profile selector - compact on mobile */}
-          <Select value={profileId || "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
-            <SelectTrigger className="w-[100px] sm:w-[140px]">
-              <span className="truncate">
-                {profileId ? profiles.find((p) => p.id === profileId)?.name ?? profileId : "All"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All profiles</SelectItem>
-              {profiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
-            </SelectContent>
-          </Select>
+          {/* Profile selector - hidden on mobile (in hamburger menu) */}
+          <div className="hidden md:block">
+            <Select value={profileId || "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
+              <SelectTrigger className="w-[140px]">
+                <span className="truncate">
+                  {profileId ? profiles.find((p) => p.id === profileId)?.name ?? profileId : "All profiles"}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All profiles</SelectItem>
+                {profiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </div>
 
           {/* Mobile hamburger */}
           <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden"
@@ -173,6 +175,21 @@ export function Navbar() {
             <SheetTitle>Menu</SheetTitle>
           </SheetHeader>
           <div className="mt-4 space-y-4">
+            {/* Profile selector (mobile) */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Profile</span>
+              <Select value={profileId || "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
+                <SelectTrigger className="w-[130px]">
+                  <span className="truncate">
+                    {profileId ? profiles.find((p) => p.id === profileId)?.name ?? profileId : "All profiles"}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All profiles</SelectItem>
+                  {profiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
             {/* Theme */}
             <div className="flex items-center justify-between">
               <span className="text-sm">Theme</span>
@@ -255,10 +272,10 @@ function PinnedTab({ view, isActive, isHome, onNavigate, onDelete, onRename, onS
           autoFocus />
       ) : (
         <button onClick={onNavigate} onDoubleClick={(e) => { e.preventDefault(); setEditValue(view.label); setEditing(true) }}
-          className={cn("rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors flex items-center gap-1.5",
+          className={cn("rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap max-w-[150px]",
             isActive ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
           )} title="Double-click to rename">
-          <Pin className="h-3 w-3 opacity-50" />{view.label}
+          <Pin className="h-3 w-3 opacity-50 shrink-0" /><span className="truncate">{view.label}</span>
         </button>
       )}
       <button className={cn("absolute -left-1 -top-1 rounded-full p-0.5 transition-opacity",
