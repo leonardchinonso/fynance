@@ -6,10 +6,12 @@
 
 use std::collections::HashMap;
 
-use chrono::NaiveDate;
+use chrono::NaiveDateTime;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+use crate::util::{serde_naive_datetime, serde_naive_datetime_option};
 
 /// A single bank transaction.
 ///
@@ -20,8 +22,9 @@ use ts_rs::TS;
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct Transaction {
     pub id: String,
+    #[serde(with = "serde_naive_datetime")]
     #[ts(type = "string")]
-    pub date: NaiveDate,
+    pub date: NaiveDateTime,
     pub description: String,
     pub normalized: String,
     #[serde(with = "rust_decimal::serde::str")]
@@ -81,8 +84,9 @@ pub struct Account {
     #[serde(with = "rust_decimal::serde::str_option", default)]
     #[ts(type = "string | null")]
     pub balance: Option<Decimal>,
+    #[serde(with = "serde_naive_datetime_option", default)]
     #[ts(type = "string | null")]
-    pub balance_date: Option<NaiveDate>,
+    pub balance_date: Option<NaiveDateTime>,
     pub is_active: bool,
     pub notes: Option<String>,
     /// JSON array of profile IDs, e.g. `["alex", "sam"]`.
@@ -251,8 +255,9 @@ pub struct BudgetOverride {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct ImportTransaction {
+    #[serde(with = "serde_naive_datetime")]
     #[ts(type = "string")]
-    pub date: NaiveDate,
+    pub date: NaiveDateTime,
     pub description: String,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
@@ -337,8 +342,9 @@ impl ChecklistStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct PortfolioSnapshot {
+    #[serde(with = "serde_naive_datetime")]
     #[ts(type = "string")]
-    pub snapshot_date: NaiveDate,
+    pub snapshot_date: NaiveDateTime,
     pub account_id: String,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
@@ -363,8 +369,9 @@ pub struct Holding {
     #[ts(type = "string")]
     pub value: Decimal,
     pub currency: String,
+    #[serde(with = "serde_naive_datetime")]
     #[ts(type = "string")]
-    pub as_of: NaiveDate,
+    pub as_of: NaiveDateTime,
     /// Optional short display name (e.g. ticker alias).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub short_name: Option<String>,

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 use rusqlite::{Connection, params};
 use rust_decimal::Decimal;
 
@@ -89,6 +89,27 @@ const MIGRATION_002_STMTS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Migration 003: transitions date fields from `YYYY-MM-DD` to
+/// `YYYY-MM-DDTHH:MM:SS` format. Fingerprints are recomputed in Rust after
+/// the SQL step because SHA-256 cannot be expressed in SQLite.
+const MIGRATION_003_SQL: &str = r"
+UPDATE transactions
+SET date = date || 'T00:00:00'
+WHERE length(date) = 10;
+
+UPDATE portfolio_snapshots
+SET snapshot_date = snapshot_date || 'T00:00:00'
+WHERE length(snapshot_date) = 10;
+
+UPDATE holdings
+SET as_of = as_of || 'T00:00:00'
+WHERE length(as_of) = 10;
+
+UPDATE accounts
+SET balance_date = balance_date || 'T00:00:00'
+WHERE balance_date IS NOT NULL AND length(balance_date) = 10;
+";
+
 /// Resolve the default DB path. On Linux this is
 /// `~/.local/share/fynance/fynance.db`; on macOS it's
 /// `~/Library/Application Support/fynance/fynance.db`.
@@ -157,6 +178,7 @@ impl Db {
 
         ensure_migration_001(&conn)?;
         ensure_migration_002(&conn)?;
+        ensure_migration_003(&conn)?;
 
         if path.exists() {
             set_file_mode_600(path)?;
@@ -226,7 +248,7 @@ impl Db {
                 account.account_type.as_str(),
                 account.currency,
                 account.balance.map(|b| b.to_string()),
-                account.balance_date.map(|d| d.format("%Y-%m-%d").to_string()),
+                account.balance_date.map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string()),
                 account.is_active as i64,
                 account.notes,
                 profile_ids,
@@ -252,7 +274,7 @@ impl Db {
                 account.account_type.as_str(),
                 account.currency,
                 account.balance.map(|b| b.to_string()),
-                account.balance_date.map(|d| d.format("%Y-%m-%d").to_string()),
+                account.balance_date.map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string()),
                 account.is_active as i64,
                 account.notes,
                 profile_ids,
@@ -325,14 +347,14 @@ impl Db {
         &self,
         account_id: &str,
         balance: Decimal,
-        date: NaiveDate,
+        date: NaiveDateTime,
     ) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         let updated = tx.execute(
             "UPDATE accounts SET balance = ?1, balance_date = ?2 WHERE id = ?3",
             params![
                 balance.to_string(),
-                date.format("%Y-%m-%d").to_string(),
+                date.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 account_id
             ],
         )?;
@@ -344,7 +366,7 @@ impl Db {
               VALUES (?1, ?2, ?3, COALESCE((SELECT currency FROM accounts WHERE id = ?2), 'GBP'))
               ON CONFLICT(snapshot_date, account_id) DO UPDATE SET balance = excluded.balance",
             params![
-                date.format("%Y-%m-%d").to_string(),
+                date.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 account_id,
                 balance.to_string()
             ],
@@ -366,7 +388,7 @@ impl Db {
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 tx.id,
-                tx.date.format("%Y-%m-%d").to_string(),
+                tx.date.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 tx.description,
                 tx.normalized,
                 tx.amount.to_string(),
@@ -407,11 +429,11 @@ impl Db {
 
         for (i, t) in txns.iter().enumerate() {
             result.rows_total += 1;
-            let date_iso = t.date.format("%Y-%m-%d").to_string();
+            let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
             let amount_str = t.amount.to_string();
             let currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
             let normalized = normalize_description(&t.description);
-            let fp = fingerprint(&date_iso, &amount_str, &t.description, account_id);
+            let fp = fingerprint(&date_iso, &amount_str, account_id);
 
             let tx = Transaction {
                 id: Uuid::new_v4().to_string(),
@@ -456,11 +478,11 @@ impl Db {
         let mut need_account_join = false;
 
         if let Some(start) = filters.start {
-            args.push(Box::new(start.format("%Y-%m-%d").to_string()));
+            args.push(Box::new(start.format("%Y-%m-%dT00:00:00").to_string()));
             conditions.push(format!("t.date >= ?{}", args.len()));
         }
         if let Some(end) = filters.end {
-            args.push(Box::new(end.format("%Y-%m-%d").to_string()));
+            args.push(Box::new(end.format("%Y-%m-%dT23:59:59").to_string()));
             conditions.push(format!("t.date <= ?{}", args.len()));
         }
         if let Some(accs) = &filters.accounts {
@@ -559,11 +581,11 @@ impl Db {
         let mut need_account_join = false;
 
         if let Some(start) = filters.start {
-            args.push(Box::new(start.format("%Y-%m-%d").to_string()));
+            args.push(Box::new(start.format("%Y-%m-%dT00:00:00").to_string()));
             conditions.push(format!("t.date >= ?{}", args.len()));
         }
         if let Some(end) = filters.end {
-            args.push(Box::new(end.format("%Y-%m-%d").to_string()));
+            args.push(Box::new(end.format("%Y-%m-%dT23:59:59").to_string()));
             conditions.push(format!("t.date <= ?{}", args.len()));
         }
         if let Some(accs) = &filters.accounts {
@@ -890,8 +912,8 @@ impl Db {
               ORDER BY t.category, period"
         );
 
-        let start_str = start.format("%Y-%m-%d").to_string();
-        let end_str = end.format("%Y-%m-%d").to_string();
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
         let mut base_args: Vec<Box<dyn rusqlite::ToSql>> = vec![
             Box::new(start_str),
@@ -997,7 +1019,7 @@ impl Db {
                 balance  = excluded.balance,
                 currency = excluded.currency",
             params![
-                snapshot.snapshot_date.format("%Y-%m-%d").to_string(),
+                snapshot.snapshot_date.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 snapshot.account_id,
                 snapshot.balance.to_string(),
                 snapshot.currency,
@@ -1031,7 +1053,7 @@ impl Db {
                     h.price_per_unit.map(|p| p.to_string()),
                     h.value.to_string(),
                     h.currency,
-                    h.as_of.format("%Y-%m-%d").to_string(),
+                    h.as_of.format("%Y-%m-%dT%H:%M:%S").to_string(),
                     h.short_name,
                 ],
             )?;
@@ -1185,7 +1207,8 @@ impl Db {
         as_of: NaiveDate,
         profile_id: Option<&str>,
     ) -> Result<Vec<Account>> {
-        let as_of_str = as_of.format("%Y-%m-%d").to_string();
+        // Use T23:59:59 so that any snapshot recorded during the as_of day is included.
+        let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
         let stale_days = 45i64;
 
         let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
@@ -1280,8 +1303,8 @@ impl Db {
         start: NaiveDate,
         end: NaiveDate,
     ) -> Result<Vec<SnapshotDelta>> {
-        let start_str = start.format("%Y-%m-%d").to_string();
-        let end_str = end.format("%Y-%m-%d").to_string();
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
         // Get all account IDs that have at least one snapshot in range.
         let account_ids: Vec<String> = {
@@ -1348,8 +1371,8 @@ impl Db {
         let rows = stmt
             .query_map(
                 rusqlite::params![
-                    start.format("%Y-%m-%d").to_string(),
-                    end.format("%Y-%m-%d").to_string()
+                    start.format("%Y-%m-%dT00:00:00").to_string(),
+                    end.format("%Y-%m-%dT23:59:59").to_string()
                 ],
                 |row| {
                     let date_str: String = row.get(0)?;
@@ -1362,7 +1385,7 @@ impl Db {
         Ok(rows
             .into_iter()
             .filter_map(|(date_str, account_id, balance_str, currency)| {
-                let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
+                let date = parse_transaction_datetime(&date_str)?;
                 let balance = balance_str.parse::<Decimal>().ok()?;
                 Some(PortfolioSnapshot {
                     snapshot_date: date,
@@ -1427,8 +1450,8 @@ impl Db {
               ORDER BY period"
         );
 
-        let start_str = start.format("%Y-%m-%d").to_string();
-        let end_str = end.format("%Y-%m-%d").to_string();
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
         let mut base_args: Vec<Box<dyn rusqlite::ToSql>> =
             vec![Box::new(start_str), Box::new(end_str)];
@@ -1528,7 +1551,7 @@ impl Db {
                     h.price_per_unit.map(|p| p.to_string()),
                     h.value.to_string(),
                     h.currency,
-                    h.as_of.format("%Y-%m-%d").to_string(),
+                    h.as_of.format("%Y-%m-%dT%H:%M:%S").to_string(),
                     h.short_name,
                 ],
             )?;
@@ -1558,7 +1581,7 @@ impl Db {
             .collect();
 
         let sum_carry_forward = |date: NaiveDate| -> Result<Decimal> {
-            let date_str = date.format("%Y-%m-%d").to_string();
+            let date_str = date.format("%Y-%m-%dT23:59:59").to_string();
             let mut total = Decimal::ZERO;
             for id in &investment_ids {
                 let balance: Option<String> = self
@@ -1583,8 +1606,8 @@ impl Db {
 
         // Net cash moved into investment accounts.
         let new_cash_invested: Decimal = {
-            let start_str = start.format("%Y-%m-%d").to_string();
-            let end_str = end.format("%Y-%m-%d").to_string();
+            let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+            let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
             let raw: Option<f64> = self
                 .conn
                 .query_row(
@@ -1685,6 +1708,24 @@ pub struct AccountStats {
     pub uncategorized: u64,
 }
 
+// ── Date parsing helper ───────────────────────────────────────────────────────
+
+/// Parse a stored date/datetime string into `NaiveDateTime`.
+///
+/// Accepts both the new `YYYY-MM-DDTHH:MM:SS` format and the legacy
+/// `YYYY-MM-DD` format (converting date-only values to `T00:00:00`).
+/// Returns `None` on parse failure rather than panicking so callers can
+/// use `.unwrap_or_else` with a sensible default.
+fn parse_transaction_datetime(s: &str) -> Option<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+        .ok()
+        .or_else(|| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+        })
+}
+
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
 /// Map a row from the carry-forward portfolio query into an Account.
@@ -1704,11 +1745,11 @@ fn row_to_portfolio_account(
     let snap_date_str: Option<String> = row.get(9)?;
 
     let balance = snap_balance.as_deref().and_then(|s| s.parse::<Decimal>().ok());
-    let balance_date =
-        snap_date_str.as_deref().and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+    let balance_date: Option<NaiveDateTime> =
+        snap_date_str.as_deref().and_then(parse_transaction_datetime);
 
     let is_stale = balance_date
-        .map(|d| (as_of - d).num_days() > stale_days)
+        .map(|d| (as_of - d.date()).num_days() > stale_days)
         .unwrap_or(false);
 
     Ok(Account {
@@ -1741,8 +1782,8 @@ fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
         price_per_unit: price_str.and_then(|s| s.parse::<Decimal>().ok()),
         value: value_str.parse::<Decimal>().unwrap_or_default(),
         currency: row.get(7)?,
-        as_of: NaiveDate::parse_from_str(&as_of_str, "%Y-%m-%d").unwrap_or_else(|_| {
-            chrono::Local::now().date_naive()
+        as_of: parse_transaction_datetime(&as_of_str).unwrap_or_else(|| {
+            chrono::Local::now().naive_local()
         }),
         short_name: row.get(9)?,
     })
@@ -1754,8 +1795,12 @@ fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> 
     let cat_source: Option<String> = row.get(8)?;
     Ok(Transaction {
         id: row.get(0)?,
-        date: NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+        date: parse_transaction_datetime(&date).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                format!("invalid transaction date: {date:?}").into(),
+            )
         })?,
         description: row.get(2)?,
         normalized: row.get(3)?,
@@ -1786,7 +1831,7 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         account_type: AccountType::parse(&type_str).unwrap_or(AccountType::Checking),
         currency: row.get(4)?,
         balance: balance.and_then(|s| s.parse::<Decimal>().ok()),
-        balance_date: balance_date.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+        balance_date: balance_date.and_then(|s| parse_transaction_datetime(&s)),
         is_active: row.get::<_, i64>(7)? != 0,
         notes: row.get(8)?,
         profile_ids,
@@ -2042,6 +2087,68 @@ fn ensure_migration_002(conn: &Connection) -> Result<()> {
     )?;
     for (section, category) in DEFAULT_SECTION_MAPPINGS {
         insert_section.execute(params![section, category])?;
+    }
+
+    Ok(())
+}
+
+fn ensure_migration_003(conn: &Connection) -> Result<()> {
+    // Check whether migration has already been applied by inspecting a sample
+    // transaction date. If no transactions exist, or the first date already
+    // contains a 'T', the SQL step is safe to skip (idempotent WHERE guards).
+    let sample_date: Option<String> = conn
+        .query_row(
+            "SELECT date FROM transactions ORDER BY rowid LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    let already_applied = sample_date
+        .as_deref()
+        .map(|d| d.contains('T'))
+        .unwrap_or(true); // No rows means nothing to migrate.
+
+    if !already_applied {
+        conn.execute_batch(MIGRATION_003_SQL)
+            .context("applying migration 003: datetime transition")?;
+    }
+
+    // Recompute all fingerprints to reflect the new formula:
+    // sha256(datetime | amount | account_id) — description removed.
+    // This is always safe to re-run because it is idempotent.
+    use crate::util::fingerprint;
+
+    let rows: Vec<(String, String, String, String)> = {
+        let mut stmt = conn.prepare("SELECT id, date, amount, account_id FROM transactions")?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+
+    // Detect whether any fingerprint needs updating by checking one row.
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let (ref id0, ref date0, ref amount0, ref account0) = rows[0];
+    let expected_fp = fingerprint(date0, amount0, account0);
+    let current_fp: String = conn
+        .query_row(
+            "SELECT fingerprint FROM transactions WHERE id = ?1",
+            params![id0],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
+    if current_fp == expected_fp {
+        return Ok(()); // Already up to date.
+    }
+
+    let mut update_stmt =
+        conn.prepare("UPDATE transactions SET fingerprint = ?1 WHERE id = ?2")?;
+    for (id, date, amount, account_id) in &rows {
+        let new_fp = fingerprint(date, amount, account_id);
+        update_stmt
+            .execute(params![new_fp, id])
+            .with_context(|| format!("recomputing fingerprint for tx {id}"))?;
     }
 
     Ok(())

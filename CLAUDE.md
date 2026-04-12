@@ -191,10 +191,10 @@ See `design/05_security_isolation.md` for details.
 - Filenames use underscores, not spaces
 - Avoid em dashes in any written content; use commas, colons, or separate sentences instead
 - Money values use `rust_decimal::Decimal`, never `f32` or `f64`
-- Dates stored as ISO 8601 strings (`YYYY-MM-DD`) in SQLite
+- Dates stored as ISO 8601 datetime strings (`YYYY-MM-DDTHH:MM:SS`) in SQLite; date-only imports use `T00:00:00`
 - Money stored as TEXT in SQLite, parsed as `Decimal` in Rust; never store as REAL
 - Return `anyhow::Result<T>` at command / route boundaries, define `thiserror` enums inside modules
-- Every importer deduplicates by a stable fingerprint hash `sha256(date, amount, description, account_id)`
+- Every importer deduplicates by a stable fingerprint hash `sha256(datetime, amount, account_id)`
 - Never log raw transaction descriptions at INFO level (may leak merchant info)
 <!-- DEFERRED: - Claude API calls always go through `src/categorizer/claude.rs` so prompt caching and batch behavior stay consistent -->
 - Axum handlers return `Result<Json<T>, AppError>` where `AppError` implements `IntoResponse`

@@ -4,7 +4,7 @@
 //! return `AppError` with the specific machine-readable codes defined in
 //! docs/plans/11_frontend_backend_consolidation.md §Validation & Error Handling.
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 use rust_decimal::Decimal;
 
 use crate::server::error::AppError;
@@ -13,6 +13,13 @@ use crate::server::error::AppError;
 pub fn parse_date(s: &str) -> Result<NaiveDate, AppError> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|_| AppError::bad_request(format!("invalid date: {s}"), "invalid_date"))
+}
+
+/// Parse a datetime or date string into `NaiveDateTime`.
+/// Accepts `YYYY-MM-DDTHH:MM:SS` or `YYYY-MM-DD` (treated as T00:00:00).
+pub fn parse_naive_datetime(s: &str) -> Result<NaiveDateTime, AppError> {
+    crate::util::parse_naive_datetime(s)
+        .map_err(|_| AppError::bad_request(format!("invalid date or datetime: {s}"), "invalid_date"))
 }
 
 /// Validate that a `YYYY-MM` month string is well-formed.
@@ -63,7 +70,7 @@ pub fn validate_pagination(page: u32, limit: u32) -> Result<(), AppError> {
             "invalid_pagination",
         ));
     }
-    if limit < 1 || limit > 200 {
+    if !(1..=200).contains(&limit) {
         return Err(AppError::bad_request(
             "limit must be between 1 and 200",
             "invalid_pagination",

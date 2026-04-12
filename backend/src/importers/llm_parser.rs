@@ -351,7 +351,7 @@ mod tests {
 
     fn make_row(date: &str, description: &str, amount: &str, confidence: f32) -> UnifiedStatementRow {
         UnifiedStatementRow {
-            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap().and_hms_opt(0, 0, 0).unwrap(),
             description: description.to_string(),
             amount: amount.parse::<Decimal>().unwrap(),
             currency: "GBP".to_string(),
