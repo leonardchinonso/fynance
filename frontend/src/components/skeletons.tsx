@@ -232,15 +232,53 @@ function SectionSkeleton({ rows, cols }: { rows: number; cols: number }) {
   )
 }
 
-/** Skeleton for budget charts view */
+/** Skeleton for budget charts view matching the actual layout:
+ *  - Stacked bar (left) + Pie (right) side by side
+ *  - Line chart full width below
+ */
 export function BudgetChartsSkeleton() {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartSkeleton height={280} />
-        <ChartSkeleton height={280} />
+        {/* Stacked bar skeleton */}
+        <div className="rounded-lg border p-4 space-y-3">
+          <Bone className="h-3 w-44" />
+          <div className="flex items-end gap-2 h-[320px] pt-8 pb-6">
+            {Array.from({ length: 11 }).map((_, i) => (
+              <div key={i} className="flex-1 flex flex-col justify-end gap-0.5">
+                <Bone className="w-full" style={{ height: `${40 + Math.sin(i) * 20 + i * 3}%` }} />
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap justify-center gap-3">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Bone key={i} className="h-3 w-16" />
+            ))}
+          </div>
+        </div>
+        {/* Pie chart skeleton */}
+        <div className="rounded-lg border p-4 space-y-3">
+          <Bone className="h-3 w-32" />
+          <div className="flex justify-center py-6">
+            <Bone className="h-56 w-56 rounded-full" />
+          </div>
+          <div className="flex flex-wrap justify-center gap-3">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Bone key={i} className="h-3 w-20" />
+            ))}
+          </div>
+        </div>
       </div>
-      <ChartSkeleton height={300} />
+      {/* Line chart skeleton */}
+      <div className="rounded-lg border p-4 space-y-3">
+        <Bone className="h-3 w-28" />
+        <Bone className="w-full h-[320px]" />
+        <div className="flex flex-wrap justify-center gap-3">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Bone key={i} className="h-3 w-16" />
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
