@@ -5,7 +5,7 @@ import { useUrlFilters } from "@/hooks/use_url_filters"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
-import { LoadingSpinner } from "@/components/loading_spinner"
+import { TableSkeleton, ChartSkeleton } from "@/components/skeletons"
 import { Currency } from "@/components/currency"
 import { TransactionTable } from "./transactions/transaction_table"
 import { TransactionBarChart } from "./transactions/transaction_bar_chart"
@@ -251,7 +251,7 @@ export function TransactionsPage() {
 
       {/* Content */}
       {loading ? (
-        <LoadingSpinner />
+        view === "table" ? <TableSkeleton rows={10} cols={5} /> : <ChartSkeleton height={320} />
       ) : view === "table" && result ? (
         <TransactionTable
           transactions={result.data}

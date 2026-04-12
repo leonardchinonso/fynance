@@ -6,7 +6,12 @@ import { useProfiles } from "@/context/profile_context"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
-import { LoadingSpinner } from "@/components/loading_spinner"
+import {
+  PortfolioOverviewSkeleton,
+  AccountsGridSkeleton,
+  ChartSkeleton,
+  PortfolioHistorySkeleton,
+} from "@/components/skeletons"
 import { PortfolioOverview } from "./portfolio/portfolio_overview"
 import { AccountsGrid } from "./portfolio/accounts_grid"
 import { HoldingsDetail } from "./portfolio/holdings_detail"
@@ -63,7 +68,7 @@ export function PortfolioPage() {
       api.getPortfolioHistory(start, end),
       api.getAccountSnapshots(start, end),
       api.getCashFlow(start, end),
-    ]).then(([p, h, snaps, cf]) => {
+    ]).then(async ([p, h, snaps, cf]) => {
       setPortfolio(p)
       setHistory(h)
       setAccountSnapshots(snaps)
@@ -72,9 +77,10 @@ export function PortfolioPage() {
       const holdingAccounts = p.accounts.filter(
         (a) => a.type === "investment" || a.type === "pension"
       )
-      Promise.all(holdingAccounts.map((a) => api.getHoldings(a.id))).then(
-        (results) => setAllHoldings(results.flat())
+      const holdingResults = await Promise.all(
+        holdingAccounts.map((a) => api.getHoldings(a.id))
       )
+      setAllHoldings(holdingResults.flat())
       setLoading(false)
     })
   }, [profileId, start, end])
@@ -140,7 +146,11 @@ export function PortfolioPage() {
       </div>
 
       {loading || !portfolio ? (
-        <LoadingSpinner />
+        activeView === "overview" ? <PortfolioOverviewSkeleton /> :
+        activeView === "accounts" ? <AccountsGridSkeleton /> :
+        activeView === "charts" ? <div className="grid gap-4 md:grid-cols-2">{[1,2,3,4].map(i => <ChartSkeleton key={i} height={260} />)}</div> :
+        activeView === "history" ? <PortfolioHistorySkeleton /> :
+        <PortfolioOverviewSkeleton />
       ) : activeView === "overview" ? (
         <PortfolioOverview
           portfolio={portfolio}

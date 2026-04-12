@@ -5,7 +5,7 @@ import { useUrlFilters } from "@/hooks/use_url_filters"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
-import { LoadingSpinner } from "@/components/loading_spinner"
+import { SpreadsheetSkeleton, BudgetChartsSkeleton } from "@/components/skeletons"
 import { BudgetSpreadsheet } from "./budget/budget_spreadsheet"
 import { BudgetCharts } from "./budget/budget_charts"
 import { Grid3X3, BarChart3, Info } from "lucide-react"
@@ -64,7 +64,7 @@ export function BudgetPage() {
       </div>
 
       {loading ? (
-        <LoadingSpinner />
+        activeView === "spreadsheet" ? <SpreadsheetSkeleton /> : <BudgetChartsSkeleton />
       ) : gridRows.length === 0 ? (
         <EmptyState message="No spending data for the selected date range." />
       ) : activeView === "spreadsheet" ? (
