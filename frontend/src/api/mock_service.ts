@@ -8,7 +8,7 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  PortfolioSnapshot,
+  AccountSnapshot,
   Profile,
   SpendingGridRow,
   Transaction,
@@ -21,7 +21,7 @@ import {
   MOCK_TRANSACTIONS,
   MOCK_HOLDINGS,
   MOCK_BUDGETS,
-  MOCK_PORTFOLIO_SNAPSHOTS,
+  MOCK_ACCOUNT_BALANCES,
 } from "@/data"
 import { delay, getMonthFromDate, getMonthsInRange } from "@/lib/utils"
 
@@ -314,9 +314,9 @@ export class MockApiService implements ApiService {
     // Monthly snapshots aggregated
     const monthMap = new Map<string, number>()
     const accountIds = new Set(accounts.map((a) => a.id))
-    for (const snap of MOCK_PORTFOLIO_SNAPSHOTS) {
+    for (const snap of MOCK_ACCOUNT_BALANCES) {
       if (!accountIds.has(snap.account_id)) continue
-      const month = getMonthFromDate(snap.snapshot_date)
+      const month = getMonthFromDate(snap.as_of)
       monthMap.set(month, (monthMap.get(month) ?? 0) + parseFloat(snap.balance))
     }
 
@@ -347,8 +347,8 @@ export class MockApiService implements ApiService {
       { available: number; unavailable: number }
     >()
 
-    for (const snap of MOCK_PORTFOLIO_SNAPSHOTS) {
-      const month = getMonthFromDate(snap.snapshot_date)
+    for (const snap of MOCK_ACCOUNT_BALANCES) {
+      const month = getMonthFromDate(snap.as_of)
       if (start && month < start.substring(0, 7)) continue
       if (end && month > end.substring(0, 7)) continue
 
@@ -413,13 +413,13 @@ export class MockApiService implements ApiService {
       }))
   }
 
-  async getAccountSnapshots(
+  async getAccountBalances(
     start?: string,
     end?: string
-  ): Promise<PortfolioSnapshot[]> {
+  ): Promise<AccountSnapshot[]> {
     await delay(DELAY_MS)
-    return MOCK_PORTFOLIO_SNAPSHOTS.filter((s) => {
-      const month = getMonthFromDate(s.snapshot_date)
+    return MOCK_ACCOUNT_BALANCES.filter((s) => {
+      const month = getMonthFromDate(s.as_of)
       if (start && month < start.substring(0, 7)) return false
       if (end && month > end.substring(0, 7)) return false
       return true

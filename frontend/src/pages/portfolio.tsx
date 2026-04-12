@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import type { PortfolioResponse, PortfolioHistoryRow, PortfolioSnapshot, CashFlowMonth, Holding } from "@/types"
+import type { PortfolioResponse, PortfolioHistoryRow, AccountSnapshot, CashFlowMonth, Holding } from "@/types"
 import { api } from "@/api/client"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { useProfiles } from "@/context/profile_context"
@@ -48,7 +48,7 @@ export function PortfolioPage() {
 
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null)
   const [history, setHistory] = useState<PortfolioHistoryRow[]>([])
-  const [accountSnapshots, setAccountSnapshots] = useState<PortfolioSnapshot[]>([])
+  const [accountBalances, setAccountBalances] = useState<AccountSnapshot[]>([])
   const [cashFlow, setCashFlow] = useState<CashFlowMonth[]>([])
   const [allHoldings, setAllHoldings] = useState<Holding[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,12 +66,12 @@ export function PortfolioPage() {
     Promise.all([
       api.getPortfolio(profileId),
       api.getPortfolioHistory(start, end),
-      api.getAccountSnapshots(start, end),
+      api.getAccountBalances(start, end),
       api.getCashFlow(start, end),
     ]).then(async ([p, h, snaps, cf]) => {
       setPortfolio(p)
       setHistory(h)
-      setAccountSnapshots(snaps)
+      setAccountBalances(snaps)
       setCashFlow(cf)
       // Fetch holdings for all investment + pension accounts
       const holdingAccounts = p.accounts.filter(
@@ -101,9 +101,9 @@ export function PortfolioPage() {
   // Start and end investment balances from snapshots
   const investStartBalances = new Map<string, number>()
   const investEndBalances = new Map<string, number>()
-  for (const snap of accountSnapshots) {
+  for (const snap of accountBalances) {
     if (!investmentAccountIds.has(snap.account_id)) continue
-    const month = snap.snapshot_date.substring(0, 7)
+    const month = snap.as_of.substring(0, 7)
     if (!investStartBalances.has(snap.account_id) || month <= (start?.substring(0, 7) ?? "")) {
       investStartBalances.set(snap.account_id, parseFloat(snap.balance))
     }
@@ -172,7 +172,7 @@ export function PortfolioPage() {
           accounts={portfolio.accounts}
           onAccountClick={setSelectedAccountId}
           profiles={profiles}
-          snapshots={accountSnapshots}
+          balances={accountBalances}
         />
       ) : activeView === "charts" ? (
         <PortfolioCharts portfolio={portfolio} holdings={allHoldings} />
