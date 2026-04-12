@@ -11,6 +11,9 @@ export type Preset =
   | "3-years"
   | "5-years"
   | "10-years"
+  | "tax-2025-26"
+  | "tax-2024-25"
+  | "tax-2023-24"
   | "custom"
 
 function todayStr(): string {
@@ -34,6 +37,13 @@ function getPresetRange(preset: Preset): { start: string; end: string } {
       return { start: format(subYears(now, 5), "yyyy-MM-dd"), end: todayStr() }
     case "10-years":
       return { start: format(subYears(now, 10), "yyyy-MM-dd"), end: todayStr() }
+    // UK tax years run 6 April to 5 April
+    case "tax-2025-26":
+      return { start: "2025-04-06", end: "2026-04-05" }
+    case "tax-2024-25":
+      return { start: "2024-04-06", end: "2025-04-05" }
+    case "tax-2023-24":
+      return { start: "2023-04-06", end: "2024-04-05" }
     case "custom":
       return { start: format(startOfMonth(subMonths(now, 5)), "yyyy-MM-dd"), end: todayStr() }
   }

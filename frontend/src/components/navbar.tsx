@@ -20,7 +20,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Sun, Moon, Monitor, Star, Pin, X, Bookmark } from "lucide-react"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import { Sun, Moon, Monitor, Star, Pin, X, Bookmark, Menu } from "lucide-react"
 
 const NAV_ITEMS = [
   { to: "/portfolio", label: "Portfolio" },
@@ -39,6 +45,7 @@ export function Navbar() {
   const navigate = useNavigate()
   const [showPinDialog, setShowPinDialog] = useState(false)
   const [pinLabel, setPinLabel] = useState("")
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   function handlePinSave() {
     if (pinLabel.trim()) {
@@ -51,19 +58,15 @@ export function Navbar() {
   return (
     <>
       <nav className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-4 px-6">
-          {/* Logo + title */}
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-4 px-4 sm:px-6">
+          {/* Logo */}
           <NavLink to={homepage} className="flex items-center gap-2 shrink-0">
-            <img
-              src="/favicon.png"
-              alt="fynance logo"
-              className="h-7 w-7 rounded"
-            />
-            <span className="text-lg font-semibold">fynance</span>
+            <img src="/favicon.png" alt="fynance logo" className="h-7 w-7 rounded" />
+            <span className="text-lg font-semibold hidden sm:inline">fynance</span>
           </NavLink>
 
-          {/* Nav tabs */}
-          <div className="flex items-center gap-0.5">
+          {/* Desktop nav tabs */}
+          <div className="hidden md:flex items-center gap-0.5">
             {NAV_ITEMS.map((item) => (
               <div key={item.to} className="group relative flex items-center">
                 <NavLink
@@ -79,37 +82,20 @@ export function Navbar() {
                 >
                   {item.label}
                 </NavLink>
-                {/* Star icon for homepage - visible on hover */}
                 <button
                   className={cn(
                     "absolute -right-1 -top-1 rounded-full p-0.5 transition-opacity",
                     "opacity-0 group-hover:opacity-60 hover:!opacity-100",
                     isHomepage(item.to) ? "text-yellow-500" : "text-muted-foreground"
                   )}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    setHomepage(item.to)
-                  }}
-                  title={
-                    isHomepage(item.to)
-                      ? "This is your homepage"
-                      : `Set ${item.label} as homepage`
-                  }
+                  onClick={(e) => { e.preventDefault(); setHomepage(item.to) }}
+                  title={isHomepage(item.to) ? "This is your homepage" : `Set ${item.label} as homepage`}
                 >
-                  <Star
-                    className="h-3 w-3"
-                    fill={isHomepage(item.to) ? "currentColor" : "none"}
-                  />
+                  <Star className="h-3 w-3" fill={isHomepage(item.to) ? "currentColor" : "none"} />
                 </button>
               </div>
             ))}
-
-            {/* Pinned views separator */}
-            {pinnedViews.length > 0 && (
-              <div className="mx-1.5 h-5 w-px bg-border" />
-            )}
-
-            {/* Pinned view tabs */}
+            {pinnedViews.length > 0 && <div className="mx-1.5 h-5 w-px bg-border" />}
             {pinnedViews.map((view) => (
               <PinnedTab
                 key={view.url}
@@ -117,108 +103,128 @@ export function Navbar() {
                 isActive={location.pathname + location.search === view.url}
                 isHome={isHomepage(view.url)}
                 onNavigate={() => navigate(view.url)}
-                onDelete={() => {
-                  unpinView(view.url)
-                  if (isHomepage(view.url)) setHomepage("/portfolio")
-                }}
+                onDelete={() => { unpinView(view.url); if (isHomepage(view.url)) setHomepage("/portfolio") }}
                 onRename={(newLabel) => renamePinnedView(view.url, newLabel)}
                 onSetHomepage={() => setHomepage(view.url)}
               />
             ))}
           </div>
 
-          <div className="flex-1" />
+          {/* Mobile nav tabs - compact horizontal scroll */}
+          <div className="flex md:hidden items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0">
+            {NAV_ITEMS.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  cn(
+                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0",
+                    isActive
+                      ? "bg-secondary text-secondary-foreground"
+                      : "text-muted-foreground"
+                  )
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
 
-          {/* Save/pin current view button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => {
-              setPinLabel("")
-              setShowPinDialog(true)
-            }}
-            title="Save current view"
-          >
-            <Bookmark className="h-4 w-4" />
-          </Button>
+          <div className="flex-1 hidden md:block" />
 
-          {/* Theme toggle */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => {
-              const next =
-                theme === "light"
-                  ? "dark"
-                  : theme === "dark"
-                    ? "system"
-                    : "light"
-              setTheme(next)
-            }}
-            title={`Theme: ${theme}`}
-          >
-            {theme === "light" ? (
-              <Sun className="h-4 w-4" />
-            ) : theme === "dark" ? (
-              <Moon className="h-4 w-4" />
-            ) : (
-              <Monitor className="h-4 w-4" />
-            )}
-          </Button>
+          {/* Desktop actions */}
+          <div className="hidden md:flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="h-8 w-8"
+              onClick={() => { setPinLabel(""); setShowPinDialog(true) }} title="Save current view">
+              <Bookmark className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8"
+              onClick={() => { const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light"; setTheme(next) }}
+              title={`Theme: ${theme}`}>
+              {theme === "light" ? <Sun className="h-4 w-4" /> : theme === "dark" ? <Moon className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}
+            </Button>
+          </div>
 
-          {/* Profile selector */}
-          <Select
-            value={profileId || "all"}
-            onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}
-          >
-            <SelectTrigger className="w-[140px]">
-              <span>
-                {profileId
-                  ? profiles.find((p) => p.id === profileId)?.name ?? profileId
-                  : "All profiles"}
+          {/* Profile selector - compact on mobile */}
+          <Select value={profileId || "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
+            <SelectTrigger className="w-[100px] sm:w-[140px]">
+              <span className="truncate">
+                {profileId ? profiles.find((p) => p.id === profileId)?.name ?? profileId : "All"}
               </span>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All profiles</SelectItem>
-              {profiles.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                </SelectItem>
-              ))}
+              {profiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
             </SelectContent>
           </Select>
+
+          {/* Mobile hamburger */}
+          <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden"
+            onClick={() => setMobileMenuOpen(true)}>
+            <Menu className="h-5 w-5" />
+          </Button>
         </div>
       </nav>
+
+      {/* Mobile menu sheet */}
+      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+        <SheetContent className="w-[280px] px-4">
+          <SheetHeader>
+            <SheetTitle>Menu</SheetTitle>
+          </SheetHeader>
+          <div className="mt-4 space-y-4">
+            {/* Theme */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Theme</span>
+              <div className="flex gap-1">
+                {(["light", "dark", "system"] as const).map((t) => (
+                  <Button key={t} variant={theme === t ? "secondary" : "ghost"} size="sm" className="h-7 px-2 text-xs capitalize"
+                    onClick={() => setTheme(t)}>{t}</Button>
+                ))}
+              </div>
+            </div>
+            {/* Save view */}
+            <Button variant="outline" size="sm" className="w-full" onClick={() => { setMobileMenuOpen(false); setPinLabel(""); setShowPinDialog(true) }}>
+              <Bookmark className="h-4 w-4 mr-2" /> Save current view
+            </Button>
+            {/* Pinned views */}
+            {pinnedViews.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Saved Views</p>
+                {pinnedViews.map((view) => (
+                  <div key={view.url} className="flex items-center gap-2">
+                    <button
+                      onClick={() => { navigate(view.url); setMobileMenuOpen(false) }}
+                      className={cn(
+                        "flex-1 text-left rounded-md px-2 py-1.5 text-sm transition-colors",
+                        location.pathname + location.search === view.url
+                          ? "bg-secondary text-secondary-foreground"
+                          : "text-muted-foreground hover:bg-secondary/50"
+                      )}
+                    >
+                      <Pin className="h-3 w-3 inline mr-1.5 opacity-50" />{view.label}
+                    </button>
+                    <button onClick={() => { unpinView(view.url); if (isHomepage(view.url)) setHomepage("/portfolio") }}
+                      className="p-1 rounded hover:bg-destructive/20"><X className="h-3 w-3 text-muted-foreground" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Pin view dialog */}
       <Dialog open={showPinDialog} onOpenChange={setShowPinDialog}>
         <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Save current view</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Save current view</DialogTitle></DialogHeader>
           <div className="space-y-3 pt-2">
-            <Input
-              placeholder="View name (e.g. Monthly budget)"
-              value={pinLabel}
+            <Input placeholder="View name (e.g. Monthly budget)" value={pinLabel}
               onChange={(e) => setPinLabel(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handlePinSave()
-              }}
-              autoFocus
-            />
+              onKeyDown={(e) => { if (e.key === "Enter") handlePinSave() }} autoFocus />
             <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowPinDialog(false)}
-              >
-                Cancel
-              </Button>
-              <Button size="sm" onClick={handlePinSave} disabled={!pinLabel.trim()}>
-                Save
-              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowPinDialog(false)}>Cancel</Button>
+              <Button size="sm" onClick={handlePinSave} disabled={!pinLabel.trim()}>Save</Button>
             </div>
           </div>
         </DialogContent>
@@ -227,86 +233,42 @@ export function Navbar() {
   )
 }
 
-function PinnedTab({
-  view,
-  isActive,
-  isHome,
-  onNavigate,
-  onDelete,
-  onRename,
-  onSetHomepage,
-}: {
-  view: { label: string; url: string }
-  isActive: boolean
-  isHome: boolean
-  onNavigate: () => void
-  onDelete: () => void
-  onRename: (label: string) => void
-  onSetHomepage: () => void
+function PinnedTab({ view, isActive, isHome, onNavigate, onDelete, onRename, onSetHomepage }: {
+  view: { label: string; url: string }; isActive: boolean; isHome: boolean
+  onNavigate: () => void; onDelete: () => void; onRename: (label: string) => void; onSetHomepage: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(view.label)
 
   function handleSave() {
     const trimmed = editValue.trim()
-    if (trimmed && trimmed !== view.label) {
-      onRename(trimmed)
-    }
+    if (trimmed && trimmed !== view.label) onRename(trimmed)
     setEditing(false)
   }
 
   return (
     <div className="group relative flex items-center">
       {editing ? (
-        <input
-          className="rounded-md border bg-background px-2 py-1 text-sm font-medium w-[120px] outline-none focus:ring-1 focus:ring-ring"
-          value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
-          onBlur={handleSave}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleSave()
-            if (e.key === "Escape") { setEditValue(view.label); setEditing(false) }
-          }}
-          autoFocus
-        />
+        <input className="rounded-md border bg-background px-2 py-1 text-sm font-medium w-[120px] outline-none focus:ring-1 focus:ring-ring"
+          value={editValue} onChange={(e) => setEditValue(e.target.value)}
+          onBlur={handleSave} onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") { setEditValue(view.label); setEditing(false) } }}
+          autoFocus />
       ) : (
-        <button
-          onClick={onNavigate}
-          onDoubleClick={(e) => {
-            e.preventDefault()
-            setEditValue(view.label)
-            setEditing(true)
-          }}
-          className={cn(
-            "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors flex items-center gap-1.5",
-            isActive
-              ? "bg-secondary text-secondary-foreground"
-              : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-          )}
-          title="Double-click to rename"
-        >
-          <Pin className="h-3 w-3 opacity-50" />
-          {view.label}
+        <button onClick={onNavigate} onDoubleClick={(e) => { e.preventDefault(); setEditValue(view.label); setEditing(true) }}
+          className={cn("rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors flex items-center gap-1.5",
+            isActive ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+          )} title="Double-click to rename">
+          <Pin className="h-3 w-3 opacity-50" />{view.label}
         </button>
       )}
-      {/* Homepage star - visible on hover */}
-      <button
-        className={cn(
-          "absolute -left-1 -top-1 rounded-full p-0.5 transition-opacity",
-          "opacity-0 group-hover:opacity-60 hover:!opacity-100",
-          isHome ? "text-yellow-500" : "text-muted-foreground"
-        )}
+      <button className={cn("absolute -left-1 -top-1 rounded-full p-0.5 transition-opacity",
+        "opacity-0 group-hover:opacity-60 hover:!opacity-100", isHome ? "text-yellow-500" : "text-muted-foreground")}
         onClick={(e) => { e.stopPropagation(); onSetHomepage() }}
-        title={isHome ? "This is your homepage" : "Set as homepage"}
-      >
+        title={isHome ? "This is your homepage" : "Set as homepage"}>
         <Star className="h-3 w-3" fill={isHome ? "currentColor" : "none"} />
       </button>
-      {/* Delete button on hover */}
-      <button
-        className="absolute -right-1 -top-1 rounded-full bg-destructive/80 p-0.5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive"
-        onClick={(e) => { e.stopPropagation(); onDelete() }}
-        title="Remove pinned view"
-      >
+      <button className="absolute -right-1 -top-1 rounded-full bg-destructive/80 p-0.5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive"
+        onClick={(e) => { e.stopPropagation(); onDelete() }} title="Remove pinned view">
         <X className="h-2.5 w-2.5 text-destructive-foreground" />
       </button>
     </div>

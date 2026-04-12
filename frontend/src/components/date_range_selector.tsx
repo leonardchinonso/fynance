@@ -17,7 +17,7 @@ import {
 import { Calendar } from "@/components/ui/calendar"
 import { parse, format } from "date-fns"
 
-const PRESETS: { value: Preset; label: string }[] = [
+const PRESETS: { value: Preset; label: string; group?: string }[] = [
   { value: "this-month", label: "This month" },
   { value: "last-3-months", label: "Last 3 months" },
   { value: "last-12-months", label: "Last 12 months" },
@@ -25,6 +25,9 @@ const PRESETS: { value: Preset; label: string }[] = [
   { value: "3-years", label: "3 years" },
   { value: "5-years", label: "5 years" },
   { value: "10-years", label: "10 years" },
+  { value: "tax-2025-26", label: "2025/26 Tax Year", group: "tax" },
+  { value: "tax-2024-25", label: "2024/25 Tax Year", group: "tax" },
+  { value: "tax-2023-24", label: "2023/24 Tax Year", group: "tax" },
 ]
 
 interface DateRangeSelectorProps {
@@ -58,16 +61,19 @@ export function DateRangeSelector({
   const endDate = parse(end, "yyyy-MM-dd", new Date())
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
       <Select value={preset} onValueChange={(v) => setPreset(v as Preset)}>
-        <SelectTrigger className="w-[160px]">
+        <SelectTrigger className="w-[140px] sm:w-[160px]">
           <span>{PRESETS.find((p) => p.value === preset)?.label ?? "Custom"}</span>
         </SelectTrigger>
         <SelectContent>
-          {PRESETS.map((p) => (
-            <SelectItem key={p.value} value={p.value}>
-              {p.label}
-            </SelectItem>
+          {PRESETS.map((p, i) => (
+            <div key={p.value}>
+              {p.group === "tax" && PRESETS[i - 1]?.group !== "tax" && (
+                <div className="my-1 border-t border-border" />
+              )}
+              <SelectItem value={p.value}>{p.label}</SelectItem>
+            </div>
           ))}
         </SelectContent>
       </Select>
