@@ -2,7 +2,7 @@
 
 React 19 web UI for the fynance personal finance tracker.
 
-[**View Live Demo**](https://dist-bay-delta-24.vercel.app)
+[**View Live Demo**](https://fynance-3c.vercel.app)
 
 ## Screenshots
 
