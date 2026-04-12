@@ -103,6 +103,7 @@ pub async fn create_account(
         is_active: true,
         notes: body.notes,
         profile_ids,
+        is_stale: None,
     };
 
     {
