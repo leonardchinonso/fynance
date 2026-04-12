@@ -1216,11 +1216,7 @@ impl Db {
         as_of: NaiveDate,
         profile_id: Option<&str>,
     ) -> Result<Vec<Account>> {
-<<<<<<< HEAD
         // Use T23:59:59 so that any holding recorded during the as_of day is included.
-=======
-        // Use T23:59:59 so that any snapshot recorded during the as_of day is included.
->>>>>>> cbe975ee83649cd45c38335766a55a531aeeda20
         let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
         let stale_days = 45i64;
 
@@ -1345,11 +1341,7 @@ impl Db {
         &self,
         start: NaiveDate,
         end: NaiveDate,
-<<<<<<< HEAD
     ) -> Result<Vec<BalanceDelta>> {
-=======
-    ) -> Result<Vec<SnapshotDelta>> {
->>>>>>> cbe975ee83649cd45c38335766a55a531aeeda20
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
@@ -1463,19 +1455,11 @@ impl Db {
 
         Ok(rows
             .into_iter()
-<<<<<<< HEAD
             .filter_map(|(date_str, account_id, total, currency)| {
                 let date = parse_transaction_datetime(&date_str)?;
                 let balance = Decimal::try_from(total).ok()?;
                 Some(AccountSnapshot {
                     as_of: date,
-=======
-            .filter_map(|(date_str, account_id, balance_str, currency)| {
-                let date = parse_transaction_datetime(&date_str)?;
-                let balance = balance_str.parse::<Decimal>().ok()?;
-                Some(PortfolioSnapshot {
-                    snapshot_date: date,
->>>>>>> cbe975ee83649cd45c38335766a55a531aeeda20
                     account_id,
                     balance,
                     currency,
@@ -1811,7 +1795,6 @@ pub struct AccountStats {
 }
 
 // ── Date parsing helper ───────────────────────────────────────────────────────
-<<<<<<< HEAD
 
 /// Parse a stored date/datetime string into `NaiveDateTime`.
 ///
@@ -1827,64 +1810,6 @@ fn parse_transaction_datetime(s: &str) -> Option<NaiveDateTime> {
                 .ok()
                 .and_then(|d| d.and_hms_opt(0, 0, 0))
         })
-=======
-
-/// Parse a stored date/datetime string into `NaiveDateTime`.
-///
-/// Accepts both the new `YYYY-MM-DDTHH:MM:SS` format and the legacy
-/// `YYYY-MM-DD` format (converting date-only values to `T00:00:00`).
-/// Returns `None` on parse failure rather than panicking so callers can
-/// use `.unwrap_or_else` with a sensible default.
-fn parse_transaction_datetime(s: &str) -> Option<NaiveDateTime> {
-    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
-        .ok()
-        .or_else(|| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .ok()
-                .and_then(|d| d.and_hms_opt(0, 0, 0))
-        })
-}
-
-// ── Row mappers ───────────────────────────────────────────────────────────────
-
-/// Map a row from the carry-forward portfolio query into an Account.
-/// Columns: id(0) name(1) institution(2) type(3) currency(4) is_active(5)
-///          notes(6) profile_ids(7) snap_balance(8) snapshot_date(9)
-fn row_to_portfolio_account(
-    row: &rusqlite::Row<'_>,
-    as_of: NaiveDate,
-    stale_days: i64,
-) -> rusqlite::Result<Account> {
-    let type_str: String = row.get(3)?;
-    let profile_ids_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
-    let profile_ids: Vec<String> =
-        serde_json::from_str(&profile_ids_str).unwrap_or_else(|_| vec!["default".to_string()]);
-
-    let snap_balance: Option<String> = row.get(8)?;
-    let snap_date_str: Option<String> = row.get(9)?;
-
-    let balance = snap_balance.as_deref().and_then(|s| s.parse::<Decimal>().ok());
-    let balance_date: Option<NaiveDateTime> =
-        snap_date_str.as_deref().and_then(parse_transaction_datetime);
-
-    let is_stale = balance_date
-        .map(|d| (as_of - d.date()).num_days() > stale_days)
-        .unwrap_or(false);
-
-    Ok(Account {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        institution: row.get(2)?,
-        account_type: AccountType::parse(&type_str).unwrap_or(AccountType::Checking),
-        currency: row.get(4)?,
-        balance,
-        balance_date,
-        is_active: row.get::<_, i64>(5)? != 0,
-        notes: row.get(6)?,
-        profile_ids,
-        is_stale: Some(is_stale),
-    })
->>>>>>> cbe975ee83649cd45c38335766a55a531aeeda20
 }
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
@@ -1982,6 +1907,8 @@ pub fn account_type_to_asset_class(t: &AccountType) -> &'static str {
         AccountType::Pension => "Pension",
         AccountType::Checking | AccountType::Savings | AccountType::Cash => "Cash",
         AccountType::Credit => "Credit",
+        AccountType::Property => "Property",
+        AccountType::Mortgage => "Debt",
     }
 }
 
@@ -2276,7 +2203,6 @@ fn ensure_migration_003(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-<<<<<<< HEAD
 fn ensure_migration_004(conn: &Connection) -> Result<()> {
     // Check whether the portfolio_snapshots table still exists. If it does not,
     // migration 004 has already run (or the DB was created fresh after the schema
@@ -2296,8 +2222,7 @@ fn ensure_migration_004(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-=======
->>>>>>> cbe975ee83649cd45c38335766a55a531aeeda20
+
 // Keep HoldingType referenced to avoid dead_code warning.
 #[allow(dead_code)]
 const _: Option<HoldingType> = None;
