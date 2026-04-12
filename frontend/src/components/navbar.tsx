@@ -115,9 +115,21 @@ export function Navbar() {
                   {pinnedViews.map((view, idx) => (
                     <div
                       key={view.url}
-                      className={cn("flex items-center gap-0.5 group rounded-md", dragIndex === idx && "opacity-50")}
+                      className={cn(
+                        "flex items-center gap-0.5 group rounded-md transition-all duration-150",
+                        dragIndex === idx && "bg-muted border border-border shadow-md scale-[1.02] z-10 relative",
+                        dragIndex !== null && dragIndex !== idx && "opacity-70"
+                      )}
                       draggable
-                      onDragStart={() => setDragIndex(idx)}
+                      onDragStart={(e) => {
+                        setDragIndex(idx)
+                        // Create a minimal drag image
+                        const ghost = document.createElement("div")
+                        ghost.style.cssText = "position:fixed;top:-1000px;opacity:0"
+                        document.body.appendChild(ghost)
+                        e.dataTransfer.setDragImage(ghost, 0, 0)
+                        requestAnimationFrame(() => document.body.removeChild(ghost))
+                      }}
                       onDragOver={(e) => { e.preventDefault(); if (dragIndex !== null && dragIndex !== idx) { reorderPinnedViews(dragIndex, idx); setDragIndex(idx) } }}
                       onDragEnd={() => setDragIndex(null)}
                     >
