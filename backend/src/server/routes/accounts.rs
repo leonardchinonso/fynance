@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::model::{Account, AccountType};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
-use crate::server::validation::parse_date;
+use crate::server::validation::parse_naive_datetime;
 
 // ── GET /api/accounts ─────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ pub async fn create_account(
     let balance_date = body
         .balance_date
         .as_deref()
-        .map(parse_date)
+        .map(parse_naive_datetime)
         .transpose()?;
 
     // Normalize profile_ids: empty -> ["default"]
@@ -142,7 +142,7 @@ pub async fn set_account_balance(
         )
     })?;
 
-    let date = crate::server::validation::parse_date(&body.date)?;
+    let date = crate::server::validation::parse_naive_datetime(&body.date)?;
 
     {
         let db = state.db.lock().expect("db mutex poisoned");

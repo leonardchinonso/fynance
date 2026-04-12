@@ -100,15 +100,11 @@ pub async fn import_csv(
 
     let (filename, raw_csv) = extract_csv_from_multipart(&mut multipart).await?;
 
-    let parser = crate::importers::llm_parser::LlmStatementParser::from_env()
-        .map_err(anyhow::Error::from)?;
+    let parser = crate::importers::llm_parser::LlmStatementParser::from_env()?;
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
 
-    let parsed = parser
-        .parse(&raw_csv, &filename)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let parsed = parser.parse(&raw_csv, &filename).await?;
 
     if parsed.detection_confidence < min_detection_confidence {
         return Err(AppError::bad_request(
@@ -191,8 +187,7 @@ pub async fn import_bulk(
         return Err(AppError::bad_request("no files provided", "missing_file"));
     }
 
-    let parser = crate::importers::llm_parser::LlmStatementParser::from_env()
-        .map_err(anyhow::Error::from)?;
+    let parser = crate::importers::llm_parser::LlmStatementParser::from_env()?;
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
     let parser: Arc<dyn StatementParser> = Arc::new(parser);
@@ -229,8 +224,7 @@ pub async fn import_bulk(
             continue;
         }
 
-        let parse_result: Result<_, anyhow::Error> =
-            parser.parse(&raw_csv, &filename).await.map_err(Into::into);
+        let parse_result = parser.parse(&raw_csv, &filename).await;
 
         match parse_result {
             Err(e) => {

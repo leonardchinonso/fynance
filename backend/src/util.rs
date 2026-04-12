@@ -1,7 +1,7 @@
 //! Small pure helpers shared by the importer, storage, and CLI layers.
 
 use anyhow::{Context, Result, anyhow};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use rust_decimal::Decimal;
@@ -53,21 +53,33 @@ pub fn normalize_description(raw: &str) -> String {
 
 /// Stable dedup fingerprint for a transaction.
 ///
-/// We hash the four fields that together uniquely identify a transaction
-/// across re-imports: the date, the signed amount as written by the bank,
-/// the raw description, and the account it belongs to. Using the raw
-/// description rather than the normalized one means a normalization tweak
-/// in the future does not invalidate every previously-imported row.
-pub fn fingerprint(date: &str, amount: &str, description: &str, account_id: &str) -> String {
+/// Hashes `(datetime, amount, account_id)` — the triple that uniquely
+/// identifies a real-world money movement. Description is intentionally
+/// excluded: the same transaction imported via CSV and via an external agent
+/// may have slightly different descriptions, and including it would cause
+/// false duplicates.
+pub fn fingerprint(date: &str, amount: &str, account_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(date.as_bytes());
     hasher.update(b"|");
     hasher.update(amount.as_bytes());
     hasher.update(b"|");
-    hasher.update(description.as_bytes());
-    hasher.update(b"|");
     hasher.update(account_id.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+/// Parse a datetime string that may be either `YYYY-MM-DDTHH:MM:SS` (stored
+/// format) or `YYYY-MM-DD` (legacy / date-only input). Date-only strings are
+/// interpreted as `T00:00:00`.
+pub fn parse_naive_datetime(s: &str) -> Result<NaiveDateTime> {
+    let trimmed = s.trim();
+    if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
+        return Ok(dt);
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        return Ok(d.and_hms_opt(0, 0, 0).unwrap());
+    }
+    Err(anyhow!("unrecognized datetime format: {s:?}"))
 }
 
 /// Parse either the ISO form `YYYY-MM-DD` (Monzo, Revolut) or the UK form
@@ -91,6 +103,46 @@ pub fn parse_date(s: &str) -> Result<NaiveDate> {
         return Ok(d);
     }
     Err(anyhow!("unrecognized date format: {s:?}"))
+}
+
+/// Serde helper module for `NaiveDateTime` fields that may be deserialized
+/// from date-only strings (`YYYY-MM-DD`) produced by the LLM or external
+/// agents.  Serializes as `YYYY-MM-DDTHH:MM:SS`.
+pub mod serde_naive_datetime {
+    use chrono::NaiveDateTime;
+    use serde::{Deserialize, Deserializer, Serializer, de};
+
+    pub fn serialize<S: Serializer>(dt: &NaiveDateTime, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<NaiveDateTime, D::Error> {
+        let raw = String::deserialize(d)?;
+        super::parse_naive_datetime(&raw).map_err(de::Error::custom)
+    }
+}
+
+/// Serde helper module for `Option<NaiveDateTime>` fields.
+pub mod serde_naive_datetime_option {
+    use chrono::NaiveDateTime;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(dt: &Option<NaiveDateTime>, s: S) -> Result<S::Ok, S::Error> {
+        match dt {
+            Some(dt) => s.serialize_some(&dt.format("%Y-%m-%dT%H:%M:%S").to_string()),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<NaiveDateTime>, D::Error> {
+        let raw: Option<String> = Option::deserialize(d)?;
+        match raw {
+            None => Ok(None),
+            Some(s) => super::parse_naive_datetime(&s)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+        }
+    }
 }
 
 /// Parse an amount from a raw bank string. Strips commas (thousands
@@ -147,31 +199,43 @@ mod tests {
 
     #[test]
     fn fingerprint_is_deterministic() {
-        let a = fingerprint("2026-03-10", "-5.50", "Lidl", "monzo-current");
-        let b = fingerprint("2026-03-10", "-5.50", "Lidl", "monzo-current");
+        let a = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
+        let b = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
         assert_eq!(a, b);
         assert_eq!(a.len(), 64);
     }
 
     #[test]
     fn fingerprint_changes_with_any_field() {
-        let base = fingerprint("2026-03-10", "-5.50", "Lidl", "monzo-current");
-        assert_ne!(
-            base,
-            fingerprint("2026-03-11", "-5.50", "Lidl", "monzo-current")
-        );
-        assert_ne!(
-            base,
-            fingerprint("2026-03-10", "-5.51", "Lidl", "monzo-current")
-        );
-        assert_ne!(
-            base,
-            fingerprint("2026-03-10", "-5.50", "Tesco", "monzo-current")
-        );
-        assert_ne!(
-            base,
-            fingerprint("2026-03-10", "-5.50", "Lidl", "revolut-main")
-        );
+        let base = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
+        assert_ne!(base, fingerprint("2026-03-11T08:30:00", "-5.50", "monzo-current")); // different date
+        assert_ne!(base, fingerprint("2026-03-10T08:30:00", "-5.51", "monzo-current")); // different amount
+        assert_ne!(base, fingerprint("2026-03-10T08:30:00", "-5.50", "revolut-main")); // different account
+    }
+
+    #[test]
+    fn fingerprint_ignores_description() {
+        // Two different descriptions with the same datetime/amount/account must hash identically.
+        let a = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
+        let b = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn parse_naive_datetime_full() {
+        let dt = parse_naive_datetime("2026-03-10T14:30:00").unwrap();
+        assert_eq!(dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "2026-03-10T14:30:00");
+    }
+
+    #[test]
+    fn parse_naive_datetime_date_only_defaults_midnight() {
+        let dt = parse_naive_datetime("2026-03-10").unwrap();
+        assert_eq!(dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "2026-03-10T00:00:00");
+    }
+
+    #[test]
+    fn parse_naive_datetime_rejects_garbage() {
+        assert!(parse_naive_datetime("yesterday").is_err());
     }
 
     #[test]
