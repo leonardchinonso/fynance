@@ -19,14 +19,14 @@ const BUDGET_TARGETS: { category: string; amount: string }[] = [
   { category: "Travel: Accommodation", amount: "200.00" },
 ]
 
-const MONTHS = [
-  "2025-10",
-  "2025-11",
-  "2025-12",
-  "2026-01",
-  "2026-02",
-  "2026-03",
-]
+// Generate months from Jan 2024 to Mar 2026
+const MONTHS: string[] = []
+for (let y = 2023; y <= 2026; y++) {
+  const maxMonth = y === 2026 ? 3 : 12
+  for (let m = 1; m <= maxMonth; m++) {
+    MONTHS.push(`${y}-${m.toString().padStart(2, "0")}`)
+  }
+}
 
 export const MOCK_BUDGETS: Budget[] = MONTHS.flatMap((month) =>
   BUDGET_TARGETS.map((t) => ({

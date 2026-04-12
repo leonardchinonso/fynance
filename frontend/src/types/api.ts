@@ -16,6 +16,7 @@ export interface TransactionFilters {
   end?: string // YYYY-MM-DD
   accounts?: string[] // account IDs
   categories?: string[] // category strings
+  search?: string // free-text search across merchant, category, account, notes
   page?: number
   limit?: number
   profile_id?: string
@@ -82,7 +83,7 @@ export interface CashFlowMonth {
 export interface SpendingGridRow {
   category: string
   section: string // "Income" | "Bills" | "Spending" | "Irregular" | "Transfers"
-  months: Record<string, string> // YYYY-MM -> Decimal string
+  months: Record<string, string | null> // YYYY-MM -> Decimal string, null = no data
   average: string | null
   budget: string | null
   total: string | null

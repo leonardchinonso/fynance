@@ -1,66 +1,59 @@
 import { useState, useEffect } from "react"
-import type { BudgetRow, SpendingGridRow } from "@/types"
+import type { SpendingGridRow } from "@/types"
 import { api } from "@/api/client"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
-import { LoadingSpinner } from "@/components/loading_spinner"
-import { BudgetProgress } from "./budget/budget_progress"
+import { SpreadsheetSkeleton, BudgetChartsSkeleton } from "@/components/skeletons"
 import { BudgetSpreadsheet } from "./budget/budget_spreadsheet"
-import { BudgetStackedBar } from "./budget/budget_stacked_bar"
-import { BudgetLineChart } from "./budget/budget_line_chart"
-import { BudgetPieChart } from "./budget/budget_pie_chart"
-import { List, Grid3X3, BarChart3, LineChart, PieChart } from "lucide-react"
-import { getMonthsInRange, getMonthFromDate } from "@/lib/utils"
+import { BudgetCharts } from "./budget/budget_charts"
+import { Grid3X3, BarChart3, Info } from "lucide-react"
+import { getMonthsInRange } from "@/lib/utils"
+import { Card, CardContent } from "@/components/ui/card"
 
 const VIEW_MODES = [
-  { value: "progress", label: "Progress", icon: <List className="h-4 w-4" /> },
   {
     value: "spreadsheet",
     label: "Spreadsheet",
     icon: <Grid3X3 className="h-4 w-4" />,
   },
   {
-    value: "stacked-bar",
-    label: "Stacked Bar",
+    value: "charts",
+    label: "Charts",
     icon: <BarChart3 className="h-4 w-4" />,
   },
-  { value: "line", label: "Line", icon: <LineChart className="h-4 w-4" /> },
-  { value: "pie", label: "Pie", icon: <PieChart className="h-4 w-4" /> },
 ]
 
 export function BudgetPage() {
-  const { start, end, view, setView, granularity } = useUrlFilters()
+  const { start, end, view, setView, granularity, profileId } = useUrlFilters()
 
-  const [budgetRows, setBudgetRows] = useState<BudgetRow[]>([])
   const [gridRows, setGridRows] = useState<SpendingGridRow[]>([])
   const [loading, setLoading] = useState(true)
 
   const months = getMonthsInRange(start, end)
-  const currentMonth = getMonthFromDate(end)
 
-  // Fetch budget progress for current month
   useEffect(() => {
     setLoading(true)
-    api.getBudget(currentMonth).then((rows) => {
-      setBudgetRows(rows)
+    api.getSpendingGrid(start, end, granularity, profileId).then((rows) => {
+      setGridRows(rows)
       setLoading(false)
     })
-  }, [currentMonth])
+  }, [start, end, granularity, profileId])
 
-  // Fetch spending grid for spreadsheet and chart views
-  useEffect(() => {
-    api.getSpendingGrid(start, end, granularity).then(setGridRows)
-  }, [start, end, granularity])
+  // Map old view names to new ones
+  const activeView =
+    view === "stacked-bar" || view === "line" || view === "pie" || view === "charts"
+      ? "charts"
+      : "spreadsheet"
 
-  // Default to progress view
-  const activeView = view === "table" ? "progress" : view
+  // Show granularity on both spreadsheet and charts (stacked bar + line use it)
+  const showGranularity = true
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <DateRangeSelector showGranularity />
+        <DateRangeSelector showGranularity={showGranularity} />
         <div className="flex-1" />
         <ViewModeSwitcher
           modes={VIEW_MODES}
@@ -71,18 +64,25 @@ export function BudgetPage() {
       </div>
 
       {loading ? (
-        <LoadingSpinner />
-      ) : activeView === "progress" ? (
-        <BudgetProgress rows={budgetRows} />
+        activeView === "spreadsheet" ? <SpreadsheetSkeleton /> : <BudgetChartsSkeleton />
+      ) : gridRows.length === 0 ? (
+        <EmptyState message="No spending data for the selected date range." />
       ) : activeView === "spreadsheet" ? (
-        <BudgetSpreadsheet rows={gridRows} months={months} />
-      ) : activeView === "stacked-bar" ? (
-        <BudgetStackedBar rows={gridRows} months={months} />
-      ) : activeView === "line" ? (
-        <BudgetLineChart rows={gridRows} months={months} />
-      ) : activeView === "pie" ? (
-        <BudgetPieChart rows={gridRows} />
+        <BudgetSpreadsheet rows={gridRows} months={months} granularity={granularity} />
+      ) : activeView === "charts" ? (
+        <BudgetCharts rows={gridRows} months={months} granularity={granularity} />
       ) : null}
     </div>
+  )
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <Card className="py-12">
+      <CardContent className="flex flex-col items-center gap-3 text-center">
+        <Info className="h-8 w-8 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground max-w-md">{message}</p>
+      </CardContent>
+    </Card>
   )
 }

@@ -1,21 +1,28 @@
-import type { PortfolioResponse } from "@/types"
-import { DonutChart } from "@tremor/react"
+import type { PortfolioResponse, Holding } from "@/types"
+import { InteractivePie } from "@/components/charts"
+import { ACCOUNT_TYPE_COLORS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
-import { ChartLegend } from "@/components/chart_legend"
 
-const TYPE_COLORS = ["blue", "green", "violet", "red", "yellow", "indigo"]
-const INST_COLORS = ["blue", "orange", "green", "pink", "cyan", "yellow"]
-const SECTOR_COLORS = ["blue", "orange", "green", "pink"]
+const INST_COLORS = ["#3b82f6", "#f97316", "#22c55e", "#ec4899", "#06b6d4", "#eab308", "#6366f1"]
+const SECTOR_COLORS = ["#3b82f6", "#f97316", "#22c55e", "#ec4899", "#a855f7"]
+const STOCK_COLORS = [
+  "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
+  "#06b6d4", "#eab308", "#6366f1", "#14b8a6", "#ef4444",
+]
 
 interface PortfolioChartsProps {
   portfolio: PortfolioResponse
+  holdings?: Holding[]
 }
 
-export function PortfolioCharts({ portfolio }: PortfolioChartsProps) {
+export function PortfolioCharts({ portfolio, holdings = [] }: PortfolioChartsProps) {
   const byTypeData = portfolio.by_type.map((item) => ({
     name: item.label.charAt(0).toUpperCase() + item.label.slice(1),
     value: parseFloat(item.total),
   }))
+  const byTypeColors = portfolio.by_type.map(
+    (item) => ACCOUNT_TYPE_COLORS[item.label as keyof typeof ACCOUNT_TYPE_COLORS] ?? "#78716c"
+  )
 
   const byInstData = portfolio.by_institution.map((item) => ({
     name: item.label,
@@ -27,58 +34,38 @@ export function PortfolioCharts({ portfolio }: PortfolioChartsProps) {
     value: parseFloat(item.total),
   }))
 
-  return (
-    <div className="grid gap-4 md:grid-cols-3">
-      <ChartCard
-        title="By Account Type"
-        data={byTypeData}
-        colors={TYPE_COLORS}
-      />
-      <ChartCard
-        title="By Institution"
-        data={byInstData}
-        colors={INST_COLORS}
-      />
-      <ChartCard
-        title="By Sector"
-        data={bySectorData}
-        colors={SECTOR_COLORS}
-      />
-    </div>
-  )
-}
+  // Stocks breakdown (aggregate by short_name)
+  const holdingsByName = new Map<string, number>()
+  for (const h of holdings) {
+    holdingsByName.set(h.short_name, (holdingsByName.get(h.short_name) ?? 0) + parseFloat(h.value))
+  }
+  const byStockData = Array.from(holdingsByName.entries())
+    .map(([name, value]) => ({ name, value: parseFloat(value.toFixed(2)) }))
+    .sort((a, b) => b.value - a.value)
 
-function ChartCard({
-  title,
-  data,
-  colors,
-}: {
-  title: string
-  data: { name: string; value: number }[]
-  colors: string[]
-}) {
-  const total = data.reduce((s, d) => s + d.value, 0)
-  const legendItems = data.map((d, i) => ({
-    name: `${d.name} (${((d.value / total) * 100).toFixed(0)}%)`,
-    color: colors[i % colors.length],
-  }))
+  const totalStr = formatCurrency(portfolio.net_worth)
+  const stocksTotal = formatCurrency(byStockData.reduce((s, d) => s + d.value, 0).toFixed(2))
 
   return (
-    <div className="rounded-lg border p-4">
-      <h3 className="mb-3 text-sm font-medium text-muted-foreground">
-        {title}
-      </h3>
-      <DonutChart
-        data={data}
-        category="value"
-        index="name"
-        colors={colors}
-        valueFormatter={(v) => formatCurrency(v.toString())}
-        className="h-52"
-        showLabel
-        label={formatCurrency(total.toFixed(2))}
-      />
-      <ChartLegend items={legendItems} className="mt-3 justify-center" />
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="rounded-lg border p-4">
+        <h3 className="mb-2 text-sm font-medium text-muted-foreground">By Account Type</h3>
+        <InteractivePie data={byTypeData} colors={byTypeColors} label={totalStr} height={260} />
+      </div>
+      <div className="rounded-lg border p-4">
+        <h3 className="mb-2 text-sm font-medium text-muted-foreground">By Institution</h3>
+        <InteractivePie data={byInstData} colors={INST_COLORS} label={totalStr} height={260} />
+      </div>
+      <div className="rounded-lg border p-4">
+        <h3 className="mb-2 text-sm font-medium text-muted-foreground">By Sector</h3>
+        <InteractivePie data={bySectorData} colors={SECTOR_COLORS} label={totalStr} height={260} />
+      </div>
+      {byStockData.length > 0 && (
+        <div className="rounded-lg border p-4">
+          <h3 className="mb-2 text-sm font-medium text-muted-foreground">By Stock</h3>
+          <InteractivePie data={byStockData} colors={STOCK_COLORS} label={stocksTotal} height={260} />
+        </div>
+      )}
     </div>
   )
 }

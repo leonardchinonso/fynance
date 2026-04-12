@@ -7,6 +7,8 @@ export const ACCOUNT_TYPE_COLORS: Record<AccountType, string> = {
   credit: "#ef4444", // red-500
   cash: "#eab308", // yellow-500
   pension: "#6366f1", // indigo-500
+  property: "#14b8a6", // teal-500
+  mortgage: "#f87171", // red-400
 }
 
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
@@ -16,6 +18,8 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   credit: "Credit",
   cash: "Cash",
   pension: "Pension",
+  property: "Property",
+  mortgage: "Mortgage",
 }
 
 // Stable colors for parent categories in charts

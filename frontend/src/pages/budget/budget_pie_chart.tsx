@@ -1,6 +1,7 @@
 import type { SpendingGridRow } from "@/types"
-import { DonutChart } from "@tremor/react"
+import { InteractivePie } from "@/components/charts"
 import { formatCurrency } from "@/lib/utils"
+import { CATEGORY_COLORS } from "@/lib/colors"
 
 interface BudgetPieChartProps {
   rows: SpendingGridRow[]
@@ -11,7 +12,6 @@ export function BudgetPieChart({ rows }: BudgetPieChartProps) {
     (r) => r.section === "Spending" || r.section === "Bills"
   )
 
-  // Aggregate by parent category
   const categoryTotals = new Map<string, number>()
   for (const row of spendingRows) {
     const parent = row.category.split(":")[0].trim()
@@ -27,20 +27,20 @@ export function BudgetPieChart({ rows }: BudgetPieChartProps) {
     }))
 
   const totalSpending = data.reduce((s, d) => s + d.value, 0)
+  const colors = data.map((d) => CATEGORY_COLORS[d.name] ?? "#78716c")
 
   return (
     <div className="rounded-lg border p-4">
-      <h3 className="mb-4 text-sm font-medium text-muted-foreground">
+      <h3 className="mb-2 text-sm font-medium text-muted-foreground">
         Spending Breakdown
       </h3>
-      <DonutChart
+      <InteractivePie
         data={data}
-        category="value"
-        index="name"
-        valueFormatter={(v) => formatCurrency(v.toString())}
-        className="h-80"
-        showLabel
+        colors={colors}
         label={`Total: ${formatCurrency(totalSpending.toFixed(2))}`}
+        height={320}
+        innerRadius={70}
+        outerRadius={120}
       />
     </div>
   )

@@ -1,51 +1,72 @@
-import type { SpendingGridRow } from "@/types"
-import { BarChart } from "@tremor/react"
-import { formatCurrency, formatMonthShort } from "@/lib/utils"
+import type { SpendingGridRow, Granularity } from "@/types"
+import { StyledBarChart } from "@/components/charts"
+import {
+  groupMonthsByGranularity,
+  getMonthsForPeriod,
+  formatPeriodKey,
+} from "@/lib/utils"
+import { CATEGORY_COLORS } from "@/lib/colors"
 
 interface BudgetStackedBarProps {
   rows: SpendingGridRow[]
   months: string[]
+  granularity: Granularity
 }
 
-export function BudgetStackedBar({ rows, months }: BudgetStackedBarProps) {
-  // Only spending categories (not income or transfers)
+export function BudgetStackedBar({ rows, months, granularity }: BudgetStackedBarProps) {
   const spendingRows = rows.filter(
     (r) => r.section === "Spending" || r.section === "Bills"
   )
 
-  // Get unique parent categories
   const categories = Array.from(
     new Set(spendingRows.map((r) => r.category.split(":")[0].trim()))
   )
 
-  // Build chart data: one entry per month
-  const data = months.map((m) => {
-    const entry: Record<string, string | number> = { month: formatMonthShort(m) }
+  const periods = groupMonthsByGranularity(months, granularity)
+
+  // Only include periods that have data
+  const periodsWithData = periods.filter((p) => {
+    const periodMonths = getMonthsForPeriod(months, p, granularity)
+    return spendingRows.some((r) =>
+      periodMonths.some((m) => r.months[m] !== null)
+    )
+  })
+
+  const data = periodsWithData.map((p) => {
+    const periodMonths = getMonthsForPeriod(months, p, granularity)
+    const entry: Record<string, string | number> = {
+      period: formatPeriodKey(p, granularity),
+    }
     for (const cat of categories) {
       const catRows = spendingRows.filter(
         (r) => r.category.split(":")[0].trim() === cat
       )
       let total = 0
       for (const row of catRows) {
-        total += Math.abs(parseFloat(row.months[m] ?? "0"))
+        for (const m of periodMonths) {
+          const val = row.months[m]
+          if (val !== null) total += Math.abs(parseFloat(val))
+        }
       }
       entry[cat] = parseFloat(total.toFixed(2))
     }
     return entry
   })
 
+  const colors = categories.map((c) => CATEGORY_COLORS[c] ?? "#78716c")
+
   return (
     <div className="rounded-lg border p-4">
-      <h3 className="mb-4 text-sm font-medium text-muted-foreground">
+      <h3 className="mb-2 text-sm font-medium text-muted-foreground">
         Spending by Category Over Time
       </h3>
-      <BarChart
+      <StyledBarChart
         data={data}
-        index="month"
+        index="period"
         categories={categories}
+        colors={colors}
         stack
-        valueFormatter={(v) => formatCurrency(v.toString())}
-        className="h-80"
+        height={340}
       />
     </div>
   )

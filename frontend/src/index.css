@@ -130,6 +130,16 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Prevent focus/selection outlines on chart elements */
+.recharts-sector,
+.recharts-rectangle,
+.recharts-dot,
+.recharts-line,
+.recharts-bar-rectangle,
+.recharts-active-dot {
+  outline: none !important;
+}
+
 /* ── Tremor design tokens ── */
 /* Tremor v4 beta uses custom utility classes that need explicit definitions
    since Tailwind v4 doesn't auto-generate them. */

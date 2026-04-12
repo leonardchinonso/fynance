@@ -1,192 +1,368 @@
 import type { PortfolioSnapshot } from "@/types"
 
-// Monthly balance snapshots per account from Apr 2025 to Mar 2026
-// Used for net worth trend charts and portfolio history
+// Generate monthly snapshots from Jan 2023 to Mar 2026 for all accounts.
+// Models a realistic UK couple's wealth journey: gradual salary increases,
+// regular contributions, market volatility, a house purchase, travel periods,
+// and pension growth from employer + employee contributions.
 
-interface SnapshotSeed {
+interface AccountSeed {
   account_id: string
-  balances: Record<string, string> // YYYY-MM -> balance
+  // Starting balance in Jan 2023
+  startBalance: number
+  // Monthly contribution (positive = deposit, negative = withdrawal tendency)
+  monthlyContribution: number
+  // Annual contribution increase rate (e.g. salary raises mean higher savings)
+  contributionGrowthRate: number
+  // Monthly market return rate (for investment/pension accounts)
+  monthlyReturn: number
+  // Volatility as std dev of monthly returns
+  volatility: number
+  // One-off events: month -> adjustment
+  events?: Record<string, { type: "set" | "add" | "multiply"; value: number }>
+  // Floor value (balance can't go below this, default 0)
+  floor?: number
 }
 
-const SNAPSHOT_SEEDS: SnapshotSeed[] = [
+const ACCOUNT_SEEDS: AccountSeed[] = [
+  // ── Alex's accounts ──
+
+  // Monzo Current: salary in, bills out. Balance fluctuates around 1500-3500.
+  // Net monthly contribution is small (salary minus expenses leaves ~200-400 buffer growth)
   {
     account_id: "monzo-current",
-    balances: {
-      "2025-04": "1908.00",
-      "2025-05": "2401.00",
-      "2025-06": "16.97",
-      "2025-07": "16.97",
-      "2025-08": "2521.23",
-      "2025-09": "2521.23",
-      "2025-10": "2521.23",
-      "2025-11": "22.03",
-      "2025-12": "2522.45",
-      "2026-01": "2539.87",
-      "2026-02": "58.71",
-      "2026-03": "2567.91",
+    startBalance: 1450,
+    monthlyContribution: 50,
+    contributionGrowthRate: 0.03,
+    monthlyReturn: 0,
+    volatility: 0.12,
+    floor: 400,
+    events: {
+      // Christmas spending dips
+      "2023-12": { type: "add", value: -600 },
+      "2024-12": { type: "add", value: -800 },
+      "2025-12": { type: "add", value: -700 },
+      // House deposit withdrawal
+      "2024-05": { type: "add", value: -8000 },
+      // Tax rebate
+      "2024-09": { type: "add", value: 1200 },
+      // Summer holiday spending
+      "2023-07": { type: "add", value: -500 },
+      "2024-07": { type: "add", value: -400 },
+      "2025-08": { type: "add", value: -600 },
     },
   },
+
+  // Revolut Current: spending card, stays relatively low
   {
     account_id: "revolut-current",
-    balances: {
-      "2025-04": "1200.00",
-      "2025-05": "1450.00",
-      "2025-06": "1380.00",
-      "2025-07": "1520.00",
-      "2025-08": "1680.00",
-      "2025-09": "1750.00",
-      "2025-10": "1600.00",
-      "2025-11": "1820.00",
-      "2025-12": "1950.00",
-      "2026-01": "1780.00",
-      "2026-02": "1850.00",
-      "2026-03": "1890.50",
+    startBalance: 820,
+    monthlyContribution: 30,
+    contributionGrowthRate: 0.02,
+    monthlyReturn: 0,
+    volatility: 0.18,
+    floor: 100,
+    events: {
+      "2023-07": { type: "add", value: -300 }, // Holiday spending
+      "2024-07": { type: "add", value: -250 },
+      "2025-08": { type: "add", value: -400 },
     },
   },
+
+  // Lloyds Savings: regular deposits, slow interest. Building emergency fund.
   {
     account_id: "lloyds-savings",
-    balances: {
-      "2025-04": "8000.00",
-      "2025-05": "8500.00",
-      "2025-06": "9000.00",
-      "2025-07": "9500.00",
-      "2025-08": "10000.00",
-      "2025-09": "10500.00",
-      "2025-10": "11000.00",
-      "2025-11": "11000.00",
-      "2025-12": "11500.00",
-      "2026-01": "11500.00",
-      "2026-02": "12000.00",
-      "2026-03": "12000.00",
+    startBalance: 3500,
+    monthlyContribution: 400,
+    contributionGrowthRate: 0.05,
+    monthlyReturn: 0.004, // ~5% annual savings rate
+    volatility: 0.005,
+    events: {
+      // Large withdrawal for house deposit
+      "2024-05": { type: "add", value: -5000 },
+      // Slowly rebuilding after
+      "2024-06": { type: "multiply", value: 1.0 },
     },
   },
+
+  // Alex's ISA: monthly contributions + market returns with real volatility
   {
-    account_id: "trading212-isa-ope",
-    balances: {
-      "2025-04": "82993.68",
-      "2025-05": "124866.18",
-      "2025-06": "142131.95",
-      "2025-07": "142131.95",
-      "2025-08": "143102.38",
-      "2025-09": "152457.03",
-      "2025-10": "155939.05",
-      "2025-11": "162026.51",
-      "2025-12": "114181.47",
-      "2026-01": "101969.42",
-      "2026-02": "103227.42",
-      "2026-03": "148938.46",
+    account_id: "t212-isa-alex",
+    startBalance: 8500,
+    monthlyContribution: 500,
+    contributionGrowthRate: 0.04,
+    monthlyReturn: 0.006, // ~7.5% annual equity return
+    volatility: 0.035,
+    events: {
+      "2023-03": { type: "multiply", value: 1.04 },   // Q1 rally
+      "2023-10": { type: "multiply", value: 0.94 },   // October selloff
+      "2023-11": { type: "multiply", value: 1.03 },   // Recovery
+      "2024-03": { type: "multiply", value: 1.05 },   // Spring rally
+      "2024-08": { type: "multiply", value: 0.91 },   // Summer correction
+      "2024-09": { type: "multiply", value: 0.97 },   // Continued weakness
+      "2024-10": { type: "multiply", value: 1.04 },   // Recovery begins
+      "2024-11": { type: "multiply", value: 1.03 },   // Continued recovery
+      "2025-01": { type: "multiply", value: 1.04 },   // New year optimism
+      "2025-04": { type: "multiply", value: 0.96 },   // Tariff concerns
+      "2025-07": { type: "multiply", value: 1.03 },   // Relief rally
+      "2025-10": { type: "multiply", value: 0.97 },   // Q4 wobble
+      "2025-12": { type: "multiply", value: 1.04 },   // Year-end rally
+      // Reduced contributions around house purchase
+      "2024-05": { type: "add", value: -300 },
+      "2024-06": { type: "add", value: -300 },
+      "2024-07": { type: "add", value: -300 },
     },
   },
+
+  // Premium Bonds: lump deposits at key points
   {
     account_id: "premium-bonds",
-    balances: {
-      "2025-04": "5000.00",
-      "2025-05": "25000.00",
-      "2025-06": "25025.00",
-      "2025-07": "25025.00",
-      "2025-08": "25025.00",
-      "2025-09": "25025.00",
-      "2025-10": "25025.00",
-      "2025-11": "25025.00",
-      "2025-12": "25025.00",
-      "2026-01": "25025.00",
-      "2026-02": "25050.00",
-      "2026-03": "38400.00",
+    startBalance: 0,
+    monthlyContribution: 0,
+    contributionGrowthRate: 0,
+    monthlyReturn: 0,
+    volatility: 0,
+    events: {
+      "2023-06": { type: "set", value: 1000 },
+      "2023-12": { type: "set", value: 2000 },
+      "2024-01": { type: "set", value: 3000 },
+      "2024-06": { type: "set", value: 3000 }, // No more after house purchase
+      "2025-03": { type: "set", value: 5000 },
+      "2025-06": { type: "set", value: 6000 },
+      "2025-09": { type: "set", value: 7000 },
+      "2025-12": { type: "set", value: 8000 },
+      "2026-03": { type: "set", value: 9500 },
     },
   },
+
+  // Alex's Pension: employer + employee contributions (~£850/month total),
+  // growing with salary raises, plus market-like returns
   {
-    account_id: "monzo-savings-ope",
-    balances: {
-      "2025-04": "2519.45",
-      "2025-05": "2526.74",
-      "2025-06": "36.33",
-      "2025-07": "36.33",
-      "2025-08": "1407.25",
-      "2025-09": "1407.25",
-      "2025-10": "1407.25",
-      "2025-11": "0.25",
-      "2025-12": "2500.25",
-      "2026-01": "2500.25",
-      "2026-02": "2519.60",
-      "2026-03": "2525.42",
+    account_id: "pension-alex",
+    startBalance: 18000,
+    monthlyContribution: 850,
+    contributionGrowthRate: 0.04,
+    monthlyReturn: 0.005, // ~6% annual pension fund return
+    volatility: 0.025,
+    events: {
+      "2023-10": { type: "multiply", value: 0.97 },   // Market dip
+      "2024-03": { type: "multiply", value: 1.03 },   // Recovery
+      "2024-08": { type: "multiply", value: 0.95 },   // Summer correction
+      "2024-10": { type: "multiply", value: 1.02 },   // Bounce back
+      "2025-01": { type: "multiply", value: 1.03 },   // New year
+      "2025-04": { type: "multiply", value: 0.97 },   // Volatility
+      "2025-10": { type: "multiply", value: 0.98 },   // Minor dip
+      "2026-01": { type: "multiply", value: 1.02 },   // Recovery
     },
   },
+
+  // Home value: purchased mid-2024, gentle appreciation
   {
-    account_id: "pension-ope",
-    balances: {
-      "2025-04": "138630.86",
-      "2025-05": "140512.30",
-      "2025-06": "142393.74",
-      "2025-07": "145646.16",
-      "2025-08": "150761.04",
-      "2025-09": "155135.02",
-      "2025-10": "164554.96",
-      "2025-11": "165945.00",
-      "2025-12": "167335.00",
-      "2026-01": "168725.00",
-      "2026-02": "170115.00",
-      "2026-03": "170714.81",
+    account_id: "home-value",
+    startBalance: 0,
+    monthlyContribution: 0,
+    contributionGrowthRate: 0,
+    monthlyReturn: 0.002, // ~2.5% annual home appreciation
+    volatility: 0.003,
+    events: {
+      "2024-06": { type: "set", value: 310000 }, // House purchase
     },
   },
+
+  // Mortgage: starts when house is bought, principal slowly decreases
+  // (monthly payments reduce it, but interest mostly offsets early on)
   {
-    account_id: "monzo-tomi",
-    balances: {
-      "2025-04": "800.00",
-      "2025-05": "950.00",
-      "2025-06": "1100.00",
-      "2025-07": "900.00",
-      "2025-08": "1050.00",
-      "2025-09": "1200.00",
-      "2025-10": "980.00",
-      "2025-11": "1150.00",
-      "2025-12": "1300.00",
-      "2026-01": "1100.00",
-      "2026-02": "1200.00",
-      "2026-03": "1243.67",
+    account_id: "mortgage-alex",
+    startBalance: 0,
+    monthlyContribution: -600, // Net principal reduction per month
+    contributionGrowthRate: 0,
+    monthlyReturn: 0,
+    volatility: 0,
+    events: {
+      "2024-06": { type: "set", value: 248000 }, // Mortgage starts
     },
   },
+
+  // ── Sam's accounts ──
+
+  // Sam's Monzo: lower salary, similar pattern
   {
-    account_id: "trading212-isa-tomi",
-    balances: {
-      "2025-04": "66860.91",
-      "2025-05": "70876.79",
-      "2025-06": "77336.10",
-      "2025-07": "80393.61",
-      "2025-08": "79563.48",
-      "2025-09": "83794.23",
-      "2025-10": "84778.08",
-      "2025-11": "86975.07",
-      "2025-12": "81341.42",
-      "2026-01": "80531.80",
-      "2026-02": "80148.94",
-      "2026-03": "80447.86",
+    account_id: "monzo-sam",
+    startBalance: 980,
+    monthlyContribution: 40,
+    contributionGrowthRate: 0.03,
+    monthlyReturn: 0,
+    volatility: 0.14,
+    floor: 200,
+    events: {
+      "2023-12": { type: "add", value: -400 },
+      "2024-12": { type: "add", value: -500 },
+      "2025-12": { type: "add", value: -450 },
+      "2023-07": { type: "add", value: -300 },
+      "2025-08": { type: "add", value: -350 },
     },
   },
+
+  // Sam's ISA: smaller monthly contributions but still growing
   {
-    account_id: "pension-tomi",
-    balances: {
-      "2025-04": "78000.00",
-      "2025-05": "79500.00",
-      "2025-06": "81200.00",
-      "2025-07": "82800.00",
-      "2025-08": "84500.00",
-      "2025-09": "86200.00",
-      "2025-10": "88000.00",
-      "2025-11": "89700.00",
-      "2025-12": "91400.00",
-      "2026-01": "92200.00",
-      "2026-02": "93100.00",
-      "2026-03": "93997.24",
+    account_id: "t212-isa-sam",
+    startBalance: 5200,
+    monthlyContribution: 400,
+    contributionGrowthRate: 0.035,
+    monthlyReturn: 0.006,
+    volatility: 0.035,
+    events: {
+      "2023-10": { type: "multiply", value: 0.95 },
+      "2023-11": { type: "multiply", value: 1.02 },
+      "2024-03": { type: "multiply", value: 1.04 },
+      "2024-08": { type: "multiply", value: 0.90 },
+      "2024-09": { type: "multiply", value: 0.98 },
+      "2024-10": { type: "multiply", value: 1.03 },
+      "2024-11": { type: "multiply", value: 1.03 },
+      "2025-01": { type: "multiply", value: 1.04 },
+      "2025-04": { type: "multiply", value: 0.97 },
+      "2025-07": { type: "multiply", value: 1.02 },
+      "2025-10": { type: "multiply", value: 0.96 },
+      "2025-12": { type: "multiply", value: 1.03 },
+    },
+  },
+
+  // Sam's Pension: employer + employee contributions (~£600/month),
+  // growing over time with salary raises
+  {
+    account_id: "pension-sam",
+    startBalance: 12000,
+    monthlyContribution: 600,
+    contributionGrowthRate: 0.035,
+    monthlyReturn: 0.005,
+    volatility: 0.025,
+    events: {
+      "2023-10": { type: "multiply", value: 0.97 },
+      "2024-03": { type: "multiply", value: 1.02 },
+      "2024-08": { type: "multiply", value: 0.94 },
+      "2024-10": { type: "multiply", value: 1.02 },
+      "2025-01": { type: "multiply", value: 1.03 },
+      "2025-04": { type: "multiply", value: 0.97 },
+      "2025-10": { type: "multiply", value: 0.98 },
+      "2026-01": { type: "multiply", value: 1.02 },
+    },
+  },
+
+  // ── Joint accounts ──
+
+  // Joint savings: building up for house, depleted for deposit, rebuilding after
+  {
+    account_id: "joint-savings",
+    startBalance: 2500,
+    monthlyContribution: 500,
+    contributionGrowthRate: 0.03,
+    monthlyReturn: 0.003,
+    volatility: 0.01,
+    events: {
+      // Big withdrawal for house deposit
+      "2024-05": { type: "add", value: -12000 },
+      "2024-06": { type: "set", value: 1500 }, // Reset after house purchase
+      // Christmas gifts
+      "2023-12": { type: "add", value: -500 },
+      "2024-12": { type: "add", value: -600 },
+      "2025-12": { type: "add", value: -400 },
+    },
+  },
+
+  // Joint current: household bills, fluctuates with spending
+  {
+    account_id: "joint-current",
+    startBalance: 650,
+    monthlyContribution: 20,
+    contributionGrowthRate: 0.02,
+    monthlyReturn: 0,
+    volatility: 0.10,
+    floor: 200,
+    events: {
+      "2024-06": { type: "add", value: 500 },  // Extra buffer after moving
+      "2024-07": { type: "add", value: -400 }, // Moving costs
     },
   },
 ]
 
-export const MOCK_PORTFOLIO_SNAPSHOTS: PortfolioSnapshot[] =
-  SNAPSHOT_SEEDS.flatMap((seed) =>
-    Object.entries(seed.balances).map(([month, balance]) => ({
-      snapshot_date: `${month}-01`,
-      account_id: seed.account_id,
-      balance,
-      currency: "GBP",
-    }))
-  )
+// Generate months from Jan 2023 to Mar 2026
+const MONTHS: string[] = []
+for (let y = 2023; y <= 2026; y++) {
+  const maxMonth = y === 2026 ? 3 : 12
+  for (let m = 1; m <= maxMonth; m++) {
+    MONTHS.push(`${y}-${m.toString().padStart(2, "0")}`)
+  }
+}
+
+function seededRandom(seed: number): () => number {
+  let s = seed
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff
+    return (s >>> 0) / 0xffffffff
+  }
+}
+
+// Box-Muller transform for normally distributed random numbers
+function gaussianRandom(rand: () => number): number {
+  const u1 = rand()
+  const u2 = rand()
+  return Math.sqrt(-2 * Math.log(u1 + 0.0001)) * Math.cos(2 * Math.PI * u2)
+}
+
+function generateSnapshots(): PortfolioSnapshot[] {
+  const snapshots: PortfolioSnapshot[] = []
+  const rand = seededRandom(777)
+
+  for (const seed of ACCOUNT_SEEDS) {
+    let balance = seed.startBalance
+    let contribution = seed.monthlyContribution
+    const floor = seed.floor ?? 0
+
+    for (let i = 0; i < MONTHS.length; i++) {
+      const month = MONTHS[i]
+
+      // Apply events first
+      const event = seed.events?.[month]
+      if (event) {
+        if (event.type === "set") balance = event.value
+        else if (event.type === "add") balance += event.value
+        else if (event.type === "multiply") balance *= event.value
+      }
+
+      // Add monthly contribution
+      balance += contribution
+
+      // Apply market return with volatility (Gaussian noise)
+      if (seed.monthlyReturn !== 0 || seed.volatility > 0) {
+        const noise = gaussianRandom(rand) * seed.volatility
+        const monthReturn = seed.monthlyReturn + noise
+        balance *= (1 + monthReturn)
+      } else if (seed.volatility > 0) {
+        // For cash accounts: just add noise proportional to balance
+        const noise = gaussianRandom(rand) * seed.volatility
+        balance *= (1 + noise)
+      }
+
+      // Apply floor
+      if (balance < floor) balance = floor
+
+      // Only record if account has been "opened" (has had a non-zero balance)
+      if (balance > 0 || seed.startBalance > 0) {
+        snapshots.push({
+          snapshot_date: `${month}-01`,
+          account_id: seed.account_id,
+          balance: Math.max(0, balance).toFixed(2),
+          currency: "GBP",
+        })
+      }
+
+      // Grow contributions annually (apply 1/12 of annual rate each month)
+      if (seed.contributionGrowthRate > 0) {
+        contribution *= (1 + seed.contributionGrowthRate / 12)
+      }
+    }
+  }
+
+  return snapshots
+}
+
+export const MOCK_PORTFOLIO_SNAPSHOTS: PortfolioSnapshot[] = generateSnapshots()

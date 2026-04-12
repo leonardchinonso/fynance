@@ -10,6 +10,8 @@ export type AccountType =
   | "credit"
   | "cash"
   | "pension"
+  | "property"
+  | "mortgage"
 
 export type HoldingType = "stock" | "etf" | "fund" | "bond" | "crypto"
 
@@ -47,7 +49,7 @@ export interface Account {
   balance_date: string | null // YYYY-MM-DD
   is_active: boolean
   notes: string | null
-  profile_id: string
+  profile_ids: string[] // owners of this account (supports joint accounts)
 }
 
 export interface Budget {
@@ -61,6 +63,7 @@ export interface Holding {
   account_id: string
   symbol: string // ticker or ISIN
   name: string // display name
+  short_name: string // nickname for legends/compact views
   holding_type: HoldingType
   quantity: string // Decimal string
   price_per_unit: string | null // Decimal string

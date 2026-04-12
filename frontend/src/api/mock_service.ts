@@ -24,10 +24,12 @@ import {
 } from "@/data"
 import { delay, getMonthFromDate, getMonthsInRange } from "@/lib/utils"
 
-const DELAY_MS = 500
+const DELAY_MS = 1000
 
 // Available/unavailable account type classification
 const AVAILABLE_TYPES = new Set(["checking", "savings", "investment", "cash", "credit"])
+// Liability types that subtract from unavailable wealth (e.g. mortgage offsets property value)
+const UNAVAILABLE_LIABILITY_TYPES = new Set(["mortgage"])
 
 export class MockApiService implements ApiService {
   async getProfiles(): Promise<Profile[]> {
@@ -45,7 +47,7 @@ export class MockApiService implements ApiService {
     // Filter by profile (via account ownership)
     if (filters.profile_id) {
       const profileAccounts = new Set(
-        MOCK_ACCOUNTS.filter((a) => a.profile_id === filters.profile_id).map(
+        MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(filters.profile_id!)).map(
           (a) => a.id
         )
       )
@@ -65,6 +67,17 @@ export class MockApiService implements ApiService {
     if (filters.categories && filters.categories.length > 0) {
       const set = new Set(filters.categories)
       data = data.filter((t) => t.category !== null && set.has(t.category))
+    }
+    if (filters.search) {
+      const q = filters.search.toLowerCase()
+      data = data.filter(
+        (t) =>
+          t.normalized.toLowerCase().includes(q) ||
+          t.description.toLowerCase().includes(q) ||
+          (t.category ?? "").toLowerCase().includes(q) ||
+          t.account_id.toLowerCase().includes(q) ||
+          (t.notes ?? "").toLowerCase().includes(q)
+      )
     }
 
     const total = data.length
@@ -88,7 +101,7 @@ export class MockApiService implements ApiService {
   async getAccounts(profileId?: string): Promise<Account[]> {
     await delay(DELAY_MS)
     if (profileId) {
-      return MOCK_ACCOUNTS.filter((a) => a.profile_id === profileId)
+      return MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(profileId!))
     }
     return MOCK_ACCOUNTS
   }
@@ -126,16 +139,26 @@ export class MockApiService implements ApiService {
   async getSpendingGrid(
     start: string,
     end: string,
-    _granularity: Granularity
+    _granularity: Granularity,
+    profileId?: string
   ): Promise<SpendingGridRow[]> {
     await delay(DELAY_MS)
 
     const months = getMonthsInRange(start, end)
 
+    // Get accounts for profile filtering
+    let profileAccounts: Set<string> | null = null
+    if (profileId) {
+      profileAccounts = new Set(
+        MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(profileId)).map((a) => a.id)
+      )
+    }
+
     // Group transactions by category and month
     const grid = new Map<string, Map<string, number>>()
     for (const t of MOCK_TRANSACTIONS) {
       if (t.date < start || t.date > end) continue
+      if (profileAccounts && !profileAccounts.has(t.account_id)) continue
       const cat = t.category ?? "Other: Uncategorized"
       const month = getMonthFromDate(t.date)
       if (!grid.has(cat)) grid.set(cat, new Map())
@@ -163,14 +186,20 @@ export class MockApiService implements ApiService {
 
     const rows: SpendingGridRow[] = []
     for (const [cat, catMap] of grid) {
-      const monthValues: Record<string, string> = {}
+      const monthValues: Record<string, string | null> = {}
       let total = 0
+      let monthsWithData = 0
       for (const m of months) {
-        const val = catMap.get(m) ?? 0
-        monthValues[m] = val.toFixed(2)
-        total += val
+        if (catMap.has(m)) {
+          const val = catMap.get(m)!
+          monthValues[m] = val.toFixed(2)
+          total += val
+          monthsWithData++
+        } else {
+          monthValues[m] = null
+        }
       }
-      const avg = total / months.length
+      const avg = monthsWithData > 0 ? total / monthsWithData : 0
 
       // Find budget for this category
       const budget = MOCK_BUDGETS.find((b) => b.category === cat)
@@ -216,7 +245,7 @@ export class MockApiService implements ApiService {
     await delay(DELAY_MS)
 
     const accounts = profileId
-      ? MOCK_ACCOUNTS.filter((a) => a.profile_id === profileId)
+      ? MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(profileId!))
       : MOCK_ACCOUNTS
 
     let totalAssets = 0
@@ -226,13 +255,15 @@ export class MockApiService implements ApiService {
 
     for (const a of accounts) {
       const bal = parseFloat(a.balance ?? "0")
-      if (a.type === "credit" && bal > 0) {
+      if ((a.type === "credit" || a.type === "mortgage") && bal > 0) {
         totalLiabilities += bal
       } else {
         totalAssets += Math.abs(bal)
       }
       if (AVAILABLE_TYPES.has(a.type)) {
         availableWealth += a.type === "credit" ? -bal : bal
+      } else if (UNAVAILABLE_LIABILITY_TYPES.has(a.type)) {
+        unavailableWealth -= bal // Mortgage subtracts from unavailable (offsets property)
       } else {
         unavailableWealth += bal
       }
@@ -261,6 +292,7 @@ export class MockApiService implements ApiService {
       let sector: string
       if (a.type === "investment") sector = "Stocks"
       else if (a.type === "pension") sector = "Pension"
+      else if (a.type === "property" || a.type === "mortgage") sector = "Property"
       else if (a.type === "savings" || a.type === "checking" || a.type === "cash")
         sector = "Cash"
       else sector = "Other"
@@ -328,6 +360,8 @@ export class MockApiService implements ApiService {
 
       if (AVAILABLE_TYPES.has(account.type)) {
         entry.available += bal
+      } else if (UNAVAILABLE_LIABILITY_TYPES.has(account.type)) {
+        entry.unavailable -= bal // Mortgage subtracts from unavailable
       } else {
         entry.unavailable += bal
       }
@@ -376,6 +410,19 @@ export class MockApiService implements ApiService {
         income: income.toFixed(2),
         spending: spending.toFixed(2),
       }))
+  }
+
+  async getAccountSnapshots(
+    start?: string,
+    end?: string
+  ): Promise<PortfolioSnapshot[]> {
+    await delay(DELAY_MS)
+    return MOCK_PORTFOLIO_SNAPSHOTS.filter((s) => {
+      const month = getMonthFromDate(s.snapshot_date)
+      if (start && month < start.substring(0, 7)) return false
+      if (end && month > end.substring(0, 7)) return false
+      return true
+    })
   }
 
   async exportData(format: string): Promise<void> {
