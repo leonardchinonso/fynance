@@ -27,6 +27,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Sun, Moon, Monitor, Star, Pin, X, Bookmark, Menu } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 
 const NAV_ITEMS = [
   { to: "/portfolio", label: "Portfolio", shortLabel: "Portfolio" },
@@ -39,7 +45,8 @@ export function Navbar() {
   const { profiles } = useProfiles()
   const { profileId, setProfileId } = useUrlFilters()
   const { theme, setTheme } = useTheme()
-  const { pinnedViews, pinCurrentView, unpinView, renamePinnedView } = usePinnedViews()
+  const { pinnedViews, pinCurrentView, unpinView, renamePinnedView, reorderPinnedViews } = usePinnedViews()
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
   const { homepage, setHomepage, isHomepage } = useHomepage()
   const location = useLocation()
   const navigate = useNavigate()
@@ -95,19 +102,58 @@ export function Navbar() {
                 </button>
               </div>
             ))}
-            {pinnedViews.length > 0 && <div className="mx-1.5 h-5 w-px bg-border hidden lg:block" />}
-            {pinnedViews.map((view) => (
-              <PinnedTab className="hidden lg:flex"
-                key={view.url}
-                view={view}
-                isActive={location.pathname + location.search === view.url}
-                isHome={isHomepage(view.url)}
-                onNavigate={() => navigate(view.url)}
-                onDelete={() => { unpinView(view.url); if (isHomepage(view.url)) setHomepage("/portfolio") }}
-                onRename={(newLabel) => renamePinnedView(view.url, newLabel)}
-                onSetHomepage={() => setHomepage(view.url)}
-              />
-            ))}
+            {/* Pinned views dropdown */}
+            {pinnedViews.length > 0 && (
+              <Popover>
+                <PopoverTrigger className="rounded-md px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors flex items-center gap-1.5 whitespace-nowrap">
+                  <Pin className="h-3 w-3 opacity-50" />
+                  Saved
+                  <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] rounded-full">{pinnedViews.length}</Badge>
+                </PopoverTrigger>
+                <PopoverContent className="w-[220px] p-2" align="start">
+                  <p className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Saved Views</p>
+                  {pinnedViews.map((view, idx) => (
+                    <div
+                      key={view.url}
+                      className={cn("flex items-center gap-0.5 group rounded-md", dragIndex === idx && "opacity-50")}
+                      draggable
+                      onDragStart={() => setDragIndex(idx)}
+                      onDragOver={(e) => { e.preventDefault(); if (dragIndex !== null && dragIndex !== idx) { reorderPinnedViews(dragIndex, idx); setDragIndex(idx) } }}
+                      onDragEnd={() => setDragIndex(null)}
+                    >
+                      {/* Drag handle */}
+                      <span className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground opacity-30 group-hover:opacity-70 shrink-0" title="Drag to reorder">
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="3" cy="2" r="1"/><circle cx="7" cy="2" r="1"/><circle cx="3" cy="5" r="1"/><circle cx="7" cy="5" r="1"/><circle cx="3" cy="8" r="1"/><circle cx="7" cy="8" r="1"/></svg>
+                      </span>
+                      <button
+                        onClick={() => setHomepage(view.url)}
+                        className="p-1 rounded hover:bg-muted transition-colors shrink-0"
+                        title={isHomepage(view.url) ? "This is your homepage" : "Set as homepage"}
+                      >
+                        <Star className={cn("h-3 w-3", isHomepage(view.url) ? "text-yellow-500" : "text-muted-foreground opacity-40 group-hover:opacity-100")} fill={isHomepage(view.url) ? "currentColor" : "none"} />
+                      </button>
+                      <button
+                        onClick={() => navigate(view.url)}
+                        className={cn(
+                          "flex-1 text-left rounded-md px-2 py-1.5 text-sm transition-colors truncate",
+                          location.pathname + location.search === view.url
+                            ? "bg-secondary text-secondary-foreground"
+                            : "text-foreground hover:bg-muted"
+                        )}
+                      >
+                        {view.label}
+                      </button>
+                      <button
+                        onClick={() => { unpinView(view.url); if (isHomepage(view.url)) setHomepage("/portfolio") }}
+                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/20 transition-opacity shrink-0"
+                      >
+                        <X className="h-3 w-3 text-muted-foreground" />
+                      </button>
+                    </div>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            )}
           </div>
 
           {/* Mobile nav tabs - compact, no overflow */}
@@ -250,45 +296,3 @@ export function Navbar() {
   )
 }
 
-function PinnedTab({ view, isActive, isHome, onNavigate, onDelete, onRename, onSetHomepage, className }: {
-  view: { label: string; url: string }; isActive: boolean; isHome: boolean
-  onNavigate: () => void; onDelete: () => void; onRename: (label: string) => void; onSetHomepage: () => void
-  className?: string
-}) {
-  const [editing, setEditing] = useState(false)
-  const [editValue, setEditValue] = useState(view.label)
-
-  function handleSave() {
-    const trimmed = editValue.trim()
-    if (trimmed && trimmed !== view.label) onRename(trimmed)
-    setEditing(false)
-  }
-
-  return (
-    <div className={cn("group relative flex items-center", className)}>
-      {editing ? (
-        <input className="rounded-md border bg-background px-2 py-1 text-sm font-medium w-[120px] outline-none focus:ring-1 focus:ring-ring"
-          value={editValue} onChange={(e) => setEditValue(e.target.value)}
-          onBlur={handleSave} onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") { setEditValue(view.label); setEditing(false) } }}
-          autoFocus />
-      ) : (
-        <button onClick={onNavigate} onDoubleClick={(e) => { e.preventDefault(); setEditValue(view.label); setEditing(true) }}
-          className={cn("rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap max-w-[150px]",
-            isActive ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-          )} title="Double-click to rename">
-          <Pin className="h-3 w-3 opacity-50 shrink-0" /><span className="truncate">{view.label}</span>
-        </button>
-      )}
-      <button className={cn("absolute -left-1 -top-1 rounded-full p-0.5 transition-opacity",
-        "opacity-0 group-hover:opacity-60 hover:!opacity-100", isHome ? "text-yellow-500" : "text-muted-foreground")}
-        onClick={(e) => { e.stopPropagation(); onSetHomepage() }}
-        title={isHome ? "This is your homepage" : "Set as homepage"}>
-        <Star className="h-3 w-3" fill={isHome ? "currentColor" : "none"} />
-      </button>
-      <button className="absolute -right-1 -top-1 rounded-full bg-destructive/80 p-0.5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive"
-        onClick={(e) => { e.stopPropagation(); onDelete() }} title="Remove pinned view">
-        <X className="h-2.5 w-2.5 text-destructive-foreground" />
-      </button>
-    </div>
-  )
-}

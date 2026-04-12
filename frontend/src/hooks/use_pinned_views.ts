@@ -57,5 +57,16 @@ export function usePinnedViews() {
     [pinnedViews]
   )
 
-  return { pinnedViews, pinCurrentView, unpinView, renamePinnedView }
+  const reorderPinnedViews = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      const next = [...pinnedViews]
+      const [moved] = next.splice(fromIndex, 1)
+      next.splice(toIndex, 0, moved)
+      setPinnedViews(next)
+      savePinned(next)
+    },
+    [pinnedViews]
+  )
+
+  return { pinnedViews, pinCurrentView, unpinView, renamePinnedView, reorderPinnedViews }
 }
