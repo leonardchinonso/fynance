@@ -24,7 +24,7 @@ import {
 } from "@/data"
 import { delay, getMonthFromDate, getMonthsInRange } from "@/lib/utils"
 
-const DELAY_MS = 5000
+const DELAY_MS = 1000
 
 // Available/unavailable account type classification
 const AVAILABLE_TYPES = new Set(["checking", "savings", "investment", "cash", "credit"])
