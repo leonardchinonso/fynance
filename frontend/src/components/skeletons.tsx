@@ -94,7 +94,7 @@ export function TableSkeleton({ rows = 25, cols = 5 }: { rows?: number; cols?: n
         <thead>
           <tr className="border-b">
             {Array.from({ length: cols }).map((_, i) => (
-              <th key={i} className="px-4 py-3 text-left">
+              <th key={i} className="px-4 py-2 text-left">
                 <Bone className={cn("h-3", i === 0 ? "w-10" : i === 1 ? "w-16" : i === 2 ? "w-16" : "w-14")} />
               </th>
             ))}
@@ -103,11 +103,11 @@ export function TableSkeleton({ rows = 25, cols = 5 }: { rows?: number; cols?: n
         <tbody>
           {Array.from({ length: rows }).map((_, i) => (
             <tr key={i} className="border-b">
-              <td className="px-4 py-3"><Bone className="h-3 w-20" /></td>
-              <td className="px-4 py-3"><Bone className={cn("h-3", i % 3 === 0 ? "w-24" : "w-20")} /></td>
-              <td className="px-4 py-3"><Bone className="h-5 w-28 rounded-full" /></td>
-              <td className="px-4 py-3 text-right"><Bone className="h-3 w-16 ml-auto" /></td>
-              <td className="px-4 py-3"><Bone className={cn("h-3", i % 2 === 0 ? "w-24" : "w-20")} /></td>
+              <td className="px-4 py-2"><Bone className="h-3 w-20" /></td>
+              <td className="px-4 py-2"><Bone className={cn("h-3", i % 3 === 0 ? "w-24" : "w-20")} /></td>
+              <td className="px-4 py-2"><Bone className="h-5 w-28 rounded-full" /></td>
+              <td className="px-4 py-2 text-right"><Bone className="h-3 w-16 ml-auto" /></td>
+              <td className="px-4 py-2"><Bone className={cn("h-3", i % 2 === 0 ? "w-24" : "w-20")} /></td>
             </tr>
           ))}
         </tbody>
@@ -179,12 +179,12 @@ export function SpreadsheetSkeleton() {
       <table className="w-full">
         <thead>
           <tr className="border-b">
-            <th className="px-4 py-2 text-left w-[120px]"><Bone className="h-2.5 w-14" /></th>
+            <th className="px-4 py-3 text-left w-[120px]"><Bone className="h-3 w-14" /></th>
             {Array.from({ length: cols }).map((_, i) => (
-              <th key={i} className="px-3 py-2 text-right"><Bone className="h-2.5 w-8 ml-auto" /></th>
+              <th key={i} className="px-3 py-3 text-right"><Bone className="h-3 w-8 ml-auto" /></th>
             ))}
-            <th className="px-3 py-2 text-right"><Bone className="h-2.5 w-10 ml-auto" /></th>
-            <th className="px-3 py-2 text-right"><Bone className="h-2.5 w-10 ml-auto" /></th>
+            <th className="px-3 py-3 text-right"><Bone className="h-3 w-10 ml-auto" /></th>
+            <th className="px-3 py-3 text-right"><Bone className="h-3 w-10 ml-auto" /></th>
           </tr>
         </thead>
         <tbody>
@@ -202,31 +202,31 @@ function SectionSkeleton({ rows, cols }: { rows: number; cols: number }) {
     <>
       {/* Section header */}
       <tr className="bg-muted/50 border-b">
-        <td colSpan={cols + 3} className="px-4 py-1.5">
-          <Bone className="h-2.5 w-16" />
+        <td colSpan={cols + 3} className="px-4 py-2">
+          <Bone className="h-3 w-16" />
         </td>
       </tr>
       {/* Data rows */}
       {Array.from({ length: rows }).map((_, ri) => (
         <tr key={ri} className="border-b">
-          <td className="px-4 py-2"><Bone className={cn("h-2.5", ri % 2 === 0 ? "w-16" : "w-20")} /></td>
+          <td className="px-4 py-3"><Bone className={cn("h-3", ri % 2 === 0 ? "w-16" : "w-20")} /></td>
           {Array.from({ length: cols }).map((_, ci) => (
-            <td key={ci} className="px-3 py-2 text-right">
-              <Bone className={cn("h-2.5 ml-auto", ci % 3 === 0 ? "w-12" : "w-10")} />
+            <td key={ci} className="px-3 py-3 text-right">
+              <Bone className={cn("h-3 ml-auto", ci % 3 === 0 ? "w-14" : "w-11")} />
             </td>
           ))}
-          <td className="px-3 py-2 text-right"><Bone className="h-2.5 w-10 ml-auto" /></td>
-          <td className="px-3 py-2 text-right"><Bone className="h-2.5 w-8 ml-auto" /></td>
+          <td className="px-3 py-3 text-right"><Bone className="h-3 w-12 ml-auto" /></td>
+          <td className="px-3 py-3 text-right"><Bone className="h-3 w-10 ml-auto" /></td>
         </tr>
       ))}
       {/* Total row */}
       <tr className="border-b-2">
-        <td className="px-4 py-2"><Bone className="h-2.5 w-14" /></td>
+        <td className="px-4 py-3"><Bone className="h-3 w-14" /></td>
         {Array.from({ length: cols }).map((_, ci) => (
-          <td key={ci} className="px-3 py-2 text-right"><Bone className="h-2.5 w-12 ml-auto" /></td>
+          <td key={ci} className="px-3 py-3 text-right"><Bone className="h-3 w-14 ml-auto" /></td>
         ))}
-        <td className="px-3 py-2 text-right"><Bone className="h-2.5 w-12 ml-auto" /></td>
-        <td className="px-3 py-2" />
+        <td className="px-3 py-3 text-right"><Bone className="h-3 w-14 ml-auto" /></td>
+        <td className="px-3 py-3" />
       </tr>
     </>
   )
