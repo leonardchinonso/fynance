@@ -74,4 +74,4 @@ export interface CashFlowMonth {
 }
 
 // Re-export model types used in API responses
-export type { Account, AccountType, Holding, PortfolioSnapshot, Transaction } from "./models"
+export type { Account, AccountSnapshot, AccountType, Holding, Transaction } from "./models"

@@ -8,7 +8,7 @@ export type { AccountType } from "@/bindings/AccountType"
 export type { CategorySource } from "@/bindings/CategorySource"
 export type { Profile } from "@/bindings/Profile"
 export type { Transaction } from "@/bindings/Transaction"
-export type { PortfolioSnapshot } from "@/bindings/PortfolioSnapshot"
+export type { AccountSnapshot } from "@/bindings/AccountSnapshot"
 export type { HoldingType } from "@/bindings/HoldingType"
 export type { Holding } from "@/bindings/Holding"
 

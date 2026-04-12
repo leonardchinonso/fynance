@@ -8,7 +8,7 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  PortfolioSnapshot,
+  AccountSnapshot,
   Profile,
   SpendingGridRow,
   Transaction,
@@ -53,11 +53,11 @@ export interface ApiService {
   getHoldings(accountId: string): Promise<Holding[]>
   getCashFlow(start?: string, end?: string): Promise<CashFlowMonth[]>
 
-  // Account snapshots (per-account monthly balances for delta calculations)
-  getAccountSnapshots(
+  // Account balances (per-account monthly balances for delta calculations)
+  getAccountBalances(
     start?: string,
     end?: string
-  ): Promise<PortfolioSnapshot[]>
+  ): Promise<AccountSnapshot[]>
 
   // Export
   exportData(format: string): Promise<void>

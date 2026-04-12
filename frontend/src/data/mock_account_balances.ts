@@ -1,4 +1,4 @@
-import type { PortfolioSnapshot } from "@/types"
+import type { AccountSnapshot } from "@/types"
 
 // Generate monthly snapshots from Jan 2023 to Mar 2026 for all accounts.
 // Models a realistic UK couple's wealth journey: gradual salary increases,
@@ -308,8 +308,8 @@ function gaussianRandom(rand: () => number): number {
   return Math.sqrt(-2 * Math.log(u1 + 0.0001)) * Math.cos(2 * Math.PI * u2)
 }
 
-function generateSnapshots(): PortfolioSnapshot[] {
-  const snapshots: PortfolioSnapshot[] = []
+function generateBalances(): AccountSnapshot[] {
+  const snapshots: AccountSnapshot[] = []
   const rand = seededRandom(777)
 
   for (const seed of ACCOUNT_SEEDS) {
@@ -348,7 +348,7 @@ function generateSnapshots(): PortfolioSnapshot[] {
       // Only record if account has been "opened" (has had a non-zero balance)
       if (balance > 0 || seed.startBalance > 0) {
         snapshots.push({
-          snapshot_date: `${month}-01`,
+          as_of: `${month}-01T00:00:00`,
           account_id: seed.account_id,
           balance: Math.max(0, balance).toFixed(2),
           currency: "GBP",
@@ -365,4 +365,4 @@ function generateSnapshots(): PortfolioSnapshot[] {
   return snapshots
 }
 
-export const MOCK_PORTFOLIO_SNAPSHOTS: PortfolioSnapshot[] = generateSnapshots()
+export const MOCK_ACCOUNT_BALANCES: AccountSnapshot[] = generateBalances()
