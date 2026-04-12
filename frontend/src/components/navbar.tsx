@@ -95,9 +95,9 @@ export function Navbar() {
                 </button>
               </div>
             ))}
-            {pinnedViews.length > 0 && <div className="mx-1.5 h-5 w-px bg-border" />}
+            {pinnedViews.length > 0 && <div className="mx-1.5 h-5 w-px bg-border hidden lg:block" />}
             {pinnedViews.map((view) => (
-              <PinnedTab
+              <PinnedTab className="hidden lg:flex"
                 key={view.url}
                 view={view}
                 isActive={location.pathname + location.search === view.url}
@@ -250,9 +250,10 @@ export function Navbar() {
   )
 }
 
-function PinnedTab({ view, isActive, isHome, onNavigate, onDelete, onRename, onSetHomepage }: {
+function PinnedTab({ view, isActive, isHome, onNavigate, onDelete, onRename, onSetHomepage, className }: {
   view: { label: string; url: string }; isActive: boolean; isHome: boolean
   onNavigate: () => void; onDelete: () => void; onRename: (label: string) => void; onSetHomepage: () => void
+  className?: string
 }) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(view.label)
@@ -264,7 +265,7 @@ function PinnedTab({ view, isActive, isHome, onNavigate, onDelete, onRename, onS
   }
 
   return (
-    <div className="group relative flex items-center">
+    <div className={cn("group relative flex items-center", className)}>
       {editing ? (
         <input className="rounded-md border bg-background px-2 py-1 text-sm font-medium w-[120px] outline-none focus:ring-1 focus:ring-ring"
           value={editValue} onChange={(e) => setEditValue(e.target.value)}
