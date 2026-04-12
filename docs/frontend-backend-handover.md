@@ -800,3 +800,263 @@ When `as_of` is omitted, default to today (or the most recent balance update dat
 9. [ ] **LOW**: Category list from taxonomy, not transaction scan
 10. [ ] **LOW**: Account snapshot deltas (first/last per account)
 11. [ ] **LOW**: Investment metrics (new cash vs market growth)
+
+---
+
+## 7. Accounts vs Portfolio Snapshots vs Holdings: Analysis
+
+This section captures findings from a frontend review of how the three portfolio-related concepts relate and where the current naming/design could be improved.
+
+### The three concepts
+
+| Concept | What it stores | Granularity | Applies to |
+|---|---|---|---|
+| **Account** | A container with a current balance, institution, type | One row per account | All account types |
+| **Portfolio Snapshot** | Historical balance for one account at one date | One row per account per date | All account types |
+| **Holding** | A named sub-balance within an account | Multiple rows per account per date | Currently: investment + pension only |
+
+### How they link
+
+All three are connected through `account_id`:
+
+```
+Account (parent)
+  |-- PortfolioSnapshot[] (balance over time for this account)
+  |-- Holding[]           (composition within this account)
+```
+
+Holdings and snapshots do not reference each other. A "portfolio view" is derived by aggregating snapshots across accounts. Holdings drill down into what an account is made of.
+
+### Recommendation: rename `portfolio_snapshots` to `account_snapshots`
+
+The current name `portfolio_snapshots` is misleading. Each row is a balance for **one account** at one date, not a portfolio-level aggregate. The frontend already treats it this way: the mock service method is `getAccountSnapshots()`, and portfolio-level numbers are derived by summing across accounts.
+
+Renaming the table (and the Rust struct) to `account_snapshots` / `AccountSnapshot` would make the data model self-documenting:
+
+- `accounts` = current state of each account
+- `account_snapshots` = historical state of each account
+- `holdings` = composition within an account
+
+This is a low-risk rename since the table is only referenced in the storage layer. The API endpoint can remain `/api/portfolio/snapshots` if preferred (the URL describes the feature area, not the table).
+
+### Recommendation: add `"cash"` to `HoldingType`
+
+The current `HoldingType` enum is `stock | etf | fund | bond | crypto`. This limits holdings to securities, but there are real use cases for **cash holdings** within accounts:
+
+1. **Uninvested cash in investment accounts**: A Trading 212 ISA might hold £500 in uninvested cash alongside stock positions. Without a cash holding, the account balance (£39,000) would not match the sum of holdings (£38,500), with no way to represent the gap.
+
+2. **Pension cash allocations**: Some pension providers split funds between investment funds and a cash reserve. Both are part of the same pension account.
+
+3. **Bank pots/goals**: Monzo pots, Revolut vaults, and Chase roundup accounts are sub-balances within a single bank account. Rather than modelling each pot as a separate account (which inflates the account count and loses the grouping), they can be represented as cash holdings within the parent account:
+   ```
+   Account: "Monzo Current" (balance: £2,500)
+     |-- Holding: "Main balance"   (cash, £590)
+     |-- Holding: "Bills pot"      (cash, £800)
+     |-- Holding: "Holiday pot"    (cash, £600)
+     |-- Holding: "Emergency pot"  (cash, £510)
+   ```
+
+4. **Multi-currency balances**: A Revolut account with GBP, EUR, and USD balances could represent each currency as a cash holding, preserving the per-currency detail within a single account.
+
+Adding `"cash"` to `HoldingType` generalizes holdings from "securities in investment accounts" to "any named sub-balance within any account". This does not change the API design: accounts without sub-divisions simply have no holdings, and the account balance remains the source of truth for total value.
+
+**Note on user choice**: Whether to model something as separate accounts or as holdings within one account (e.g., Monzo pots as accounts vs. cash holdings) is a user configuration decision at ingestion time. The API supports both patterns without changes.
+
+### Proposal: consolidate account snapshots into holding-level history (eliminate separate snapshot table)
+
+**Status**: Under consideration. Ope's strong preference. Needs Nonso's input on backend complexity.
+
+Rather than maintaining two separate time-series tables (`account_snapshots` for balance history and `holdings` for point-in-time composition), consolidate into a single model where **holdings are the atomic unit of history** and account-level snapshots are derived by summing holdings.
+
+**Current design (two tables)**:
+```
+account_snapshots: { account_id, snapshot_date, balance }     -- account-level time series
+holdings:          { account_id, symbol, as_of, value, ... }  -- point-in-time composition
+```
+
+**Proposed design (one table)**:
+```
+holdings:          { account_id, symbol, as_of, value, ... }  -- holding-level time series
+-- account balance at any date = SUM(holdings.value) WHERE account_id = X AND carry-forward to date
+```
+
+**Why consolidate**:
+
+1. **Single source of truth**: Two tables that both describe "what an account is worth over time" will inevitably drift. If the account snapshot says £39,000 on March 1 but holdings sum to £38,500, which is right? With one table, there's no ambiguity.
+
+2. **Build the right thing from the start**: We will almost certainly want holding history later (composition drift, performance attribution, "when did I buy NVDA"). Adding it retroactively means backfilling data or losing early history. Storing it from day one costs almost nothing.
+
+3. **Simpler ingestion**: One code path writes holdings. Account balances are always derived. No need to keep two tables in sync during import.
+
+4. **The carry-forward query is not hard**: To get an account balance as of a target date, carry forward each holding to that date and sum:
+   ```sql
+   SELECT SUM(h.value) as account_balance
+   FROM holdings h
+   WHERE h.account_id = ?1
+     AND h.as_of = (
+       SELECT MAX(h2.as_of) FROM holdings h2
+       WHERE h2.account_id = h.account_id
+         AND h2.symbol = h.symbol
+         AND h2.as_of <= ?2  -- target date
+     )
+   ```
+   At the scale of this app (tens of accounts, tens of holdings each), this is negligible.
+
+**What this requires**:
+
+1. **`"cash"` HoldingType becomes mandatory, not optional**. Every account needs at least one holding to have history. A simple checking account like Monzo with no subdivisions would have a single cash holding representing the whole balance:
+   ```
+   Account: "Monzo Current"
+     └── Holding: "Monzo Current" (cash, £590, as_of: 2026-03-15)
+   ```
+   This is a bit redundant for simple accounts, but it's the cost of a unified model. The alternative (special-casing accounts with no holdings) reintroduces the two-source problem.
+
+2. **The `account_snapshots` / `portfolio_snapshots` table can be dropped entirely**. The `accounts.balance` and `accounts.balance_date` fields can remain as a denormalized cache of the latest total, but the time-series history lives in holdings only.
+
+3. **Ingestion always writes holdings, never snapshots**. When importing a Monzo CSV with a closing balance of £590, the importer creates a single cash holding: `{ account_id: "monzo-current", symbol: "GBP", holding_type: "cash", value: "590.00", as_of: "2026-03-15" }`. When importing a Trading 212 export, it creates one holding per position plus a cash holding for uninvested balance.
+
+**Trade-offs**:
+
+| | Current (two tables) | Proposed (holdings only) |
+|---|---|---|
+| Query for account balance at date | Single row lookup | Carry-forward + SUM across holdings |
+| Query for net worth at date | SUM across account snapshots | Carry-forward + SUM across all holdings |
+| Ingestion complexity | Write to two tables, keep in sync | Write to one table |
+| Simple accounts (checking, savings) | One snapshot row per date | One cash holding row per date (slightly redundant) |
+| Investment accounts | Snapshot + holdings (can drift) | Holdings only (single source of truth) |
+| Future holding history | Needs backfill or new table | Already there |
+
+**Ope's view**: The redundancy for simple accounts is a small price for a cleaner, single-source model. Building two parallel time-series systems and then likely wanting holding history anyway feels like unnecessary complexity. Better to get this right from the start.
+
+**Decision needed from Nonso**: Is the carry-forward SUM query acceptable for the backend, or does the single-row lookup for account balances matter for performance? At this app's scale it shouldn't, but this is a backend architecture call.
+
+### CSV import should create holdings (not just transactions)
+
+Currently CSV import only creates transactions. But many bank CSV exports include a running or closing balance, and investment account exports may include positions. The import should extract all available data in one pass.
+
+**If the consolidation proposal above is adopted** (holdings as the single source of balance history), the import flow becomes:
+
+```
+CSV Import
+  |-- Always: create transactions (deduplicated by fingerprint)
+  |-- If closing balance available: upsert a cash holding for that account
+  |     e.g., { account_id: "monzo-current", symbol: "GBP", holding_type: "cash",
+  |             value: "590.00", as_of: "2026-03-15" }
+  |-- If holdings data available (investment/trading CSVs): upsert per-symbol holdings
+  |     plus a cash holding for any uninvested balance
+```
+
+**If the current two-table design is kept**, the import flow is:
+
+```
+CSV Import
+  |-- Always: create transactions (deduplicated by fingerprint)
+  |-- If closing balance available: create an account snapshot row
+  |-- If holdings data available: upsert holdings for the account
+```
+
+Either way, the key point is that a single CSV import should update both the transaction history and the balance/holdings history in one step, rather than requiring the user to manually set the balance after importing.
+
+This is importer-specific logic. The LLM-based CSV parser already exists at `backend/src/importers/csv_importer.rs`. It would need to be taught to recognize balance columns and holdings data in addition to transactions. This is prompt engineering work on top of the existing importer (adjusting what the LLM extracts from the CSV), not a new importer. The API contract doesn't change, just the scope of what a single import operation produces.
+
+### Currency: store in source currency, convert on display
+
+All monetary values (transactions, account balances, snapshots, holdings) should be stored in their **source currency**, the currency the account is actually denominated in. Never convert at ingestion time, because exchange rates change and you would lose the original value.
+
+This matters for several real scenarios:
+- A Revolut USD account with dollar-denominated transactions
+- A Nigerian bank account in Naira (NGN)
+- Investment accounts holding US-listed stocks priced in USD but within a GBP-denominated ISA wrapper
+
+The `currency` field already exists on transactions, accounts, snapshots, and holdings. The key requirement is that these are always populated with the actual source currency, not defaulted to GBP.
+
+**Display-time conversion**: The frontend should support toggling between:
+- **Source currency**: show the raw value as stored (e.g., "$1,200.00 USD")
+- **Preferred currency**: convert to the user's preferred currency (e.g., "~£948.00 GBP") using a rate
+
+For net worth aggregation across accounts in different currencies, the backend needs to convert to a common currency (the user's preferred currency, typically GBP).
+
+**Approach: store source currency + ingestion-time exchange rate**
+
+The principle is: store the value in its actual source currency (never convert the stored value), but also capture the exchange rate at ingestion time so historical views use historically accurate rates. This means each holding row stores both what it's worth in its native currency and how to convert it.
+
+For MVP, the exchange rate source can be simple: a free API like exchangerate.host called at ingestion time, or a manually provided rate. The backend caches rates by `(currency, date)` so repeated ingestions on the same day don't make redundant API calls.
+
+**Schema approach**: A lightweight `exchange_rates` reference table is cleaner than adding a rate column to every holdings row, since the same rate applies to all holdings in the same currency on the same date:
+
+```sql
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_currency   TEXT NOT NULL,        -- e.g., 'USD'
+    to_currency     TEXT NOT NULL,        -- e.g., 'GBP' (user's preferred)
+    rate            TEXT NOT NULL,        -- Decimal string
+    rate_date       TEXT NOT NULL,        -- YYYY-MM-DD
+    source          TEXT NOT NULL DEFAULT 'manual',  -- 'manual' | 'api'
+    captured_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(from_currency, to_currency, rate_date)
+);
+```
+
+The frontend can then:
+- Show source currency by default ("$1,200.00 USD")
+- Toggle to preferred currency using the rate for that date ("~£948.00 GBP at rate captured on 2026-03-15")
+- Aggregate net worth across currencies by joining holdings with `exchange_rates` on `(currency, as_of)`
+
+**What this means for the schema**:
+- `transactions.currency`: already exists, ensure it's always the source currency
+- `accounts.currency`: already exists, same
+- `holdings.currency`: already exists, same
+- New: `exchange_rates` table (schema above)
+- GBP-denominated accounts don't need rate rows (rate is 1.0 by definition, skip the lookup)
+
+### Summary of recommended changes
+
+| Change | Impact | Priority |
+|---|---|---|
+| **Consolidate snapshots into holdings** (Ope's preference) | Drop `portfolio_snapshots` table, use holdings as single time-series source. Account balance = SUM(holdings). Needs Nonso's sign-off. | **High (architectural, decide before building)** |
+| Add `"cash"` to `HoldingType` enum | Required if consolidation is adopted (every account needs at least one holding). One-line Rust enum + schema change. | **High (required for consolidation)** |
+| Rename `portfolio_snapshots` to `account_snapshots` | Only if consolidation is NOT adopted. Moot if table is dropped. | Low |
+| CSV import: extract balance/holdings, not just transactions | Importer writes holdings (or snapshots) from closing balance and position data in CSVs | Medium |
+| Store all values in source currency, never convert at ingestion | Convention/validation, no schema change needed | High (enforce from the start) |
+| Add exchange rate capture at ingestion time | New column on holdings or separate `exchange_rates` table | Medium (needed for multi-currency net worth) |
+| Frontend: toggle between source and preferred currency | UI feature | Low (post-MVP, after backend currency support) |
+| Decide on balance/holdings mismatch handling (see Appendix A) | Backend validation logic. Less relevant if consolidation is adopted (holdings ARE the balance). | Medium |
+
+---
+
+## Appendix A: Account Balance vs Holdings Sum Mismatch
+
+For accounts that have both a balance (from `accounts` or `account_snapshots`) and holdings, there is no guarantee that `SUM(holdings.value)` equals the account balance. This can happen legitimately:
+
+- **Uninvested cash**: A Trading 212 ISA has £39,000 total but only £38,500 in stocks. The remaining £500 is uninvested cash sitting in the account. Without a cash holding (see the `"cash"` HoldingType recommendation above), the sum of holdings will always be less than the account balance.
+- **Timing mismatch**: The account balance was updated on March 20 but holdings were last updated on March 15. Stock prices moved in between.
+- **Fees/pending settlements**: The account shows a balance net of pending fees or unsettled trades that aren't reflected in the holdings snapshot.
+- **Rounding**: Multiple holdings each rounded to 2 decimal places may not sum exactly to the rounded account balance.
+
+### Options for handling this
+
+**Option A: Soft warning (recommended for MVP)**
+
+Accept the mismatch and surface it in the API response. When `GET /api/holdings?account_id=X` returns holdings, include a summary field:
+
+```json
+{
+  "account_id": "t212-isa-alex",
+  "account_balance": "39000.00",
+  "holdings_total": "38500.00",
+  "unaccounted": "500.00",
+  "holdings": [...]
+}
+```
+
+The frontend can display this as "£500 unaccounted (uninvested cash, timing differences, or pending updates)". This is informational, not blocking.
+
+**Option B: Auto-create a cash holding for the gap**
+
+When the mismatch is positive (account balance > holdings sum), automatically create a synthetic `"cash"` holding for the difference. This keeps `SUM(holdings.value) == account_balance` as an invariant, but introduces a "fake" holding that the user didn't explicitly create.
+
+**Option C: Strict enforcement (reject mismatched updates)**
+
+Reject holdings updates where the sum doesn't match the account balance. This is too rigid: it would block legitimate cases (timing mismatches, uninvested cash) and create friction during ingestion.
+
+**Recommendation**: Option A for MVP. The mismatch is real information, not a bug. Surfacing it lets the user decide whether to add a cash holding to close the gap or leave it as-is. Option B could be offered as a user-facing toggle later ("auto-create cash holding for uninvested balance").

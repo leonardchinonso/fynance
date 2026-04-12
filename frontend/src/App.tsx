@@ -19,9 +19,9 @@ function Layout() {
   const homepage = getHomepage()
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background overflow-x-hidden">
       <Navbar />
-      <main className="mx-auto max-w-[1600px] px-6 py-6">
+      <main className="mx-auto max-w-[1600px] px-3 sm:px-6 py-4 sm:py-6 w-full overflow-x-hidden">
         <Routes>
           <Route path="/" element={<Navigate to={homepage} replace />} />
           <Route path="/portfolio" element={<PortfolioPage />} />

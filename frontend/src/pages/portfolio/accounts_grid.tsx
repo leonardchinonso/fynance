@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import type { Account, PortfolioSnapshot } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -6,21 +6,12 @@ import { Currency } from "@/components/currency"
 import { daysSince, formatCurrency, formatDate } from "@/lib/utils"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
-import { api } from "@/api/client"
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 
 interface AccountsGridProps {
   accounts: Account[]
@@ -196,18 +187,6 @@ function AccountDetailSheet({
   account: Account | null
   onClose: () => void
 }) {
-  const [snapshots, setSnapshots] = useState<PortfolioSnapshot[]>([])
-
-  useEffect(() => {
-    if (!account) return
-    // Fetch snapshots for this account via portfolio history
-    api.getPortfolioHistory().then((history) => {
-      // We don't have per-account history in the API yet,
-      // so show basic account info
-      setSnapshots([])
-    })
-  }, [account])
-
   if (!account) return null
 
   return (

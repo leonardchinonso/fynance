@@ -45,7 +45,6 @@ export function PortfolioOverview({
 
   const netWorth = parseFloat(portfolio.net_worth)
   const available = parseFloat(portfolio.available_wealth)
-  const unavailable = parseFloat(portfolio.unavailable_wealth)
   const availablePct = netWorth > 0 ? (available / netWorth) * 100 : 0
 
   // Income/outgoing totals
@@ -174,7 +173,7 @@ export function PortfolioOverview({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <ArrowUpRight className="h-3 w-3 text-green-500" />
@@ -216,7 +215,7 @@ export function PortfolioOverview({
             {investmentMetrics && investmentMetrics.startValue > 0 && (
               <div className="mt-4 border-t pt-3">
                 <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Investments</p>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-0.5">
                     <p className="text-xs text-muted-foreground">New Cash Invested</p>
                     <p className="text-base font-semibold tabular-nums">
