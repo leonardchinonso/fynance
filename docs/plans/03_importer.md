@@ -1,5 +1,7 @@
 # Statement Importer
 
+> **Superseded for CSV ingestion by [`10_llm_csv_import.md`](10_llm_csv_import.md).** The bank-specific `BankMapping`, `AmountSign`, and `detect_format` paths documented below are preserved for historical context but must not be reimplemented. The CSV path is an LLM-driven unified parser that emits `UnifiedStatementRow` regardless of bank, and uses `BankFormat` only as a bookkeeping tag. See plan 10 for the confidence-threshold contract, the unknown-bank behaviour, and the new Phase 1 checklist.
+>
 > **Updated after Prompt 1.1.** Target banks are Monzo, Revolut, and Lloyds. The original Chase/BofA/Apple mappings from the first draft are preserved conceptually but replaced with UK bank formats.
 
 ## Supported Formats (MVP)

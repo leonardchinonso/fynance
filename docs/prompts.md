@@ -119,3 +119,28 @@ These apply to every view in the app (budget, portfolio, reports):
 
 1. Iterate on the **data model** to ensure it supports all of the above (especially point-in-time carry-forward for portfolio, stock-level holdings, and the guided ingestion flow)
 2. Build out the **React frontend** with mock data: get the app to a state where you can click around, navigate between views, interact with charts, and validate the UX before wiring up real data
+
+# Prompt 2: Implementation
+
+Looking at the `/Users/leonard/projects/fynance/docs` folder, come up with an implementation plan for how we would build the backend MVP. The plan should be split into phases, with each phase outlining in detail what needs to be done to mark the phase as complete. Each phase should be self-contained and aim to build one part of the final service. Follow the outlined plans in `/Users/leonard/projects/fynance/docs/plans` while adhering to the designs in `/Users/leonard/projects/fynance/docs/design`. DO NOT WRITE ANY CODE YET. Write the implementation plan to the `/Users/leonard/projects/fynance/docs/plans/` folder and let me review it. The aim is to use this plan as a checklist and checkpoint for what is done and what is left to do, while referencing the plans and designs as a guide/blueprint.
+
+# Prompt 3.1: Backend Phase 1 Implementation [DONE]
+
+Using the implementation plan in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`, implement phase 1. Add comments to explain complex code cases. If you're in doubt about whether the code is straightforward to understand to the average person, write a comment for it. When you're done implementing phase 1, create a new branch for the feature, commit the code and push it to that new branch. DO NOT move on to phase 2 until I tell you to do so. Implement phase 1 only and make changes to the backend only, do not make any frontend changes.
+
+# Prompt 3.2: Backend Phase 2 Implementation [DONE]
+
+Using the implementation plan in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`, implement phase 2. Add comments to explain complex code cases. If you're in doubt about whether the code is straightforward to understand to the average person, write a comment for it. When you're done implementing phase 2, create a new branch for the feature, commit the code and push it to that new branch. DO NOT move on to phase 3 until I tell you to do so. Implement phase 2 only and make changes to the backend only, do not make any frontend changes.
+
+# Prompt 3.3: Phase 1 Iteration [DONE]
+
+I am reviewing the code for phase 1 in the `feature/phase-1-data-layer` branch and I have a few suggestions/concerns/questions:
+
+## 1. Bank File Format Detection
+
+Currently, the exported CSVs by banks go through a `detect_format` method to detect which bank sent the CSV. Instead of playing this matching game, establish a single format with all the fields that most banks will provide (including monzo, revolut, lloyds etc). This format will replace `BankFormat::Monzo`, `BankFormat::Revolut`, etc and will be generic but supporting all the previous bank format structures. It should be a union of all the fields supported by all the banks. Additionally, instead of reading arbitrary fields from the headers like is currently done, e.g. reading the `Transaction ID` field to detect if its Monzo, we should use an LLM to parse the input file and extract all the fields required to create an `ImportResult`. If there is any specific detail in the file that shows what bank it is from, the LLM should parse that as well and the `ImportResult` should contain that information. You should also use that information to populate the BankFormat enum for book keeping. For cases where the bank is unknown, do not fail hard as it currently does. Let the LLM parse the data and extract the fields as well and set the bank format as Unknown. The LLM should fail hard in cases where the detection confidence ratio is less than a threshold. Figure out what that threshold is and use it.
+Do not write any code to make these changes yet. Come up with a plan for these changes in a single markdown document and write it to `/Users/leonard/projects/fynance/docs/plans` folder. The document should be in great detail and should contain code snippets/examples and diagrams showing design changes. Also update the design and plans folders with the proposed changes.
+
+# Prompt 4: How To Run Backend [DONE]
+
+Go through the code in the backend folder and write a comprehensive markdown document in the folder explaining how to set up and run the code. This document will be iterated on over time. Include a pointer to the document in the CLAUDE.md file for how to run the Rust backend.
