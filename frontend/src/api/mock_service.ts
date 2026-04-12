@@ -207,7 +207,7 @@ export class MockApiService implements ApiService {
       rows.push({
         category: cat,
         section: getSection(cat),
-        months: monthValues,
+        periods: monthValues,
         average: avg.toFixed(2),
         budget: budget?.amount ?? null,
         total: total.toFixed(2),

@@ -83,7 +83,7 @@ export interface CashFlowMonth {
 export interface SpendingGridRow {
   category: string
   section: string // "Income" | "Bills" | "Spending" | "Irregular" | "Transfers"
-  months: Record<string, string | null> // YYYY-MM -> Decimal string, null = no data
+  periods: Record<string, string | null> // period key -> Decimal string, null = no data
   average: string | null
   budget: string | null
   total: string | null
