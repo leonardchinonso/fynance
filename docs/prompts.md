@@ -144,3 +144,8 @@ Do not write any code to make these changes yet. Come up with a plan for these c
 # Prompt 4: How To Run Backend [DONE]
 
 Go through the code in the backend folder and write a comprehensive markdown document in the folder explaining how to set up and run the code. This document will be iterated on over time. Include a pointer to the document in the CLAUDE.md file for how to run the Rust backend.
+
+# Prompt 5; Consolidate Requirements
+
+The frontend is currently being worked on and has made significant progress. The contributor has identified some requirements along with different approaches to execute them in `/Users/leonard/projects/fynance/docs/frontend-backend-handover.md`. I want you to go through the document in `/Users/leonard/projects/fynance/docs/frontend-backend-handover.md`, compare it to the plans in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`, and come up with a plan for the actions, improvements and fixes outlined in the document. It should merge with the initial plan we had in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`. I agree with the favoured approaches by the collaborators in the document, but if there are any ones you do not agree with, flag them out and we will iterate more on it.
+Come up with a detailed plan to support the fixes/requests and write the plan to the `plans` folder. DO NOT WRITE ANY CODE YET, just write a detailed plan that explains how we would go about implementing the changes. Do not spend time on trying to come up with a new solution in the cases where the recommended solution works enough, especially for an MVP. Come up with the plan and structure it in phases of execution. I will review the plan first before we move to any other thing.
