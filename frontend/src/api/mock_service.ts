@@ -8,6 +8,7 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
+  PortfolioSnapshot,
   Profile,
   SpendingGridRow,
   Transaction,
