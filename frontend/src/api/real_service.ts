@@ -160,19 +160,11 @@ export class RealApiService implements ApiService {
     return mock.getCashFlow(start, end)
   }
 
-<<<<<<< HEAD
-  async getAccountSnapshots(
-    start?: string,
-    end?: string
-  ): Promise<PortfolioSnapshot[]> {
-    return mock.getAccountSnapshots(start, end)
-=======
   async getAccountBalances(
     start?: string,
     end?: string
   ): Promise<AccountSnapshot[]> {
     return mock.getAccountBalances(start, end)
->>>>>>> cb582c1 (Rename PortfolioSnapshot -> AccountSnapshot across frontend)
   }
 
   async exportData(format: string): Promise<void> {
