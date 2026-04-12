@@ -47,8 +47,8 @@ export function BudgetPage() {
       ? "charts"
       : "spreadsheet"
 
-  // Hide granularity on charts view (pie doesn't use it, and the charts handle it internally)
-  const showGranularity = activeView === "spreadsheet"
+  // Show granularity on both spreadsheet and charts (stacked bar + line use it)
+  const showGranularity = true
 
   return (
     <div className="space-y-4">
