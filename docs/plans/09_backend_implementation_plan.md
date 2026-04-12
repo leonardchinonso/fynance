@@ -14,104 +14,104 @@ This is the executable checklist for building the fynance backend. It is split i
 
 ### 1.1 Repository scaffold
 
-- [ ] Create `backend/` directory with `Cargo.toml`
-- [ ] Create `db/sql/schema.sql` containing all tables from `docs/design/03_data_model.md`:
-  - `transactions` with all indexes
-  - `import_log`
-  - `accounts`
-  - `portfolio_snapshots` with index
-  - `budgets` with index
-  - `holdings` with index
-  - `ingestion_checklist`
-  - `api_tokens`
-- [ ] Create `backend/config/categories.yaml` with the full category taxonomy (top-level categories and subcategories, e.g. `Food: Groceries`, `Food: Eating Out`, `Transport: Commute`, etc.)
-- [ ] Create `.env.example` documenting all environment variables: `FYNANCE_PORT`, `FYNANCE_DB_PATH`, `FYNANCE_HOST`, `FYNANCE_LOG_LEVEL`
-- [ ] Create `Makefile` with targets: `build` (frontend then cargo), `dev-backend`, `dev-frontend`, `test`, `lint`, `fmt`
-- [ ] Add `Cargo.toml` Phase 1 dependencies (see `08_mvp_phases_v2.md` Phase 1 for the exact list)
+- [x] Create `backend/` directory with `Cargo.toml`
+- [x] Create `db/sql/schema.sql` containing all tables from `docs/design/03_data_model.md`:
+  - [x] `transactions` with all indexes
+  - [x] `import_log`
+  - [x] `accounts`
+  - [x] `portfolio_snapshots` with index
+  - [x] `budgets` with index
+  - [x] `holdings` with index
+  - [x] `ingestion_checklist`
+  - [x] `api_tokens`
+- [x] Create `backend/config/categories.yaml` with the full category taxonomy (top-level categories and subcategories, e.g. `Food: Groceries`, `Food: Eating Out`, `Transport: Commute`, etc.)
+- [x] Create `.env.example` documenting all environment variables: `FYNANCE_PORT`, `FYNANCE_DB_PATH`, `FYNANCE_HOST`, `FYNANCE_LOG_LEVEL`
+- [x] Create `Makefile` with targets: `build` (frontend then cargo), `dev-backend`, `dev-frontend`, `test`, `lint`, `fmt`
+- [x] Add `Cargo.toml` Phase 1 dependencies (see `08_mvp_phases_v2.md` Phase 1 for the exact list)
 
 ### 1.2 Core types (`backend/src/model.rs`)
 
-- [ ] `Transaction` struct with all fields from schema; derives `serde::Serialize/Deserialize`, `ts_rs::TS`, `#[ts(export)]`
-- [ ] `Account` struct; same derives
-- [ ] `AccountType` enum: `Checking | Savings | Investment | Credit | Cash | Pension`
-- [ ] `CategorySource` enum: `Rule | Agent | Manual`
-- [ ] `Budget` struct
-- [ ] `PortfolioSnapshot` struct
-- [ ] `Holding` struct
-- [ ] `HoldingType` enum: `Stock | Etf | Fund | Bond | Crypto`
-- [ ] `ImportResult` struct: `{ rows_total, rows_inserted, rows_duplicate, filename, account_id }`
-- [ ] `InsertOutcome` enum: `Inserted | Duplicate`
+- [x] `Transaction` struct with all fields from schema; derives `serde::Serialize/Deserialize`, `ts_rs::TS`, `#[ts(export)]`
+- [x] `Account` struct; same derives
+- [x] `AccountType` enum: `Checking | Savings | Investment | Credit | Cash | Pension`
+- [x] `CategorySource` enum: `Rule | Agent | Manual`
+- [x] `Budget` struct
+- [x] `PortfolioSnapshot` struct
+- [x] `Holding` struct
+- [x] `HoldingType` enum: `Stock | Etf | Fund | Bond | Crypto`
+- [x] `ImportResult` struct: `{ rows_total, rows_inserted, rows_duplicate, filename, account_id }`
+- [x] `InsertOutcome` enum: `Inserted | Duplicate`
 
 ### 1.3 Utilities (`backend/src/util.rs`)
 
-- [ ] `normalize_description(raw: &str) -> String` -- strips noise tokens, lowercases, trims
-- [ ] `fingerprint(date: &str, amount: &str, description: &str, account_id: &str) -> String` -- `sha256(joined fields)` as hex string
-- [ ] `parse_date(s: &str) -> Result<NaiveDate>` -- handles `YYYY-MM-DD` and `DD/MM/YYYY`
+- [x] `normalize_description(raw: &str) -> String` -- strips noise tokens, lowercases, trims
+- [x] `fingerprint(date: &str, amount: &str, description: &str, account_id: &str) -> String` -- `sha256(joined fields)` as hex string
+- [x] `parse_date(s: &str) -> Result<NaiveDate>` -- handles `YYYY-MM-DD` and `DD/MM/YYYY`
 
 ### 1.4 Storage layer (`backend/src/storage/db.rs`)
 
-- [ ] `Db` struct wrapping `rusqlite::Connection`
-- [ ] `Db::open(path: &Path) -> Result<Db>`:
-  - Resolves path from `dirs::data_local_dir()` when no explicit path given
-  - Creates parent directory with mode `0o700` (Unix) if it does not exist
-  - Sets DB file to mode `0o600` (Unix) on creation
-  - Runs `schema.sql` via `execute_batch`
-  - Enables WAL mode: `PRAGMA journal_mode=WAL`
-- [ ] `Db::insert_transaction(&self, tx: &Transaction) -> Result<InsertOutcome>` -- INSERT OR IGNORE on fingerprint
-- [ ] `Db::log_import(&self, log: &ImportLog) -> Result<()>`
-- [ ] `Db::get_accounts(&self) -> Result<Vec<Account>>`
-- [ ] `Db::upsert_account(&self, account: &Account) -> Result<()>`
-- [ ] `Db::get_transactions(&self, filters: &TransactionFilters) -> Result<Vec<Transaction>>` -- filters: month, category, account, page, limit
-- [ ] `Db::update_transaction_category(&self, id: &str, category: &str, source: CategorySource) -> Result<()>`
-- [ ] `Db::set_budget(&self, month: &str, category: &str, amount: Decimal) -> Result<()>` -- upsert
-- [ ] `Db::get_budget(&self, month: &str) -> Result<Vec<BudgetRow>>` -- joins with actual spending
-- [ ] `Db::upsert_portfolio_snapshot(&self, snapshot: &PortfolioSnapshot) -> Result<()>`
-- [ ] `Db::get_portfolio_as_of(&self, date: NaiveDate) -> Result<Vec<PortfolioRow>>` -- carry-forward query (see design/03_data_model.md Key Decision 5)
-- [ ] `Db::upsert_holdings(&self, account_id: &str, holdings: &[Holding]) -> Result<()>`
+- [x] `Db` struct wrapping `rusqlite::Connection`
+- [x] `Db::open(path: &Path) -> Result<Db>`:
+  - [x] Resolves path from `dirs::data_local_dir()` when no explicit path given
+  - [x] Creates parent directory with mode `0o700` (Unix) if it does not exist
+  - [x] Sets DB file to mode `0o600` (Unix) on creation
+  - [x] Runs `schema.sql` via `execute_batch`
+  - [x] Enables WAL mode: `PRAGMA journal_mode=WAL`
+- [x] `Db::insert_transaction(&self, tx: &Transaction) -> Result<InsertOutcome>` -- INSERT OR IGNORE on fingerprint
+- [x] `Db::log_import(&self, log: &ImportLog) -> Result<()>`
+- [x] `Db::get_accounts(&self) -> Result<Vec<Account>>`
+- [x] `Db::upsert_account(&self, account: &Account) -> Result<()>`
+- [x] `Db::get_transactions(&self, filters: &TransactionFilters) -> Result<Vec<Transaction>>` -- filters: month, category, account, page, limit
+- [x] `Db::update_transaction_category(&self, id: &str, category: &str, source: CategorySource) -> Result<()>`
+- [x] `Db::set_budget(&self, month: &str, category: &str, amount: Decimal) -> Result<()>` -- upsert
+- [x] `Db::get_budget(&self, month: &str) -> Result<Vec<BudgetRow>>` -- joins with actual spending
+- [x] `Db::upsert_portfolio_snapshot(&self, snapshot: &PortfolioSnapshot) -> Result<()>`
+- [x] `Db::get_portfolio_as_of(&self, date: NaiveDate) -> Result<Vec<PortfolioRow>>` -- carry-forward query (see design/03_data_model.md Key Decision 5)
+- [x] `Db::upsert_holdings(&self, account_id: &str, holdings: &[Holding]) -> Result<()>`
 
 ### 1.5 Import trait and CSV importers
 
 > **Iteration note (prompt 3.3).** Implement this section per [`10_llm_csv_import.md`](10_llm_csv_import.md), not the header-sniffing bullets below. The bullets are kept for historical context so the diff against the original Phase 1 is reviewable. In short: there is no `detect_format`, no per-bank column mapping, and no per-bank branch inside `map_row`. `CsvImporter` is a thin adapter around `LlmStatementParser`, which produces `UnifiedStatementRow`s and a `(detected_bank, detection_confidence)` tag. Two confidence gates apply: file-level (hard fail below threshold) and row-level (skip + warn). Unknown banks pass through as `BankFormat::Unknown` provided file-level confidence clears the threshold.
 
-- [ ] `backend/src/importers/mod.rs`:
-  - `Importer` trait: `fn import(&self, path: &Path, account_id: &str, db: &Db) -> Result<ImportResult>`
-  - `get_importer(path: &Path) -> Result<Box<dyn Importer>>` -- extension-based dispatch only (`.csv` -> `CsvImporter`)
-- [ ] `backend/src/importers/csv_importer.rs`:
-  - `BankFormat` enum: `Monzo | Revolut | Lloyds | Unknown`
-  - `detect_format(headers: &StringRecord) -> BankFormat`
-  - `CsvImporter` implementing `Importer` for all three formats
-  - Monzo: columns `Transaction ID, Date, Name, Category, Amount` -- amount already signed
-  - Revolut: columns `Type, Completed Date, Description, Amount` -- amount already signed
-  - Lloyds: columns `Transaction Date, Transaction Description, Debit Amount, Credit Amount` -- separate columns, `DD/MM/YYYY` date
-  - For each row: parse date + amount, normalize description, compute fingerprint, call `db.insert_transaction`
-  - Show `indicatif` progress bar during import
+- [x] `backend/src/importers/mod.rs`:
+  - [x] `Importer` trait: `fn import(&self, path: &Path, account_id: &str, db: &Db) -> Result<ImportResult>`
+  - [x] `get_importer(path: &Path) -> Result<Box<dyn Importer>>` -- extension-based dispatch only (`.csv` -> `CsvImporter`)
+- [x] `backend/src/importers/csv_importer.rs`:
+  - [x] `BankFormat` enum: `Monzo | Revolut | Lloyds | Unknown`
+  - [x] `detect_format(headers: &StringRecord) -> BankFormat`
+  - [x] `CsvImporter` implementing `Importer` for all three formats
+  - [x] Monzo: columns `Transaction ID, Date, Name, Category, Amount` -- amount already signed
+  - [x] Revolut: columns `Type, Completed Date, Description, Amount` -- amount already signed
+  - [x] Lloyds: columns `Transaction Date, Transaction Description, Debit Amount, Credit Amount` -- separate columns, `DD/MM/YYYY` date
+  - [x] For each row: parse date + amount, normalize description, compute fingerprint, call `db.insert_transaction`
+  - [x] Show `indicatif` progress bar during import
 
 ### 1.6 CLI commands
 
-- [ ] `backend/src/commands/import.rs`:
-  - Accepts a single file path or directory
-  - For directories: glob `*.csv`, process all files in parallel with Rayon (or sequentially for Phase 1)
-  - Prints per-file summary: `Imported 142 new, 3 duplicates (monzo_march.csv)`
-  - Records each file in `import_log`
-- [ ] `backend/src/commands/stats.rs`:
-  - Total transaction count and date range
-  - Per-account breakdown (count, date range, uncategorized count)
-- [ ] `backend/src/commands/account.rs`:
-  - `account add --id --name --institution --type [--balance] [--currency]`
-  - `account set-balance <id> <amount> --date YYYY-MM-DD`
-  - `account list`
-- [ ] `backend/src/commands/budget.rs` (stub for Phase 1, flesh out in Phase 3):
-  - `budget set --month YYYY-MM --category <cat> --amount N`
-  - `budget status`
-- [ ] `backend/src/cli.rs`: clap derive macros, top-level `Cli` and `Commands` enum
-- [ ] `backend/src/main.rs`: dispatch to commands, init tracing-subscriber with `FYNANCE_LOG_LEVEL`
+- [x] `backend/src/commands/import.rs`:
+  - [x] Accepts a single file path or directory
+  - [x] For directories: glob `*.csv`, process all files in parallel with Rayon (or sequentially for Phase 1)
+  - [x] Prints per-file summary: `Imported 142 new, 3 duplicates (monzo_march.csv)`
+  - [x] Records each file in `import_log`
+- [x] `backend/src/commands/stats.rs`:
+  - [x] Total transaction count and date range
+  - [x] Per-account breakdown (count, date range, uncategorized count)
+- [x] `backend/src/commands/account.rs`:
+  - [x] `account add --id --name --institution --type [--balance] [--currency]`
+  - [x] `account set-balance <id> <amount> --date YYYY-MM-DD`
+  - [x] `account list`
+- [x] `backend/src/commands/budget.rs` (stub for Phase 1, flesh out in Phase 3):
+  - [x] `budget set --month YYYY-MM --category <cat> --amount N`
+  - [x] `budget status`
+- [x] `backend/src/cli.rs`: clap derive macros, top-level `Cli` and `Commands` enum
+- [x] `backend/src/main.rs`: dispatch to commands, init tracing-subscriber with `FYNANCE_LOG_LEVEL`
 
 ### 1.7 Tests
 
-- [ ] Unit tests in `util.rs`: `normalize_description`, `fingerprint`, `parse_date` (both date formats, invalid input)
-- [ ] Integration test: import a fixture Monzo CSV, verify row count, deduplication, and amount sign
-- [ ] Integration test: import a fixture Revolut CSV
-- [ ] Integration test: import a fixture Lloyds CSV
+- [x] Unit tests in `util.rs`: `normalize_description`, `fingerprint`, `parse_date` (both date formats, invalid input)
+- [x] Integration test: import a fixture Monzo CSV, verify row count, deduplication, and amount sign
+- [x] Integration test: import a fixture Revolut CSV
+- [x] Integration test: import a fixture Lloyds CSV
 
 ### Deliverable
 
@@ -134,21 +134,21 @@ cargo run -- stats
 
 ### 2.1 Axum server scaffold
 
-- [ ] Add to `Cargo.toml`: `axum`, `tokio` (features: full), `tower-http` (features: cors, fs), `include_dir`, `open`, `dotenvy`
-- [ ] `backend/src/server/mod.rs`:
-  - `build_router(db: Arc<Db>) -> Router` -- assembles all routes with shared state
-  - CORS: `tower_http::cors::CorsLayer::permissive()` (loopback only, not a security boundary)
-  - Static file fallback: serve embedded `frontend/dist/` via `include_dir!`; all unmatched GET routes return `index.html` for client-side routing
-- [ ] `backend/src/server/static_files.rs`:
-  - `static FRONTEND_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/../frontend/dist")`
-  - `serve_static(uri: &str) -> Response` -- look up file in `FRONTEND_DIR`, return with correct `Content-Type`; fallback to `index.html`
-- [ ] `backend/src/commands/serve.rs`:
-  - Load `.env` via `dotenvy`
-  - Bind `TcpListener` to `FYNANCE_HOST:FYNANCE_PORT` (default `127.0.0.1:7433`)
-  - Start Axum server on the listener
-  - Call `open::that("http://localhost:7433")` unless `--no-open` flag is set
-  - Log startup: `fynance: server started at http://localhost:7433`
-- [ ] Add `serve` subcommand to `src/cli.rs`
+- [x] Add to `Cargo.toml`: `axum`, `tokio` (features: full), `tower-http` (features: cors, fs), `include_dir`, `open`, `dotenvy`
+- [x] `backend/src/server/mod.rs`:
+  - [x] `build_router(db: Arc<Db>) -> Router` -- assembles all routes with shared state
+  - [x] CORS: `tower_http::cors::CorsLayer::permissive()` (loopback only, not a security boundary)
+  - [x] Static file fallback: serve embedded `frontend/dist/` via `include_dir!`; all unmatched GET routes return `index.html` for client-side routing
+- [x] `backend/src/server/static_files.rs`:
+  - [x] `static FRONTEND_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/../frontend/dist")`
+  - [x] `serve_static(uri: &str) -> Response` -- look up file in `FRONTEND_DIR`, return with correct `Content-Type`; fallback to `index.html`
+- [x] `backend/src/commands/serve.rs`:
+  - [x] Load `.env` via `dotenvy`
+  - [x] Bind `TcpListener` to `FYNANCE_HOST:FYNANCE_PORT` (default `127.0.0.1:7433`)
+  - [x] Start Axum server on the listener
+  - [x] Call `open::that("http://localhost:7433")` unless `--no-open` flag is set
+  - [x] Log startup: `fynance: server started at http://localhost:7433`
+- [x] Add `serve` subcommand to `src/cli.rs`
 
 ### 2.2 API token authentication
 
@@ -164,49 +164,49 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 ```
 
-- [ ] `Db::create_token(&self, name: &str) -> Result<String>` -- generate `fyn_` + 32 random hex bytes, store `SHA-256(token)` in DB, return raw token (shown once)
-- [ ] `Db::list_tokens(&self) -> Result<Vec<TokenInfo>>`
-- [ ] `Db::revoke_token(&self, name: &str) -> Result<()>` -- set `is_active = 0`
-- [ ] `Db::validate_token(&self, raw_token: &str) -> Result<bool>` -- hash and lookup; update `last_used`
-- [ ] `backend/src/server/auth.rs`:
-  - `AuthLayer` middleware: extract `Authorization: Bearer fyn_...` header
-  - Requests from loopback (`127.0.0.1`) without a token are allowed (browser UI path)
-  - Requests with a valid token are allowed (programmatic API path)
-  - All other requests get `401 Unauthorized`
-  - Attach `AuthContext` (anonymous loopback vs. authenticated token) to request extensions
-- [ ] CLI token commands in `backend/src/commands/token.rs`:
-  - `token create --name <name>` -- prints raw token once
-  - `token list`
-  - `token revoke --name <name>`
+- [x] `Db::create_token(&self, name: &str) -> Result<String>` -- generate `fyn_` + 32 random hex bytes, store `SHA-256(token)` in DB, return raw token (shown once)
+- [x] `Db::list_tokens(&self) -> Result<Vec<TokenInfo>>`
+- [x] `Db::revoke_token(&self, name: &str) -> Result<()>` -- set `is_active = 0`
+- [x] `Db::validate_token(&self, raw_token: &str) -> Result<bool>` -- hash and lookup; update `last_used`
+- [x] `backend/src/server/auth.rs`:
+  - [x] `AuthLayer` middleware: extract `Authorization: Bearer fyn_...` header
+  - [x] Requests from loopback (`127.0.0.1`) without a token are allowed (browser UI path)
+  - [x] Requests with a valid token are allowed (programmatic API path)
+  - [x] All other requests get `401 Unauthorized`
+  - [x] Attach `AuthContext` (anonymous loopback vs. authenticated token) to request extensions
+- [x] CLI token commands in `backend/src/commands/token.rs`:
+  - [x] `token create --name <name>` -- prints raw token once
+  - [x] `token list`
+  - [x] `token revoke --name <name>`
 
 ### 2.3 API docs endpoint (`GET /api/docs`)
 
-- [ ] `backend/src/server/routes/docs.rs`:
-  - Returns OpenAPI JSON spec (hand-crafted for MVP, `ts-rs`-assisted later)
-  - Must include: all route definitions, request/response schemas, field descriptions, example payloads, full category taxonomy from `config/categories.yaml`, `category_source` field values and their meaning
-  - Designed to be agent-readable: an AI agent should be able to fetch this and immediately start pushing data
-- [ ] Register route: `GET /api/docs` -- no auth required
+- [x] `backend/src/server/routes/docs.rs`:
+  - [x] Returns OpenAPI JSON spec (hand-crafted for MVP, `ts-rs`-assisted later)
+  - [x] Must include: all route definitions, request/response schemas, field descriptions, example payloads, full category taxonomy from `config/categories.yaml`, `category_source` field values and their meaning
+  - [x] Designed to be agent-readable: an AI agent should be able to fetch this and immediately start pushing data
+- [x] Register route: `GET /api/docs` -- no auth required
 
 ### 2.4 Frontend shell
 
-- [ ] Initialize React 19 project in `frontend/` with Vite + TypeScript template
-- [ ] Install and configure: React 19, React Compiler (babel-plugin-react-compiler), Tailwind CSS, Recharts, shadcn-ui base components
-- [ ] Create `frontend/src/App.tsx` with a four-tab layout: Transactions, Budget, Portfolio, Reports
-- [ ] Create `frontend/src/components/Navbar.tsx` with tab navigation
-- [ ] Create `frontend/src/components/DateRangePicker.tsx`: always-visible date range selector with presets (current month, last 3 months, YTD, full year, last 5 years, custom)
-- [ ] Create `frontend/src/context/DateRangeContext.tsx`: shared date range state across all pages
-- [ ] Create placeholder `frontend/src/pages/Transactions.tsx`, `Budget.tsx`, `Portfolio.tsx`, `Reports.tsx` (each renders "Coming soon.")
-- [ ] Create `frontend/src/api/client.ts`: typed fetch wrappers for all API routes; returns mock data for now, real fetch later
-- [ ] Create `frontend/src/data/mock.ts`: typed mock data matching Rust-generated types from `frontend/src/bindings/`
-- [ ] `cargo test` generates TypeScript bindings into `frontend/src/bindings/` via `ts-rs`
-- [ ] `npm run build` in `frontend/` produces `frontend/dist/`; `cargo build --release` embeds it
+- [x] Initialize React 19 project in `frontend/` with Vite + TypeScript template
+- [x] Install and configure: React 19, React Compiler (babel-plugin-react-compiler), Tailwind CSS, Recharts, shadcn-ui base components
+- [x] Create `frontend/src/App.tsx` with a four-tab layout: Transactions, Budget, Portfolio, Reports
+- [x] Create `frontend/src/components/Navbar.tsx` with tab navigation
+- [x] Create `frontend/src/components/DateRangePicker.tsx`: always-visible date range selector with presets (current month, last 3 months, YTD, full year, last 5 years, custom)
+- [x] Create `frontend/src/context/DateRangeContext.tsx`: shared date range state across all pages
+- [x] Create placeholder `frontend/src/pages/Transactions.tsx`, `Budget.tsx`, `Portfolio.tsx`, `Reports.tsx` (each renders "Coming soon.")
+- [x] Create `frontend/src/api/client.ts`: typed fetch wrappers for all API routes; returns mock data for now, real fetch later
+- [x] Create `frontend/src/data/mock.ts`: typed mock data matching Rust-generated types from `frontend/src/bindings/`
+- [x] `cargo test` generates TypeScript bindings into `frontend/src/bindings/` via `ts-rs`
+- [x] `npm run build` in `frontend/` produces `frontend/dist/`; `cargo build --release` embeds it
 
 ### 2.5 Error handling conventions
 
-- [ ] `backend/src/server/error.rs`:
-  - `AppError` enum with variants for `NotFound`, `BadRequest`, `Unauthorized`, `Internal`
-  - Implement `IntoResponse` for `AppError`: maps to appropriate HTTP status + JSON body `{ "error": "..." }`
-  - All Axum handlers return `Result<Json<T>, AppError>`
+- [x] `backend/src/server/error.rs`:
+  - [x] `AppError` enum with variants for `NotFound`, `BadRequest`, `Unauthorized`, `Internal`
+  - [x] Implement `IntoResponse` for `AppError`: maps to appropriate HTTP status + JSON body `{ "error": "..." }`
+  - [x] All Axum handlers return `Result<Json<T>, AppError>`
 
 ### Deliverable
 
