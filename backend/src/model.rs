@@ -227,8 +227,32 @@ pub struct BudgetRow {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct CategoryTotal {
     pub category: String,
-    /// Signed sum of `amount` for this category (negative = net spend).
+    /// When `direction` is unset the total is the signed net sum
+    /// (negative = net spend). When `direction` is `outflow` or `income`
+    /// the total is the sum of absolute values of matching transactions.
     pub total: String,
+}
+
+/// Cash-flow direction filter for aggregation endpoints.
+/// `Outflow` sums absolute values of negative amounts (spending).
+/// `Income` sums absolute values of positive amounts (credits).
+/// When no direction is supplied the caller gets signed net sums.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "lowercase")]
+pub enum TransactionDirection {
+    Outflow,
+    Income,
+}
+
+impl TransactionDirection {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "outflow" => Some(Self::Outflow),
+            "income" => Some(Self::Income),
+            _ => None,
+        }
+    }
 }
 
 /// Maps one budget category to a spending-grid section.

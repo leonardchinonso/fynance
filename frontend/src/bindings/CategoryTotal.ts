@@ -5,6 +5,8 @@
  */
 export type CategoryTotal = { category: string, 
 /**
- * Signed sum of `amount` for this category (negative = net spend).
+ * When `direction` is unset the total is the signed net sum
+ * (negative = net spend). When `direction` is `outflow` or `income`
+ * the total is the sum of absolute values of matching transactions.
  */
 total: string, };

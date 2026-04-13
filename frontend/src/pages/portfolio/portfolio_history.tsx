@@ -1,6 +1,7 @@
 import { useState } from "react"
 import type { PortfolioHistoryRow, Granularity } from "@/types"
 import { StyledLineChart } from "@/components/charts"
+import { EmptyState } from "@/components/empty_state"
 import {
   Table,
   TableBody,
@@ -63,6 +64,10 @@ export function PortfolioHistory({ history, granularity }: PortfolioHistoryProps
 
   const filtered = history.filter((row) => parseFloat(row.total_wealth) > 0)
   const aggregated = aggregateHistory(filtered, granularity)
+
+  if (aggregated.length === 0) {
+    return <EmptyState />
+  }
 
   const chartData = aggregated.map((row) => ({
     period: formatPeriodLabel(row.month, granularity),

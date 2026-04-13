@@ -746,60 +746,82 @@ When `as_of` is omitted, default to today (or the most recent balance update dat
 
 ## 6. Summary Checklist
 
-### New DB tables needed
-- [ ] `profiles` (id, name)
-- [ ] `account_owners` or add `profile_ids` JSON column to `accounts`
+**Status as of 2026-04-13** (audited against `origin/master` @ `89cd1b7`). Done items have been moved to the bottom of this section.
 
-### Model changes
-- [ ] `Account`: add `profile_ids` field
-- [ ] `Holding`: add `short_name` field
+### Outstanding
 
-### New endpoints (not in backend plan)
-- [ ] `GET /api/profiles`
-- [ ] `GET /api/budget/spending-grid?start=&end=&granularity=&profile_id=`
-- [ ] `GET /api/cash-flow?start=&end=&profile_id=`
-- [ ] `GET /api/portfolio/snapshots?start=&end=`
-- [ ] `GET /api/transactions/by-category?start=&end=&accounts=&profile_id=` (chart aggregation)
+#### New endpoints
+- [ ] `GET /api/portfolio/snapshots?start=&end=` — per-account monthly snapshots for the accounts grid. Note: item 31 below ("Account snapshot deltas, summary mode") is served by a different endpoint (`GET /api/portfolio/balances?summary=true` in `backend/src/server/routes/portfolio.rs`), so deltas work, but the raw snapshot listing endpoint the handover called for is not present.
 
-### Modified endpoints (differ from plan)
-- [ ] `GET /api/transactions`: date range instead of single month, multi-select filters, search, profile_id
-- [ ] `GET /api/portfolio`: add available/unavailable wealth, by_sector, remove monthly_snapshots
-- [ ] `GET /api/portfolio/history`: return available/unavailable split, accept granularity
-- [ ] `GET /api/holdings`: support batch/profile query (avoid N+1)
-- [ ] `GET /api/accounts`: accept `?profile_id=` filter
-- [ ] `GET /api/budget/:month`: return `BudgetRow[]` with pre-computed actual spending
+#### Aligned endpoints
+- [ ] `GET /api/export` — no backend handler; frontend `real_service.ts` still routes this to mock.
 
-### Endpoints aligned with plan (no changes needed)
-- [ ] `POST /api/budget` (set budget amount)
-- [ ] `POST /api/accounts` (register account)
-- [ ] `PATCH /api/accounts/:id/balance` (update balance)
-- [ ] `PATCH /api/transactions/:id` (edit category, notes)
-- [ ] `GET /api/transactions/categories`
-- [ ] `GET /api/export`
+#### Section 7 / extended recommendations
+- [ ] `exchange_rates` table — not in `db/sql/schema.sql`. Currency convention ("store in source currency, convert on display") is implicitly followed but not backed by a rates table yet.
+- [ ] CSV importer extracts balance/holdings in addition to transactions — current importer (`backend/src/importers/csv_importer.rs`) is transaction-only; closing balances and positions are set via separate `PATCH /api/accounts/:id/balance` and holdings upload calls.
 
-### Endpoints in plan but not yet used by frontend
+#### Frontend wiring gap
+- [ ] Holdings N+1 on the frontend — backend batch endpoint exists (`GET /api/holdings?account_ids=` / `?profile_id=` in `backend/src/server/routes/holdings.rs`), but `frontend/src/pages/portfolio.tsx` still calls `getHoldings(accountId)` in a loop per investment/pension account. Backend work is done; just needs the frontend to switch to the batch call.
+
+### Endpoints in plan but not yet used by frontend (still informational, not blockers)
 - [ ] `POST /api/import` (typed JSON import)
 - [ ] `POST /api/import/csv` (CSV upload)
 - [ ] `POST /api/import/bulk` (multiple CSVs)
-- [ ] `GET /api/income/:month` (not used; frontend derives from transactions)
+- [ ] `GET /api/income/:month` (frontend derives from transactions)
 - [ ] `GET /api/reports/:month` (Reports page is stub)
 - [ ] `GET /api/docs` (OpenAPI spec)
 - [ ] `GET /api/ingestion/checklist/:month`
 - [ ] `POST /api/ingestion/checklist/:month/:account_id`
 - [ ] Token management (CLI only)
 
-### Frontend logic to move to backend (priority order)
-1. [ ] **CRITICAL**: Spending grid computation (pivot by category x month)
-2. [ ] **CRITICAL**: Portfolio response aggregation (net worth, breakdowns)
-3. [ ] **HIGH**: Portfolio history aggregation (available/unavailable per month)
-4. [ ] **HIGH**: Cash flow computation (income vs spending per month)
-5. [ ] **HIGH**: Budget row computation (budget target + actual spending join)
-6. [ ] **MEDIUM**: Holdings batch query (avoid N+1)
-7. [ ] **MEDIUM**: Transaction search (server-side LIKE or FTS)
-8. [ ] **MEDIUM**: Chart data aggregation (by-category totals, not raw transactions)
-9. [ ] **LOW**: Category list from taxonomy, not transaction scan
-10. [ ] **LOW**: Account snapshot deltas (first/last per account)
-11. [ ] **LOW**: Investment metrics (new cash vs market growth)
+---
+
+### Done
+
+#### New DB tables
+- [x] `profiles` (id, name) — `db/sql/schema.sql:143-146`
+- [x] `profile_ids` on `accounts` — added via migration 002 in `backend/src/storage/db.rs`
+
+#### Model changes
+- [x] `Account.profile_ids: Vec<String>` — `backend/src/model.rs:78-81`
+- [x] `Holding.short_name: Option<String>` — `backend/src/model.rs:283`
+
+#### New endpoints
+- [x] `GET /api/profiles` — `backend/src/server/routes/profiles.rs`
+- [x] `GET /api/budget/spending-grid` — `backend/src/server/routes/budget.rs`
+- [x] `GET /api/cash-flow` — `backend/src/server/routes/portfolio.rs`
+- [x] `GET /api/transactions/by-category` — `backend/src/server/routes/transactions.rs`
+
+#### Modified endpoints
+- [x] `GET /api/transactions`: `start`, `end`, multi-select `accounts`, multi-select `categories`, `search`, `profile_id` — `backend/src/server/routes/transactions.rs:25-36`
+- [x] `GET /api/portfolio`: returns `available_wealth`, `unavailable_wealth`, `by_asset_class` (a.k.a. `by_sector`), no `monthly_snapshots` — `backend/src/model.rs:217-236`
+- [x] `GET /api/portfolio/history`: available/unavailable/total per period, `granularity` accepted — `backend/src/model.rs:247-260`
+- [x] `GET /api/holdings`: supports `?account_ids=` and `?profile_id=` (backend batch query done — frontend wiring still pending, see Outstanding)
+- [x] `GET /api/accounts`: accepts `?profile_id=` — `backend/src/server/routes/accounts.rs:14-28`
+- [x] `GET /api/budget/:month`: returns `BudgetRow[]` with pre-computed actuals — `backend/src/server/routes/budget.rs:15-25`
+
+#### Endpoints aligned with plan
+- [x] `POST /api/budget`
+- [x] `POST /api/accounts`
+- [x] `PATCH /api/accounts/:id/balance`
+- [x] `PATCH /api/transactions/:id`
+- [x] `GET /api/transactions/categories`
+
+#### Frontend logic moved to backend
+1. [x] **CRITICAL**: Spending grid computation — `db::get_spending_grid`
+2. [x] **CRITICAL**: Portfolio response aggregation — `backend/src/server/routes/portfolio.rs:25-130`
+3. [x] **HIGH**: Portfolio history aggregation — `db::get_monthly_net_worth`
+4. [x] **HIGH**: Cash flow computation — `db::get_cash_flow`
+5. [x] **HIGH**: Budget row computation — `db::get_effective_budget`
+6. [x] **MEDIUM**: Transaction search — `db::get_transactions` with `search` param
+7. [x] **MEDIUM**: Chart data aggregation (by-category) — no more `limit: 10000` dual-fetch
+8. [x] **LOW**: Category list from taxonomy — `api.getCategories()`
+9. [x] **LOW**: Account snapshot deltas (summary mode) — `backend/src/server/routes/portfolio.rs:177-210`
+10. [x] **LOW**: Investment metrics — `PortfolioResponse.investment_metrics` (`backend/src/model.rs:218`)
+
+#### Section 7 / extended recommendations
+- [x] `portfolio_snapshots` consolidated into `holdings` (symbol `_CASH`) via migration `db/sql/migrations/004_consolidate_snapshots.sql` — Option A of the consolidation proposal
+- [x] `HoldingType::Cash` variant added — `backend/src/model.rs:308-313`
 
 ---
 

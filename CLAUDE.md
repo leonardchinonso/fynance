@@ -201,3 +201,4 @@ See `design/05_security_isolation.md` for details.
 - Axum handlers return `Result<Json<T>, AppError>` where `AppError` implements `IntoResponse`
 - Frontend fetches through `src/api/client.ts`, never direct `fetch()` in components
 - All API response types are auto-generated from Rust via `ts-rs` into `frontend/src/bindings/`. Never manually duplicate types in TypeScript.
+- Playwright screenshots and traces always go inside the `.playwright-mcp/` folder (e.g. `.playwright-mcp/live-transactions.png`). Never write screenshots to the repo root or anywhere else.

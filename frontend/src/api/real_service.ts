@@ -1,15 +1,18 @@
 import type {
   Account,
+  AccountSnapshot,
   BudgetRow,
-  BudgetUpdateRequest,
   CashFlowMonth,
+  CategoryTotal,
+  CategoryTotalFilters,
   Granularity,
   Holding,
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  AccountSnapshot,
   Profile,
+  SetBudgetOverrideBody,
+  SetStandingBudgetBody,
   SpendingGridRow,
   Transaction,
   TransactionFilters,
@@ -47,13 +50,13 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
-// Mock fallback for endpoints the backend doesn't have yet
+// Mock fallback for endpoints the backend doesn't have yet (currently: exportData)
 const mock = new MockApiService()
 
 /**
- * RealApiService calls the Rust backend for endpoints that exist,
- * and falls back to MockApiService for portfolio/export endpoints
- * that haven't been built yet.
+ * RealApiService calls the Rust backend for every endpoint that has
+ * server-side support. The only remaining mock fallback is exportData
+ * which isn't built on the backend yet.
  */
 export class RealApiService implements ApiService {
   // ── Real endpoints ──────────────────────────────────────────────
@@ -65,46 +68,31 @@ export class RealApiService implements ApiService {
   async getTransactions(
     filters: TransactionFilters
   ): Promise<PaginatedResponse<Transaction>> {
-    // Backend caps limit at 200. For requests that want more (e.g. charts
-    // asking for "all" transactions via limit=10000), paginate transparently.
-    const BACKEND_MAX = 200
-    const wantLimit = filters.limit ?? 25
+    const params: Record<string, string> = {}
+    if (filters.start) params.start = filters.start
+    if (filters.end) params.end = filters.end
+    if (filters.accounts?.length) params.accounts = filters.accounts.join(",")
+    if (filters.categories?.length)
+      params.categories = filters.categories.join(",")
+    if (filters.search) params.search = filters.search
+    if (filters.profile_id) params.profile_id = filters.profile_id
+    if (filters.page) params.page = String(filters.page)
+    if (filters.limit) params.limit = String(filters.limit)
+    return get<PaginatedResponse<Transaction>>(`${BASE}/transactions`, params)
+  }
 
-    const buildParams = (page: number, limit: number) => {
-      const params: Record<string, string> = { page: String(page), limit: String(limit) }
-      if (filters.start) params.start = filters.start
-      if (filters.end) params.end = filters.end
-      if (filters.accounts?.length) params.accounts = filters.accounts.join(",")
-      if (filters.categories?.length)
-        params.categories = filters.categories.join(",")
-      if (filters.search) params.search = filters.search
-      if (filters.profile_id) params.profile_id = filters.profile_id
-      return params
-    }
-
-    if (wantLimit <= BACKEND_MAX) {
-      return get<PaginatedResponse<Transaction>>(
-        `${BASE}/transactions`,
-        buildParams(filters.page ?? 1, wantLimit)
-      )
-    }
-
-    // Loop through pages until we have wantLimit rows or exhaust the result set
-    const all: Transaction[] = []
-    let page = 1
-    let total = 0
-    while (all.length < wantLimit) {
-      const res = await get<PaginatedResponse<Transaction>>(
-        `${BASE}/transactions`,
-        buildParams(page, BACKEND_MAX)
-      )
-      total = res.total
-      all.push(...res.data)
-      if (res.data.length < BACKEND_MAX) break
-      if (all.length >= total) break
-      page++
-    }
-    return { data: all.slice(0, wantLimit), total, page: 1, limit: wantLimit }
+  async getTransactionsByCategory(
+    filters: CategoryTotalFilters
+  ): Promise<CategoryTotal[]> {
+    const params: Record<string, string> = {}
+    if (filters.start) params.start = filters.start
+    if (filters.end) params.end = filters.end
+    if (filters.accounts?.length) params.accounts = filters.accounts.join(",")
+    if (filters.categories?.length)
+      params.categories = filters.categories.join(",")
+    if (filters.profile_id) params.profile_id = filters.profile_id
+    if (filters.direction) params.direction = filters.direction
+    return get<CategoryTotal[]>(`${BASE}/transactions/by-category`, params)
   }
 
   async getCategories(): Promise<string[]> {
@@ -132,40 +120,62 @@ export class RealApiService implements ApiService {
     return get<SpendingGridRow[]>(`${BASE}/budget/spending-grid`, params)
   }
 
-  async updateBudget(req: BudgetUpdateRequest): Promise<void> {
-    await post(`${BASE}/budget`, {
-      category: req.category,
-      amount: req.amount,
-    })
+  async setStandingBudget(body: SetStandingBudgetBody): Promise<void> {
+    await post(`${BASE}/budget`, body)
   }
 
-  // ── Mock fallbacks (backend endpoints don't exist yet) ──────────
+  async setBudgetOverride(body: SetBudgetOverrideBody): Promise<void> {
+    await post(`${BASE}/budget/override`, body)
+  }
+
+  // ── Portfolio endpoints (now backed by the real backend) ────────
 
   async getPortfolio(profileId?: string): Promise<PortfolioResponse> {
-    return mock.getPortfolio(profileId)
+    const params: Record<string, string> = {}
+    if (profileId) params.profile_id = profileId
+    return get<PortfolioResponse>(`${BASE}/portfolio`, params)
   }
 
   async getPortfolioHistory(
-    start?: string,
-    end?: string
+    start: string,
+    end: string,
+    granularity: Granularity = "monthly",
+    profileId?: string
   ): Promise<PortfolioHistoryRow[]> {
-    return mock.getPortfolioHistory(start, end)
+    const params: Record<string, string> = { start, end, granularity }
+    if (profileId) params.profile_id = profileId
+    return get<PortfolioHistoryRow[]>(`${BASE}/portfolio/history`, params)
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {
-    return mock.getHoldings(accountId)
+    return get<Holding[]>(`${BASE}/holdings`, { account_id: accountId })
   }
 
-  async getCashFlow(start?: string, end?: string): Promise<CashFlowMonth[]> {
-    return mock.getCashFlow(start, end)
+  async getCashFlow(
+    start: string,
+    end: string,
+    granularity: Granularity = "monthly",
+    profileId?: string
+  ): Promise<CashFlowMonth[]> {
+    const params: Record<string, string> = { start, end, granularity }
+    if (profileId) params.profile_id = profileId
+    return get<CashFlowMonth[]>(`${BASE}/cash-flow`, params)
   }
 
   async getAccountBalances(
-    start?: string,
-    end?: string
+    start: string,
+    end: string,
+    _profileId?: string
   ): Promise<AccountSnapshot[]> {
-    return mock.getAccountBalances(start, end)
+    // Backend endpoint is /api/portfolio/balances. The non-summary mode
+    // returns the full per-account snapshot list; omit ?summary=true.
+    return get<AccountSnapshot[]>(`${BASE}/portfolio/balances`, {
+      start,
+      end,
+    })
   }
+
+  // ── Mock fallback (backend endpoint doesn't exist yet) ──────────
 
   async exportData(format: string): Promise<void> {
     return mock.exportData(format)

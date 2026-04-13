@@ -3,8 +3,9 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::server::error::AppError;
 use crate::server::state::AppState;
@@ -71,7 +72,10 @@ pub async fn get_spending_grid(
 
 // ── POST /api/budget ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+/// Request body for `POST /api/budget`. Sets a standing monthly target
+/// for one category that applies to every month unless overridden.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SetStandingBudgetBody {
     pub category: String,
     pub amount: String,
@@ -96,7 +100,10 @@ pub async fn set_standing_budget(
 
 // ── POST /api/budget/override ─────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+/// Request body for `POST /api/budget/override`. Sets a per-month override
+/// on top of the standing budget for one category.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SetBudgetOverrideBody {
     pub month: String,
     pub category: String,
