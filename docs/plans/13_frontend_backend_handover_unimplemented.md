@@ -234,85 +234,6 @@ Out of scope for MVP. The backend stores all values in source currency; the fron
 
 ---
 
-## Section 3: Architectural Consolidation Decision
-
-### 3.1 Consolidate snapshots into holdings
-
-**Current State:**  
-The database has two separate time-series tables:
-- `portfolio_snapshots`: account-level balance at a point in time
-- `holdings`: security-level details (shares, values) at a point in time
-
-Both support carry-forward semantics (most recent value as of a date), and there is some overlap in what they represent.
-
-**Decision Needed:**  
-The handover proposes consolidating these into a single `holdings` table as the source of truth for balances:
-- Account balance = SUM(all holdings for that account as of a date)
-- Each account has at least one "cash" or "account balance" holding
-- Eliminates redundancy and parallel time-series logic
-
-**Current Blocker:**  
-- This is a **major architectural change** requiring sign-off from both frontend and backend leads
-- If adopted, `portfolio_snapshots` should be **dropped** (or deprecated)
-- If not adopted, `portfolio_snapshots` should be **renamed** to `account_snapshots` for clarity
-
-**Implementation Notes (if consolidation is adopted):**
-- [ ] Add `"cash"` variant to the `HoldingType` enum (one-line Rust change)
-- [ ] Update schema migration to drop `portfolio_snapshots` table
-- [ ] Update all portfolio queries to SUM holdings instead of reading snapshots
-- [ ] Update import logic to create cash holdings instead of snapshots
-- [ ] Delete portfolio_snapshots.rs and related code
-
-**Implementation Notes (if consolidation is rejected):**
-- [ ] Rename `portfolio_snapshots` table to `account_snapshots` for clarity
-- [ ] Update all references in code (routes, queries, etc.)
-- [ ] Leave both tables in place; no further consolidation planned
-
-**Acceptance Criteria (must choose one):**
-- [ ] **Option A (Consolidate):** HoldingType includes 'cash', portfolio_snapshots dropped, all balance queries use holdings
-- [ ] **Option B (Rename Only):** portfolio_snapshots renamed to account_snapshots, semantics unchanged
-
-**Priority:** High (architectural decision, must be made before phase 2 of new features)
-
-**Status:** Requires decision from Nonso; awaiting sign-off.
-
----
-
-## Section 3.2: Multiple Cash Holdings Per Account (Pots / Sub-balances)
-
-**Current State:**
-Migration 004 consolidated `portfolio_snapshots` into `holdings` by inserting one row per account per date with `symbol = '_CASH'`. Combined with the existing `UNIQUE(account_id, symbol, as_of)` constraint on `holdings`, this means **only one cash holding per account per date is possible**. A second `_CASH` row for the same account on the same `as_of` is rejected by the unique index.
-
-**Why This Is a Gap:**
-The original handover (`docs/frontend-backend-handover.md` Section 7) explicitly called out pots, vaults, and multi-currency balances as cash holdings that should live inside a single parent account:
-
-```
-Account: "Monzo Current" (balance: £2,500)
-  |-- Holding: "Main balance"   (cash, £590)
-  |-- Holding: "Bills pot"      (cash, £800)
-  |-- Holding: "Holiday pot"    (cash, £600)
-  |-- Holding: "Emergency pot"  (cash, £510)
-```
-
-Under the current schema all four rows collide on `(account_id='monzo-current', symbol='_CASH', as_of='2026-03-15')`. The same issue affects a Revolut account that holds GBP, EUR, and USD balances on the same day.
-
-**What's Needed:**
-Pick one of the following. Option A is the cheapest and fully unblocks pots:
-
-- **Option A — Use meaningful symbols instead of a fixed `_CASH` sentinel.** Cash holdings can use symbols like `POT_BILLS`, `POT_HOLIDAY`, or the pot's short name. Plain accounts with no pots keep a single `_CASH` row for the whole balance. No schema change, just a convention shift in the importer and in migration 004's intent.
-- **Option B — Widen the unique constraint to `UNIQUE(account_id, symbol, name, as_of)`.** Allows multiple `_CASH` rows differentiated by `name` (e.g. "Main balance", "Bills pot"). Schema migration required.
-- **Option C — Add a dedicated `slot` or `label` column** and include it in the unique key.
-
-**Acceptance Criteria:**
-- [ ] A single account can carry multiple cash holdings on the same `as_of` date
-- [ ] Ingestion of a Monzo-style account with pots produces one holding row per pot, not a single merged balance
-- [ ] Multi-currency accounts (e.g. Revolut GBP/EUR/USD) can represent each currency as its own cash holding on the same date
-- [ ] Existing `_CASH` rows migrated from `portfolio_snapshots` continue to work
-
-**Priority:** Medium (blocks any pot-aware or multi-currency feature; not blocking the current transactions-only MVP flow)
-
----
-
 ## Section 4: Balance vs Holdings Mismatch Handling
 
 ### 4.1 Soft Warning for Unaccounted Balance
@@ -400,35 +321,6 @@ pub struct UnaccountedBalance {
 - OpenAPI spec (if maintained manually)
 
 **Estimated Effort:** Medium (schema + validation logic, no breaking changes to existing code)
-
----
-
-### Phase 4: Architectural Consolidation (High Priority, Decision Required)
-
-**Depends on:** Decision from Nonso and Ope on consolidation proposal
-
-**Changes Required (if consolidated):**
-1. Add `"cash"` to `HoldingType` enum (1 line change)
-2. Drop `portfolio_snapshots` table in migration
-3. Update all portfolio queries to `SUM(holdings) GROUP BY account_id`
-4. Update importer to create cash holdings instead of snapshots
-5. Delete snapshot-specific code (routes, db methods, etc.)
-
-**Changes Required (if NOT consolidated):**
-1. Rename `portfolio_snapshots` to `account_snapshots` (db + code)
-2. Update all references (straightforward search-replace)
-
-**Affected Files (if consolidated):**
-- `backend/src/model.rs` (HoldingType enum)
-- `backend/src/db.rs` (portfolio queries, drop snapshot methods)
-- `backend/src/routes/portfolio.rs` (routing)
-- `backend/src/importers/unified.rs` (create holdings instead of snapshots)
-- `db/sql/migrations/` (drop table)
-- All tests referencing portfolio_snapshots
-
-**Estimated Effort:** Medium (extensive but straightforward refactoring)
-
-**Blocking:** This decision must be made before phase 3 features go into production, as the schema change is large.
 
 ---
 
@@ -529,25 +421,39 @@ category error — they serve opposite directions of the wire.
 
 | Item | Status | Priority | Effort | Decision Required |
 |------|--------|----------|--------|-------------------|
+| Multiple cash holdings per account (pots) | Not implemented | Medium | Small | Yes (pick A/B/C) |
 | CSV import: extract balance data | Not implemented | Medium | Small | No |
 | CSV import: extract holdings data | Not implemented | Medium | Medium | No |
 | LLM parser: extend for holdings | Not implemented | Medium | Medium | No |
 | Exchange rates table | Not implemented | High | Small | No |
 | Enforce source currency storage | Not implemented | High | Small | No |
 | Display-time currency conversion | Out of scope (post-MVP) | Low | Medium | N/A |
-| Consolidate snapshots into holdings | Requires decision | High | Medium | **Yes** |
 | Soft warning for balance mismatch | Not implemented | Low | Small | No |
 
 ---
 
 ## Next Steps
 
-1. **Immediately:** Decide on architectural consolidation (Section 3.1) — consolidate or rename?
+1. **Immediately:** Decide on pots / multi-cash-holding approach (Section 1) — Option A (symbol convention), B (widen UNIQUE), or C (new column)?
 2. **Phase 3a:** Implement CSV import enhancements (balance + holdings extraction)
 3. **Phase 3b:** Implement currency and exchange rate handling
-4. **Phase 4:** Execute architectural consolidation decision
-5. **Tiny, any time:** Section 6.1 — add `Paginated<T>` generic struct with ts-rs so the frontend can drop `PaginatedResponse<T>`.
-6. **Post-MVP:** Display-time currency conversion in frontend
+4. **Tiny, any time:** Section 6.1 — add `Paginated<T>` generic struct with ts-rs so the frontend can drop `PaginatedResponse<T>`.
+5. **Post-MVP:** Display-time currency conversion in frontend
+
+---
+
+## Completed
+
+### Consolidate snapshots into holdings (was Section 3.1)
+
+**Status:** Done. Option A (consolidate) was chosen and shipped.
+
+- Migration `db/sql/migrations/004_consolidate_snapshots.sql` moves every `portfolio_snapshots` row into `holdings` as `symbol='_CASH'`, `holding_type='cash'`, then drops `portfolio_snapshots` and its index.
+- `HoldingType::Cash` variant added (`backend/src/model.rs`).
+- Portfolio queries now sum holdings instead of reading a separate snapshots table.
+- Account balance at any date = carry-forward + SUM of that account's holdings.
+
+**Caveat:** The chosen implementation uses a fixed `_CASH` sentinel symbol, which blocks multiple cash sub-balances (pots, multi-currency) in a single account. That limitation is tracked as Section 1 in this document.
 
 ---
 

@@ -272,21 +272,34 @@ export function PortfolioOverview({
         )}
       </div>
 
-      {/* Breakdown cards */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <BreakdownCard
-          title="By Asset Type"
-          items={portfolio.by_type}
-          colorFn={(label) =>
-            ACCOUNT_TYPE_COLORS[label as keyof typeof ACCOUNT_TYPE_COLORS] ?? "#78716c"
-          }
-          labelFn={(label) =>
-            ACCOUNT_TYPE_LABELS[label as keyof typeof ACCOUNT_TYPE_LABELS] ?? label
-          }
-        />
-        <BreakdownCard title="By Institution" items={portfolio.by_institution} />
-        <BreakdownCard title="By Asset Class" items={portfolio.by_asset_class} />
-      </div>
+      {/* Breakdown cards - each card hides itself when its underlying
+          breakdown array is empty so the page collapses cleanly for
+          accounts with limited data. The wrapping row also drops out
+          entirely when all three are empty. */}
+      {(portfolio.by_type.length > 0 ||
+        portfolio.by_institution.length > 0 ||
+        portfolio.by_asset_class.length > 0) && (
+        <div className="grid gap-4 md:grid-cols-3">
+          {portfolio.by_type.length > 0 && (
+            <BreakdownCard
+              title="By Asset Type"
+              items={portfolio.by_type}
+              colorFn={(label) =>
+                ACCOUNT_TYPE_COLORS[label as keyof typeof ACCOUNT_TYPE_COLORS] ?? "#78716c"
+              }
+              labelFn={(label) =>
+                ACCOUNT_TYPE_LABELS[label as keyof typeof ACCOUNT_TYPE_LABELS] ?? label
+              }
+            />
+          )}
+          {portfolio.by_institution.length > 0 && (
+            <BreakdownCard title="By Institution" items={portfolio.by_institution} />
+          )}
+          {portfolio.by_asset_class.length > 0 && (
+            <BreakdownCard title="By Asset Class" items={portfolio.by_asset_class} />
+          )}
+        </div>
+      )}
     </div>
   )
 }
