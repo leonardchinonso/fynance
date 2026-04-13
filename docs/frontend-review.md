@@ -47,3 +47,7 @@ target/release/fynance import ~/Downloads/revolut_all_time_statement.csv --accou
 ###### 5. Check the UI for changes
 
 This is where it fails in the UI. The debug logs show the API requests being sent and received as 200, so I think this is a UI issue.
+
+# Security
+
+1. CORS is currently `CorsLayer::permissive()` in `backend/src/server/mod.rs:114`, which sends `Access-Control-Allow-Origin: *`. Combined with the loopback binding, this means any website the user visits in the same browser could issue `fetch('http://127.0.0.1:7433/api/...')` and read the user's finance data. Not a blocker for self-hosted MVP — blast radius is limited — but worth tightening to `http://127.0.0.1:<dev-port>` and `http://localhost:<dev-port>` explicitly when we get a chance, or relying on same-origin once the frontend is served from the backend in production mode.
