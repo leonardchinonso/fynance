@@ -149,3 +149,40 @@ Go through the code in the backend folder and write a comprehensive markdown doc
 
 The frontend is currently being worked on and has made significant progress. The contributor has identified some requirements along with different approaches to execute them in `/Users/leonard/projects/fynance/docs/frontend-backend-handover.md`. I want you to go through the document in `/Users/leonard/projects/fynance/docs/frontend-backend-handover.md`, compare it to the plans in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`, and come up with a plan for the actions, improvements and fixes outlined in the document. It should merge with the initial plan we had in `/Users/leonard/projects/fynance/docs/plans/09_backend_implementation_plan.md`. I agree with the favoured approaches by the collaborators in the document, but if there are any ones you do not agree with, flag them out and we will iterate more on it.
 Come up with a detailed plan to support the fixes/requests and write the plan to the `plans` folder. DO NOT WRITE ANY CODE YET, just write a detailed plan that explains how we would go about implementing the changes. Do not spend time on trying to come up with a new solution in the cases where the recommended solution works enough, especially for an MVP. Come up with the plan and structure it in phases of execution. I will review the plan first before we move to any other thing.
+
+# Prompt 5.1: Component breakdown
+
+Look at the @backend/ folder, study how the Portfolio is built and explain it to me in great detail. Make sure to answer the following questions in great detail and use code pointers where necessary:
+
+1. How is the portfolio balance calculated?
+2. How do the imports for portfolios work?
+3. How are portfolios related to Holdings?
+4. How are the holding balances calculated?
+5. How do the spending/cash flow logic work in the portfolio and holdings territory?
+6. Explain the logic behind the `LAST VALUE (point-in-time)` for portfolio and balance.
+7. How do imports for Holdings work and how is this different from the imports for portfolio and regular account transactions?
+
+# Prompt 6: Improvements
+
+I am reviewing the code and have identified some things that need to change. Come up with a detailed plan for the changes below and write them to the plan folder for me to review. The plan should include code changes (before and after) and justifications as to why. If you do not think the changes should be made, then detail why. If you think the changes could be better, detail them as another approach and explain the pros and cons too.
+
+## Transaction fingerprint generated using (date, amount, description, account_id)
+
+1. If two different transactions have the same date, amount, description and account_id but at different times, they will resolve to the same fingerprint and thus be considered duplicate transactions. We should represent the date as datetime instead. The code currently uses NaiveDate instead of a datetime counterpart.
+2. Description might change between two different imports for the same transaction. For instance, importing via CSV and then importing via Screenshot (supported in the future) might have their descriptions changed for the same account. We should remove description from the fingerprint generation for now and will add it later if we need to tighten the hash.
+
+## Snapshots
+
+1. "Unique constraint: UNIQUE(snapshot_date, account_id) — Can only have one balance per account per day". This should be a datetime not date. We want to be granular.
+
+# Prompt 7: FrontEnd Requirements Iteration
+
+Go through the requirements in `/Users/leonard/projects/fynance/docs/frontend-backend-handover.md` and compare and contrast it against the code base. Identify the asks that are not yet implemented in the code base and copy them to a new file in the `plans` folder. The new file in the plans folder should contain the asks that are in `/Users/leonard/projects/fynance/docs/frontend-backend-handover.md` but not yet answered or supported in the code. For the items with `[SKIP]`, do not copy them over.
+
+# Prompt 8: Architectural Consolidation of Holdings and Snapshots
+
+In the `/Users/leonard/projects/fynance/docs/plans/13_frontend_backend_handover_unimplemented.md` file, we have decided to go with Option A of Section 3. I want you to read Section 3 of the `/Users/leonard/projects/fynance/docs/plans/13_frontend_backend_handover_unimplemented.md` document and come up with a comprehensive and detailed plan of how the consolidation is going to work. Outline the code changes, the schema changes, current callers and migrations of the code in order for another LLM to implement. You should come up with a plan that is > 95% clear and shows where all the changes will be made and how they will be made. The plan should live in `/Users/leonard/projects/fynance/docs/plans/` folder. Do not leave room for ambiguity. Use clear code solutions in the doc.
+
+# Prompt 9: Teach how to run
+
+Read the code, README.md and RUNNING.md in the frontend and backend folders and come up with a document describing in comprehensive step by step how one would run the frontend web app and connect it to the backend. I want to test the end to end flow of both. I want to be able to call click through the frontend UI in the browser and call REAL API endpoints set up by the backend. This means I need to know how to start the frontend app, start the backend app and connect both to run. Write the comprehensive "how to run" to a section in the README.md file in the fynance root folder. You can update any stale data there with the correct data from your findings.

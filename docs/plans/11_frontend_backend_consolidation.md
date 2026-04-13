@@ -239,165 +239,165 @@ All endpoints accept `profile_id` as optional. When omitted, they return unfilte
 
 ### 3.1 Schema changes
 
-- [ ] Add `profiles` table:
+- [x] Add `profiles` table:
   ```sql
   CREATE TABLE IF NOT EXISTS profiles (
       id   TEXT PRIMARY KEY,
       name TEXT NOT NULL
   );
   ```
-- [ ] Add `profile_ids` column to `accounts`:
+- [x] Add `profile_ids` column to `accounts`:
   ```sql
   ALTER TABLE accounts ADD COLUMN profile_ids TEXT NOT NULL DEFAULT '[]';
   -- JSON array of profile IDs, e.g. '["alex","sam"]'
   ```
-- [ ] Add `section_mappings` table:
+- [x] Add `section_mappings` table:
   ```sql
   CREATE TABLE IF NOT EXISTS section_mappings (
       section  TEXT NOT NULL,  -- 'Income','Bills','Spending','Irregular','Transfers'
       category TEXT NOT NULL UNIQUE
   );
   ```
-- [ ] Replace `budgets` table with `standing_budgets` and `budget_overrides` (see Q3 above)
-- [ ] Add `short_name` column to `holdings`:
+- [x] Replace `budgets` table with `standing_budgets` and `budget_overrides` (see Q3 above)
+- [x] Add `short_name` column to `holdings`:
   ```sql
   ALTER TABLE holdings ADD COLUMN short_name TEXT;
   ```
-- [ ] Seed `section_mappings` with defaults on first startup:
+- [x] Seed `section_mappings` with defaults on first startup:
   - `Income`: categories starting with `Income`
   - `Bills`: `Housing: *`, `Finance: Insurance`, `Entertainment: Streaming`
   - `Transfers`: `Finance: Savings`, `Finance: Investment`
   - `Irregular`: `Travel: *`
   - `Spending`: all remaining categories from `categories.yaml`
-- [ ] Seed a default profile (e.g., `{ id: "default", name: "Default" }`) if no profiles exist
-- [ ] Write a migration path: since Phase 1-2 are deployed, the schema changes must be additive (`ALTER TABLE ... ADD COLUMN`, new tables with `IF NOT EXISTS`). The old `budgets` table data should be migrated to `standing_budgets` where possible (group by category, take the modal amount as the standing target, put any deviations into `budget_overrides`).
-- [ ] After adding `profile_ids` column with `DEFAULT '[]'`, backfill existing accounts: `UPDATE accounts SET profile_ids = '["default"]' WHERE profile_ids = '[]'` (see "Profile Semantics" section above)
+- [x] Seed a default profile (e.g., `{ id: "default", name: "Default" }`) if no profiles exist
+- [x] Write a migration path: since Phase 1-2 are deployed, the schema changes must be additive (`ALTER TABLE ... ADD COLUMN`, new tables with `IF NOT EXISTS`). The old `budgets` table data should be migrated to `standing_budgets` where possible (group by category, take the modal amount as the standing target, put any deviations into `budget_overrides`).
+- [x] After adding `profile_ids` column with `DEFAULT '[]'`, backfill existing accounts: `UPDATE accounts SET profile_ids = '["default"]' WHERE profile_ids = '[]'` (see "Profile Semantics" section above)
 
 ### 3.2 Storage additions
 
-- [ ] `Db::create_profile(&self, id: &str, name: &str) -> Result<()>`
-- [ ] `Db::get_profiles(&self) -> Result<Vec<Profile>>`
-- [ ] `Db::get_accounts(&self, profile_id: Option<&str>) -> Result<Vec<Account>>` -- filters by profile_id membership in the JSON array if provided
-- [ ] `Db::get_transactions(&self, filters: TransactionFilters) -> Result<(Vec<Transaction>, u64)>`:
+- [x] `Db::create_profile(&self, id: &str, name: &str) -> Result<()>`
+- [x] `Db::get_profiles(&self) -> Result<Vec<Profile>>`
+- [x] `Db::get_accounts(&self, profile_id: Option<&str>) -> Result<Vec<Account>>` -- filters by profile_id membership in the JSON array if provided
+- [x] `Db::get_transactions(&self, filters: TransactionFilters) -> Result<(Vec<Transaction>, u64)>`:
   - `TransactionFilters` expanded: `start: Option<NaiveDate>`, `end: Option<NaiveDate>`, `accounts: Option<Vec<String>>`, `categories: Option<Vec<String>>`, `search: Option<String>`, `profile_id: Option<String>`, `page: u32`, `limit: u32`
   - Date range filtering: `WHERE date >= ? AND date <= ?`
   - Multi-select: `WHERE account_id IN (?, ?, ?)` and `WHERE category IN (?, ?, ?)`
   - Search: `WHERE (normalized LIKE ? OR description LIKE ? OR category LIKE ? OR notes LIKE ?)` with `%search_term%`
   - Profile filter: join accounts on `profile_ids` JSON contains check
   - Returns `(rows, total_count)` for pagination
-- [ ] `Db::get_transactions_by_category(&self, filters: TransactionFilters) -> Result<Vec<CategoryTotal>>`:
+- [x] `Db::get_transactions_by_category(&self, filters: TransactionFilters) -> Result<Vec<CategoryTotal>>`:
   - Same filters as above but returns `GROUP BY category` with `SUM(amount)` instead of individual rows
   - Response type: `Vec<{ category: String, total: Decimal }>`
   - Powers the bar/pie charts without downloading raw transactions
-- [ ] `Db::get_all_categories(&self) -> Result<Vec<String>>`:
+- [x] `Db::get_all_categories(&self) -> Result<Vec<String>>`:
   - Union of categories from `categories.yaml` taxonomy and `SELECT DISTINCT category FROM transactions`
   - Returns the full list so filter dropdowns show all possible categories
-- [ ] `Db::get_section_mappings(&self) -> Result<Vec<SectionMapping>>`
-- [ ] `Db::update_section_mappings(&self, mappings: &[SectionMapping]) -> Result<()>`
-- [ ] `Db::get_standing_budgets(&self) -> Result<Vec<StandingBudget>>`
-- [ ] `Db::set_standing_budget(&self, category: &str, amount: Decimal) -> Result<()>`
-- [ ] `Db::set_budget_override(&self, month: &str, category: &str, amount: Decimal) -> Result<()>`
-- [ ] `Db::get_effective_budget(&self, month: &str) -> Result<Vec<BudgetRow>>`:
+- [x] `Db::get_section_mappings(&self) -> Result<Vec<SectionMapping>>`
+- [x] `Db::update_section_mappings(&self, mappings: &[SectionMapping]) -> Result<()>`
+- [x] `Db::get_standing_budgets(&self) -> Result<Vec<StandingBudget>>`
+- [x] `Db::set_standing_budget(&self, category: &str, amount: Decimal) -> Result<()>`
+- [x] `Db::set_budget_override(&self, month: &str, category: &str, amount: Decimal) -> Result<()>`
+- [x] `Db::get_effective_budget(&self, month: &str) -> Result<Vec<BudgetRow>>`:
   - Resolves standing + overrides: `COALESCE(override.amount, standing.amount) AS budgeted`
   - Joins with actual spending: `LEFT JOIN (SELECT category, SUM(ABS(amount)) ... FROM transactions WHERE month = ? AND amount < 0 GROUP BY category)`
   - Returns `{ category, budgeted, actual, percent }`
-- [ ] `Db::get_spending_grid(&self, start: NaiveDate, end: NaiveDate, granularity: Granularity, profile_id: Option<&str>) -> Result<Vec<SpendingGridRow>>`:
+- [x] `Db::get_spending_grid(&self, start: NaiveDate, end: NaiveDate, granularity: Granularity, profile_id: Option<&str>) -> Result<Vec<SpendingGridRow>>`:
   - Core SQL: `GROUP BY category, substr(date, 1, 7)` for monthly, with further aggregation for quarterly/yearly
   - Joins `section_mappings` for section classification
   - Joins `standing_budgets` + `budget_overrides` for budget column
   - Computes average and total per category
   - Returns `SpendingGridRow { category, section, periods: HashMap<String, Option<Decimal>>, average, budget, total }`
-- [ ] `Db::insert_transactions_bulk(&self, txns: &[Transaction]) -> Result<ImportResult>` -- batch insert with dedup for API import
+- [x] `Db::insert_transactions_bulk(&self, txns: &[Transaction]) -> Result<ImportResult>` -- batch insert with dedup for API import
 
 ### 3.3 New types
 
-- [ ] `Profile { id: String, name: String }` with `serde` and `ts_rs` derives
-- [ ] `Granularity` enum: `Monthly | Quarterly | Yearly`, parseable from query string
-- [ ] `SpendingGridRow { category: String, section: String, periods: HashMap<String, Option<Decimal>>, average: Option<Decimal>, budget: Option<Decimal>, total: Option<Decimal> }`
-- [ ] `BudgetRow { category: String, budgeted: Option<Decimal>, actual: Decimal, percent: Option<f64> }`
-- [ ] `CategoryTotal { category: String, total: Decimal }`
-- [ ] `SectionMapping { section: String, category: String }`
-- [ ] `StandingBudget { category: String, amount: Decimal }`
-- [ ] `BudgetOverride { month: String, category: String, amount: Decimal }`
-- [ ] Update `Account` to include `profile_ids: Vec<String>`
-- [ ] Update `Holding` to include `short_name: Option<String>`
+- [x] `Profile { id: String, name: String }` with `serde` and `ts_rs` derives
+- [x] `Granularity` enum: `Monthly | Quarterly | Yearly`, parseable from query string
+- [x] `SpendingGridRow { category: String, section: String, periods: HashMap<String, Option<Decimal>>, average: Option<Decimal>, budget: Option<Decimal>, total: Option<Decimal> }`
+- [x] `BudgetRow { category: String, budgeted: Option<Decimal>, actual: Decimal, percent: Option<f64> }`
+- [x] `CategoryTotal { category: String, total: Decimal }`
+- [x] `SectionMapping { section: String, category: String }`
+- [x] `StandingBudget { category: String, amount: Decimal }`
+- [x] `BudgetOverride { month: String, category: String, amount: Decimal }`
+- [x] Update `Account` to include `profile_ids: Vec<String>`
+- [x] Update `Holding` to include `short_name: Option<String>`
 
 ### 3.4 Transactions routes
 
-- [ ] `GET /api/transactions` (MODIFIED from original plan):
+- [x] `GET /api/transactions` (MODIFIED from original plan):
   - Query params: `start`, `end`, `accounts` (comma-separated), `categories` (comma-separated), `search`, `profile_id`, `page` (default 1), `limit` (default 25)
   - Response: `{ data: Transaction[], total: u64, page: u32, limit: u32 }`
-- [ ] `GET /api/transactions/by-category` (NEW, handover 4.8):
+- [x] `GET /api/transactions/by-category` (NEW, handover 4.8):
   - Same filter params as above (minus page/limit)
   - Response: `CategoryTotal[]`
   - Powers bar/pie charts without downloading raw transactions
-- [ ] `GET /api/transactions/categories` (MODIFIED, handover 4.9):
+- [x] `GET /api/transactions/categories` (MODIFIED, handover 4.9):
   - Returns full category taxonomy from `categories.yaml`, not just categories with data
   - Response: `string[]`
-- [ ] `PATCH /api/transactions/:id` (unchanged from original plan):
+- [x] `PATCH /api/transactions/:id` (unchanged from original plan):
   - Body: `{ category?: string, notes?: string }`
   - Sets `category_source = 'manual'` when category is changed
   - Response: updated `Transaction`
 
 ### 3.5 Import routes
 
-- [ ] `POST /api/import` (unchanged from original plan):
+- [x] `POST /api/import` (unchanged from original plan):
   - Body: `{ account_id: string, transactions: ImportTransaction[] }`
   - Auth required (API token)
   - Dedup via fingerprint
   - Response: `ImportResult`
-- [ ] `POST /api/import/csv` (unchanged):
+- [x] `POST /api/import/csv` (unchanged):
   - Multipart form: `file` + `account` (account_id)
   - Auth required
   - Response: `ImportResult`
-- [ ] `POST /api/import/bulk` (unchanged):
+- [x] `POST /api/import/bulk` (unchanged):
   - Multipart form: `files[]` + `accounts[]`
   - Auth required
   - Response: `ImportResult[]`
 
 ### 3.6 Budget routes
 
-- [ ] `GET /api/budget/:month` (MODIFIED, handover 4.5):
+- [x] `GET /api/budget/:month` (MODIFIED, handover 4.5):
   - Returns pre-computed `BudgetRow[]` with actual spending joined against effective budget (standing + overrides)
   - Response: `[{ category, budgeted, actual, percent }]`
-- [ ] `GET /api/budget/spending-grid` (NEW, handover 4.1 -- CRITICAL):
+- [x] `GET /api/budget/spending-grid` (NEW, handover 4.1 -- CRITICAL):
   - Query params: `start`, `end`, `granularity` (monthly|quarterly|yearly), `profile_id`
   - Response: `SpendingGridRow[]`
   - The backend does the pivot, join, and aggregation that the frontend currently does in ~80 lines of JS
-- [ ] `POST /api/budget` (MODIFIED for Option C):
+- [x] `POST /api/budget` (MODIFIED for Option C):
   - Body: `{ category: string, amount: string }` -- sets standing budget
   - Response: `{ ok: true }`
-- [ ] `POST /api/budget/override` (NEW for Option C):
+- [x] `POST /api/budget/override` (NEW for Option C):
   - Body: `{ month: string, category: string, amount: string }` -- sets per-month override
   - Response: `{ ok: true }`
 
 ### 3.7 Profile and section routes
 
-- [ ] `GET /api/profiles` (NEW, handover 2.1):
+- [x] `GET /api/profiles` (NEW, handover 2.1):
   - Response: `Profile[]`
-- [ ] `POST /api/profiles` (NEW):
+- [x] `POST /api/profiles` (NEW):
   - Body: `{ id: string, name: string }`
   - Response: created `Profile`
-- [ ] `GET /api/sections` (NEW, handover Q2):
+- [x] `GET /api/sections` (NEW, handover Q2):
   - Returns all section mappings
   - Response: `SectionMapping[]`
-- [ ] `PUT /api/sections` (NEW):
+- [x] `PUT /api/sections` (NEW):
   - Body: `SectionMapping[]` -- full replacement
   - Response: `{ ok: true }`
 
 ### 3.8 Account routes (expanded)
 
-- [ ] `GET /api/accounts` (MODIFIED, replaces `GET /api/transactions/accounts`):
+- [x] `GET /api/accounts` (MODIFIED, replaces `GET /api/transactions/accounts`):
   - Query params: `profile_id` (optional)
   - Response: `Account[]` with `profile_ids` field
-- [ ] `POST /api/accounts` (unchanged from original plan):
+- [x] `POST /api/accounts` (unchanged from original plan):
   - Body: `{ id, name, institution, type, currency?, balance?, balance_date?, profile_ids?, notes? }`
   - Response: `Account`
 
 ### 3.9 Ingestion checklist routes (unchanged from original plan)
 
-- [ ] `GET /api/ingestion/checklist/:month`
-- [ ] `POST /api/ingestion/checklist/:month/:account_id`
+- [x] `GET /api/ingestion/checklist/:month`
+- [x] `POST /api/ingestion/checklist/:month/:account_id`
 
 ### 3.10 Frontend wiring
 
@@ -423,7 +423,7 @@ Full transaction list in the browser with date range filtering, multi-select acc
 
 ### 4.1 Portfolio routes
 
-- [ ] `GET /api/portfolio` (MODIFIED, handover 4.2):
+- [x] `GET /api/portfolio` (MODIFIED, handover 4.2):
   - Query params: `profile_id`, `as_of` (YYYY-MM-DD, defaults to today)
   - The backend computes everything server-side in a small number of queries:
     1. Fetch all active accounts (filtered by profile_id if given)
@@ -451,7 +451,7 @@ Full transaction list in the browser with date range filtering, multi-select acc
   - Available wealth classification: `type IN ('checking', 'savings', 'investment', 'cash', 'credit')`
   - Unavailable wealth classification: `type IN ('pension')` (extend with `property` post-MVP)
 
-- [ ] `GET /api/portfolio/history` (MODIFIED, handover 4.3):
+- [x] `GET /api/portfolio/history` (MODIFIED, handover 4.3):
   - Query params: `start`, `end`, `granularity` (monthly|quarterly|yearly)
   - Returns pre-aggregated rows with available/unavailable split
   - Uses **LAST VALUE** aggregation for quarterly/yearly (point-in-time, not sum)
@@ -460,19 +460,19 @@ Full transaction list in the browser with date range filtering, multi-select acc
     { month: String, available_wealth: Decimal, unavailable_wealth: Decimal, total_wealth: Decimal }
     ```
 
-- [ ] `GET /api/portfolio/snapshots` (NEW, handover 4.10):
+- [x] `GET /api/portfolio/snapshots` (NEW, handover 4.10):
   - Query params: `start`, `end`, `summary` (boolean, default false)
   - When `summary=true`: returns `{ account_id, start_balance, end_balance, delta }` per account (just first and last snapshot in range)
   - When `summary=false`: returns all `PortfolioSnapshot[]` in range
   - Powers the account grid delta indicators without downloading all monthly snapshots
 
-- [ ] `GET /api/cash-flow` (NEW, handover 4.4):
+- [x] `GET /api/cash-flow` (NEW, handover 4.4):
   - Query params: `start`, `end`, `profile_id`, `granularity`
   - SQL: `SELECT substr(date,1,7) AS month, SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) AS income, SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) AS spending FROM transactions WHERE date BETWEEN ? AND ? GROUP BY month`
   - Uses SUM aggregation for quarterly/yearly
   - Response: `CashFlowMonth[]`: `{ month, income, spending }`
 
-- [ ] `PATCH /api/accounts/:id/balance` (unchanged from original plan):
+- [x] `PATCH /api/accounts/:id/balance` (unchanged from original plan):
   - Body: `{ balance: string, date: string }`
   - Updates `accounts.balance` and `accounts.balance_date`
   - Inserts/updates a `portfolio_snapshots` row
@@ -480,41 +480,41 @@ Full transaction list in the browser with date range filtering, multi-select acc
 
 ### 4.2 Holdings routes (MODIFIED, handover 4.6)
 
-- [ ] `GET /api/holdings` (MODIFIED to support batch query):
+- [x] `GET /api/holdings` (MODIFIED to support batch query):
   - Query params: `account_id` (single), `account_ids` (comma-separated), or `profile_id`
   - When `profile_id` is given: finds all investment/pension accounts for that profile, returns all holdings grouped by account
   - Response: `Holding[]` (each includes `account_id` so the caller can group)
   - Solves the N+1 query problem where the frontend currently calls this in a loop
 
-- [ ] `POST /api/holdings/:account_id` (unchanged):
+- [x] `POST /api/holdings/:account_id` (unchanged):
   - Body: `Holding[]` -- full replacement
   - Auth required
   - Response: `{ ok: true, holdings_updated: u32 }`
 
 ### 4.3 Storage additions
 
-- [ ] `Db::get_portfolio_as_of(&self, as_of: NaiveDate, profile_id: Option<&str>) -> Result<Vec<PortfolioRow>>`:
+- [x] `Db::get_portfolio_as_of(&self, as_of: NaiveDate, profile_id: Option<&str>) -> Result<Vec<PortfolioRow>>`:
   - Carry-forward query (already exists from Phase 1, extend with profile filter)
   - Each row includes `{ account_id, name, institution, type, balance, as_of_date, is_stale }`
 
-- [ ] `Db::get_monthly_net_worth(&self, from: NaiveDate, to: NaiveDate, granularity: Granularity) -> Result<Vec<PortfolioHistoryRow>>`:
+- [x] `Db::get_monthly_net_worth(&self, from: NaiveDate, to: NaiveDate, granularity: Granularity) -> Result<Vec<PortfolioHistoryRow>>`:
   - Generates a point per period using carry-forward
   - Classifies each account as available/unavailable for the split
   - For quarterly/yearly granularity, uses LAST VALUE (end-of-period balance)
 
-- [ ] `Db::get_snapshot_summary(&self, start: NaiveDate, end: NaiveDate) -> Result<Vec<SnapshotDelta>>`:
+- [x] `Db::get_snapshot_summary(&self, start: NaiveDate, end: NaiveDate) -> Result<Vec<SnapshotDelta>>`:
   - Returns first and last snapshot per account in range
   - `SnapshotDelta { account_id, start_balance, end_balance, delta }`
 
-- [ ] `Db::get_cash_flow(&self, start: NaiveDate, end: NaiveDate, profile_id: Option<&str>, granularity: Granularity) -> Result<Vec<CashFlowMonth>>`:
+- [x] `Db::get_cash_flow(&self, start: NaiveDate, end: NaiveDate, profile_id: Option<&str>, granularity: Granularity) -> Result<Vec<CashFlowMonth>>`:
   - GROUP BY month with SUM for income (positive) and spending (negative)
   - Further aggregation for quarterly/yearly
 
-- [ ] `Db::get_holdings_batch(&self, account_ids: &[String]) -> Result<Vec<Holding>>`:
+- [x] `Db::get_holdings_batch(&self, account_ids: &[String]) -> Result<Vec<Holding>>`:
   - `SELECT * FROM holdings WHERE account_id IN (...) AND as_of = (SELECT MAX(as_of) FROM holdings WHERE account_id = h.account_id)`
   - Returns latest holdings for all requested accounts in one query
 
-- [ ] `Db::compute_investment_metrics(&self, start: NaiveDate, end: NaiveDate, profile_id: Option<&str>) -> Result<InvestmentMetrics>`:
+- [x] `Db::compute_investment_metrics(&self, start: NaiveDate, end: NaiveDate, profile_id: Option<&str>) -> Result<InvestmentMetrics>`:
   - Start value: sum of investment account balances at `start` (carry-forward)
   - End value: sum of investment account balances at `end` (carry-forward)
   - New cash invested: `SUM(amount) FROM transactions WHERE category = 'Finance: Investment Transfer' AND date BETWEEN start AND end`
@@ -522,12 +522,12 @@ Full transaction list in the browser with date range filtering, multi-select acc
 
 ### 4.4 New types
 
-- [ ] `PortfolioResponse { net_worth, currency, as_of, total_assets, total_liabilities, available_wealth, unavailable_wealth, accounts, by_type, by_institution, by_asset_class, investment_metrics }`
-- [ ] `BreakdownItem { label: String, value: Decimal, percentage: f64 }`
-- [ ] `PortfolioHistoryRow { month: String, available_wealth: Decimal, unavailable_wealth: Decimal, total_wealth: Decimal }`
-- [ ] `CashFlowMonth { month: String, income: Decimal, spending: Decimal }`
-- [ ] `SnapshotDelta { account_id: String, start_balance: Option<Decimal>, end_balance: Option<Decimal>, delta: Option<Decimal> }`
-- [ ] `InvestmentMetrics { start_value: Decimal, end_value: Decimal, total_growth: Decimal, new_cash_invested: Decimal, market_growth: Decimal }`
+- [x] `PortfolioResponse { net_worth, currency, as_of, total_assets, total_liabilities, available_wealth, unavailable_wealth, accounts, by_type, by_institution, by_asset_class, investment_metrics }`
+- [x] `BreakdownItem { label: String, value: Decimal, percentage: f64 }`
+- [x] `PortfolioHistoryRow { month: String, available_wealth: Decimal, unavailable_wealth: Decimal, total_wealth: Decimal }`
+- [x] `CashFlowMonth { month: String, income: Decimal, spending: Decimal }`
+- [x] `SnapshotDelta { account_id: String, start_balance: Option<Decimal>, end_balance: Option<Decimal>, delta: Option<Decimal> }`
+- [x] `InvestmentMetrics { start_value: Decimal, end_value: Decimal, total_growth: Decimal, new_cash_invested: Decimal, market_growth: Decimal }`
 
 ### 4.5 Frontend wiring
 
@@ -600,20 +600,20 @@ This phase is unchanged from the original plan (`09_backend_implementation_plan.
 
 ### 6.1 Error handling and resilience
 
-- [ ] All `AppError` variants return structured JSON `{ error, code }`
-- [ ] Import routes return partial success with per-row errors
-- [ ] All multi-insert operations use DB transactions
+- [x] All `AppError` variants return structured JSON `{ error, code }`
+- [x] Import routes return partial success with per-row errors
+- [x] All multi-insert operations use DB transactions
 
 ### 6.2 Configuration
 
-- [ ] `.env` via `dotenvy`, `categories.yaml` embedded via `include_str!`
-- [ ] Optional user config at `~/.config/fynance/config.yaml` (mode `0o600`)
+- [x] `.env` via `dotenvy`, `categories.yaml` embedded via `include_str!`
+- [x] Optional user config at `~/.config/fynance/config.yaml` (mode `0o600`)
 
 ### 6.3 Logging
 
-- [ ] `tracing-subscriber` with `FYNANCE_LOG_LEVEL`
-- [ ] HTTP request logging via `tower_http::trace::TraceLayer`
-- [ ] Never log raw transaction descriptions at `info` level
+- [x] `tracing-subscriber` with `FYNANCE_LOG_LEVEL`
+- [x] HTTP request logging via `tower_http::trace::TraceLayer`
+- [x] Never log raw transaction descriptions at `info` level
 
 ### 6.4 Docker
 
@@ -628,9 +628,9 @@ This phase is unchanged from the original plan (`09_backend_implementation_plan.
 ### 6.6 Final verification checklist
 
 - [ ] `fynance serve` opens browser, all four tabs render real data
-- [ ] CSV import works for Monzo, Revolut, Lloyds
-- [ ] Deduplication prevents double-imports
-- [ ] API token auth blocks unauthenticated programmatic requests
+- [x] CSV import works for Monzo, Revolut, Lloyds
+- [x] Deduplication prevents double-imports
+- [x] API token auth blocks unauthenticated programmatic requests
 - [ ] Profile filtering works across all endpoints
 - [ ] Budget spreadsheet renders server-computed spending grid
 - [ ] Portfolio shows net worth with available/unavailable split and carry-forward

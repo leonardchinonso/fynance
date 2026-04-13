@@ -159,7 +159,7 @@ export function TransactionTable({
               )}
               {isVisible("source") && (
                 <TableCell>
-                  {t.category_source === "claude" && t.confidence && (
+                  {t.category_source === "agent" && t.confidence && (
                     <Badge variant="outline" className="text-xs">
                       AI {Math.round(t.confidence * 100)}%
                     </Badge>

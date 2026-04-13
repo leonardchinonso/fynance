@@ -1,15 +1,18 @@
 import type {
   Account,
+  AccountSnapshot,
   BudgetRow,
-  BudgetUpdateRequest,
   CashFlowMonth,
+  CategoryTotal,
+  CategoryTotalFilters,
   Granularity,
   Holding,
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  PortfolioSnapshot,
   Profile,
+  SetBudgetOverrideBody,
+  SetStandingBudgetBody,
   SpendingGridRow,
   Transaction,
   TransactionFilters,
@@ -31,6 +34,19 @@ export interface ApiService {
   getTransactions(
     filters: TransactionFilters
   ): Promise<PaginatedResponse<Transaction>>
+  /**
+   * Server-side aggregation of transactions grouped by category.
+   *
+   * When `filters.direction` is set, totals are absolute sums and only
+   * transactions with the matching sign are included. When omitted, totals
+   * are signed net sums (negative = net spend).
+   *
+   * Prefer this over `getTransactions` when you only need per-category
+   * totals (bar/pie charts, "total spent on X") instead of raw rows.
+   */
+  getTransactionsByCategory(
+    filters: CategoryTotalFilters
+  ): Promise<CategoryTotal[]>
   getCategories(): Promise<string[]>
   getAccounts(profileId?: string): Promise<Account[]>
 
@@ -42,22 +58,40 @@ export interface ApiService {
     granularity: Granularity,
     profileId?: string
   ): Promise<SpendingGridRow[]>
-  updateBudget(req: BudgetUpdateRequest): Promise<void>
+  /**
+   * Set the standing monthly budget for one category. Applies to every
+   * month unless a per-month override is set via `setBudgetOverride`.
+   * Maps to `POST /api/budget`.
+   */
+  setStandingBudget(body: SetStandingBudgetBody): Promise<void>
+  /**
+   * Set a per-month override on top of the standing budget for one
+   * category. Maps to `POST /api/budget/override`.
+   */
+  setBudgetOverride(body: SetBudgetOverrideBody): Promise<void>
 
   // Portfolio
   getPortfolio(profileId?: string): Promise<PortfolioResponse>
   getPortfolioHistory(
-    start?: string,
-    end?: string
+    start: string,
+    end: string,
+    granularity?: Granularity,
+    profileId?: string
   ): Promise<PortfolioHistoryRow[]>
   getHoldings(accountId: string): Promise<Holding[]>
-  getCashFlow(start?: string, end?: string): Promise<CashFlowMonth[]>
+  getCashFlow(
+    start: string,
+    end: string,
+    granularity?: Granularity,
+    profileId?: string
+  ): Promise<CashFlowMonth[]>
 
-  // Account snapshots (per-account monthly balances for delta calculations)
-  getAccountSnapshots(
-    start?: string,
-    end?: string
-  ): Promise<PortfolioSnapshot[]>
+  // Account balances (per-account monthly balances for delta calculations)
+  getAccountBalances(
+    start: string,
+    end: string,
+    profileId?: string
+  ): Promise<AccountSnapshot[]>
 
   // Export
   exportData(format: string): Promise<void>

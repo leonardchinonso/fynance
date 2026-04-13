@@ -5,7 +5,7 @@ use rust_decimal::Decimal;
 
 use crate::model::{Account, AccountType};
 use crate::storage::Db;
-use crate::util::parse_date;
+use crate::util::parse_naive_datetime;
 
 pub fn add(
     db: &Db,
@@ -36,6 +36,7 @@ pub fn add(
         is_active: true,
         notes: None,
         profile_ids: vec!["default".to_string()],
+        is_stale: None,
     };
     db.upsert_account(&account)?;
     println!("Added account {id}");
@@ -46,7 +47,7 @@ pub fn set_balance(db: &Db, id: &str, amount: &str, date: &str) -> Result<()> {
     let balance: Decimal = amount
         .parse()
         .map_err(|e| anyhow!("invalid amount {amount:?}: {e}"))?;
-    let date = parse_date(date)?;
+    let date = parse_naive_datetime(date)?;
     db.set_account_balance(id, balance, date)?;
     println!("Set {id} balance to {balance} as of {date}");
     Ok(())

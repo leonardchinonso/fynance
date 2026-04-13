@@ -47,11 +47,8 @@ fn make_importer(fixture_json_name: &str) -> CsvImporter {
 }
 
 fn total_amount(db: &Db) -> Decimal {
-    db.get_transactions(&Default::default())
-        .unwrap()
-        .into_iter()
-        .map(|t| t.amount)
-        .sum()
+    let (txs, _) = db.get_transactions(&Default::default()).unwrap();
+    txs.into_iter().map(|t| t.amount).sum()
 }
 
 #[test]
@@ -87,7 +84,7 @@ fn imports_lloyds_csv_and_flips_debit_sign() {
         .unwrap();
     assert_eq!(result.rows_inserted, 3);
     assert_eq!(result.detected_bank, BankFormat::Lloyds);
-    let txs = db.get_transactions(&Default::default()).unwrap();
+    let (txs, _) = db.get_transactions(&Default::default()).unwrap();
     // Exactly two negative amounts and one positive; the fixture already
     // encodes the correct signs from the LLM (negative = debit convention).
     assert_eq!(txs.iter().filter(|t| t.amount.is_sign_negative()).count(), 2);
@@ -107,7 +104,8 @@ fn reimport_is_idempotent() {
     assert_eq!(first.rows_inserted, 3);
     assert_eq!(second.rows_inserted, 0);
     assert_eq!(second.rows_duplicate, 3);
-    assert_eq!(db.get_transactions(&Default::default()).unwrap().len(), 3);
+    let (txs, _) = db.get_transactions(&Default::default()).unwrap();
+    assert_eq!(txs.len(), 3);
 }
 
 #[test]

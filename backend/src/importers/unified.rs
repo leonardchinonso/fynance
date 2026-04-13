@@ -9,14 +9,14 @@
 //! `Transaction::from_unified` converts one row into the storage-ready
 //! `Transaction` type.
 
-use chrono::NaiveDate;
+use chrono::NaiveDateTime;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::model::{CategorySource, Transaction};
-use crate::util::{fingerprint, normalize_description};
+use crate::util::{fingerprint, normalize_description, serde_naive_datetime};
 
 /// One row of a bank statement after the LLM has normalised it.
 ///
@@ -27,8 +27,9 @@ use crate::util::{fingerprint, normalize_description};
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct UnifiedStatementRow {
     // -- Always required --
+    #[serde(with = "serde_naive_datetime")]
     #[ts(type = "string")]
-    pub date: NaiveDate,
+    pub date: NaiveDateTime,
     pub description: String,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
@@ -63,11 +64,11 @@ pub struct UnifiedStatementRow {
 impl Transaction {
     /// Build a `Transaction` from a normalised LLM statement row.
     ///
-    /// The fingerprint is computed from the raw description (not the
-    /// normalised one) so that future changes to normalisation rules do not
-    /// invalidate previously-imported rows.
+    /// The fingerprint is computed from `(datetime, amount, account_id)`.
+    /// Description is excluded so that the same transaction imported via
+    /// different channels (CSV vs agent) deduplicates correctly.
     pub fn from_unified(row: UnifiedStatementRow, account_id: &str) -> Self {
-        let date_iso = row.date.format("%Y-%m-%d").to_string();
+        let date_iso = row.date.format("%Y-%m-%dT%H:%M:%S").to_string();
         let amount_str = row.amount.to_string();
 
         // Prefer the explicit merchant field when present (it is more stable
@@ -78,7 +79,7 @@ impl Transaction {
             .unwrap_or(row.description);
 
         let normalized = normalize_description(&description);
-        let fp = fingerprint(&date_iso, &amount_str, &description, account_id);
+        let fp = fingerprint(&date_iso, &amount_str, account_id);
 
         let category = row.category.filter(|s| !s.is_empty());
         let category_source = category.as_ref().map(|_| CategorySource::Rule);

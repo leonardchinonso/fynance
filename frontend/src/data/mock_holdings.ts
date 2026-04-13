@@ -1,6 +1,10 @@
 import type { Holding } from "@/types"
 
-export const MOCK_HOLDINGS: Holding[] = [
+// Mock holdings extend the binding type with an id for React keys.
+// The real API will use account_id + symbol as the unique key.
+type MockHolding = Holding & { id: number }
+
+export const MOCK_HOLDINGS: MockHolding[] = [
   // Alex's T212 ISA
   {
     id: 1,

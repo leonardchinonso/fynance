@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::model::{CategorySource, Transaction};
+use crate::model::{CategorySource, Transaction, TransactionDirection};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 use crate::server::validation::{
@@ -86,7 +86,11 @@ pub struct ByCategoryQuery {
     pub start: Option<String>,
     pub end: Option<String>,
     pub accounts: Option<String>,
+    pub categories: Option<String>,
     pub profile_id: Option<String>,
+    /// Optional sign filter: `outflow` or `income`. When omitted the
+    /// aggregation returns signed net sums per category.
+    pub direction: Option<String>,
 }
 
 pub async fn transactions_by_category(
@@ -99,17 +103,28 @@ pub async fn transactions_by_category(
         validate_date_range(s, e)?;
     }
 
+    let direction = match q.direction.as_deref() {
+        None | Some("") => None,
+        Some(raw) => Some(TransactionDirection::parse(raw).ok_or_else(|| {
+            AppError::bad_request(
+                "direction must be 'outflow' or 'income'",
+                "invalid_direction",
+            )
+        })?),
+    };
+
     let filters = TransactionFilters {
         start,
         end,
         accounts: q.accounts.as_deref().and_then(split_csv_param),
+        categories: q.categories.as_deref().and_then(split_csv_param),
         profile_id: q.profile_id.filter(|s| !s.is_empty()),
         ..TransactionFilters::default()
     };
 
     let totals = {
         let db = state.db.lock().expect("db mutex poisoned");
-        db.get_transactions_by_category(&filters)?
+        db.get_transactions_by_category(&filters, direction)?
     };
 
     Ok(Json(serde_json::to_value(totals)?))

@@ -75,6 +75,24 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/budget/override",
             post(routes::budget::set_budget_override),
         )
+        // ── Portfolio ──────────────────────────────────────────────────────
+        .route("/portfolio", get(routes::portfolio::get_portfolio))
+        .route(
+            "/portfolio/history",
+            get(routes::portfolio::get_portfolio_history),
+        )
+        .route(
+            "/portfolio/balances",
+            get(routes::portfolio::get_portfolio_balances),
+        )
+        // ── Cash flow ──────────────────────────────────────────────────────
+        .route("/cash-flow", get(routes::portfolio::get_cash_flow))
+        // ── Holdings ───────────────────────────────────────────────────────
+        .route("/holdings", get(routes::holdings::list_holdings))
+        .route(
+            "/holdings/:account_id",
+            post(routes::holdings::post_holdings),
+        )
         // ── Ingestion checklist ────────────────────────────────────────────
         .route(
             "/ingestion/checklist/:month",

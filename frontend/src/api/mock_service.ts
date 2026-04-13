@@ -1,14 +1,18 @@
 import type {
   Account,
+  AccountSnapshot,
   BudgetRow,
-  BudgetUpdateRequest,
   CashFlowMonth,
+  CategoryTotal,
+  CategoryTotalFilters,
   Granularity,
   Holding,
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
   Profile,
+  SetBudgetOverrideBody,
+  SetStandingBudgetBody,
   SpendingGridRow,
   Transaction,
   TransactionFilters,
@@ -20,7 +24,7 @@ import {
   MOCK_TRANSACTIONS,
   MOCK_HOLDINGS,
   MOCK_BUDGETS,
-  MOCK_PORTFOLIO_SNAPSHOTS,
+  MOCK_ACCOUNT_BALANCES,
 } from "@/data"
 import { delay, getMonthFromDate, getMonthsInRange } from "@/lib/utils"
 
@@ -87,6 +91,61 @@ export class MockApiService implements ApiService {
     const paged = data.slice(start, start + limit)
 
     return { data: paged, total, page, limit }
+  }
+
+  /**
+   * Mock of the backend `/api/transactions/by-category` aggregation.
+   * Mirrors the server logic: group by leaf category, sum amounts,
+   * honour direction (outflow = abs(negatives), income = positives),
+   * and apply the same filters the real endpoint supports.
+   */
+  async getTransactionsByCategory(
+    filters: CategoryTotalFilters
+  ): Promise<CategoryTotal[]> {
+    await delay(DELAY_MS)
+
+    let data = [...MOCK_TRANSACTIONS]
+
+    // Same filter order and semantics as getTransactions
+    if (filters.profile_id) {
+      const profileAccounts = new Set(
+        MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(filters.profile_id!)).map(
+          (a) => a.id
+        )
+      )
+      data = data.filter((t) => profileAccounts.has(t.account_id))
+    }
+    if (filters.start) data = data.filter((t) => t.date >= filters.start!)
+    if (filters.end) data = data.filter((t) => t.date <= filters.end!)
+    if (filters.accounts && filters.accounts.length > 0) {
+      const set = new Set(filters.accounts)
+      data = data.filter((t) => set.has(t.account_id))
+    }
+    if (filters.categories && filters.categories.length > 0) {
+      const set = new Set(filters.categories)
+      data = data.filter((t) => t.category !== null && set.has(t.category))
+    }
+
+    // Direction filter
+    if (filters.direction === "outflow") {
+      data = data.filter((t) => parseFloat(t.amount) < 0)
+    } else if (filters.direction === "income") {
+      data = data.filter((t) => parseFloat(t.amount) > 0)
+    }
+
+    // Group by leaf category, summing by direction semantics
+    const totals = new Map<string, number>()
+    for (const t of data) {
+      if (!t.category) continue
+      const amt = parseFloat(t.amount)
+      const contribution = filters.direction ? Math.abs(amt) : amt
+      totals.set(t.category, (totals.get(t.category) ?? 0) + contribution)
+    }
+
+    // DESC order to match the backend's ORDER BY total DESC
+    return Array.from(totals.entries())
+      .map(([category, total]) => ({ category, total: total.toFixed(2) }))
+      .sort((a, b) => parseFloat(b.total) - parseFloat(a.total))
   }
 
   async getCategories(): Promise<string[]> {
@@ -207,7 +266,7 @@ export class MockApiService implements ApiService {
       rows.push({
         category: cat,
         section: getSection(cat),
-        months: monthValues,
+        periods: monthValues,
         average: avg.toFixed(2),
         budget: budget?.amount ?? null,
         total: total.toFixed(2),
@@ -225,18 +284,44 @@ export class MockApiService implements ApiService {
     return rows
   }
 
-  async updateBudget(req: BudgetUpdateRequest): Promise<void> {
+  /**
+   * Mock of `POST /api/budget` - sets a standing budget that applies to
+   * every month unless overridden. Stored in the shared MOCK_BUDGETS
+   * array as a month-less row (empty month) so the mock mirrors the
+   * backend's standing_budgets table.
+   */
+  async setStandingBudget(body: SetStandingBudgetBody): Promise<void> {
     await delay(DELAY_MS)
     const existing = MOCK_BUDGETS.find(
-      (b) => b.month === req.month && b.category === req.category
+      (b) => b.month === "" && b.category === body.category
     )
     if (existing) {
-      existing.amount = req.amount
+      existing.amount = body.amount
     } else {
       MOCK_BUDGETS.push({
-        month: req.month,
-        category: req.category,
-        amount: req.amount,
+        month: "",
+        category: body.category,
+        amount: body.amount,
+      })
+    }
+  }
+
+  /**
+   * Mock of `POST /api/budget/override` - sets a per-month override on
+   * top of the standing budget.
+   */
+  async setBudgetOverride(body: SetBudgetOverrideBody): Promise<void> {
+    await delay(DELAY_MS)
+    const existing = MOCK_BUDGETS.find(
+      (b) => b.month === body.month && b.category === body.category
+    )
+    if (existing) {
+      existing.amount = body.amount
+    } else {
+      MOCK_BUDGETS.push({
+        month: body.month,
+        category: body.category,
+        amount: body.amount,
       })
     }
   }
@@ -285,18 +370,20 @@ export class MockApiService implements ApiService {
       byInst.set(a.institution, (byInst.get(a.institution) ?? 0) + bal)
     }
 
-    // By sector (simplified)
-    const bySector = new Map<string, number>()
+    // By asset class - mirrors the backend's account_type_to_asset_class
+    const byAssetClass = new Map<string, number>()
     for (const a of accounts) {
       const bal = parseFloat(a.balance ?? "0")
-      let sector: string
-      if (a.type === "investment") sector = "Stocks"
-      else if (a.type === "pension") sector = "Pension"
-      else if (a.type === "property" || a.type === "mortgage") sector = "Property"
-      else if (a.type === "savings" || a.type === "checking" || a.type === "cash")
-        sector = "Cash"
-      else sector = "Other"
-      bySector.set(sector, (bySector.get(sector) ?? 0) + bal)
+      let cls: string
+      if (a.type === "investment") cls = "Stocks"
+      else if (a.type === "pension") cls = "Pension"
+      else if (a.type === "property") cls = "Property"
+      else if (a.type === "mortgage") cls = "Debt"
+      else if (a.type === "credit") cls = "Credit"
+      else cls = "Cash"
+      // Breakdowns use absolute values (matches backend logic) so liabilities
+      // show positive for charting.
+      byAssetClass.set(cls, (byAssetClass.get(cls) ?? 0) + Math.abs(bal))
     }
 
     function toBreakdown(map: Map<string, number>) {
@@ -304,20 +391,18 @@ export class MockApiService implements ApiService {
       return Array.from(map.entries())
         .map(([label, val]) => ({
           label,
-          total: val.toFixed(2),
-          percent: total > 0 ? Math.round((val / total) * 100) : 0,
+          value: val.toFixed(2),
+          percentage: total > 0 ? (val / total) * 100 : 0,
         }))
-        .sort((a, b) => parseFloat(b.total) - parseFloat(a.total))
+        .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
     }
 
-    // Monthly snapshots aggregated
-    const monthMap = new Map<string, number>()
-    const accountIds = new Set(accounts.map((a) => a.id))
-    for (const snap of MOCK_PORTFOLIO_SNAPSHOTS) {
-      if (!accountIds.has(snap.account_id)) continue
-      const month = getMonthFromDate(snap.snapshot_date)
-      monthMap.set(month, (monthMap.get(month) ?? 0) + parseFloat(snap.balance))
-    }
+    // Rough investment metrics for mock mode: sum investment account balances
+    // as `end_value` and set the others to zero. The real backend computes
+    // these from snapshot deltas + Finance: Investment Transfer outflows.
+    const investEndValue = accounts
+      .filter((a) => a.type === "investment")
+      .reduce((s, a) => s + parseFloat(a.balance ?? "0"), 0)
 
     return {
       net_worth: netWorth.toFixed(2),
@@ -330,13 +415,22 @@ export class MockApiService implements ApiService {
       accounts,
       by_type: toBreakdown(byType),
       by_institution: toBreakdown(byInst),
-      by_sector: toBreakdown(bySector),
+      by_asset_class: toBreakdown(byAssetClass),
+      investment_metrics: {
+        start_value: "0",
+        end_value: investEndValue.toFixed(2),
+        total_growth: "0",
+        new_cash_invested: "0",
+        market_growth: "0",
+      },
     }
   }
 
   async getPortfolioHistory(
-    start?: string,
-    end?: string
+    start: string,
+    end: string,
+    _granularity?: Granularity,
+    _profileId?: string
   ): Promise<PortfolioHistoryRow[]> {
     await delay(DELAY_MS)
 
@@ -346,8 +440,8 @@ export class MockApiService implements ApiService {
       { available: number; unavailable: number }
     >()
 
-    for (const snap of MOCK_PORTFOLIO_SNAPSHOTS) {
-      const month = getMonthFromDate(snap.snapshot_date)
+    for (const snap of MOCK_ACCOUNT_BALANCES) {
+      const month = getMonthFromDate(snap.as_of)
       if (start && month < start.substring(0, 7)) continue
       if (end && month > end.substring(0, 7)) continue
 
@@ -382,7 +476,12 @@ export class MockApiService implements ApiService {
     return MOCK_HOLDINGS.filter((h) => h.account_id === accountId)
   }
 
-  async getCashFlow(start?: string, end?: string): Promise<CashFlowMonth[]> {
+  async getCashFlow(
+    start: string,
+    end: string,
+    _granularity?: Granularity,
+    _profileId?: string
+  ): Promise<CashFlowMonth[]> {
     await delay(DELAY_MS)
 
     const months = new Map<string, { income: number; spending: number }>()
@@ -412,13 +511,14 @@ export class MockApiService implements ApiService {
       }))
   }
 
-  async getAccountSnapshots(
-    start?: string,
-    end?: string
-  ): Promise<PortfolioSnapshot[]> {
+  async getAccountBalances(
+    start: string,
+    end: string,
+    _profileId?: string
+  ): Promise<AccountSnapshot[]> {
     await delay(DELAY_MS)
-    return MOCK_PORTFOLIO_SNAPSHOTS.filter((s) => {
-      const month = getMonthFromDate(s.snapshot_date)
+    return MOCK_ACCOUNT_BALANCES.filter((s) => {
+      const month = getMonthFromDate(s.as_of)
       if (start && month < start.substring(0, 7)) return false
       if (end && month > end.substring(0, 7)) return false
       return true

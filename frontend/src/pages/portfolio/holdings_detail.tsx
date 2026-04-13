@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Currency } from "@/components/currency"
+import { EmptyState } from "@/components/empty_state"
 import { LoadingSpinner } from "@/components/loading_spinner"
 
 interface HoldingsDetailProps {
@@ -52,6 +53,13 @@ export function HoldingsDetail({
         </SheetHeader>
         {loading ? (
           <LoadingSpinner />
+        ) : holdings.length === 0 ? (
+          <div className="mt-4">
+            <EmptyState
+              title="No holdings on file"
+              message="This account doesn't have any recorded positions yet."
+            />
+          </div>
         ) : (
           <div className="mt-4">
             <Table>
@@ -72,7 +80,7 @@ export function HoldingsDetail({
                     (a, b) => parseFloat(b.value) - parseFloat(a.value)
                   )
                   .map((h) => (
-                    <TableRow key={h.id}>
+                    <TableRow key={`${h.account_id}-${h.symbol}`}>
                       <TableCell className="font-medium">{h.symbol}</TableCell>
                       <TableCell className="text-sm">{h.name}</TableCell>
                       <TableCell>

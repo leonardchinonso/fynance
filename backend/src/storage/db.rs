@@ -10,15 +10,15 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 use rusqlite::{Connection, params};
 use rust_decimal::Decimal;
 
 use crate::model::{
-    Account, AccountType, BudgetRow, CategorySource, CategoryTotal, ChecklistItem,
-    ChecklistStatus, Granularity, Holding, HoldingType, ImportLog, ImportResult, ImportRowError,
-    ImportTransaction, InsertOutcome, PortfolioSnapshot, Profile, SectionMapping, SpendingGridRow,
-    StandingBudget, Transaction,
+    Account, AccountSnapshot, AccountType, BalanceDelta, BudgetRow, CategorySource, CategoryTotal,
+    ChecklistItem, ChecklistStatus, CashFlowMonth, Granularity, Holding, HoldingType, ImportLog,
+    ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentMetrics,
+    PortfolioHistoryRow, Profile, SectionMapping, SpendingGridRow, StandingBudget, Transaction,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -88,6 +88,35 @@ const MIGRATION_002_STMTS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Migration 003: transitions date fields from `YYYY-MM-DD` to
+/// `YYYY-MM-DDTHH:MM:SS` format. Fingerprints are recomputed in Rust after
+/// the SQL step because SHA-256 cannot be expressed in SQLite.
+/// NOTE: the `portfolio_snapshots` UPDATE in this migration is harmless after
+/// migration 004 drops the table, because 003 always runs before 004.
+const MIGRATION_003_SQL: &str = r"
+UPDATE transactions
+SET date = date || 'T00:00:00'
+WHERE length(date) = 10;
+
+UPDATE portfolio_snapshots
+SET snapshot_date = snapshot_date || 'T00:00:00'
+WHERE length(snapshot_date) = 10;
+
+UPDATE holdings
+SET as_of = as_of || 'T00:00:00'
+WHERE length(as_of) = 10;
+
+UPDATE accounts
+SET balance_date = balance_date || 'T00:00:00'
+WHERE balance_date IS NOT NULL AND length(balance_date) = 10;
+";
+
+/// Migration 004: consolidate portfolio_snapshots into holdings.
+/// Every snapshot row becomes a holdings row with symbol='_CASH', holding_type='cash'.
+/// The portfolio_snapshots table is then dropped.
+const MIGRATION_004_SQL: &str =
+    include_str!("../../../db/sql/migrations/004_consolidate_snapshots.sql");
+
 /// Resolve the default DB path. On Linux this is
 /// `~/.local/share/fynance/fynance.db`; on macOS it's
 /// `~/Library/Application Support/fynance/fynance.db`.
@@ -156,6 +185,8 @@ impl Db {
 
         ensure_migration_001(&conn)?;
         ensure_migration_002(&conn)?;
+        ensure_migration_003(&conn)?;
+        ensure_migration_004(&conn)?;
 
         if path.exists() {
             set_file_mode_600(path)?;
@@ -225,7 +256,7 @@ impl Db {
                 account.account_type.as_str(),
                 account.currency,
                 account.balance.map(|b| b.to_string()),
-                account.balance_date.map(|d| d.format("%Y-%m-%d").to_string()),
+                account.balance_date.map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string()),
                 account.is_active as i64,
                 account.notes,
                 profile_ids,
@@ -251,7 +282,7 @@ impl Db {
                 account.account_type.as_str(),
                 account.currency,
                 account.balance.map(|b| b.to_string()),
-                account.balance_date.map(|d| d.format("%Y-%m-%d").to_string()),
+                account.balance_date.map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string()),
                 account.is_active as i64,
                 account.notes,
                 profile_ids,
@@ -324,30 +355,48 @@ impl Db {
         &self,
         account_id: &str,
         balance: Decimal,
-        date: NaiveDate,
+        date: NaiveDateTime,
     ) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
+
+        // 1. Update the denormalized balance on the accounts table.
         let updated = tx.execute(
             "UPDATE accounts SET balance = ?1, balance_date = ?2 WHERE id = ?3",
             params![
                 balance.to_string(),
-                date.format("%Y-%m-%d").to_string(),
+                date.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 account_id
             ],
         )?;
         if updated == 0 {
             return Err(anyhow!("unknown account: {account_id}"));
         }
+
+        // 2. Upsert a cash holding to record the point-in-time balance.
+        let currency: String = tx
+            .query_row(
+                "SELECT currency FROM accounts WHERE id = ?1",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "GBP".to_string());
+
         tx.execute(
-            r"INSERT INTO portfolio_snapshots (snapshot_date, account_id, balance, currency)
-              VALUES (?1, ?2, ?3, COALESCE((SELECT currency FROM accounts WHERE id = ?2), 'GBP'))
-              ON CONFLICT(snapshot_date, account_id) DO UPDATE SET balance = excluded.balance",
+            r"INSERT INTO holdings (
+                account_id, symbol, name, holding_type, quantity, price_per_unit,
+                value, currency, as_of
+            ) VALUES (?1, '_CASH', 'Account Balance', 'cash', '1', NULL, ?2, ?3, ?4)
+            ON CONFLICT(account_id, symbol, as_of) DO UPDATE SET
+                value    = excluded.value,
+                currency = excluded.currency",
             params![
-                date.format("%Y-%m-%d").to_string(),
                 account_id,
-                balance.to_string()
+                balance.to_string(),
+                currency,
+                date.format("%Y-%m-%dT%H:%M:%S").to_string(),
             ],
         )?;
+
         tx.commit()?;
         Ok(())
     }
@@ -365,7 +414,7 @@ impl Db {
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 tx.id,
-                tx.date.format("%Y-%m-%d").to_string(),
+                tx.date.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 tx.description,
                 tx.normalized,
                 tx.amount.to_string(),
@@ -406,11 +455,11 @@ impl Db {
 
         for (i, t) in txns.iter().enumerate() {
             result.rows_total += 1;
-            let date_iso = t.date.format("%Y-%m-%d").to_string();
+            let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
             let amount_str = t.amount.to_string();
             let currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
             let normalized = normalize_description(&t.description);
-            let fp = fingerprint(&date_iso, &amount_str, &t.description, account_id);
+            let fp = fingerprint(&date_iso, &amount_str, account_id);
 
             let tx = Transaction {
                 id: Uuid::new_v4().to_string(),
@@ -455,11 +504,11 @@ impl Db {
         let mut need_account_join = false;
 
         if let Some(start) = filters.start {
-            args.push(Box::new(start.format("%Y-%m-%d").to_string()));
+            args.push(Box::new(start.format("%Y-%m-%dT00:00:00").to_string()));
             conditions.push(format!("t.date >= ?{}", args.len()));
         }
         if let Some(end) = filters.end {
-            args.push(Box::new(end.format("%Y-%m-%d").to_string()));
+            args.push(Box::new(end.format("%Y-%m-%dT23:59:59").to_string()));
             conditions.push(format!("t.date <= ?{}", args.len()));
         }
         if let Some(accs) = &filters.accounts {
@@ -548,21 +597,29 @@ impl Db {
     }
 
     /// Aggregate spending per category over a filtered range.
-    /// Returns signed sums (negative = net spend, positive = net income).
+    ///
+    /// When `direction` is `None` the returned `total` is the signed net sum
+    /// (negative = net spend). When `direction` is `Some(Outflow)` or
+    /// `Some(Income)` the aggregation filters by sign first and returns the
+    /// sum of absolute values. `filters.categories` restricts which category
+    /// rows are considered.
     pub fn get_transactions_by_category(
         &self,
         filters: &TransactionFilters,
+        direction: Option<crate::model::TransactionDirection>,
     ) -> Result<Vec<CategoryTotal>> {
+        use crate::model::TransactionDirection;
+
         let mut conditions: Vec<String> = vec!["t.category IS NOT NULL".to_string()];
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut need_account_join = false;
 
         if let Some(start) = filters.start {
-            args.push(Box::new(start.format("%Y-%m-%d").to_string()));
+            args.push(Box::new(start.format("%Y-%m-%dT00:00:00").to_string()));
             conditions.push(format!("t.date >= ?{}", args.len()));
         }
         if let Some(end) = filters.end {
-            args.push(Box::new(end.format("%Y-%m-%d").to_string()));
+            args.push(Box::new(end.format("%Y-%m-%dT23:59:59").to_string()));
             conditions.push(format!("t.date <= ?{}", args.len()));
         }
         if let Some(accs) = &filters.accounts {
@@ -577,12 +634,38 @@ impl Db {
                 conditions.push(format!("t.account_id IN ({})", placeholders.join(",")));
             }
         }
+        if let Some(cats) = &filters.categories {
+            if !cats.is_empty() {
+                let placeholders: Vec<String> = cats
+                    .iter()
+                    .map(|v| {
+                        args.push(Box::new(v.clone()));
+                        format!("?{}", args.len())
+                    })
+                    .collect();
+                conditions.push(format!("t.category IN ({})", placeholders.join(",")));
+            }
+        }
         if let Some(pid) = &filters.profile_id {
             need_account_join = true;
             let pattern = format!("%\"{pid}\"%");
             args.push(Box::new(pattern));
             conditions.push(format!("a.profile_ids LIKE ?{}", args.len()));
         }
+
+        // Direction filter (sign-based). Adds both a WHERE clause and
+        // switches the aggregation to SUM(ABS(amount)).
+        let sum_expr = match direction {
+            Some(TransactionDirection::Outflow) => {
+                conditions.push("CAST(t.amount AS REAL) < 0".to_string());
+                "SUM(ABS(CAST(t.amount AS REAL)))"
+            }
+            Some(TransactionDirection::Income) => {
+                conditions.push("CAST(t.amount AS REAL) > 0".to_string());
+                "SUM(CAST(t.amount AS REAL))"
+            }
+            None => "SUM(CAST(t.amount AS REAL))",
+        };
 
         let join = if need_account_join {
             "JOIN accounts a ON a.id = t.account_id"
@@ -592,11 +675,11 @@ impl Db {
         let where_clause = conditions.join(" AND ");
 
         let sql = format!(
-            r"SELECT t.category, SUM(CAST(t.amount AS REAL)) AS total
+            r"SELECT t.category, {sum_expr} AS total
               FROM transactions t {join}
               WHERE {where_clause}
               GROUP BY t.category
-              ORDER BY total ASC"
+              ORDER BY total DESC"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -889,8 +972,8 @@ impl Db {
               ORDER BY t.category, period"
         );
 
-        let start_str = start.format("%Y-%m-%d").to_string();
-        let end_str = end.format("%Y-%m-%d").to_string();
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
         let mut base_args: Vec<Box<dyn rusqlite::ToSql>> = vec![
             Box::new(start_str),
@@ -988,23 +1071,6 @@ impl Db {
 
     // ── Portfolio ─────────────────────────────────────────────────────────────
 
-    pub fn upsert_portfolio_snapshot(&self, snapshot: &PortfolioSnapshot) -> Result<()> {
-        self.conn.execute(
-            r"INSERT INTO portfolio_snapshots (snapshot_date, account_id, balance, currency)
-              VALUES (?1, ?2, ?3, ?4)
-              ON CONFLICT(snapshot_date, account_id) DO UPDATE SET
-                balance  = excluded.balance,
-                currency = excluded.currency",
-            params![
-                snapshot.snapshot_date.format("%Y-%m-%d").to_string(),
-                snapshot.account_id,
-                snapshot.balance.to_string(),
-                snapshot.currency,
-            ],
-        )?;
-        Ok(())
-    }
-
     pub fn upsert_holdings(&self, account_id: &str, holdings: &[Holding]) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         for h in holdings {
@@ -1030,7 +1096,7 @@ impl Db {
                     h.price_per_unit.map(|p| p.to_string()),
                     h.value.to_string(),
                     h.currency,
-                    h.as_of.format("%Y-%m-%d").to_string(),
+                    h.as_of.format("%Y-%m-%dT%H:%M:%S").to_string(),
                     h.short_name,
                 ],
             )?;
@@ -1172,6 +1238,522 @@ impl Db {
         }
     }
 
+    // ── Portfolio queries ─────────────────────────────────────────────────────
+
+    /// Returns all accounts with their carry-forward balance as of `as_of`.
+    /// Each returned `Account` has:
+    /// - `balance`: SUM(holdings.value) for the most recent `as_of` date <= `as_of`, or `None`
+    /// - `balance_date`: the holdings date that was carried forward
+    /// - `is_stale`: `Some(true)` if that date is > 45 days before `as_of`
+    pub fn get_portfolio_as_of(
+        &self,
+        as_of: NaiveDate,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<Account>> {
+        // Use T23:59:59 so that any holding recorded during the as_of day is included.
+        let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
+        let stale_days = 45i64;
+
+        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
+        {
+            let pattern = format!("%\"{pid}\"%");
+            ("AND a.profile_ids LIKE ?2".to_string(), Some(pattern))
+        } else {
+            (String::new(), None)
+        };
+
+        // For each account, find the most recent holdings snapshot date <= as_of,
+        // then sum all holdings values on that date.
+        let sql = format!(
+            r"SELECT
+                a.id, a.name, a.institution, a.type, a.currency,
+                a.is_active, a.notes, a.profile_ids,
+                hb.total_value AS snap_balance,
+                hb.max_as_of   AS snapshot_date
+              FROM accounts a
+              LEFT JOIN (
+                  SELECT
+                      h.account_id,
+                      SUM(CAST(h.value AS REAL)) AS total_value,
+                      h.as_of AS max_as_of
+                  FROM holdings h
+                  WHERE h.as_of = (
+                      SELECT MAX(h2.as_of)
+                      FROM holdings h2
+                      WHERE h2.account_id = h.account_id
+                        AND h2.as_of <= ?1
+                  )
+                  GROUP BY h.account_id
+              ) hb ON hb.account_id = a.id
+              WHERE a.is_active = 1
+              {profile_filter}
+              ORDER BY a.institution, a.name"
+        );
+
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<Account> {
+            let type_str: String = row.get(3)?;
+            let profile_ids_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
+            let profile_ids: Vec<String> = serde_json::from_str(&profile_ids_str)
+                .unwrap_or_else(|_| vec!["default".to_string()]);
+
+            let snap_balance: Option<f64> = row.get(8)?;
+            let snap_date_str: Option<String> = row.get(9)?;
+
+            let balance = snap_balance.and_then(|f| Decimal::try_from(f).ok());
+            let balance_date: Option<NaiveDateTime> =
+                snap_date_str.as_deref().and_then(parse_transaction_datetime);
+
+            let is_stale = balance_date
+                .map(|d| (as_of - d.date()).num_days() > stale_days)
+                .unwrap_or(false);
+
+            Ok(Account {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                institution: row.get(2)?,
+                account_type: AccountType::parse(&type_str).unwrap_or(AccountType::Checking),
+                currency: row.get(4)?,
+                balance,
+                balance_date,
+                is_active: row.get::<_, i64>(5)? != 0,
+                notes: row.get(6)?,
+                profile_ids,
+                is_stale: Some(is_stale),
+            })
+        };
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows: Vec<Account> = if let Some(ref pat) = profile_arg {
+            stmt.query_map(rusqlite::params![as_of_str, pat], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(rusqlite::params![as_of_str], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        Ok(rows)
+    }
+
+    /// Returns one `PortfolioHistoryRow` per period between `from` and `to`.
+    /// Uses carry-forward semantics: point-in-time balance at period end.
+    pub fn get_monthly_net_worth(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+        granularity: &Granularity,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<PortfolioHistoryRow>> {
+        let periods = generate_period_end_dates(from, to, granularity);
+        let mut rows = Vec::new();
+
+        for (label, period_end) in periods {
+            let accounts = self.get_portfolio_as_of(period_end, profile_id)?;
+            let available: Decimal = accounts
+                .iter()
+                .filter(|a| is_available_account(&a.account_type))
+                .filter_map(|a| a.balance)
+                .sum();
+            let unavailable: Decimal = accounts
+                .iter()
+                .filter(|a| !is_available_account(&a.account_type))
+                .filter_map(|a| a.balance)
+                .sum();
+            rows.push(PortfolioHistoryRow {
+                month: label,
+                available_wealth: available,
+                unavailable_wealth: unavailable,
+                total_wealth: available + unavailable,
+            });
+        }
+
+        Ok(rows)
+    }
+
+    /// Returns the first and last balance (SUM of holdings) per account within `[start, end]`,
+    /// and the delta between them.
+    pub fn get_balance_summary(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<BalanceDelta>> {
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
+
+        // Get all account IDs that have at least one holding in range.
+        let account_ids: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT DISTINCT account_id FROM holdings WHERE as_of >= ?1 AND as_of <= ?2",
+            )?;
+            stmt.query_map(rusqlite::params![start_str, end_str], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut result = Vec::new();
+        for account_id in account_ids {
+            // First snapshot date >= start for this account.
+            let first_date: Option<String> = self
+                .conn
+                .query_row(
+                    r"SELECT MIN(as_of) FROM holdings
+                      WHERE account_id = ?1 AND as_of >= ?2",
+                    rusqlite::params![account_id, start_str],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+
+            // Last snapshot date <= end for this account.
+            let last_date: Option<String> = self
+                .conn
+                .query_row(
+                    r"SELECT MAX(as_of) FROM holdings
+                      WHERE account_id = ?1 AND as_of <= ?2",
+                    rusqlite::params![account_id, end_str],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+
+            // Sum holdings at the first date.
+            let start_balance: Option<Decimal> = first_date.as_ref().and_then(|d| {
+                self.conn
+                    .query_row(
+                        r"SELECT SUM(CAST(value AS REAL)) FROM holdings
+                          WHERE account_id = ?1 AND as_of = ?2",
+                        rusqlite::params![account_id, d],
+                        |row| row.get::<_, Option<f64>>(0),
+                    )
+                    .ok()
+                    .flatten()
+                    .and_then(|f| Decimal::try_from(f).ok())
+            });
+
+            // Sum holdings at the last date.
+            let end_balance: Option<Decimal> = last_date.as_ref().and_then(|d| {
+                self.conn
+                    .query_row(
+                        r"SELECT SUM(CAST(value AS REAL)) FROM holdings
+                          WHERE account_id = ?1 AND as_of = ?2",
+                        rusqlite::params![account_id, d],
+                        |row| row.get::<_, Option<f64>>(0),
+                    )
+                    .ok()
+                    .flatten()
+                    .and_then(|f| Decimal::try_from(f).ok())
+            });
+
+            let delta = start_balance.zip(end_balance).map(|(s, e)| e - s);
+
+            result.push(BalanceDelta {
+                account_id,
+                start_balance,
+                end_balance,
+                delta,
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Returns aggregated account balances (SUM of holdings) for each distinct
+    /// (account_id, as_of) date in `[start, end]`, ordered by date and account.
+    pub fn get_balances_in_range(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<AccountSnapshot>> {
+        let mut stmt = self.conn.prepare(
+            r"SELECT
+                h.as_of,
+                h.account_id,
+                SUM(CAST(h.value AS REAL)) AS total_balance,
+                MIN(h.currency) AS currency
+              FROM holdings h
+              WHERE h.as_of >= ?1 AND h.as_of <= ?2
+              GROUP BY h.account_id, h.as_of
+              ORDER BY h.as_of, h.account_id",
+        )?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params![
+                    start.format("%Y-%m-%dT00:00:00").to_string(),
+                    end.format("%Y-%m-%dT23:59:59").to_string()
+                ],
+                |row| {
+                    let date_str: String = row.get(0)?;
+                    let total: f64 = row.get(2)?;
+                    Ok((date_str, row.get::<_, String>(1)?, total, row.get::<_, String>(3)?))
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|(date_str, account_id, total, currency)| {
+                let date = parse_transaction_datetime(&date_str)?;
+                let balance = Decimal::try_from(total).ok()?;
+                Some(AccountSnapshot {
+                    as_of: date,
+                    account_id,
+                    balance,
+                    currency,
+                })
+            })
+            .collect())
+    }
+
+    /// Returns income and spending aggregated by period.
+    pub fn get_cash_flow(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+        granularity: &Granularity,
+    ) -> Result<Vec<CashFlowMonth>> {
+        let period_expr = match granularity {
+            Granularity::Monthly => "substr(t.date, 1, 7)".to_string(),
+            Granularity::Quarterly => concat!(
+                "CASE ",
+                "WHEN CAST(substr(t.date,6,2) AS INTEGER) BETWEEN 1 AND 3 ",
+                "  THEN substr(t.date,1,4)||'-Q1' ",
+                "WHEN CAST(substr(t.date,6,2) AS INTEGER) BETWEEN 4 AND 6 ",
+                "  THEN substr(t.date,1,4)||'-Q2' ",
+                "WHEN CAST(substr(t.date,6,2) AS INTEGER) BETWEEN 7 AND 9 ",
+                "  THEN substr(t.date,1,4)||'-Q3' ",
+                "ELSE substr(t.date,1,4)||'-Q4' END"
+            )
+            .to_string(),
+            Granularity::Yearly => "substr(t.date, 1, 4)".to_string(),
+        };
+
+        let mut conditions = vec![
+            "t.date >= ?1".to_string(),
+            "t.date <= ?2".to_string(),
+        ];
+        let mut extra_args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        let join = if let Some(pid) = profile_id {
+            let pattern = format!("%\"{pid}\"%");
+            extra_args.push(Box::new(pattern));
+            conditions.push(format!("a.profile_ids LIKE ?{}", 2 + extra_args.len()));
+            "JOIN accounts a ON a.id = t.account_id"
+        } else {
+            ""
+        };
+
+        let where_clause = conditions.join(" AND ");
+
+        let sql = format!(
+            r"SELECT
+                {period_expr} AS period,
+                SUM(CASE WHEN CAST(t.amount AS REAL) > 0 THEN CAST(t.amount AS REAL) ELSE 0 END) AS income,
+                SUM(CASE WHEN CAST(t.amount AS REAL) < 0 THEN ABS(CAST(t.amount AS REAL)) ELSE 0 END) AS spending
+              FROM transactions t
+              {join}
+              WHERE {where_clause}
+              GROUP BY period
+              ORDER BY period"
+        );
+
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
+
+        let mut base_args: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(start_str), Box::new(end_str)];
+        base_args.extend(extra_args);
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let raw: Vec<(String, f64, f64)> = stmt
+            .query_map(
+                rusqlite::params_from_iter(base_args.iter().map(|b| b.as_ref())),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(raw
+            .into_iter()
+            .map(|(period, income_f, spending_f)| CashFlowMonth {
+                month: period,
+                income: Decimal::try_from(income_f).unwrap_or_default(),
+                spending: Decimal::try_from(spending_f).unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// Returns the latest holdings (carry-forward) for all specified accounts.
+    pub fn get_holdings_batch(&self, account_ids: &[String]) -> Result<Vec<Holding>> {
+        if account_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let placeholders: String = account_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let sql = format!(
+            r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
+                     h.quantity, h.price_per_unit, h.value, h.currency,
+                     h.as_of, h.short_name
+              FROM holdings h
+              WHERE h.account_id IN ({placeholders})
+                AND h.as_of = (
+                    SELECT MAX(h2.as_of) FROM holdings h2
+                    WHERE h2.account_id = h.account_id
+                )
+              ORDER BY h.account_id, h.symbol"
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(account_ids.iter()),
+                row_to_holding,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Replace all holdings for `account_id` on the dates present in `holdings`.
+    /// For each distinct `as_of` date in the payload: delete existing rows for
+    /// (account_id, as_of), then insert the new ones.
+    pub fn replace_holdings(&self, account_id: &str, holdings: &[Holding]) -> Result<u32> {
+        if holdings.is_empty() {
+            return Ok(0);
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+
+        // Collect distinct as_of dates to replace.
+        let mut dates: Vec<String> = holdings
+            .iter()
+            .map(|h| h.as_of.format("%Y-%m-%d").to_string())
+            .collect();
+        dates.sort();
+        dates.dedup();
+
+        for date in &dates {
+            tx.execute(
+                "DELETE FROM holdings WHERE account_id = ?1 AND as_of = ?2",
+                rusqlite::params![account_id, date],
+            )?;
+        }
+
+        let mut inserted = 0u32;
+        for h in holdings {
+            tx.execute(
+                r"INSERT INTO holdings (
+                    account_id, symbol, name, holding_type, quantity, price_per_unit,
+                    value, currency, as_of, short_name
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                rusqlite::params![
+                    account_id,
+                    h.symbol,
+                    h.name,
+                    h.holding_type.as_str(),
+                    h.quantity.to_string(),
+                    h.price_per_unit.map(|p| p.to_string()),
+                    h.value.to_string(),
+                    h.currency,
+                    h.as_of.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    h.short_name,
+                ],
+            )?;
+            inserted += 1;
+        }
+
+        tx.commit()?;
+        Ok(inserted)
+    }
+
+    /// Compute investment performance metrics for `[start, end]`.
+    ///
+    /// Uses carry-forward for start and end values on investment accounts.
+    /// `new_cash_invested` = signed sum of `Finance: Investment Transfer` transactions.
+    pub fn compute_investment_metrics(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+    ) -> Result<InvestmentMetrics> {
+        // Fetch investment accounts only.
+        let all_accounts = self.get_accounts(profile_id)?;
+        let investment_ids: Vec<String> = all_accounts
+            .into_iter()
+            .filter(|a| matches!(a.account_type, AccountType::Investment))
+            .map(|a| a.id)
+            .collect();
+
+        let sum_carry_forward = |date: NaiveDate| -> Result<Decimal> {
+            let date_str = date.format("%Y-%m-%dT23:59:59").to_string();
+            let mut total = Decimal::ZERO;
+            for id in &investment_ids {
+                // Find the most recent holdings snapshot date for this account.
+                let max_date: Option<String> = self
+                    .conn
+                    .query_row(
+                        r"SELECT MAX(as_of) FROM holdings
+                          WHERE account_id = ?1 AND as_of <= ?2",
+                        rusqlite::params![id, date_str],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten();
+
+                if let Some(ref d) = max_date {
+                    // Sum all holdings at that date.
+                    let balance: Option<f64> = self
+                        .conn
+                        .query_row(
+                            r"SELECT SUM(CAST(value AS REAL)) FROM holdings
+                              WHERE account_id = ?1 AND as_of = ?2",
+                            rusqlite::params![id, d],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                        .flatten();
+                    if let Some(b) = balance {
+                        total += Decimal::try_from(b).unwrap_or_default();
+                    }
+                }
+            }
+            Ok(total)
+        };
+
+        let start_value = sum_carry_forward(start)?;
+        let end_value = sum_carry_forward(end)?;
+
+        // Net cash moved into investment accounts.
+        let new_cash_invested: Decimal = {
+            let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+            let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
+            let raw: Option<f64> = self
+                .conn
+                .query_row(
+                    r"SELECT SUM(CAST(amount AS REAL)) FROM transactions
+                      WHERE category = 'Finance: Investment Transfer'
+                        AND date >= ?1 AND date <= ?2",
+                    rusqlite::params![start_str, end_str],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+            Decimal::try_from(raw.unwrap_or(0.0)).unwrap_or_default()
+        };
+
+        let total_growth = end_value - start_value;
+        let market_growth = total_growth - new_cash_invested;
+
+        Ok(InvestmentMetrics {
+            start_value,
+            end_value,
+            total_growth,
+            new_cash_invested,
+            market_growth,
+        })
+    }
+
     // ── Stats ─────────────────────────────────────────────────────────────────
 
     pub fn stats(&self) -> Result<Stats> {
@@ -1246,7 +1828,47 @@ pub struct AccountStats {
     pub uncategorized: u64,
 }
 
+// ── Date parsing helper ───────────────────────────────────────────────────────
+
+/// Parse a stored date/datetime string into `NaiveDateTime`.
+///
+/// Accepts both the new `YYYY-MM-DDTHH:MM:SS` format and the legacy
+/// `YYYY-MM-DD` format (converting date-only values to `T00:00:00`).
+/// Returns `None` on parse failure rather than panicking so callers can
+/// use `.unwrap_or_else` with a sensible default.
+fn parse_transaction_datetime(s: &str) -> Option<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+        .ok()
+        .or_else(|| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+        })
+}
+
 // ── Row mappers ───────────────────────────────────────────────────────────────
+
+fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
+    let holding_type_str: String = row.get(3)?;
+    let quantity_str: String = row.get(4)?;
+    let price_str: Option<String> = row.get(5)?;
+    let value_str: String = row.get(6)?;
+    let as_of_str: String = row.get(8)?;
+    Ok(Holding {
+        account_id: row.get(0)?,
+        symbol: row.get(1)?,
+        name: row.get(2)?,
+        holding_type: HoldingType::parse(&holding_type_str).unwrap_or(HoldingType::Stock),
+        quantity: quantity_str.parse::<Decimal>().unwrap_or_default(),
+        price_per_unit: price_str.and_then(|s| s.parse::<Decimal>().ok()),
+        value: value_str.parse::<Decimal>().unwrap_or_default(),
+        currency: row.get(7)?,
+        as_of: parse_transaction_datetime(&as_of_str).unwrap_or_else(|| {
+            chrono::Local::now().naive_local()
+        }),
+        short_name: row.get(9)?,
+    })
+}
 
 fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> {
     let date: String = row.get(1)?;
@@ -1254,8 +1876,12 @@ fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> 
     let cat_source: Option<String> = row.get(8)?;
     Ok(Transaction {
         id: row.get(0)?,
-        date: NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+        date: parse_transaction_datetime(&date).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                format!("invalid transaction date: {date:?}").into(),
+            )
         })?,
         description: row.get(2)?,
         normalized: row.get(3)?,
@@ -1286,11 +1912,120 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         account_type: AccountType::parse(&type_str).unwrap_or(AccountType::Checking),
         currency: row.get(4)?,
         balance: balance.and_then(|s| s.parse::<Decimal>().ok()),
-        balance_date: balance_date.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+        balance_date: balance_date.and_then(|s| parse_transaction_datetime(&s)),
         is_active: row.get::<_, i64>(7)? != 0,
         notes: row.get(8)?,
         profile_ids,
+        is_stale: None,
     })
+}
+
+// ── Portfolio helpers ─────────────────────────────────────────────────────────
+
+/// Returns `true` for account types counted in "available wealth".
+pub fn is_available_account(t: &AccountType) -> bool {
+    matches!(
+        t,
+        AccountType::Checking
+            | AccountType::Savings
+            | AccountType::Investment
+            | AccountType::Cash
+            | AccountType::Credit
+    )
+}
+
+/// Map an account type to a broad asset class label for `by_asset_class`.
+pub fn account_type_to_asset_class(t: &AccountType) -> &'static str {
+    match t {
+        AccountType::Investment => "Stocks",
+        AccountType::Pension => "Pension",
+        AccountType::Checking | AccountType::Savings | AccountType::Cash => "Cash",
+        AccountType::Credit => "Credit",
+        AccountType::Property => "Property",
+        AccountType::Mortgage => "Debt",
+    }
+}
+
+/// Generate (label, period_end_date) pairs for a date range and granularity.
+/// Each period_end is clamped to `to` if it exceeds it.
+pub fn generate_period_end_dates(
+    from: NaiveDate,
+    to: NaiveDate,
+    granularity: &Granularity,
+) -> Vec<(String, NaiveDate)> {
+    use chrono::Datelike;
+
+    let mut periods = Vec::new();
+
+    match granularity {
+        Granularity::Monthly => {
+            let mut year = from.year();
+            let mut month = from.month();
+            loop {
+                // Last day of this month.
+                let next = if month == 12 {
+                    NaiveDate::from_ymd_opt(year + 1, 1, 1)
+                } else {
+                    NaiveDate::from_ymd_opt(year, month + 1, 1)
+                }
+                .unwrap();
+                let period_end = next.pred_opt().unwrap().min(to);
+                let label = format!("{year}-{month:02}");
+                periods.push((label, period_end));
+                if period_end >= to {
+                    break;
+                }
+                // Advance one month.
+                if month == 12 {
+                    year += 1;
+                    month = 1;
+                } else {
+                    month += 1;
+                }
+            }
+        }
+        Granularity::Quarterly => {
+            let start_q = (from.month() - 1) / 3 + 1;
+            let mut year = from.year();
+            let mut quarter = start_q;
+            loop {
+                let end_month = quarter * 3;
+                let next_year = if end_month == 12 { year + 1 } else { year };
+                let next_month = if end_month == 12 { 1 } else { end_month + 1 };
+                let period_end = NaiveDate::from_ymd_opt(next_year, next_month, 1)
+                    .unwrap()
+                    .pred_opt()
+                    .unwrap()
+                    .min(to);
+                let label = format!("{year}-Q{quarter}");
+                periods.push((label, period_end));
+                if period_end >= to {
+                    break;
+                }
+                if quarter == 4 {
+                    year += 1;
+                    quarter = 1;
+                } else {
+                    quarter += 1;
+                }
+            }
+        }
+        Granularity::Yearly => {
+            let mut year = from.year();
+            loop {
+                let period_end =
+                    NaiveDate::from_ymd_opt(year, 12, 31).unwrap().min(to);
+                let label = format!("{year}");
+                periods.push((label, period_end));
+                if period_end >= to {
+                    break;
+                }
+                year += 1;
+            }
+        }
+    }
+
+    periods
 }
 
 // ── Taxonomy helpers ──────────────────────────────────────────────────────────
@@ -1440,6 +2175,338 @@ fn ensure_migration_002(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_migration_003(conn: &Connection) -> Result<()> {
+    // Check whether migration has already been applied by inspecting a sample
+    // transaction date. If no transactions exist, or the first date already
+    // contains a 'T', the SQL step is safe to skip (idempotent WHERE guards).
+    let sample_date: Option<String> = conn
+        .query_row(
+            "SELECT date FROM transactions ORDER BY rowid LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    let already_applied = sample_date
+        .as_deref()
+        .map(|d| d.contains('T'))
+        .unwrap_or(true); // No rows means nothing to migrate.
+
+    if !already_applied {
+        conn.execute_batch(MIGRATION_003_SQL)
+            .context("applying migration 003: datetime transition")?;
+    }
+
+    // Recompute all fingerprints to reflect the new formula:
+    // sha256(datetime | amount | account_id) — description removed.
+    // This is always safe to re-run because it is idempotent.
+    use crate::util::fingerprint;
+
+    let rows: Vec<(String, String, String, String)> = {
+        let mut stmt = conn.prepare("SELECT id, date, amount, account_id FROM transactions")?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+
+    // Detect whether any fingerprint needs updating by checking one row.
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let (ref id0, ref date0, ref amount0, ref account0) = rows[0];
+    let expected_fp = fingerprint(date0, amount0, account0);
+    let current_fp: String = conn
+        .query_row(
+            "SELECT fingerprint FROM transactions WHERE id = ?1",
+            params![id0],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
+    if current_fp == expected_fp {
+        return Ok(()); // Already up to date.
+    }
+
+    let mut update_stmt =
+        conn.prepare("UPDATE transactions SET fingerprint = ?1 WHERE id = ?2")?;
+    for (id, date, amount, account_id) in &rows {
+        let new_fp = fingerprint(date, amount, account_id);
+        update_stmt
+            .execute(params![new_fp, id])
+            .with_context(|| format!("recomputing fingerprint for tx {id}"))?;
+    }
+
+    Ok(())
+}
+
+fn ensure_migration_004(conn: &Connection) -> Result<()> {
+    // Check whether the portfolio_snapshots table still exists. If it does not,
+    // migration 004 has already run (or the DB was created fresh after the schema
+    // change) and there is nothing to do.
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='portfolio_snapshots'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if table_exists {
+        conn.execute_batch(MIGRATION_004_SQL)
+            .context("applying migration 004: consolidate portfolio_snapshots into holdings")?;
+        tracing::info!("applied migration 004: consolidated portfolio_snapshots into holdings");
+    }
+
+    Ok(())
+}
+
+
 // Keep HoldingType referenced to avoid dead_code warning.
 #[allow(dead_code)]
 const _: Option<HoldingType> = None;
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod consolidation_tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+    use tempfile::NamedTempFile;
+
+    macro_rules! dec {
+        ($val:expr) => {
+            Decimal::from_str(stringify!($val)).unwrap()
+        };
+    }
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn make_account(id: &str, account_type: AccountType) -> Account {
+        Account {
+            id: id.to_string(),
+            name: id.to_string(),
+            institution: "TestBank".to_string(),
+            account_type,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+        }
+    }
+
+    fn naive_dt(year: i32, month: u32, day: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(year, month, day)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+    }
+
+    fn naive_date(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    }
+
+    fn make_holding(
+        account_id: &str,
+        symbol: &str,
+        holding_type: HoldingType,
+        value: Decimal,
+        as_of: NaiveDateTime,
+    ) -> Holding {
+        Holding {
+            account_id: account_id.to_string(),
+            symbol: symbol.to_string(),
+            name: symbol.to_string(),
+            holding_type,
+            quantity: Decimal::ONE,
+            price_per_unit: None,
+            value,
+            currency: "GBP".to_string(),
+            as_of,
+            short_name: None,
+        }
+    }
+
+    #[test]
+    fn set_account_balance_creates_cash_holding() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("monzo", AccountType::Checking)).unwrap();
+
+        db.set_account_balance("monzo", dec!(1500), naive_dt(2025, 1, 15)).unwrap();
+
+        let holdings = db.get_holdings_batch(&["monzo".to_string()]).unwrap();
+        assert_eq!(holdings.len(), 1);
+        assert_eq!(holdings[0].symbol, "_CASH");
+        assert_eq!(holdings[0].holding_type, HoldingType::Cash);
+        assert_eq!(holdings[0].value, dec!(1500));
+    }
+
+    #[test]
+    fn set_account_balance_upserts_on_same_date() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("monzo", AccountType::Checking)).unwrap();
+
+        let dt = naive_dt(2025, 1, 15);
+        db.set_account_balance("monzo", dec!(1000), dt).unwrap();
+        db.set_account_balance("monzo", dec!(1200), dt).unwrap();
+
+        let holdings = db.get_holdings_batch(&["monzo".to_string()]).unwrap();
+        assert_eq!(holdings.len(), 1, "should not duplicate on same date");
+        assert_eq!(holdings[0].value, dec!(1200));
+    }
+
+    #[test]
+    fn portfolio_as_of_sums_all_holdings() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment)).unwrap();
+
+        let dt = naive_dt(2025, 1, 15);
+        db.upsert_holdings(
+            "t212",
+            &[
+                make_holding("t212", "AAPL", HoldingType::Stock, dec!(5000), dt),
+                make_holding("t212", "MSFT", HoldingType::Stock, dec!(3000), dt),
+                make_holding("t212", "_CASH", HoldingType::Cash, dec!(2000), dt),
+            ],
+        )
+        .unwrap();
+
+        let accounts = db
+            .get_portfolio_as_of(naive_date(2025, 2, 1), None)
+            .unwrap();
+        let t212 = accounts.iter().find(|a| a.id == "t212").unwrap();
+        // Allow small f64 rounding tolerance (sum goes through CAST AS REAL).
+        let balance = t212.balance.unwrap();
+        let diff = (balance - dec!(10000)).abs();
+        assert!(
+            diff < Decimal::from_str("0.01").unwrap(),
+            "expected ~10000, got {balance}"
+        );
+    }
+
+    #[test]
+    fn portfolio_as_of_carry_forward() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("monzo", AccountType::Checking)).unwrap();
+
+        db.set_account_balance("monzo", dec!(1000), naive_dt(2025, 1, 15)).unwrap();
+        db.set_account_balance("monzo", dec!(1500), naive_dt(2025, 3, 1)).unwrap();
+
+        // Query for Feb: should carry forward Jan value.
+        let accounts = db
+            .get_portfolio_as_of(naive_date(2025, 2, 15), None)
+            .unwrap();
+        let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
+        let diff = (monzo.balance.unwrap() - dec!(1000)).abs();
+        assert!(diff < Decimal::from_str("0.01").unwrap());
+
+        // Query for April: should use March value.
+        let accounts = db
+            .get_portfolio_as_of(naive_date(2025, 4, 15), None)
+            .unwrap();
+        let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
+        let diff = (monzo.balance.unwrap() - dec!(1500)).abs();
+        assert!(diff < Decimal::from_str("0.01").unwrap());
+    }
+
+    #[test]
+    fn portfolio_as_of_stale_flag() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("monzo", AccountType::Checking)).unwrap();
+
+        // Record balance on Jan 1. Query 60 days later: should be stale.
+        db.set_account_balance("monzo", dec!(500), naive_dt(2025, 1, 1)).unwrap();
+        let accounts = db
+            .get_portfolio_as_of(naive_date(2025, 3, 2), None)
+            .unwrap();
+        let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
+        assert_eq!(monzo.is_stale, Some(true));
+
+        // Record balance on Feb 28. Query March 2: within 45 days, not stale.
+        db.set_account_balance("monzo", dec!(600), naive_dt(2025, 2, 28)).unwrap();
+        let accounts = db
+            .get_portfolio_as_of(naive_date(2025, 3, 2), None)
+            .unwrap();
+        let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
+        assert_eq!(monzo.is_stale, Some(false));
+    }
+
+    #[test]
+    fn get_balance_summary_returns_delta() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("monzo", AccountType::Checking)).unwrap();
+
+        db.set_account_balance("monzo", dec!(1000), naive_dt(2025, 1, 1)).unwrap();
+        db.set_account_balance("monzo", dec!(1300), naive_dt(2025, 3, 1)).unwrap();
+
+        let summary = db
+            .get_balance_summary(naive_date(2025, 1, 1), naive_date(2025, 3, 31))
+            .unwrap();
+        assert_eq!(summary.len(), 1);
+        let row = &summary[0];
+        assert_eq!(row.account_id, "monzo");
+
+        let start = row.start_balance.unwrap();
+        let end = row.end_balance.unwrap();
+        let delta = row.delta.unwrap();
+
+        let tol = Decimal::from_str("0.01").unwrap();
+        assert!((start - dec!(1000)).abs() < tol);
+        assert!((end - dec!(1300)).abs() < tol);
+        assert!((delta - dec!(300)).abs() < tol);
+    }
+
+    #[test]
+    fn get_balances_in_range_aggregates_per_date() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment)).unwrap();
+
+        let dt1 = naive_dt(2025, 1, 1);
+        let dt2 = naive_dt(2025, 2, 1);
+
+        db.upsert_holdings(
+            "t212",
+            &[
+                make_holding("t212", "AAPL", HoldingType::Stock, dec!(2000), dt1),
+                make_holding("t212", "_CASH", HoldingType::Cash, dec!(500), dt1),
+                make_holding("t212", "AAPL", HoldingType::Stock, dec!(2200), dt2),
+                make_holding("t212", "_CASH", HoldingType::Cash, dec!(600), dt2),
+            ],
+        )
+        .unwrap();
+
+        let rows = db
+            .get_balances_in_range(naive_date(2025, 1, 1), naive_date(2025, 2, 28))
+            .unwrap();
+        assert_eq!(rows.len(), 2, "one row per (account, date)");
+
+        let tol = Decimal::from_str("0.01").unwrap();
+        let jan = rows.iter().find(|r| r.as_of.date() == naive_date(2025, 1, 1)).unwrap();
+        assert!((jan.balance - dec!(2500)).abs() < tol);
+
+        let feb = rows.iter().find(|r| r.as_of.date() == naive_date(2025, 2, 1)).unwrap();
+        assert!((feb.balance - dec!(2800)).abs() < tol);
+    }
+
+    #[test]
+    fn holdings_api_unchanged() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment)).unwrap();
+
+        let dt = naive_dt(2025, 1, 15);
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "VOO", HoldingType::Etf, dec!(4000), dt)],
+        )
+        .unwrap();
+
+        let holdings = db.get_holdings_batch(&["t212".to_string()]).unwrap();
+        assert_eq!(holdings.len(), 1);
+        assert_eq!(holdings[0].symbol, "VOO");
+        assert_eq!(holdings[0].value, dec!(4000));
+    }
+}
