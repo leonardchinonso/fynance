@@ -6,6 +6,7 @@ import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
 import { TableSkeleton, ChartSkeleton } from "@/components/skeletons"
+import { EmptyState } from "@/components/empty_state"
 import { Currency } from "@/components/currency"
 import { TransactionTable } from "./transactions/transaction_table"
 import { TransactionBarChart } from "./transactions/transaction_bar_chart"
@@ -110,7 +111,27 @@ export function TransactionsPage() {
     profileId,
     search,
     setSearch,
+    setFilter,
   } = useUrlFilters()
+
+  const hasFilters =
+    selectedAccounts.length > 0 ||
+    selectedCategories.length > 0 ||
+    search.length > 0
+  // Single setFilter call so all URL params update from the same prev state;
+  // calling setAccounts/setCategories/setSearch/setPreset individually loses
+  // writes because React batches state updates.
+  const resetFilters = () => {
+    setFilter({
+      accounts: undefined,
+      categories: undefined,
+      search: undefined,
+      preset: "last-12-months",
+      start: undefined,
+      end: undefined,
+      page: "1",
+    })
+  }
 
   const [result, setResult] = useState<PaginatedResponse<Transaction> | null>(null)
   // Server-aggregated outflow totals per category for bar/pie charts.
@@ -263,23 +284,43 @@ export function TransactionsPage() {
       {loading ? (
         view === "table" ? <TableSkeleton rows={25} cols={5} /> : <ChartSkeleton height={320} />
       ) : view === "table" && result ? (
-        <TransactionTable
-          transactions={result.data}
-          total={result.total}
-          page={result.page}
-          limit={result.limit}
-          onPageChange={setPage}
-          onLimitChange={(newLimit) => {
-            setPageSize(newLimit)
-            setPage(1)
-          }}
-          accountNames={accountNameMap}
-        />
+        result.data.length === 0 ? (
+          <EmptyState
+            action={
+              hasFilters
+                ? { label: "Reset filters", onClick: resetFilters }
+                : undefined
+            }
+          />
+        ) : (
+          <TransactionTable
+            transactions={result.data}
+            total={result.total}
+            page={result.page}
+            limit={result.limit}
+            onPageChange={setPage}
+            onLimitChange={(newLimit) => {
+              setPageSize(newLimit)
+              setPage(1)
+            }}
+            accountNames={accountNameMap}
+          />
+        )
       ) : (view === "charts" || view === "bar" || view === "pie") ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <TransactionBarChart totals={chartTotals} />
-          <TransactionPieChart totals={chartTotals} />
-        </div>
+        chartTotals.length === 0 ? (
+          <EmptyState
+            action={
+              hasFilters
+                ? { label: "Reset filters", onClick: resetFilters }
+                : undefined
+            }
+          />
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            <TransactionBarChart totals={chartTotals} />
+            <TransactionPieChart totals={chartTotals} />
+          </div>
+        )
       ) : null}
     </div>
   )

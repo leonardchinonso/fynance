@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Currency } from "@/components/currency"
 import { daysSince, formatCurrency, formatDate } from "@/lib/utils"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
+import { EmptyState } from "@/components/empty_state"
 import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
 import {
   Sheet,
@@ -63,6 +64,10 @@ export function AccountsGrid({
         deltas.set(accId, last - first)
       }
     }
+  }
+
+  if (accounts.length === 0) {
+    return <EmptyState />
   }
 
   return (

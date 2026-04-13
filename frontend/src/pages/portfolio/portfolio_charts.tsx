@@ -1,6 +1,7 @@
 import type { PortfolioResponse, Holding } from "@/types"
 import { InteractivePie } from "@/components/charts"
 import { ACCOUNT_TYPE_COLORS } from "@/lib/colors"
+import { EmptyState } from "@/components/empty_state"
 import { formatCurrency } from "@/lib/utils"
 
 const INST_COLORS = ["#3b82f6", "#f97316", "#22c55e", "#ec4899", "#06b6d4", "#eab308", "#6366f1"]
@@ -46,6 +47,17 @@ export function PortfolioCharts({ portfolio, holdings = [] }: PortfolioChartsPro
 
   const totalStr = formatCurrency(portfolio.net_worth)
   const stocksTotal = formatCurrency(byStockData.reduce((s, d) => s + d.value, 0).toFixed(2))
+
+  // All four charts would render empty - surface a single explanation
+  // instead of four blank donuts.
+  const isEmpty =
+    byTypeData.length === 0 &&
+    byInstData.length === 0 &&
+    bySectorData.length === 0 &&
+    byStockData.length === 0
+  if (isEmpty) {
+    return <EmptyState />
+  }
 
   return (
     <div className="grid gap-4 md:grid-cols-2">

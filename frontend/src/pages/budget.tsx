@@ -8,9 +8,9 @@ import { ExportButton } from "@/components/export_button"
 import { SpreadsheetSkeleton, BudgetChartsSkeleton } from "@/components/skeletons"
 import { BudgetSpreadsheet } from "./budget/budget_spreadsheet"
 import { BudgetCharts } from "./budget/budget_charts"
-import { Grid3X3, BarChart3, Info } from "lucide-react"
+import { EmptyState } from "@/components/empty_state"
+import { Grid3X3, BarChart3 } from "lucide-react"
 import { getMonthsInRange } from "@/lib/utils"
-import { Card, CardContent } from "@/components/ui/card"
 
 const VIEW_MODES = [
   {
@@ -26,7 +26,29 @@ const VIEW_MODES = [
 ]
 
 export function BudgetPage() {
-  const { start, end, view, setView, granularity, profileId } = useUrlFilters()
+  const {
+    start,
+    end,
+    view,
+    setView,
+    granularity,
+    profileId,
+    accounts,
+    categories,
+    setFilter,
+  } = useUrlFilters()
+
+  const hasFilters = accounts.length > 0 || categories.length > 0
+  // Single setFilter call so all URL params update from the same prev state.
+  const resetFilters = () => {
+    setFilter({
+      accounts: undefined,
+      categories: undefined,
+      preset: "last-12-months",
+      start: undefined,
+      end: undefined,
+    })
+  }
 
   const [gridRows, setGridRows] = useState<SpendingGridRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,23 +88,18 @@ export function BudgetPage() {
       {loading ? (
         activeView === "spreadsheet" ? <SpreadsheetSkeleton /> : <BudgetChartsSkeleton />
       ) : gridRows.length === 0 ? (
-        <EmptyState message="No spending data for the selected date range." />
+        <EmptyState
+          action={
+            hasFilters
+              ? { label: "Reset filters", onClick: resetFilters }
+              : undefined
+          }
+        />
       ) : activeView === "spreadsheet" ? (
         <BudgetSpreadsheet rows={gridRows} months={months} granularity={granularity} />
       ) : activeView === "charts" ? (
         <BudgetCharts rows={gridRows} months={months} granularity={granularity} />
       ) : null}
     </div>
-  )
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <Card className="py-12">
-      <CardContent className="flex flex-col items-center gap-3 text-center">
-        <Info className="h-8 w-8 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground max-w-md">{message}</p>
-      </CardContent>
-    </Card>
   )
 }
