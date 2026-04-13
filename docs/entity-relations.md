@@ -9,66 +9,150 @@ Visual overview of all data models in the fynance API.
 
 Source of truth for shipped entities: [db/sql/schema.sql](../db/sql/schema.sql) and [db/sql/migrations/](../db/sql/migrations/).
 
+### 🟢 Shipped entities
+
 ```mermaid
-flowchart TB
-    %% ━━━ BAND 1: CORE (shipped) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    subgraph core["🟢 Core"]
-        direction TB
-        profiles["<b>profiles</b><br/>──────────────<br/>id TEXT PK<br/>name TEXT"]:::shipped
-        accounts["<b>accounts</b><br/>──────────────<br/>id TEXT PK<br/>name TEXT<br/>institution TEXT<br/>type TEXT<br/>currency TEXT<br/>balance TEXT Decimal<br/>balance_date TEXT<br/>is_active INTEGER<br/>notes TEXT<br/>profile_ids JSON FK→profiles"]:::shipped
-        transactions["<b>transactions</b><br/>──────────────<br/>id TEXT PK UUID<br/>date TEXT ISO datetime<br/>description TEXT<br/>normalized TEXT<br/>amount TEXT Decimal<br/>currency TEXT<br/>account_id TEXT FK→accounts<br/>category TEXT<br/>category_source TEXT rule/agent/manual<br/>confidence REAL<br/>notes TEXT<br/>is_recurring INTEGER<br/>fingerprint TEXT UNIQUE<br/>fitid TEXT<br/>created_at TEXT"]:::shipped
-        holdings["<b>holdings</b><br/>──────────────<br/>id INTEGER PK<br/>account_id TEXT FK→accounts<br/>symbol TEXT<br/>name TEXT<br/>short_name TEXT<br/>holding_type TEXT stock/etf/fund/bond/crypto/cash<br/>quantity TEXT Decimal<br/>price_per_unit TEXT Decimal<br/>value TEXT Decimal<br/>currency TEXT<br/>as_of TEXT<br/>created_at TEXT<br/>UNIQUE account_id,symbol,as_of"]:::shipped
-        profiles --> accounts
-        accounts --> transactions
-        accounts --> holdings
-    end
-
-    %% ━━━ BAND 2: BUDGETS (shipped) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    subgraph budget["🟢 Budgets"]
-        direction TB
-        section_mappings["<b>section_mappings</b><br/>──────────────<br/>section TEXT<br/>Income/Bills/Spending/Irregular/Transfers<br/>category TEXT UNIQUE"]:::shipped
-        standing_budgets["<b>standing_budgets</b><br/>──────────────<br/>id INTEGER PK<br/>category TEXT UNIQUE<br/>amount TEXT Decimal"]:::shipped
-        budget_overrides["<b>budget_overrides</b><br/>──────────────<br/>id INTEGER PK<br/>month TEXT YYYY-MM<br/>category TEXT<br/>amount TEXT Decimal<br/>UNIQUE month,category"]:::shipped
-        budgets_legacy["<b>budgets</b> (legacy)<br/>──────────────<br/>id INTEGER PK<br/>month TEXT<br/>category TEXT<br/>amount TEXT<br/>UNIQUE month,category<br/><i>superseded by standing_budgets + overrides</i>"]:::shipped
-        section_mappings --> standing_budgets
-        standing_budgets --> budget_overrides
-        budget_overrides --> budgets_legacy
-    end
-
-    %% ━━━ BAND 3: OPS (shipped) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    subgraph ops["🟢 Ops and ingest"]
-        direction TB
-        import_log["<b>import_log</b><br/>──────────────<br/>id INTEGER PK<br/>filename TEXT<br/>account_id TEXT FK→accounts<br/>rows_total INTEGER<br/>rows_inserted INTEGER<br/>rows_duplicate INTEGER<br/>source TEXT<br/>detected_bank TEXT<br/>detection_confidence REAL<br/>imported_at TEXT"]:::shipped
-        ingestion_checklist["<b>ingestion_checklist</b><br/>──────────────<br/>id INTEGER PK<br/>month TEXT YYYY-MM<br/>account_id TEXT FK→accounts<br/>status TEXT pending/completed/skipped<br/>completed_at TEXT<br/>notes TEXT"]:::shipped
-        api_tokens["<b>api_tokens</b><br/>──────────────<br/>id INTEGER PK<br/>name TEXT UNIQUE<br/>token_hash TEXT SHA-256<br/>created_at TEXT<br/>last_used TEXT<br/>is_active INTEGER"]:::shipped
-        import_log --> ingestion_checklist
-        ingestion_checklist --> api_tokens
-    end
-
-    %% ━━━ BAND 4: PENDING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    subgraph pending["🟡 Pending / proposed"]
-        direction TB
-        exchange_rates["<b>exchange_rates</b> ⏳<br/>──────────────<br/>id INTEGER PK<br/>from_currency TEXT<br/>to_currency TEXT<br/>rate TEXT Decimal<br/>rate_date TEXT<br/>source TEXT manual/api<br/>captured_at TEXT<br/>UNIQUE from,to,rate_date<br/><i>Plan 13 §3, handover §Currency</i>"]:::pending
-        transaction_edits["<b>transaction_edits</b> ⏳<br/>──────────────<br/>id INTEGER PK<br/>transaction_id TEXT FK→transactions<br/>field TEXT category/notes<br/>old_value TEXT<br/>new_value TEXT<br/>changed_at TEXT<br/>changed_by TEXT user/agent<br/><i>Appendix B.4 audit trail</i>"]:::pending
-        holdings_pots["<b>holdings</b> pot support ⏳<br/>──────────────<br/>Need one of:<br/>• drop fixed '_CASH' symbol; use meaningful symbols per pot<br/>• widen UNIQUE to account_id,symbol,name,as_of<br/>• add slot/label column in unique key<br/><i>Plan 13 §1 — pots/multi-currency</i>"]:::pending
-        account_types_pending["<b>accounts.type</b> extension ⏳<br/>──────────────<br/>Add: property, mortgage<br/><i>Frontend uses these; backend enum missing them</i>"]:::pending
-        tx_time_pending["<b>transactions.date</b> datetime-always ⏳<br/>──────────────<br/>Today: date-only CSVs zero to T00:00:00<br/>→ same-day same-amount tx collide on fingerprint<br/>Fix: synthesize distinct per-row time at import<br/><i>Appendix B.6 fingerprint collisions</i>"]:::pending
-        tx_timezone_pending["<b>timezone policy</b> ⏳<br/>──────────────<br/>Today: NaiveDateTime stored without TZ<br/>Proposal: stamp user's TZ at ingestion<br/><i>Appendix B.2</i>"]:::pending
-        exchange_rates --> transaction_edits
-        transaction_edits --> holdings_pots
-        holdings_pots --> account_types_pending
-        account_types_pending --> tx_time_pending
-        tx_time_pending --> tx_timezone_pending
-    end
-
-    %% Vertical chaining between bands so layout stays tall
-    core --> budget
-    budget --> ops
-    ops --> pending
-
-    classDef shipped fill:#c6f6d5,stroke:#22543d,stroke-width:1.5px,color:#1a202c
-    classDef pending fill:#fef3c7,stroke:#92400e,stroke-width:1.5px,color:#1a202c
+erDiagram
+    profiles {
+        TEXT id PK
+        TEXT name
+    }
+    accounts {
+        TEXT id PK
+        TEXT name
+        TEXT institution
+        TEXT type "checking/savings/investment/credit/cash/pension"
+        TEXT currency
+        TEXT balance "Decimal"
+        TEXT balance_date
+        INTEGER is_active
+        TEXT notes
+        JSON profile_ids FK "→ profiles.id[]"
+    }
+    transactions {
+        TEXT id PK "UUID v4"
+        TEXT date "ISO datetime"
+        TEXT description
+        TEXT normalized
+        TEXT amount "Decimal, neg = debit"
+        TEXT currency
+        TEXT account_id FK
+        TEXT category "Parent: Child"
+        TEXT category_source "rule/agent/manual"
+        REAL confidence
+        TEXT notes
+        INTEGER is_recurring
+        TEXT fingerprint UK "SHA-256 dedup"
+        TEXT fitid
+        TEXT created_at
+    }
+    holdings {
+        INTEGER id PK
+        TEXT account_id FK
+        TEXT symbol "or _CASH"
+        TEXT name
+        TEXT short_name
+        TEXT holding_type "stock/etf/fund/bond/crypto/cash"
+        TEXT quantity "Decimal"
+        TEXT price_per_unit "Decimal"
+        TEXT value "Decimal"
+        TEXT currency
+        TEXT as_of
+        TEXT created_at
+    }
+    standing_budgets {
+        INTEGER id PK
+        TEXT category UK
+        TEXT amount "Decimal, monthly target"
+    }
+    budget_overrides {
+        INTEGER id PK
+        TEXT month "YYYY-MM"
+        TEXT category
+        TEXT amount "Decimal"
+    }
+    section_mappings {
+        TEXT section "Income/Bills/Spending/Irregular/Transfers"
+        TEXT category UK
+    }
+    import_log {
+        INTEGER id PK
+        TEXT filename
+        TEXT account_id FK
+        INTEGER rows_total
+        INTEGER rows_inserted
+        INTEGER rows_duplicate
+        TEXT source
+        TEXT detected_bank
+        REAL detection_confidence
+        TEXT imported_at
+    }
+    ingestion_checklist {
+        INTEGER id PK
+        TEXT month "YYYY-MM"
+        TEXT account_id FK
+        TEXT status "pending/completed/skipped"
+        TEXT completed_at
+        TEXT notes
+    }
+    api_tokens {
+        INTEGER id PK
+        TEXT name UK
+        TEXT token_hash "SHA-256"
+        TEXT created_at
+        TEXT last_used
+        INTEGER is_active
+    }
+    profiles       ||--o{ accounts            : "profile_ids[]"
+    accounts       ||--o{ transactions        : "account_id"
+    accounts       ||--o{ holdings            : "account_id"
+    accounts       ||--o{ import_log          : "account_id"
+    accounts       ||--o{ ingestion_checklist : "account_id"
+    standing_budgets ||--o{ budget_overrides  : "category"
+    section_mappings }o--|| standing_budgets  : "category"
 ```
+
+### 🟡 Pending and proposed entities
+
+Separate diagram so the pending items stack below the shipped core instead of expanding it sideways. Grey `(existing)` boxes are references to tables defined in the shipped diagram above; the yellow items are new.
+
+```mermaid
+erDiagram
+    exchange_rates {
+        INTEGER id PK
+        TEXT from_currency
+        TEXT to_currency
+        TEXT rate "Decimal"
+        TEXT rate_date
+        TEXT source "manual/api"
+        TEXT captured_at
+    }
+    transaction_edits {
+        INTEGER id PK
+        TEXT transaction_id FK
+        TEXT field "category/notes"
+        TEXT old_value
+        TEXT new_value
+        TEXT changed_at
+        TEXT changed_by "user/agent"
+    }
+    transactions_existing {
+        TEXT id PK "see shipped diagram"
+    }
+    holdings_existing {
+        INTEGER id PK "see shipped diagram"
+    }
+
+    transactions_existing ||--o{ transaction_edits : "transaction_id"
+    holdings_existing     }o--o{ exchange_rates    : "currency + as_of"
+```
+
+Schema-level refinements (no new tables, so not drawn above) — see Status Legend below for details:
+
+- **holdings pot support** — drop fixed `_CASH` sentinel or widen `UNIQUE(account_id, symbol, as_of)` so a single account can carry multiple cash sub-balances (pots, multi-currency)
+- **accounts.type** — add `property` and `mortgage` to the `AccountType` enum
+- **transactions.date: datetime-always** — stop zero-padding date-only imports to `T00:00:00`; synthesize distinct per-row times at import
+- **timezone policy** — stamp user's local timezone at ingestion so stored values are stable across devices
 
 ## Status Legend
 
