@@ -1082,3 +1082,103 @@ When the mismatch is positive (account balance > holdings sum), automatically cr
 Reject holdings updates where the sum doesn't match the account balance. This is too rigid: it would block legitimate cases (timing mismatches, uninvested cash) and create friction during ingestion.
 
 **Recommendation**: Option A for MVP. The mismatch is real information, not a bug. Surfacing it lets the user decide whether to add a cash holding to close the gap or leave it as-is. Option B could be offered as a user-facing toggle later ("auto-create cash holding for uninvested balance").
+
+---
+
+## Appendix B: Additional Design Concerns Raised During Review (2026-04-13)
+
+These are items surfaced while auditing `origin/master` against this handover doc. They are not blockers for the current MVP, but most need a decision from Nonso before the relevant code path matures. Ope's notes inline where opinions already exist.
+
+### B.1 Holdings carry-forward: ghost positions after a sale
+
+**Concern:** Account balance at date `T` is computed by taking the latest holding row per symbol where `as_of <= T` and summing values. If the user sells a holding and simply stops reporting it, the old row carries forward forever, silently over-stating account value.
+
+**Ope's view:** Expectation is the user will set a zero snapshot for the sold symbol, but that's easy to forget and hard to audit. It keeps reporting zero after that, which is also not useful and needs cleanup.
+
+**Needs:** Some explicit mechanism — one of:
+- A `closed_at` (or `as_of_end`) column on holdings so rows stop contributing after that date
+- A convention that a value of `0` means "closed," plus a cleanup job
+- A soft UI warning when a symbol hasn't been refreshed in N days
+
+**Priority:** Low (correctness, not blocker). Mostly a "what does Nonso think?" item.
+
+### B.2 Timestamps are naive (no timezone) through the whole stack
+
+**Concern:** `Transaction.date` is `NaiveDateTime` with no timezone info. `util::fingerprint` hashes the date string directly, and `util::parse_naive_datetime` zeros date-only inputs to `T00:00:00`. The backend has no idea what timezone any of this is in, so semantics of "midnight" depend on the machine that did the ingest.
+
+**Ope's view:** For self-hosted, the user will almost always ingest from home, so this is fine in practice. What matters is that once ingested, the stored value must not shift if the UI is loaded from a different timezone. The proposal:
+
+1. Assume the user's local timezone at ingestion time (or let them provide one in config)
+2. Stamp the timezone on the value as it's written to the DB
+3. Downstream reads are TZ-aware and stable regardless of where the UI is loaded
+
+If the current stored format already behaves this way (i.e. the string is interpreted consistently regardless of browser TZ), this is already fine and just needs a note in the docs. If not, it needs the ingest-time stamping above.
+
+**Priority:** Low (self-hosted, usually same TZ) but worth confirming behavior before leaving it as-is.
+
+### B.3 `profile_ids` stored as JSON-in-TEXT
+
+**Concern:** `accounts.profile_ids` is a JSON array packed into a TEXT column. Can't index, can't enforce referential integrity against the `profiles` table, can't ask "which accounts does Alex own" without a `LIKE` scan.
+
+**Ope's view:** Not a concern at this scale. Max ~20 accounts, self-hosted, one machine. Full table scans over 20 rows are free. Leaving as-is.
+
+**Priority:** None (explicitly accepted).
+
+### B.4 Transaction edits have no audit trail
+
+**Concern:** `PATCH /api/transactions/:id` silently overwrites category and notes. `category_source` captures only the *current* source (`rule`/`agent`/`manual`), not history. If an agent mass-categorizes and a user then corrects some rows, there's no way to reconstruct "what did the agent originally say" or to revert a bad edit.
+
+**Ope's view:** This feels important. At minimum there should be a log of old→new for category and notes edits so bad changes can be reverted. A full audit trail (with timestamps and who made the change) is nicer but the log is the floor.
+
+**Suggested minimum:**
+```sql
+CREATE TABLE IF NOT EXISTS transaction_edits (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_id  TEXT NOT NULL,
+    field           TEXT NOT NULL,     -- 'category' | 'notes'
+    old_value       TEXT,
+    new_value       TEXT,
+    changed_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    changed_by      TEXT                -- 'user' | 'agent' | future: user id
+);
+```
+
+The `PATCH` handler writes one row per changed field. A simple `GET /api/transactions/:id/history` exposes it for revertability.
+
+**Priority:** Medium (correctness / trust).
+
+### B.5 LLM parser calls Claude with raw statement content
+
+**Concern:** The LLM-backed CSV importer sends raw bank statement content to the Anthropic API (via `FYNANCE_ANTHROPIC_API_KEY`). This is the one outbound call from an otherwise telemetry-free binary. Non-deterministic: the same CSV re-parsed can produce slightly different normalized fields (fingerprint-based dedup catches full duplicates, but not descriptions drifting).
+
+**Ope's view:** Accepting this — there isn't a realistic alternative for free-form CSV parsing at MVP quality, and the user opts in by setting the API key. Just needs to be called out clearly in docs as the one exception to the "no outbound calls" line in CLAUDE.md.
+
+**Action:** Documentation only. Update CLAUDE.md security section and the README to explicitly note that CSV imports leave the machine when the Anthropic key is configured.
+
+**Priority:** Low (documentation).
+
+### B.6 Fingerprint collapses same-day same-amount transactions
+
+**Concern:** `fingerprint = sha256(datetime | amount | account_id)`. UK bank CSVs (Monzo, Revolut, Lloyds) generally don't include time-of-day — only the date — so `util::parse_naive_datetime` zeros date-only inputs to `T00:00:00`. Two £5 Pret coffees bought on the same day from the same account produce identical fingerprints and collapse into one on dedup. Two identical descriptions do not disambiguate them (the descriptions are the same), so the only real disambiguator is time.
+
+**Ope's view:** Including description in the fingerprint doesn't fix this — identical merchant purchases have identical descriptions. The real fix is to ensure every transaction has a full datetime, not just a date, end to end.
+
+**What's needed:**
+1. **Importer side:** When a bank CSV provides only a date, the importer must synthesize a distinct time-of-day for each row rather than defaulting every row to `T00:00:00`. Simplest approach: use the row's position within the file for that date as a seconds offset (e.g. first row of 2026-04-11 → `T00:00:00`, second → `T00:00:01`, etc.), or use a higher-resolution fractional seconds field. This is per-bank importer logic: if the source has real times (OFX, some Revolut exports), use them; if not, generate a stable per-row offset.
+2. **Schema/convention:** Treat `date` as always a full `YYYY-MM-DDTHH:MM:SS` and reject / upgrade any code path that creates `T00:00:00`-padded rows. Update the CLAUDE.md convention line accordingly ("Date-only imports use `T00:00:00`") — that line is exactly what's causing the collision.
+3. **Fingerprint stays the same:** Once every row has a distinct datetime, the existing `sha256(datetime | amount | account_id)` hash is sufficient.
+
+**Acceptance Criteria:**
+- [ ] Importing a CSV with two same-amount transactions on the same date produces two distinct rows with distinct fingerprints
+- [ ] Re-importing the same CSV is still idempotent (deterministic offset generation, not random)
+- [ ] Bank CSVs that do provide time-of-day continue to use the real time
+
+**Priority:** Medium (silent data loss; real today for any Monzo/Revolut/Lloyds user).
+
+### B.7 Per-account monthly snapshots endpoint
+
+**Concern:** The original handover asked for `GET /api/portfolio/snapshots?start=&end=` returning raw `{ snapshot_date, account_id, balance, currency }` rows — one per account per month. The backend shipped `GET /api/portfolio/balances?summary=true` instead, which returns only the first and last balance per account in the range (start, end, delta). That covers the accounts-grid "+£320 this period" use case but not any view that wants a monthly trend *per account*.
+
+**Ope's view:** Low priority until a specific view needs it. Noting so it's not forgotten.
+
+**Priority:** Low (no current caller).
