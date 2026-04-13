@@ -8,17 +8,52 @@
 
 ## Summary
 
-Of the 53 backend asks identified in the frontend-backend-handover document, **50 have been implemented** across API endpoints, data models, database schema, and complex query logic. The following **3 major areas** remain unimplemented and require attention:
+Of the 53 backend asks identified in the frontend-backend-handover document, the architectural consolidation of `portfolio_snapshots` into `holdings` has been completed (see Completed section at the bottom). The following areas remain unimplemented and require attention:
 
-1. **CSV Import Enhancements** — Extend the importer to extract balance and holdings data
-2. **Currency and Exchange Rate Handling** — Add exchange rate capture and currency conventions
-3. **Architectural Consolidation Decision** — Decide whether to consolidate portfolio_snapshots into holdings
+1. **Multiple Cash Holdings Per Account** — Pots / sub-balances / multi-currency need schema or convention fix; currently blocked by `UNIQUE(account_id, symbol, as_of)` + the fixed `_CASH` sentinel
+2. **CSV Import Enhancements** — Extend the importer to extract balance and holdings data
+3. **Currency and Exchange Rate Handling** — Add exchange rate capture and currency conventions
 
 ---
 
-## Section 1: CSV Import Enhancements
+## Section 1: Multiple Cash Holdings Per Account (Pots / Sub-balances)
 
-### 1.1 CSV Import: Extract Balance Data
+**Current State:**
+Migration 004 consolidated `portfolio_snapshots` into `holdings` by inserting one row per account per date with `symbol = '_CASH'`. Combined with the existing `UNIQUE(account_id, symbol, as_of)` constraint on `holdings`, this means **only one cash holding per account per date is possible**. A second `_CASH` row for the same account on the same `as_of` is rejected by the unique index.
+
+**Why This Is a Gap:**
+The original handover (`docs/frontend-backend-handover.md` Section 7) explicitly called out pots, vaults, and multi-currency balances as cash holdings that should live inside a single parent account:
+
+```
+Account: "Monzo Current" (balance: £2,500)
+  |-- Holding: "Main balance"   (cash, £590)
+  |-- Holding: "Bills pot"      (cash, £800)
+  |-- Holding: "Holiday pot"    (cash, £600)
+  |-- Holding: "Emergency pot"  (cash, £510)
+```
+
+Under the current schema all four rows collide on `(account_id='monzo-current', symbol='_CASH', as_of='2026-03-15')`. The same issue affects a Revolut account that holds GBP, EUR, and USD balances on the same day.
+
+**What's Needed:**
+Pick one of the following. Option A is the cheapest and fully unblocks pots:
+
+- **Option A — Use meaningful symbols instead of a fixed `_CASH` sentinel.** Cash holdings can use symbols like `POT_BILLS`, `POT_HOLIDAY`, or the pot's short name. Plain accounts with no pots keep a single `_CASH` row for the whole balance. No schema change, just a convention shift in the importer and in migration 004's intent.
+- **Option B — Widen the unique constraint to `UNIQUE(account_id, symbol, name, as_of)`.** Allows multiple `_CASH` rows differentiated by `name` (e.g. "Main balance", "Bills pot"). Schema migration required.
+- **Option C — Add a dedicated `slot` or `label` column** and include it in the unique key.
+
+**Acceptance Criteria:**
+- [ ] A single account can carry multiple cash holdings on the same `as_of` date
+- [ ] Ingestion of a Monzo-style account with pots produces one holding row per pot, not a single merged balance
+- [ ] Multi-currency accounts (e.g. Revolut GBP/EUR/USD) can represent each currency as its own cash holding on the same date
+- [ ] Existing `_CASH` rows migrated from `portfolio_snapshots` continue to work
+
+**Priority:** Medium (blocks any pot-aware or multi-currency feature; not blocking the current transactions-only MVP flow)
+
+---
+
+## Section 2: CSV Import Enhancements
+
+### 2.1 CSV Import: Extract Balance Data
 
 **Current State:**  
 The CSV importer only extracts transactions. Although bank CSV exports often include a running or closing balance (`balance_after` field), this data is parsed but **not stored as a portfolio snapshot**.
@@ -47,7 +82,7 @@ When a CSV is imported and a `balance_after` or closing balance is available, th
 
 ---
 
-### 1.2 CSV Import: Extract Holdings Data
+### 2.2 CSV Import: Extract Holdings Data
 
 **Current State:**  
 Investment account CSVs often include position data (e.g., "100 shares of AAPL @ $150"). The importer does **not** currently extract or create holdings records from this data.
@@ -83,7 +118,7 @@ The LLM parser and unified importer should recognize holdings/position data in i
 
 ---
 
-### 1.3 LLM Parser: Extend `statement_parser.txt` Prompt
+### 2.3 LLM Parser: Extend `statement_parser.txt` Prompt
 
 **Current State:**  
 The system prompt at `backend/src/importers/statement_parser.txt` is designed for transaction extraction only.
@@ -106,13 +141,13 @@ Holdings Extraction (if present):
 - If a "closing balance" or "total value" line exists, use its date as the as_of date for all holdings
 ```
 
-**Priority:** Medium (paired with 1.2)
+**Priority:** Medium (paired with 2.2)
 
 ---
 
-## Section 2: Currency and Exchange Rate Handling
+## Section 3: Currency and Exchange Rate Handling
 
-### 2.1 Exchange Rate Capture Table
+### 3.1 Exchange Rate Capture Table
 
 **Current State:**  
 The database schema has **no exchange_rates table**. While individual transactions store their currency, there is no way to track what exchange rate was used (if any) or for historical currency conversions.
@@ -151,7 +186,7 @@ CREATE INDEX IF NOT EXISTS idx_ex_date ON exchange_rates(as_of_date);
 
 ---
 
-### 2.2 Enforce: All Values Stored in Source Currency
+### 3.2 Enforce: All Values Stored in Source Currency
 
 **Current State:**  
 The codebase stores each transaction with its declared currency (good), but there is **no validation** that currencies are never converted at ingestion time. The handover emphasizes: "Never convert at ingestion time, because exchange rates change and you would lose the original value."
@@ -180,7 +215,7 @@ The codebase stores each transaction with its declared currency (good), but ther
 
 ---
 
-### 2.3 Display-Time Currency Conversion (Post-MVP)
+### 3.3 Display-Time Currency Conversion (Post-MVP)
 
 **Current State:**  
 Out of scope for MVP. The backend stores all values in source currency; the frontend eventually needs to support toggling between source and user-preferred currency for display.
@@ -240,6 +275,41 @@ The handover proposes consolidating these into a single `holdings` table as the 
 **Priority:** High (architectural decision, must be made before phase 2 of new features)
 
 **Status:** Requires decision from Nonso; awaiting sign-off.
+
+---
+
+## Section 3.2: Multiple Cash Holdings Per Account (Pots / Sub-balances)
+
+**Current State:**
+Migration 004 consolidated `portfolio_snapshots` into `holdings` by inserting one row per account per date with `symbol = '_CASH'`. Combined with the existing `UNIQUE(account_id, symbol, as_of)` constraint on `holdings`, this means **only one cash holding per account per date is possible**. A second `_CASH` row for the same account on the same `as_of` is rejected by the unique index.
+
+**Why This Is a Gap:**
+The original handover (`docs/frontend-backend-handover.md` Section 7) explicitly called out pots, vaults, and multi-currency balances as cash holdings that should live inside a single parent account:
+
+```
+Account: "Monzo Current" (balance: £2,500)
+  |-- Holding: "Main balance"   (cash, £590)
+  |-- Holding: "Bills pot"      (cash, £800)
+  |-- Holding: "Holiday pot"    (cash, £600)
+  |-- Holding: "Emergency pot"  (cash, £510)
+```
+
+Under the current schema all four rows collide on `(account_id='monzo-current', symbol='_CASH', as_of='2026-03-15')`. The same issue affects a Revolut account that holds GBP, EUR, and USD balances on the same day.
+
+**What's Needed:**
+Pick one of the following. Option A is the cheapest and fully unblocks pots:
+
+- **Option A — Use meaningful symbols instead of a fixed `_CASH` sentinel.** Cash holdings can use symbols like `POT_BILLS`, `POT_HOLIDAY`, or the pot's short name. Plain accounts with no pots keep a single `_CASH` row for the whole balance. No schema change, just a convention shift in the importer and in migration 004's intent.
+- **Option B — Widen the unique constraint to `UNIQUE(account_id, symbol, name, as_of)`.** Allows multiple `_CASH` rows differentiated by `name` (e.g. "Main balance", "Bills pot"). Schema migration required.
+- **Option C — Add a dedicated `slot` or `label` column** and include it in the unique key.
+
+**Acceptance Criteria:**
+- [ ] A single account can carry multiple cash holdings on the same `as_of` date
+- [ ] Ingestion of a Monzo-style account with pots produces one holding row per pot, not a single merged balance
+- [ ] Multi-currency accounts (e.g. Revolut GBP/EUR/USD) can represent each currency as its own cash holding on the same date
+- [ ] Existing `_CASH` rows migrated from `portfolio_snapshots` continue to work
+
+**Priority:** Medium (blocks any pot-aware or multi-currency feature; not blocking the current transactions-only MVP flow)
 
 ---
 
