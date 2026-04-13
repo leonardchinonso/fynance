@@ -3,6 +3,7 @@ import { twMerge } from "tailwind-merge"
 import {
   format,
   parse,
+  parseISO,
   startOfMonth,
   endOfMonth,
   eachMonthOfInterval,
@@ -34,8 +35,7 @@ export function formatCurrency(amount: string, currency: string = "GBP"): string
 }
 
 export function formatDate(dateStr: string): string {
-  const date = parse(dateStr, "yyyy-MM-dd", new Date())
-  return format(date, "dd MMM yyyy")
+  return format(parseISO(dateStr), "dd MMM yyyy")
 }
 
 export function formatMonth(month: string): string {
@@ -49,8 +49,7 @@ export function formatMonthShort(month: string): string {
 }
 
 export function daysSince(dateStr: string): number {
-  const date = parse(dateStr, "yyyy-MM-dd", new Date())
-  return differenceInDays(new Date(), date)
+  return differenceInDays(new Date(), parseISO(dateStr))
 }
 
 export function getMonthsInRange(start: string, end: string): string[] {
