@@ -9,7 +9,9 @@ Visual overview of all data models in the fynance API.
 
 Source of truth for shipped entities: [db/sql/schema.sql](../db/sql/schema.sql) and [db/sql/migrations/](../db/sql/migrations/).
 
-### 🟢 Shipped entities
+### 🟢 Shipped: Core (accounts, transactions, holdings, ingest)
+
+Everything in this diagram is wired together through `accounts`.
 
 ```mermaid
 erDiagram
@@ -60,21 +62,6 @@ erDiagram
         TEXT as_of
         TEXT created_at
     }
-    standing_budgets {
-        INTEGER id PK
-        TEXT category UK
-        TEXT amount "Decimal, monthly target"
-    }
-    budget_overrides {
-        INTEGER id PK
-        TEXT month "YYYY-MM"
-        TEXT category
-        TEXT amount "Decimal"
-    }
-    section_mappings {
-        TEXT section "Income/Bills/Spending/Irregular/Transfers"
-        TEXT category UK
-    }
     import_log {
         INTEGER id PK
         TEXT filename
@@ -95,6 +82,46 @@ erDiagram
         TEXT completed_at
         TEXT notes
     }
+
+    profiles ||--o{ accounts            : "profile_ids[]"
+    accounts ||--o{ transactions        : "account_id"
+    accounts ||--o{ holdings            : "account_id"
+    accounts ||--o{ import_log          : "account_id"
+    accounts ||--o{ ingestion_checklist : "account_id"
+```
+
+### 🟢 Shipped: Budgets
+
+Standalone island. No foreign keys into the core tables; linked by category name only.
+
+```mermaid
+erDiagram
+    section_mappings {
+        TEXT section "Income/Bills/Spending/Irregular/Transfers"
+        TEXT category UK
+    }
+    standing_budgets {
+        INTEGER id PK
+        TEXT category UK
+        TEXT amount "Decimal, monthly target"
+    }
+    budget_overrides {
+        INTEGER id PK
+        TEXT month "YYYY-MM"
+        TEXT category
+        TEXT amount "Decimal"
+    }
+
+    section_mappings }o--|| standing_budgets : "category"
+    standing_budgets ||--o{ budget_overrides : "category"
+```
+
+### 🟢 Shipped: API tokens
+
+Standalone. Used by scripts and external agents, not linked to any user-data table.
+
+```mermaid
+erDiagram
     api_tokens {
         INTEGER id PK
         TEXT name UK
@@ -103,13 +130,6 @@ erDiagram
         TEXT last_used
         INTEGER is_active
     }
-    profiles       ||--o{ accounts            : "profile_ids[]"
-    accounts       ||--o{ transactions        : "account_id"
-    accounts       ||--o{ holdings            : "account_id"
-    accounts       ||--o{ import_log          : "account_id"
-    accounts       ||--o{ ingestion_checklist : "account_id"
-    standing_budgets ||--o{ budget_overrides  : "category"
-    section_mappings }o--|| standing_budgets  : "category"
 ```
 
 ### 🟡 Pending and proposed entities
