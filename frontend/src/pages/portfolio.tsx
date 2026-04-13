@@ -113,20 +113,24 @@ export function PortfolioPage() {
   const investEnd = Array.from(investEndBalances.values()).reduce((s, v) => s + v, 0)
   const investTotalGrowth = investEnd - investStart
 
-  // New cash invested = sum of "Finance: Investment Transfer" spending
-  // This is tracked as negative amounts in transactions
+  // New cash invested = sum of "Finance: Investment Transfer" outflows.
+  // Uses the server-side aggregation endpoint so we never fetch raw
+  // transaction rows client-side just to sum them.
   const [newInvestments, setNewInvestments] = useState(0)
   useEffect(() => {
     if (!start || !end) return
-    api.getTransactions({
-      start, end, page: 1, limit: 10000, profile_id: profileId,
-      categories: ["Finance: Investment Transfer"],
-    }).then((r) => {
-      const total = r.data
-        .filter((t) => parseFloat(t.amount) < 0) // only outflows
-        .reduce((s, t) => s + Math.abs(parseFloat(t.amount)), 0)
-      setNewInvestments(total)
-    })
+    api
+      .getTransactionsByCategory({
+        start,
+        end,
+        profile_id: profileId,
+        categories: ["Finance: Investment Transfer"],
+        direction: "outflow",
+      })
+      .then((rows) => {
+        const total = rows.reduce((s, r) => s + parseFloat(r.total), 0)
+        setNewInvestments(total)
+      })
   }, [start, end, profileId])
 
   // Default to overview view

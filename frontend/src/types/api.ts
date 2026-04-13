@@ -6,8 +6,10 @@ import type { Account } from "./models"
 
 // ── From backend bindings ───────────────────────────────────────────
 export type { BudgetRow } from "@/bindings/BudgetRow"
+export type { CategoryTotal } from "@/bindings/CategoryTotal"
 export type { Granularity } from "@/bindings/Granularity"
 export type { SpendingGridRow } from "@/bindings/SpendingGridRow"
+export type { TransactionDirection } from "@/bindings/TransactionDirection"
 
 // ── Frontend-only API types ─────────────────────────────────────────
 
@@ -20,6 +22,19 @@ export interface TransactionFilters {
   page?: number
   limit?: number
   profile_id?: string
+}
+
+// Filters for GET /api/transactions/by-category.
+// When `direction` is set, totals are non-negative (absolute values) and the
+// response only includes rows where matching transactions exist for that sign.
+// When omitted the totals are signed net sums per category.
+export interface CategoryTotalFilters {
+  start?: string // YYYY-MM-DD
+  end?: string // YYYY-MM-DD
+  accounts?: string[]
+  categories?: string[]
+  profile_id?: string
+  direction?: "outflow" | "income"
 }
 
 export interface PaginatedResponse<T> {

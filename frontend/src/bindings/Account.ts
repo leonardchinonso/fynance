@@ -6,4 +6,10 @@ export type Account = { id: string, name: string, institution: string, type: Acc
  * JSON array of profile IDs, e.g. `["alex", "sam"]`.
  * Defaults to `["default"]` when not specified.
  */
-profile_ids: Array<string>, };
+profile_ids: Array<string>, 
+/**
+ * Set in portfolio responses to indicate whether the carried-forward
+ * balance is stale (snapshot > 45 days before the query date).
+ * Absent (`None`) in non-portfolio contexts.
+ */
+is_stale: boolean | null, };

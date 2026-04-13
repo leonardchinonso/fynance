@@ -3,6 +3,8 @@ import type {
   BudgetRow,
   BudgetUpdateRequest,
   CashFlowMonth,
+  CategoryTotal,
+  CategoryTotalFilters,
   Granularity,
   Holding,
   PaginatedResponse,
@@ -88,6 +90,61 @@ export class MockApiService implements ApiService {
     const paged = data.slice(start, start + limit)
 
     return { data: paged, total, page, limit }
+  }
+
+  /**
+   * Mock of the backend `/api/transactions/by-category` aggregation.
+   * Mirrors the server logic: group by leaf category, sum amounts,
+   * honour direction (outflow = abs(negatives), income = positives),
+   * and apply the same filters the real endpoint supports.
+   */
+  async getTransactionsByCategory(
+    filters: CategoryTotalFilters
+  ): Promise<CategoryTotal[]> {
+    await delay(DELAY_MS)
+
+    let data = [...MOCK_TRANSACTIONS]
+
+    // Same filter order and semantics as getTransactions
+    if (filters.profile_id) {
+      const profileAccounts = new Set(
+        MOCK_ACCOUNTS.filter((a) => a.profile_ids.includes(filters.profile_id!)).map(
+          (a) => a.id
+        )
+      )
+      data = data.filter((t) => profileAccounts.has(t.account_id))
+    }
+    if (filters.start) data = data.filter((t) => t.date >= filters.start!)
+    if (filters.end) data = data.filter((t) => t.date <= filters.end!)
+    if (filters.accounts && filters.accounts.length > 0) {
+      const set = new Set(filters.accounts)
+      data = data.filter((t) => set.has(t.account_id))
+    }
+    if (filters.categories && filters.categories.length > 0) {
+      const set = new Set(filters.categories)
+      data = data.filter((t) => t.category !== null && set.has(t.category))
+    }
+
+    // Direction filter
+    if (filters.direction === "outflow") {
+      data = data.filter((t) => parseFloat(t.amount) < 0)
+    } else if (filters.direction === "income") {
+      data = data.filter((t) => parseFloat(t.amount) > 0)
+    }
+
+    // Group by leaf category, summing by direction semantics
+    const totals = new Map<string, number>()
+    for (const t of data) {
+      if (!t.category) continue
+      const amt = parseFloat(t.amount)
+      const contribution = filters.direction ? Math.abs(amt) : amt
+      totals.set(t.category, (totals.get(t.category) ?? 0) + contribution)
+    }
+
+    // DESC order to match the backend's ORDER BY total DESC
+    return Array.from(totals.entries())
+      .map(([category, total]) => ({ category, total: total.toFixed(2) }))
+      .sort((a, b) => parseFloat(b.total) - parseFloat(a.total))
   }
 
   async getCategories(): Promise<string[]> {

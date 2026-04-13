@@ -571,11 +571,19 @@ impl Db {
     }
 
     /// Aggregate spending per category over a filtered range.
-    /// Returns signed sums (negative = net spend, positive = net income).
+    ///
+    /// When `direction` is `None` the returned `total` is the signed net sum
+    /// (negative = net spend). When `direction` is `Some(Outflow)` or
+    /// `Some(Income)` the aggregation filters by sign first and returns the
+    /// sum of absolute values. `filters.categories` restricts which category
+    /// rows are considered.
     pub fn get_transactions_by_category(
         &self,
         filters: &TransactionFilters,
+        direction: Option<crate::model::TransactionDirection>,
     ) -> Result<Vec<CategoryTotal>> {
+        use crate::model::TransactionDirection;
+
         let mut conditions: Vec<String> = vec!["t.category IS NOT NULL".to_string()];
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut need_account_join = false;
@@ -600,12 +608,38 @@ impl Db {
                 conditions.push(format!("t.account_id IN ({})", placeholders.join(",")));
             }
         }
+        if let Some(cats) = &filters.categories {
+            if !cats.is_empty() {
+                let placeholders: Vec<String> = cats
+                    .iter()
+                    .map(|v| {
+                        args.push(Box::new(v.clone()));
+                        format!("?{}", args.len())
+                    })
+                    .collect();
+                conditions.push(format!("t.category IN ({})", placeholders.join(",")));
+            }
+        }
         if let Some(pid) = &filters.profile_id {
             need_account_join = true;
             let pattern = format!("%\"{pid}\"%");
             args.push(Box::new(pattern));
             conditions.push(format!("a.profile_ids LIKE ?{}", args.len()));
         }
+
+        // Direction filter (sign-based). Adds both a WHERE clause and
+        // switches the aggregation to SUM(ABS(amount)).
+        let sum_expr = match direction {
+            Some(TransactionDirection::Outflow) => {
+                conditions.push("CAST(t.amount AS REAL) < 0".to_string());
+                "SUM(ABS(CAST(t.amount AS REAL)))"
+            }
+            Some(TransactionDirection::Income) => {
+                conditions.push("CAST(t.amount AS REAL) > 0".to_string());
+                "SUM(CAST(t.amount AS REAL))"
+            }
+            None => "SUM(CAST(t.amount AS REAL))",
+        };
 
         let join = if need_account_join {
             "JOIN accounts a ON a.id = t.account_id"
@@ -615,11 +649,11 @@ impl Db {
         let where_clause = conditions.join(" AND ");
 
         let sql = format!(
-            r"SELECT t.category, SUM(CAST(t.amount AS REAL)) AS total
+            r"SELECT t.category, {sum_expr} AS total
               FROM transactions t {join}
               WHERE {where_clause}
               GROUP BY t.category
-              ORDER BY total ASC"
+              ORDER BY total DESC"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -1859,7 +1893,8 @@ pub fn account_type_to_asset_class(t: &AccountType) -> &'static str {
         AccountType::Investment => "Stocks",
         AccountType::Pension => "Pension",
         AccountType::Checking | AccountType::Savings | AccountType::Cash => "Cash",
-        AccountType::Credit => "Credit",
+        AccountType::Credit | AccountType::Mortgage => "Credit",
+        AccountType::Property => "Property",
     }
 }
 

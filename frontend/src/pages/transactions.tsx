@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import type { Transaction, PaginatedResponse } from "@/types"
+import type { CategoryTotal, Transaction, PaginatedResponse } from "@/types"
 import { api } from "@/api/client"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { DateRangeSelector } from "@/components/date_range_selector"
@@ -113,7 +113,11 @@ export function TransactionsPage() {
   } = useUrlFilters()
 
   const [result, setResult] = useState<PaginatedResponse<Transaction> | null>(null)
-  const [allTransactions, setAllTransactions] = useState<Transaction[]>([])
+  // Server-aggregated outflow totals per category for bar/pie charts.
+  // Use /api/transactions/by-category instead of fetching raw rows; the
+  // backend does the SUM so the frontend never has to ship thousands of
+  // rows across the wire just to aggregate them client-side.
+  const [chartTotals, setChartTotals] = useState<CategoryTotal[]>([])
   const [availableAccounts, setAvailableAccounts] = useState<string[]>([])
   const [accountNameMap, setAccountNameMap] = useState<Record<string, string>>({})
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
@@ -151,23 +155,24 @@ export function TransactionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [start, end, accountsKey, categoriesKey, search, page, pageSize, profileId])
 
-  // Fetch ALL transactions for chart views (no pagination)
+  // Fetch server-aggregated category totals for chart views. Always filters
+  // to outflows so charts show spending (not net positions). Free-text
+  // `search` is intentionally not forwarded: the aggregation endpoint
+  // doesn't support it and the result would be misleading if it did.
   useEffect(() => {
     api
-      .getTransactions({
+      .getTransactionsByCategory({
         start,
         end,
         accounts: selectedAccounts.length > 0 ? selectedAccounts : undefined,
         categories:
           selectedCategories.length > 0 ? selectedCategories : undefined,
-        search: search || undefined,
-        page: 1,
-        limit: 10000,
         profile_id: profileId,
+        direction: "outflow",
       })
-      .then((r) => setAllTransactions(r.data))
+      .then(setChartTotals)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start, end, accountsKey, categoriesKey, search, profileId])
+  }, [start, end, accountsKey, categoriesKey, profileId])
 
   // Fetch filter options
   useEffect(() => {
@@ -180,10 +185,14 @@ export function TransactionsPage() {
     api.getCategories().then(setAvailableCategories)
   }, [profileId])
 
-  // Calculate total spending from current filtered results
-  const totalSpending = allTransactions
-    .filter((t) => parseFloat(t.amount) < 0)
-    .reduce((sum, t) => sum + parseFloat(t.amount), 0)
+  // Sum of all category outflow totals in the selected period. The backend
+  // has already filtered to negative amounts and returned absolute values,
+  // so this is simply the sum of the chart totals (negated to match the
+  // previous signed-spending display).
+  const totalSpending = -chartTotals.reduce(
+    (sum, row) => sum + parseFloat(row.total),
+    0
+  )
 
   return (
     <div className="space-y-4">
@@ -268,8 +277,8 @@ export function TransactionsPage() {
         />
       ) : (view === "charts" || view === "bar" || view === "pie") ? (
         <div className="grid gap-4 lg:grid-cols-2">
-          <TransactionBarChart transactions={allTransactions} />
-          <TransactionPieChart transactions={allTransactions} />
+          <TransactionBarChart totals={chartTotals} />
+          <TransactionPieChart totals={chartTotals} />
         </div>
       ) : null}
     </div>

@@ -3,6 +3,8 @@ import type {
   BudgetRow,
   BudgetUpdateRequest,
   CashFlowMonth,
+  CategoryTotal,
+  CategoryTotalFilters,
   Granularity,
   Holding,
   PaginatedResponse,
@@ -31,6 +33,19 @@ export interface ApiService {
   getTransactions(
     filters: TransactionFilters
   ): Promise<PaginatedResponse<Transaction>>
+  /**
+   * Server-side aggregation of transactions grouped by category.
+   *
+   * When `filters.direction` is set, totals are absolute sums and only
+   * transactions with the matching sign are included. When omitted, totals
+   * are signed net sums (negative = net spend).
+   *
+   * Prefer this over `getTransactions` when you only need per-category
+   * totals (bar/pie charts, "total spent on X") instead of raw rows.
+   */
+  getTransactionsByCategory(
+    filters: CategoryTotalFilters
+  ): Promise<CategoryTotal[]>
   getCategories(): Promise<string[]>
   getAccounts(profileId?: string): Promise<Account[]>
 
