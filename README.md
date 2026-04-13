@@ -84,57 +84,228 @@ FYNANCE_LOG_LEVEL=info
 
 ### Prerequisites
 
-- Rust 1.85+ (`rustup install stable`)
-- Node.js 22+ and npm
-- `cargo-watch` for live reload: `cargo install cargo-watch`
+- **Rust** 1.85+ MSRV: `curl https://sh.rustup.rs -sSf | sh`
+- **Node.js** 22+ and **npm**: From [nodejs.org](https://nodejs.org)
+- **`cargo-watch`** (optional, for live reload): `cargo install cargo-watch`
+- **.env file** with API keys (see [Environment Variables](#environment-variables) above)
 
-### Getting started
+### Initial Setup
 
-1. Clone the repo and set up the environment:
-   ```bash
-   git clone <repo-url> && cd fynance-be
-   cp .env.example .env
-   # Edit .env with your values (see Environment Variables above)
-   ```
+Only do this once:
 
-2. Install frontend dependencies:
-   ```bash
-   cd frontend
-   npm install
-   cd ..
-   ```
+```bash
+# 1. Clone and enter the repo
+git clone https://github.com/leonardchinonso/fynance.git
+cd fynance
 
-3. Do an initial frontend build (needed so `include_dir!` can compile):
-   ```bash
-   cd frontend && npm run build && cd ..
-   ```
+# 2. Copy and configure the environment file
+cp .env.example .env
+$EDITOR .env
+# Fill in at least: FYNANCE_ANTHROPIC_API_KEY for CSV imports
 
-4. Start the Rust backend (terminal 1):
-   ```bash
-   cargo watch -x 'run -- serve --no-open'
-   ```
-   The API server starts on `http://localhost:7433` and auto-restarts when `.rs` files change.
+# 3. Install frontend dependencies
+cd frontend
+npm install
+cd ..
 
-5. Start the React frontend (terminal 2):
-   ```bash
-   cd frontend
-   npm run dev
-   ```
-   Vite dev server starts on `http://localhost:5173` with hot module replacement. API calls (`/api/*`) are proxied to the Rust backend automatically.
+# 4. Do an initial frontend build (required for Rust embedded UI)
+cd frontend && npm run build && cd ..
+```
 
-6. Open `http://localhost:5173` in your browser.
+### Running the Full Stack (End-to-End Testing)
 
-### How local dev works
+This is the recommended workflow for active development on both frontend and backend. You will have two dev servers running: Vite for the frontend and Axum for the backend. The frontend will proxy API calls to the backend, so you can interact with the real API while developing.
 
-You work against two servers: Vite for the frontend (instant hot reload) and Axum for the API (recompiles on save via `cargo-watch`). The browser talks to Vite, which proxies API requests to Axum.
+**Terminal 1** — Backend with live reload:
+```bash
+cd backend
+cargo watch -x 'run -- serve --no-open'
+```
+The backend API starts on `http://localhost:7433` and auto-recompiles when `.rs` files change.
 
+**Terminal 2** — Frontend with hot module replacement:
+```bash
+cd frontend
+npm run dev
+```
+Vite dev server starts on `http://localhost:5173` with instant hot reload.
+
+**Browser:**
+```
+Open http://localhost:5173
+```
+
+The frontend automatically proxies `/api/*` requests to the backend:
 ```
 Browser (localhost:5173)
-  |-- page/assets --> Vite (instant HMR)
-  |-- /api/*      --> proxied to Axum (localhost:7433)
+  ├── page/assets --> Vite dev server (instant HMR)
+  └── /api/*      --> proxied to Axum backend (localhost:7433)
 ```
 
 Frontend changes appear instantly. Backend changes take a few seconds to recompile.
+
+### Running the Backend Only
+
+Use this if you're only working on the Rust backend or want to test the embedded UI.
+
+```bash
+cd backend
+cargo watch -x 'run -- serve --no-open'
+```
+
+Then open `http://localhost:7433` in your browser. The compiled React app is embedded in the binary.
+
+Or, without live reload:
+```bash
+cd backend
+cargo run --release -- serve
+```
+
+### Running the Frontend Only
+
+Use this if you're only working on the React frontend and want to iterate on the UI without backend changes.
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open `http://localhost:5173`. The frontend is configured to proxy `/api/*` requests to `http://localhost:7433`, so you need a running backend (see above).
+
+If the backend is not running, API calls will fail. You can point to a different backend by editing `frontend/vite.config.ts` (the `proxy` configuration).
+
+### One-Command Full Build
+
+To build both frontend and backend for production (or to verify everything compiles):
+
+```bash
+make build
+```
+
+This runs `npm run build` in the frontend folder, then `cargo build --release` in the backend. The result is a single binary in `backend/target/release/fynance` with the compiled React app embedded.
+
+To build only the backend:
+```bash
+cd backend && cargo build --release
+```
+
+To build only the frontend:
+```bash
+cd frontend && npm run build
+```
+
+### Typical Development Workflows
+
+#### Scenario 1: Backend Changes Only (Rust)
+
+You have the backend running and want to iterate on the API or database logic.
+
+```bash
+# Terminal 1: Backend with live reload
+cd backend && cargo watch -x 'run -- serve --no-open'
+
+# Terminal 2: Optional, to make requests manually
+curl http://localhost:7433/api/health
+curl http://localhost:7433/api/docs    # OpenAPI schema
+```
+
+#### Scenario 2: Frontend Changes Only (React/TypeScript)
+
+You have both frontend and backend running and want to iterate on the UI.
+
+```bash
+# Terminal 1: Backend (can be idle, requests will still work)
+cd backend && cargo watch -x 'run -- serve --no-open'
+
+# Terminal 2: Frontend with HMR
+cd frontend && npm run dev
+
+# Browser: Open http://localhost:5173
+# Make changes to src/**/*.tsx - they appear instantly
+```
+
+#### Scenario 3: End-to-End Testing (Both Stacks)
+
+You want to test the full flow: user interaction → API call → database → response → UI update.
+
+Follow the instructions in [Running the Full Stack](#running-the-full-stack-end-to-end-testing) above.
+
+#### Scenario 4: Testing the Production Binary
+
+After a full build, you can run the compiled binary locally:
+
+```bash
+make build
+./backend/target/release/fynance serve
+```
+
+Open `http://localhost:7433`. The frontend is embedded, so no separate dev server is needed. This is the same binary you would ship in Docker.
+
+### Testing and Validation
+
+Before pushing code, run tests and linters:
+
+```bash
+# All backend tests (no API key needed)
+cd backend && cargo test
+
+# Lint
+cargo clippy --all-targets -- -D warnings
+
+# Format check
+cargo fmt --check
+```
+
+For the live smoke test against the real Anthropic API:
+```bash
+cd backend
+FYNANCE_ANTHROPIC_API_KEY=<your-key> cargo test -- --ignored
+```
+
+### Importing Real Bank Data
+
+Once the backend is running, you can import real CSV bank statements:
+
+```bash
+fynance account add --id my-monzo --name "Monzo" --institution Monzo --type checking --currency GBP
+fynance import ~/Downloads/monzo-statement.csv --account my-monzo
+fynance stats    # verify the import
+```
+
+The frontend will then show the imported transactions in the Transactions view and include them in budget/portfolio calculations.
+
+### How It All Works Together
+
+```
+Development Flow:
+├── Frontend (Vite @ localhost:5173)
+│   ├── src/ (TypeScript + React)
+│   ├── npm run build --> dist/
+│   └── npm run dev   --> dev server with HMR & proxy
+│
+├── Backend (Axum @ localhost:7433)
+│   ├── src/main.rs, lib.rs, ...
+│   ├── cargo build --release --> fynance binary
+│   └── cargo run -- serve    --> HTTP server
+│
+├── Database (SQLite)
+│   └── ~/.local/share/fynance/fynance.db (macOS: ~/Library/Application Support/fynance/)
+│
+└── Browser
+    ├── Request GET /app/transactions
+    ├── Vite responds with React bundle
+    ├── React mounts, fetches GET /api/transactions
+    ├── Proxy sends to Axum backend
+    ├── Axum queries SQLite, returns JSON
+    └── React renders the data
+```
+
+In production:
+- Build frontend with `npm run build`.
+- Embed the `dist/` folder into the Rust binary via `include_dir!`.
+- Compile the Rust binary: `cargo build --release`.
+- Run the single binary: `./target/release/fynance serve`.
+- Everything is served from `http://localhost:7433` with no separate dev servers.
 
 ## Build
 
