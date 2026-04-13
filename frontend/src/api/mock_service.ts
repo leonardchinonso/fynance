@@ -1,7 +1,7 @@
 import type {
   Account,
+  AccountSnapshot,
   BudgetRow,
-  BudgetUpdateRequest,
   CashFlowMonth,
   CategoryTotal,
   CategoryTotalFilters,
@@ -10,8 +10,9 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  AccountSnapshot,
   Profile,
+  SetBudgetOverrideBody,
+  SetStandingBudgetBody,
   SpendingGridRow,
   Transaction,
   TransactionFilters,
@@ -283,18 +284,44 @@ export class MockApiService implements ApiService {
     return rows
   }
 
-  async updateBudget(req: BudgetUpdateRequest): Promise<void> {
+  /**
+   * Mock of `POST /api/budget` - sets a standing budget that applies to
+   * every month unless overridden. Stored in the shared MOCK_BUDGETS
+   * array as a month-less row (empty month) so the mock mirrors the
+   * backend's standing_budgets table.
+   */
+  async setStandingBudget(body: SetStandingBudgetBody): Promise<void> {
     await delay(DELAY_MS)
     const existing = MOCK_BUDGETS.find(
-      (b) => b.month === req.month && b.category === req.category
+      (b) => b.month === "" && b.category === body.category
     )
     if (existing) {
-      existing.amount = req.amount
+      existing.amount = body.amount
     } else {
       MOCK_BUDGETS.push({
-        month: req.month,
-        category: req.category,
-        amount: req.amount,
+        month: "",
+        category: body.category,
+        amount: body.amount,
+      })
+    }
+  }
+
+  /**
+   * Mock of `POST /api/budget/override` - sets a per-month override on
+   * top of the standing budget.
+   */
+  async setBudgetOverride(body: SetBudgetOverrideBody): Promise<void> {
+    await delay(DELAY_MS)
+    const existing = MOCK_BUDGETS.find(
+      (b) => b.month === body.month && b.category === body.category
+    )
+    if (existing) {
+      existing.amount = body.amount
+    } else {
+      MOCK_BUDGETS.push({
+        month: body.month,
+        category: body.category,
+        amount: body.amount,
       })
     }
   }

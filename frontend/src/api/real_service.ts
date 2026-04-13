@@ -1,7 +1,7 @@
 import type {
   Account,
+  AccountSnapshot,
   BudgetRow,
-  BudgetUpdateRequest,
   CashFlowMonth,
   CategoryTotal,
   CategoryTotalFilters,
@@ -10,8 +10,9 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  AccountSnapshot,
   Profile,
+  SetBudgetOverrideBody,
+  SetStandingBudgetBody,
   SpendingGridRow,
   Transaction,
   TransactionFilters,
@@ -119,11 +120,12 @@ export class RealApiService implements ApiService {
     return get<SpendingGridRow[]>(`${BASE}/budget/spending-grid`, params)
   }
 
-  async updateBudget(req: BudgetUpdateRequest): Promise<void> {
-    await post(`${BASE}/budget`, {
-      category: req.category,
-      amount: req.amount,
-    })
+  async setStandingBudget(body: SetStandingBudgetBody): Promise<void> {
+    await post(`${BASE}/budget`, body)
+  }
+
+  async setBudgetOverride(body: SetBudgetOverrideBody): Promise<void> {
+    await post(`${BASE}/budget/override`, body)
   }
 
   // ── Portfolio endpoints (now backed by the real backend) ────────

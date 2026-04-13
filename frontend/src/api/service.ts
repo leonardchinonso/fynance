@@ -1,7 +1,7 @@
 import type {
   Account,
+  AccountSnapshot,
   BudgetRow,
-  BudgetUpdateRequest,
   CashFlowMonth,
   CategoryTotal,
   CategoryTotalFilters,
@@ -10,8 +10,9 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  AccountSnapshot,
   Profile,
+  SetBudgetOverrideBody,
+  SetStandingBudgetBody,
   SpendingGridRow,
   Transaction,
   TransactionFilters,
@@ -57,7 +58,17 @@ export interface ApiService {
     granularity: Granularity,
     profileId?: string
   ): Promise<SpendingGridRow[]>
-  updateBudget(req: BudgetUpdateRequest): Promise<void>
+  /**
+   * Set the standing monthly budget for one category. Applies to every
+   * month unless a per-month override is set via `setBudgetOverride`.
+   * Maps to `POST /api/budget`.
+   */
+  setStandingBudget(body: SetStandingBudgetBody): Promise<void>
+  /**
+   * Set a per-month override on top of the standing budget for one
+   * category. Maps to `POST /api/budget/override`.
+   */
+  setBudgetOverride(body: SetBudgetOverrideBody): Promise<void>
 
   // Portfolio
   getPortfolio(profileId?: string): Promise<PortfolioResponse>

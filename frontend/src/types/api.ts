@@ -12,6 +12,8 @@ export type { Granularity } from "@/bindings/Granularity"
 export type { InvestmentMetrics } from "@/bindings/InvestmentMetrics"
 export type { PortfolioHistoryRow } from "@/bindings/PortfolioHistoryRow"
 export type { PortfolioResponse } from "@/bindings/PortfolioResponse"
+export type { SetBudgetOverrideBody } from "@/bindings/SetBudgetOverrideBody"
+export type { SetStandingBudgetBody } from "@/bindings/SetStandingBudgetBody"
 export type { SpendingGridRow } from "@/bindings/SpendingGridRow"
 export type { TransactionDirection } from "@/bindings/TransactionDirection"
 
@@ -46,12 +48,6 @@ export interface PaginatedResponse<T> {
   total: number
   page: number
   limit: number
-}
-
-export interface BudgetUpdateRequest {
-  month: string // YYYY-MM
-  category: string
-  amount: string // Decimal string
 }
 
 export interface DateRange {

@@ -362,6 +362,99 @@ pub struct UnaccountedBalance {
 
 ---
 
+## Section 6: Type-Sharing Follow-ups (Frontend → Backend Ask)
+
+These are small backend changes that would let the frontend drop the last
+hand-written interfaces that duplicate backend shapes. The goal is a single
+source of truth: if the backend owns the wire format, the frontend should
+import the ts-rs binding, not maintain its own copy.
+
+### 6.1 `Paginated<T>` envelope for `GET /api/transactions`
+
+**Current state:** The backend route at `backend/src/server/routes/transactions.rs`
+builds the list response with an inline `serde_json::json!` macro:
+
+```rust
+Ok(Json(serde_json::json!({
+    "data": data,
+    "total": total,
+    "page": q.page,
+    "limit": q.limit,
+})))
+```
+
+Because the return type is `serde_json::Value`, there is no Rust struct to
+annotate with `#[ts(export)]`, so no binding is generated. The frontend
+maintains a hand-written generic:
+
+```typescript
+// frontend/src/types/api.ts
+export interface PaginatedResponse<T> {
+  data: T[]
+  total: number
+  page: number
+  limit: number
+}
+```
+
+The two happen to match today, but nothing enforces it. If the backend
+adds `total_pages` or renames `limit` to `page_size`, the frontend will
+silently break.
+
+**Ask:** Introduce a generic `Paginated<T>` struct and use it as the
+return type:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct Paginated<T: TS + 'static> {
+    pub data: Vec<T>,
+    pub total: u64,
+    pub page: u32,
+    pub limit: u32,
+}
+
+pub async fn list_transactions(...) -> Result<Json<Paginated<Transaction>>, AppError> {
+    ...
+    Ok(Json(Paginated { data, total, page: q.page, limit: q.limit }))
+}
+```
+
+ts-rs supports generics, so this generates a `Paginated.ts` binding. The
+frontend then drops `PaginatedResponse<T>` from `types/api.ts` and imports
+`Paginated` from `@/bindings/Paginated` instead. Any future paginated
+endpoint (accounts, import log, holdings history) gets the same shape for
+free.
+
+**Impact:** Low risk (return shape is identical, clients unaffected),
+high consistency value. Roughly 20 lines of backend code.
+
+### 6.2 `SetStandingBudgetBody` and `SetBudgetOverrideBody` — done
+
+These were resolved in the same PR as this note. Both structs in
+`backend/src/server/routes/budget.rs` now derive `TS` and export bindings,
+and the frontend re-exports them via `types/api.ts` instead of carrying a
+hand-written `BudgetUpdateRequest` interface. The `ApiService.updateBudget`
+method was also split into `setStandingBudget` and `setBudgetOverride`
+matching the two backend endpoints. Noting here only as context for the
+pattern above.
+
+### 6.3 Remaining frontend-only types (correctly frontend-only)
+
+For the record, the frontend still maintains a few types that do not have
+backend equivalents and should stay that way:
+
+| Type | Why frontend-only is correct |
+|---|---|
+| `TransactionFilters` | Query-string shape for `GET /api/transactions`. The backend deserializes each param individually via `Query<ListTransactionsQuery>`. It is a serialization *input*, not a response. |
+| `CategoryTotalFilters` | Same reasoning as above, for `GET /api/transactions/by-category`. |
+| `DateRange` | Pure UI state object used by the date picker. Never crosses the wire. |
+
+Forcing these to share a type with the backend query structs would be a
+category error — they serve opposite directions of the wire.
+
+---
+
 ## Summary Table
 
 | Item | Status | Priority | Effort | Decision Required |
@@ -383,7 +476,8 @@ pub struct UnaccountedBalance {
 2. **Phase 3a:** Implement CSV import enhancements (balance + holdings extraction)
 3. **Phase 3b:** Implement currency and exchange rate handling
 4. **Phase 4:** Execute architectural consolidation decision
-5. **Post-MVP:** Display-time currency conversion in frontend
+5. **Tiny, any time:** Section 6.1 — add `Paginated<T>` generic struct with ts-rs so the frontend can drop `PaginatedResponse<T>`.
+6. **Post-MVP:** Display-time currency conversion in frontend
 
 ---
 
