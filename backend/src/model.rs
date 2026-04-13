@@ -369,12 +369,14 @@ impl ChecklistStatus {
     }
 }
 
+/// Point-in-time account balance derived from SUM(holdings.value).
+/// Used by `GET /api/portfolio/balances` (non-summary mode).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
-pub struct PortfolioSnapshot {
+pub struct AccountSnapshot {
     #[serde(with = "serde_naive_datetime")]
     #[ts(type = "string")]
-    pub snapshot_date: NaiveDateTime,
+    pub as_of: NaiveDateTime,
     pub account_id: String,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
@@ -565,10 +567,11 @@ pub struct CashFlowMonth {
     pub spending: Decimal,
 }
 
-/// Start/end balance delta for one account. Used by `GET /api/portfolio/snapshots?summary=true`.
+/// Start/end balance delta for one account. Used by `GET /api/portfolio/balances?summary=true`.
+/// Balance is computed as SUM(holdings.value) per account.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
-pub struct SnapshotDelta {
+pub struct BalanceDelta {
     pub account_id: String,
     #[serde(with = "rust_decimal::serde::str_option", default)]
     #[ts(type = "string | null")]

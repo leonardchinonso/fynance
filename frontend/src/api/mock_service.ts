@@ -10,7 +10,7 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  PortfolioSnapshot,
+  AccountSnapshot,
   Profile,
   SpendingGridRow,
   Transaction,
@@ -23,7 +23,7 @@ import {
   MOCK_TRANSACTIONS,
   MOCK_HOLDINGS,
   MOCK_BUDGETS,
-  MOCK_PORTFOLIO_SNAPSHOTS,
+  MOCK_ACCOUNT_BALANCES,
 } from "@/data"
 import { delay, getMonthFromDate, getMonthsInRange } from "@/lib/utils"
 
@@ -343,18 +343,20 @@ export class MockApiService implements ApiService {
       byInst.set(a.institution, (byInst.get(a.institution) ?? 0) + bal)
     }
 
-    // By sector (simplified)
-    const bySector = new Map<string, number>()
+    // By asset class - mirrors the backend's account_type_to_asset_class
+    const byAssetClass = new Map<string, number>()
     for (const a of accounts) {
       const bal = parseFloat(a.balance ?? "0")
-      let sector: string
-      if (a.type === "investment") sector = "Stocks"
-      else if (a.type === "pension") sector = "Pension"
-      else if (a.type === "property" || a.type === "mortgage") sector = "Property"
-      else if (a.type === "savings" || a.type === "checking" || a.type === "cash")
-        sector = "Cash"
-      else sector = "Other"
-      bySector.set(sector, (bySector.get(sector) ?? 0) + bal)
+      let cls: string
+      if (a.type === "investment") cls = "Stocks"
+      else if (a.type === "pension") cls = "Pension"
+      else if (a.type === "property") cls = "Property"
+      else if (a.type === "mortgage") cls = "Debt"
+      else if (a.type === "credit") cls = "Credit"
+      else cls = "Cash"
+      // Breakdowns use absolute values (matches backend logic) so liabilities
+      // show positive for charting.
+      byAssetClass.set(cls, (byAssetClass.get(cls) ?? 0) + Math.abs(bal))
     }
 
     function toBreakdown(map: Map<string, number>) {
@@ -362,20 +364,18 @@ export class MockApiService implements ApiService {
       return Array.from(map.entries())
         .map(([label, val]) => ({
           label,
-          total: val.toFixed(2),
-          percent: total > 0 ? Math.round((val / total) * 100) : 0,
+          value: val.toFixed(2),
+          percentage: total > 0 ? (val / total) * 100 : 0,
         }))
-        .sort((a, b) => parseFloat(b.total) - parseFloat(a.total))
+        .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
     }
 
-    // Monthly snapshots aggregated
-    const monthMap = new Map<string, number>()
-    const accountIds = new Set(accounts.map((a) => a.id))
-    for (const snap of MOCK_PORTFOLIO_SNAPSHOTS) {
-      if (!accountIds.has(snap.account_id)) continue
-      const month = getMonthFromDate(snap.snapshot_date)
-      monthMap.set(month, (monthMap.get(month) ?? 0) + parseFloat(snap.balance))
-    }
+    // Rough investment metrics for mock mode: sum investment account balances
+    // as `end_value` and set the others to zero. The real backend computes
+    // these from snapshot deltas + Finance: Investment Transfer outflows.
+    const investEndValue = accounts
+      .filter((a) => a.type === "investment")
+      .reduce((s, a) => s + parseFloat(a.balance ?? "0"), 0)
 
     return {
       net_worth: netWorth.toFixed(2),
@@ -388,13 +388,22 @@ export class MockApiService implements ApiService {
       accounts,
       by_type: toBreakdown(byType),
       by_institution: toBreakdown(byInst),
-      by_sector: toBreakdown(bySector),
+      by_asset_class: toBreakdown(byAssetClass),
+      investment_metrics: {
+        start_value: "0",
+        end_value: investEndValue.toFixed(2),
+        total_growth: "0",
+        new_cash_invested: "0",
+        market_growth: "0",
+      },
     }
   }
 
   async getPortfolioHistory(
-    start?: string,
-    end?: string
+    start: string,
+    end: string,
+    _granularity?: Granularity,
+    _profileId?: string
   ): Promise<PortfolioHistoryRow[]> {
     await delay(DELAY_MS)
 
@@ -404,8 +413,8 @@ export class MockApiService implements ApiService {
       { available: number; unavailable: number }
     >()
 
-    for (const snap of MOCK_PORTFOLIO_SNAPSHOTS) {
-      const month = getMonthFromDate(snap.snapshot_date)
+    for (const snap of MOCK_ACCOUNT_BALANCES) {
+      const month = getMonthFromDate(snap.as_of)
       if (start && month < start.substring(0, 7)) continue
       if (end && month > end.substring(0, 7)) continue
 
@@ -440,7 +449,12 @@ export class MockApiService implements ApiService {
     return MOCK_HOLDINGS.filter((h) => h.account_id === accountId)
   }
 
-  async getCashFlow(start?: string, end?: string): Promise<CashFlowMonth[]> {
+  async getCashFlow(
+    start: string,
+    end: string,
+    _granularity?: Granularity,
+    _profileId?: string
+  ): Promise<CashFlowMonth[]> {
     await delay(DELAY_MS)
 
     const months = new Map<string, { income: number; spending: number }>()
@@ -470,13 +484,14 @@ export class MockApiService implements ApiService {
       }))
   }
 
-  async getAccountSnapshots(
-    start?: string,
-    end?: string
-  ): Promise<PortfolioSnapshot[]> {
+  async getAccountBalances(
+    start: string,
+    end: string,
+    _profileId?: string
+  ): Promise<AccountSnapshot[]> {
     await delay(DELAY_MS)
-    return MOCK_PORTFOLIO_SNAPSHOTS.filter((s) => {
-      const month = getMonthFromDate(s.snapshot_date)
+    return MOCK_ACCOUNT_BALANCES.filter((s) => {
+      const month = getMonthFromDate(s.as_of)
       if (start && month < start.substring(0, 7)) return false
       if (end && month > end.substring(0, 7)) return false
       return true

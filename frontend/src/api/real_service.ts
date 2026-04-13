@@ -10,7 +10,7 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  PortfolioSnapshot,
+  AccountSnapshot,
   Profile,
   SpendingGridRow,
   Transaction,
@@ -49,13 +49,13 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
-// Mock fallback for endpoints the backend doesn't have yet
+// Mock fallback for endpoints the backend doesn't have yet (currently: exportData)
 const mock = new MockApiService()
 
 /**
- * RealApiService calls the Rust backend for endpoints that exist,
- * and falls back to MockApiService for portfolio/export endpoints
- * that haven't been built yet.
+ * RealApiService calls the Rust backend for every endpoint that has
+ * server-side support. The only remaining mock fallback is exportData
+ * which isn't built on the backend yet.
  */
 export class RealApiService implements ApiService {
   // ── Real endpoints ──────────────────────────────────────────────
@@ -126,33 +126,54 @@ export class RealApiService implements ApiService {
     })
   }
 
-  // ── Mock fallbacks (backend endpoints don't exist yet) ──────────
+  // ── Portfolio endpoints (now backed by the real backend) ────────
 
   async getPortfolio(profileId?: string): Promise<PortfolioResponse> {
-    return mock.getPortfolio(profileId)
+    const params: Record<string, string> = {}
+    if (profileId) params.profile_id = profileId
+    return get<PortfolioResponse>(`${BASE}/portfolio`, params)
   }
 
   async getPortfolioHistory(
-    start?: string,
-    end?: string
+    start: string,
+    end: string,
+    granularity: Granularity = "monthly",
+    profileId?: string
   ): Promise<PortfolioHistoryRow[]> {
-    return mock.getPortfolioHistory(start, end)
+    const params: Record<string, string> = { start, end, granularity }
+    if (profileId) params.profile_id = profileId
+    return get<PortfolioHistoryRow[]>(`${BASE}/portfolio/history`, params)
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {
-    return mock.getHoldings(accountId)
+    return get<Holding[]>(`${BASE}/holdings`, { account_id: accountId })
   }
 
-  async getCashFlow(start?: string, end?: string): Promise<CashFlowMonth[]> {
-    return mock.getCashFlow(start, end)
+  async getCashFlow(
+    start: string,
+    end: string,
+    granularity: Granularity = "monthly",
+    profileId?: string
+  ): Promise<CashFlowMonth[]> {
+    const params: Record<string, string> = { start, end, granularity }
+    if (profileId) params.profile_id = profileId
+    return get<CashFlowMonth[]>(`${BASE}/cash-flow`, params)
   }
 
-  async getAccountSnapshots(
-    start?: string,
-    end?: string
-  ): Promise<PortfolioSnapshot[]> {
-    return mock.getAccountSnapshots(start, end)
+  async getAccountBalances(
+    start: string,
+    end: string,
+    _profileId?: string
+  ): Promise<AccountSnapshot[]> {
+    // Backend endpoint is /api/portfolio/balances. The non-summary mode
+    // returns the full per-account snapshot list; omit ?summary=true.
+    return get<AccountSnapshot[]>(`${BASE}/portfolio/balances`, {
+      start,
+      end,
+    })
   }
+
+  // ── Mock fallback (backend endpoint doesn't exist yet) ──────────
 
   async exportData(format: string): Promise<void> {
     return mock.exportData(format)

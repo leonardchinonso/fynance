@@ -155,19 +155,19 @@ Monthly net worth history with available/unavailable split. Used for the portfol
 [{ "month": "2025-04", "available_wealth": "71833.28", "unavailable_wealth": "76200.23", "total_wealth": "148033.51" }]
 ```
 
-**Backend notes**: Aggregate `portfolio_snapshots` by month. For each month, sum account balances split by available/unavailable type. The frontend handles quarterly/yearly aggregation client-side.
+**Backend notes**: Aggregate holdings by month (SUM of holdings.value per account), split by available/unavailable type. The frontend handles quarterly/yearly aggregation client-side.
 
 ---
 
-### `getAccountSnapshots(start?, end?): Promise<PortfolioSnapshot[]>`
+### `getAccountBalances(start?, end?): Promise<AccountSnapshot[]>`
 
-**Backend endpoint**: `GET /api/portfolio/snapshots?start=&end=`
+**Backend endpoint**: `GET /api/portfolio/balances?start=&end=`
 
-Raw per-account monthly balance snapshots. Used by the accounts grid to compute per-card deltas (change from start of selected period to current balance).
+Raw per-account monthly balance data, derived from SUM of holdings. Used by the accounts grid to compute per-card deltas (change from start of selected period to current balance).
 
-**Response**: `PortfolioSnapshot[]`
+**Response**: `AccountSnapshot[]`
 ```json
-[{ "snapshot_date": "2025-04-01", "account_id": "monzo-current", "balance": "2800.00", "currency": "GBP" }]
+[{ "as_of": "2025-04-01T00:00:00", "account_id": "monzo-current", "balance": "2800.00", "currency": "GBP" }]
 ```
 
 ---

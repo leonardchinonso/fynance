@@ -2,12 +2,16 @@
 // These define the contract between frontend and backend.
 // Types shared with backend are imported from generated bindings.
 
-import type { Account } from "./models"
-
-// ── From backend bindings ───────────────────────────────────────────
+// ── From backend bindings (single source of truth) ─────────────────
+export type { BalanceDelta } from "@/bindings/BalanceDelta"
+export type { BreakdownItem } from "@/bindings/BreakdownItem"
 export type { BudgetRow } from "@/bindings/BudgetRow"
+export type { CashFlowMonth } from "@/bindings/CashFlowMonth"
 export type { CategoryTotal } from "@/bindings/CategoryTotal"
 export type { Granularity } from "@/bindings/Granularity"
+export type { InvestmentMetrics } from "@/bindings/InvestmentMetrics"
+export type { PortfolioHistoryRow } from "@/bindings/PortfolioHistoryRow"
+export type { PortfolioResponse } from "@/bindings/PortfolioResponse"
 export type { SpendingGridRow } from "@/bindings/SpendingGridRow"
 export type { TransactionDirection } from "@/bindings/TransactionDirection"
 
@@ -50,43 +54,10 @@ export interface BudgetUpdateRequest {
   amount: string // Decimal string
 }
 
-export interface PortfolioBreakdownItem {
-  label: string // account type or institution name
-  total: string // Decimal string
-  percent: number
-}
-
-export interface PortfolioResponse {
-  net_worth: string
-  currency: string
-  as_of: string // YYYY-MM-DD
-  total_assets: string
-  total_liabilities: string
-  available_wealth: string // checking + savings + investment
-  unavailable_wealth: string // pension + home equity
-  accounts: Account[]
-  by_type: PortfolioBreakdownItem[]
-  by_institution: PortfolioBreakdownItem[]
-  by_sector: PortfolioBreakdownItem[]
-}
-
-export interface PortfolioHistoryRow {
-  month: string // YYYY-MM
-  available_wealth: string
-  unavailable_wealth: string
-  total_wealth: string
-}
-
 export interface DateRange {
   start: string // YYYY-MM-DD
   end: string // YYYY-MM-DD
 }
 
-export interface CashFlowMonth {
-  month: string // YYYY-MM
-  income: string // Decimal string
-  spending: string // Decimal string
-}
-
 // Re-export model types used in API responses
-export type { Account, AccountType, Holding, PortfolioSnapshot, Transaction } from "./models"
+export type { Account, AccountSnapshot, AccountType, Holding, Transaction } from "./models"

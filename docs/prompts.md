@@ -175,4 +175,14 @@ I am reviewing the code and have identified some things that need to change. Com
 
 1. "Unique constraint: UNIQUE(snapshot_date, account_id) — Can only have one balance per account per day". This should be a datetime not date. We want to be granular.
 
-Come up with a
+# Prompt 7: FrontEnd Requirements Iteration
+
+Go through the requirements in `/Users/leonard/projects/fynance/docs/frontend-backend-handover.md` and compare and contrast it against the code base. Identify the asks that are not yet implemented in the code base and copy them to a new file in the `plans` folder. The new file in the plans folder should contain the asks that are in `/Users/leonard/projects/fynance/docs/frontend-backend-handover.md` but not yet answered or supported in the code. For the items with `[SKIP]`, do not copy them over.
+
+# Prompt 8: Architectural Consolidation of Holdings and Snapshots
+
+In the `/Users/leonard/projects/fynance/docs/plans/13_frontend_backend_handover_unimplemented.md` file, we have decided to go with Option A of Section 3. I want you to read Section 3 of the `/Users/leonard/projects/fynance/docs/plans/13_frontend_backend_handover_unimplemented.md` document and come up with a comprehensive and detailed plan of how the consolidation is going to work. Outline the code changes, the schema changes, current callers and migrations of the code in order for another LLM to implement. You should come up with a plan that is > 95% clear and shows where all the changes will be made and how they will be made. The plan should live in `/Users/leonard/projects/fynance/docs/plans/` folder. Do not leave room for ambiguity. Use clear code solutions in the doc.
+
+# Prompt 9: Teach how to run
+
+Read the code, README.md and RUNNING.md in the frontend and backend folders and come up with a document describing in comprehensive step by step how one would run the frontend web app and connect it to the backend. I want to test the end to end flow of both. I want to be able to call click through the frontend UI in the browser and call REAL API endpoints set up by the backend. This means I need to know how to start the frontend app, start the backend app and connect both to run. Write the comprehensive "how to run" to a section in the README.md file in the fynance root folder. You can update any stale data there with the correct data from your findings.

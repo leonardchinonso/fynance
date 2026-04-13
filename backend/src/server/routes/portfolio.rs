@@ -1,7 +1,7 @@
 //! Portfolio routes:
 //!   GET  /api/portfolio
 //!   GET  /api/portfolio/history
-//!   GET  /api/portfolio/snapshots
+//!   GET  /api/portfolio/balances
 //!   GET  /api/cash-flow
 
 use std::collections::HashMap;
@@ -13,8 +13,8 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 
 use crate::model::{
-    BreakdownItem, CashFlowMonth, PortfolioHistoryRow, PortfolioResponse, PortfolioSnapshot,
-    SnapshotDelta,
+    AccountSnapshot, BalanceDelta, BreakdownItem, CashFlowMonth, PortfolioHistoryRow,
+    PortfolioResponse,
 };
 use crate::server::error::AppError;
 use crate::server::state::AppState;
@@ -188,10 +188,10 @@ pub async fn get_portfolio_history(
     Ok(Json(rows))
 }
 
-// ── GET /api/portfolio/snapshots ──────────────────────────────────────────────
+// ── GET /api/portfolio/balances ───────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct PortfolioSnapshotsQuery {
+pub struct PortfolioBalancesQuery {
     pub start: Option<String>,
     pub end: Option<String>,
     pub summary: Option<String>,
@@ -199,14 +199,14 @@ pub struct PortfolioSnapshotsQuery {
 
 #[derive(serde::Serialize)]
 #[serde(untagged)]
-pub enum SnapshotsResponse {
-    Full(Vec<PortfolioSnapshot>),
-    Summary(Vec<SnapshotDelta>),
+pub enum BalancesResponse {
+    Full(Vec<AccountSnapshot>),
+    Summary(Vec<BalanceDelta>),
 }
 
-pub async fn get_portfolio_snapshots(
+pub async fn get_portfolio_balances(
     State(state): State<AppState>,
-    Query(q): Query<PortfolioSnapshotsQuery>,
+    Query(q): Query<PortfolioBalancesQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let start = q
         .start
@@ -224,11 +224,11 @@ pub async fn get_portfolio_snapshots(
 
     let db = state.db.lock().expect("db mutex poisoned");
     if summary {
-        let deltas = db.get_snapshot_summary(start, end)?;
+        let deltas = db.get_balance_summary(start, end)?;
         Ok(Json(serde_json::to_value(deltas)?))
     } else {
-        let snapshots = db.get_snapshots_in_range(start, end)?;
-        Ok(Json(serde_json::to_value(snapshots)?))
+        let balances = db.get_balances_in_range(start, end)?;
+        Ok(Json(serde_json::to_value(balances)?))
     }
 }
 

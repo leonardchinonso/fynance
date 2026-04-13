@@ -10,7 +10,7 @@ import type {
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
-  PortfolioSnapshot,
+  AccountSnapshot,
   Profile,
   SpendingGridRow,
   Transaction,
@@ -62,17 +62,25 @@ export interface ApiService {
   // Portfolio
   getPortfolio(profileId?: string): Promise<PortfolioResponse>
   getPortfolioHistory(
-    start?: string,
-    end?: string
+    start: string,
+    end: string,
+    granularity?: Granularity,
+    profileId?: string
   ): Promise<PortfolioHistoryRow[]>
   getHoldings(accountId: string): Promise<Holding[]>
-  getCashFlow(start?: string, end?: string): Promise<CashFlowMonth[]>
+  getCashFlow(
+    start: string,
+    end: string,
+    granularity?: Granularity,
+    profileId?: string
+  ): Promise<CashFlowMonth[]>
 
-  // Account snapshots (per-account monthly balances for delta calculations)
-  getAccountSnapshots(
-    start?: string,
-    end?: string
-  ): Promise<PortfolioSnapshot[]>
+  // Account balances (per-account monthly balances for delta calculations)
+  getAccountBalances(
+    start: string,
+    end: string,
+    profileId?: string
+  ): Promise<AccountSnapshot[]>
 
   // Export
   exportData(format: string): Promise<void>

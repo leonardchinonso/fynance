@@ -1,4 +1,10 @@
-import type { PortfolioResponse, CashFlowMonth, Holding } from "@/types"
+import type {
+  BreakdownItem,
+  CashFlowMonth,
+  Holding,
+  InvestmentMetrics,
+  PortfolioResponse,
+} from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Currency } from "@/components/currency"
 import { InteractivePie } from "@/components/charts"
@@ -8,14 +14,6 @@ import {
 } from "lucide-react"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
-
-interface InvestmentMetrics {
-  totalGrowth: number
-  newCashInvested: number
-  marketGrowth: number
-  startValue: number
-  endValue: number
-}
 
 interface PortfolioOverviewProps {
   portfolio: PortfolioResponse
@@ -211,39 +209,44 @@ export function PortfolioOverview({
               </div>
             </div>
 
-            {/* Investment metrics */}
-            {investmentMetrics && investmentMetrics.startValue > 0 && (
-              <div className="mt-4 border-t pt-3">
-                <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Investments</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="space-y-0.5">
-                    <p className="text-xs text-muted-foreground">New Cash Invested</p>
-                    <p className="text-base font-semibold tabular-nums">
-                      {formatCurrency(investmentMetrics.newCashInvested.toFixed(2))}
-                    </p>
-                  </div>
-                  <div className="space-y-0.5">
-                    <p className="text-xs text-muted-foreground">Total Growth</p>
-                    <p className={`text-base font-semibold tabular-nums ${investmentMetrics.totalGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
-                      {investmentMetrics.totalGrowth >= 0 ? "+" : ""}
-                      {formatCurrency(investmentMetrics.totalGrowth.toFixed(2))}
-                    </p>
-                  </div>
-                  <div className="space-y-0.5">
-                    <p className="text-xs text-muted-foreground">Market Performance</p>
-                    <p className={`text-base font-semibold tabular-nums ${investmentMetrics.marketGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
-                      {investmentMetrics.marketGrowth >= 0 ? "+" : ""}
-                      {formatCurrency(investmentMetrics.marketGrowth.toFixed(2))}
-                    </p>
-                    {investmentMetrics.startValue > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        {((investmentMetrics.marketGrowth / investmentMetrics.startValue) * 100).toFixed(1)}% return
+            {/* Investment metrics - parsed from decimal strings in the API response */}
+            {investmentMetrics && (() => {
+              const startValue = parseFloat(investmentMetrics.start_value)
+              if (startValue <= 0) return null
+              const totalGrowth = parseFloat(investmentMetrics.total_growth)
+              const marketGrowth = parseFloat(investmentMetrics.market_growth)
+              const newCashInvested = parseFloat(investmentMetrics.new_cash_invested)
+              return (
+                <div className="mt-4 border-t pt-3">
+                  <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Investments</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-0.5">
+                      <p className="text-xs text-muted-foreground">New Cash Invested</p>
+                      <p className="text-base font-semibold tabular-nums">
+                        {formatCurrency(newCashInvested.toFixed(2))}
                       </p>
-                    )}
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="text-xs text-muted-foreground">Total Growth</p>
+                      <p className={`text-base font-semibold tabular-nums ${totalGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
+                        {totalGrowth >= 0 ? "+" : ""}
+                        {formatCurrency(totalGrowth.toFixed(2))}
+                      </p>
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="text-xs text-muted-foreground">Market Performance</p>
+                      <p className={`text-base font-semibold tabular-nums ${marketGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
+                        {marketGrowth >= 0 ? "+" : ""}
+                        {formatCurrency(marketGrowth.toFixed(2))}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {((marketGrowth / startValue) * 100).toFixed(1)}% return
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
           </CardContent>
         </Card>
 
@@ -282,7 +285,7 @@ export function PortfolioOverview({
           }
         />
         <BreakdownCard title="By Institution" items={portfolio.by_institution} />
-        <BreakdownCard title="By Sector" items={portfolio.by_sector} />
+        <BreakdownCard title="By Asset Class" items={portfolio.by_asset_class} />
       </div>
     </div>
   )
@@ -300,7 +303,7 @@ function BreakdownCard({
   labelFn,
 }: {
   title: string
-  items: { label: string; total: string; percent: number }[]
+  items: BreakdownItem[]
   colorFn?: (label: string) => string
   labelFn?: (label: string) => string
 }) {
@@ -326,9 +329,9 @@ function BreakdownCard({
                   <span className="capitalize">{displayLabel}</span>
                 </span>
                 <div className="flex items-center gap-2 tabular-nums">
-                  <Currency amount={item.total} colorize={false} />
-                  <span className="text-xs text-muted-foreground w-8 text-right">
-                    {item.percent}%
+                  <Currency amount={item.value} colorize={false} />
+                  <span className="text-xs text-muted-foreground w-10 text-right">
+                    {item.percentage.toFixed(1)}%
                   </span>
                 </div>
               </div>
@@ -336,7 +339,7 @@ function BreakdownCard({
                 <div
                   className="h-full rounded-full transition-all duration-500"
                   style={{
-                    width: `${Math.abs(item.percent)}%`,
+                    width: `${Math.abs(item.percentage)}%`,
                     backgroundColor: color,
                   }}
                 />

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import type { PortfolioResponse, PortfolioHistoryRow, PortfolioSnapshot, CashFlowMonth, Holding } from "@/types"
+import type { PortfolioResponse, PortfolioHistoryRow, AccountSnapshot, CashFlowMonth, Holding } from "@/types"
 import { api } from "@/api/client"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { useProfiles } from "@/context/profile_context"
@@ -48,7 +48,7 @@ export function PortfolioPage() {
 
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null)
   const [history, setHistory] = useState<PortfolioHistoryRow[]>([])
-  const [accountSnapshots, setAccountSnapshots] = useState<PortfolioSnapshot[]>([])
+  const [accountBalances, setAccountBalances] = useState<AccountSnapshot[]>([])
   const [cashFlow, setCashFlow] = useState<CashFlowMonth[]>([])
   const [allHoldings, setAllHoldings] = useState<Holding[]>([])
   const [loading, setLoading] = useState(true)
@@ -65,13 +65,13 @@ export function PortfolioPage() {
     setLoading(true)
     Promise.all([
       api.getPortfolio(profileId),
-      api.getPortfolioHistory(start, end),
-      api.getAccountSnapshots(start, end),
-      api.getCashFlow(start, end),
+      api.getPortfolioHistory(start, end, granularity, profileId),
+      api.getAccountBalances(start, end, profileId),
+      api.getCashFlow(start, end, granularity, profileId),
     ]).then(async ([p, h, snaps, cf]) => {
       setPortfolio(p)
       setHistory(h)
-      setAccountSnapshots(snaps)
+      setAccountBalances(snaps)
       setCashFlow(cf)
       // Fetch holdings for all investment + pension accounts
       const holdingAccounts = p.accounts.filter(
@@ -83,7 +83,7 @@ export function PortfolioPage() {
       setAllHoldings(holdingResults.flat())
       setLoading(false)
     })
-  }, [profileId, start, end])
+  }, [profileId, start, end, granularity])
 
   // Delta is start-of-range vs end-of-range net worth
   const startNetWorth =
@@ -91,47 +91,10 @@ export function PortfolioPage() {
   const endNetWorth =
     history.length >= 1 ? history[history.length - 1].total_wealth : undefined
 
-  // Investment metrics: compute from snapshots
-  const investmentAccountIds = new Set(
-    (portfolio?.accounts ?? [])
-      .filter((a) => a.type === "investment")
-      .map((a) => a.id)
-  )
-
-  // Start and end investment balances from snapshots
-  const investStartBalances = new Map<string, number>()
-  const investEndBalances = new Map<string, number>()
-  for (const snap of accountSnapshots) {
-    if (!investmentAccountIds.has(snap.account_id)) continue
-    const month = snap.snapshot_date.substring(0, 7)
-    if (!investStartBalances.has(snap.account_id) || month <= (start?.substring(0, 7) ?? "")) {
-      investStartBalances.set(snap.account_id, parseFloat(snap.balance))
-    }
-    investEndBalances.set(snap.account_id, parseFloat(snap.balance))
-  }
-  const investStart = Array.from(investStartBalances.values()).reduce((s, v) => s + v, 0)
-  const investEnd = Array.from(investEndBalances.values()).reduce((s, v) => s + v, 0)
-  const investTotalGrowth = investEnd - investStart
-
-  // New cash invested = sum of "Finance: Investment Transfer" outflows.
-  // Uses the server-side aggregation endpoint so we never fetch raw
-  // transaction rows client-side just to sum them.
-  const [newInvestments, setNewInvestments] = useState(0)
-  useEffect(() => {
-    if (!start || !end) return
-    api
-      .getTransactionsByCategory({
-        start,
-        end,
-        profile_id: profileId,
-        categories: ["Finance: Investment Transfer"],
-        direction: "outflow",
-      })
-      .then((rows) => {
-        const total = rows.reduce((s, r) => s + parseFloat(r.total), 0)
-        setNewInvestments(total)
-      })
-  }, [start, end, profileId])
+  // Investment metrics now come from the backend as part of
+  // `portfolio.investment_metrics` (computed server-side from holdings +
+  // transaction transfers). The frontend no longer aggregates snapshots
+  // or re-fetches Finance: Investment Transfer totals.
 
   // Default to overview view
   const activeView = view === "table" ? "overview" : view
@@ -163,20 +126,14 @@ export function PortfolioPage() {
           dateLabel={`${start} to ${end}`}
           cashFlow={cashFlow}
           holdings={allHoldings}
-          investmentMetrics={{
-            totalGrowth: investTotalGrowth,
-            newCashInvested: newInvestments,
-            marketGrowth: investTotalGrowth - newInvestments,
-            startValue: investStart,
-            endValue: investEnd,
-          }}
+          investmentMetrics={portfolio.investment_metrics}
         />
       ) : activeView === "accounts" ? (
         <AccountsGrid
           accounts={portfolio.accounts}
           onAccountClick={setSelectedAccountId}
           profiles={profiles}
-          snapshots={accountSnapshots}
+          balances={accountBalances}
         />
       ) : activeView === "charts" ? (
         <PortfolioCharts portfolio={portfolio} holdings={allHoldings} />

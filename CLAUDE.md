@@ -162,6 +162,7 @@ GET    /api/income/:month                    # derived from Income-category tran
 
 GET    /api/portfolio
 GET    /api/portfolio/history
+GET    /api/portfolio/balances               # per-account balances derived from holdings SUM
 POST   /api/accounts
 PATCH  /api/accounts/:id/balance
 

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { Account, PortfolioSnapshot } from "@/types"
+import type { Account, AccountSnapshot } from "@/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Currency } from "@/components/currency"
@@ -19,14 +19,14 @@ interface AccountsGridProps {
   onAccountClick: (accountId: string) => void
   profiles: { id: string; name: string }[]
   startDate?: string
-  snapshots?: PortfolioSnapshot[]
+  balances?: AccountSnapshot[]
 }
 
 export function AccountsGrid({
   accounts,
   onAccountClick,
   profiles,
-  snapshots,
+  balances,
 }: AccountsGridProps) {
   const [selectedNonInvestment, setSelectedNonInvestment] = useState<Account | null>(null)
 
@@ -47,16 +47,16 @@ export function AccountsGrid({
 
   // Compute delta from earliest snapshot for each account
   const deltas = new Map<string, number>()
-  if (snapshots && snapshots.length > 0) {
-    const byAccount = new Map<string, PortfolioSnapshot[]>()
-    for (const s of snapshots) {
+  if (balances && balances.length > 0) {
+    const byAccount = new Map<string, AccountSnapshot[]>()
+    for (const s of balances) {
       const arr = byAccount.get(s.account_id) ?? []
       arr.push(s)
       byAccount.set(s.account_id, arr)
     }
     for (const [accId, snaps] of byAccount) {
       const sorted = [...snaps].sort((a, b) =>
-        a.snapshot_date.localeCompare(b.snapshot_date)
+        a.as_of.localeCompare(b.as_of)
       )
       if (sorted.length >= 2) {
         const first = parseFloat(sorted[0].balance)
