@@ -1,7 +1,7 @@
 # Frontend-Backend Handover: Unimplemented Asks
 
 **Date:** 2026-04-12  
-**Source:** `/docs/plans/18_frontend_backend_handover.md` (full requirements analysis)  
+**Source:** `/docs/plans/11_frontend_backend_handover.md` (full requirements analysis)  
 **Status:** Items below have been identified as mentioned in the handover but not yet fully implemented in the codebase.
 
 ---
@@ -22,7 +22,7 @@ Of the 53 backend asks identified in the frontend-backend-handover document, the
 Migration 004 consolidated `portfolio_snapshots` into `holdings` by inserting one row per account per date with `symbol = '_CASH'`. Combined with the existing `UNIQUE(account_id, symbol, as_of)` constraint on `holdings`, this means **only one cash holding per account per date is possible**. A second `_CASH` row for the same account on the same `as_of` is rejected by the unique index.
 
 **Why This Is a Gap:**
-The original handover (`docs/plans/18_frontend_backend_handover.md` Section 7) explicitly called out pots, vaults, and multi-currency balances as cash holdings that should live inside a single parent account:
+The original handover (`docs/plans/11_frontend_backend_handover.md` Section 7) explicitly called out pots, vaults, and multi-currency balances as cash holdings that should live inside a single parent account:
 
 ```
 Account: "Monzo Current" (balance: £2,500)
@@ -459,9 +459,9 @@ category error — they serve opposite directions of the wire.
 
 ## References
 
-- Frontend-Backend Handover: `/docs/plans/18_frontend_backend_handover.md`
+- Frontend-Backend Handover: `/docs/plans/11_frontend_backend_handover.md`
 - Current Implementation Plan: `/docs/plans/09_backend_implementation_plan.md`
 - Data Model Design: `/docs/design/03_data_model.md`
 - Database Schema: `/db/sql/schema.sql`
 - Importer Code: `/backend/src/importers/`
-- Consolidation Proposal: `/docs/plans/11_frontend_backend_consolidation.md`
+- Consolidation Proposal: `/docs/plans/12_frontend_backend_consolidation.md`

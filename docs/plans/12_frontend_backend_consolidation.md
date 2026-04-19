@@ -1,6 +1,6 @@
 # Frontend-Backend Consolidation Plan
 
-This plan integrates the requirements from `docs/plans/18_frontend_backend_handover.md` into the existing backend implementation plan (`09_backend_implementation_plan.md`). It restructures Phases 3-6 to incorporate all model changes, new endpoints, modified endpoints, and the delegation of frontend computation to the backend.
+This plan integrates the requirements from `docs/plans/11_frontend_backend_handover.md` into the existing backend implementation plan (`09_backend_implementation_plan.md`). It restructures Phases 3-6 to incorporate all model changes, new endpoints, modified endpoints, and the delegation of frontend computation to the backend.
 
 Phases 1 and 2 are already complete and require no changes.
 
