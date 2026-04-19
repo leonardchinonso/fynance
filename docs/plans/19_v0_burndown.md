@@ -153,6 +153,7 @@ These errors exist in files that predate this PR but are now caught by CI's `tsc
 - [ ] undefined on reading from array index, then make sure to handle nullables
 - [ ] remove all type casting at the very least use type guards
 - [ ] Above were fixed
+- [ ] Test pulling from the docker registry and setig it up
 
 ### Transactions (UI)
 
