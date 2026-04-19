@@ -560,7 +560,7 @@ The project is ready for regular use. Docker image published to GHCR. Any contri
 | 5 | Reports + Export + monthly composite command | Monthly summaries exportable as CSV and Obsidian markdown |
 | 6 | Polish + Docker + CI | Docker deployment; CI green; app ready for daily use |
 
-## Open Questions (from `docs/plans/16_project_brief.md`)
+## Open Questions (from `docs/plans/18_project_brief.md`)
 
 These have not been resolved and affect specific implementation choices. Decisions should be made before the relevant phase:
 

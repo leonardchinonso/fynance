@@ -142,7 +142,7 @@ For both the CSV/PDF/IMAGE imports and be bulk upsert in points where we end up 
 
 ### Infrastructure
 
-- [ ] Multi-stage Dockerfile (node build, rust build, debian-slim runtime) + `docker-compose.yml` with volume mount for SQLite (from `11_frontend_backend_consolidation.md` Phase 6.4)
+- [ ] Multi-stage Dockerfile (node build, rust build, debian-slim runtime) + `docker-compose.yml` with volume mount for SQLite (from `12_frontend_backend_consolidation.md` Phase 6.4)
 
 ### Settings Page (UI)
 

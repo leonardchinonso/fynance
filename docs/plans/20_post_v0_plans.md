@@ -8,7 +8,7 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ### CI/CD and Release Pipeline
 
-- [ ] `ci.yml`: fmt, clippy, test, frontend build + typecheck (from `11_frontend_backend_consolidation.md` Phase 6.5)
+- [ ] `ci.yml`: fmt, clippy, test, frontend build + typecheck (from `12_frontend_backend_consolidation.md` Phase 6.5)
 - [ ] `docker.yml`: build and push to GHCR on push to main (from Phase 6.5)
 - [ ] Block direct pushes to main; create a feature branch -> develop (staging) -> main (release) pipeline
 - [ ] Pushing to main automatically deploys a new Docker version to the registry
@@ -29,7 +29,7 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ### Reports and Export
 
-- [ ] `GET /api/reports/:month`: monthly summary (total income, total spending, net savings, top categories, top merchants, month-over-month deltas) (from `11_frontend_backend_consolidation.md` Phase 5.1)
+- [ ] `GET /api/reports/:month`: monthly summary (total income, total spending, net savings, top categories, top merchants, month-over-month deltas) (from `12_frontend_backend_consolidation.md` Phase 5.1)
 - [ ] Frontend: Reports page wired to real API, summary cards, category breakdown, top merchants, MoM deltas, export button (from Phase 5.4)
 - [ ] `GET /api/export?year=YYYY&format=csv`: full-year transaction CSV export (from Phase 5.2)
 - [ ] `GET /api/export?month=YYYY-MM&format=md`: single-month Obsidian-compatible markdown (from Phase 5.2)
@@ -42,7 +42,7 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ### CORS
 
-- [ ] Tighten CORS from `CorsLayer::permissive()` to explicit `http://127.0.0.1:<port>` and `http://localhost:<port>` origins (from `20_frontend_review.md`)
+- [ ] Tighten CORS from `CorsLayer::permissive()` to explicit `http://127.0.0.1:<port>` and `http://localhost:<port>` origins (from `17_frontend_review.md`)
 
 ---
 
@@ -63,10 +63,6 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 - [ ] Develop rules-based per-sender category assignment as a fallback or complement to AI categorization (from V0 burndown shared questions)
 - [ ] A rule is: "all transactions to/from this sender go to this category"
 
-### Smart Transaction Detection
-
-- [ ] Anomaly detection (flag unusual spending patterns)
-- [ ] Smart recurring transaction detection (auto-flag transactions that repeat monthly)
 
 ---
 
@@ -87,6 +83,18 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ---
 
+## V6
+
+### Forecasting
+- [ ] Using past trends to predict future spending. i.e. we can use the avg income, avg spending per category, avg savings/investements left over e.t.c to forecast the future spending
+    - [ ] On the budget tab this could allow a forecasted view showing values in future date columns, so you can do calculations with dates that haven't happened yet
+    - [ ] can be tweaked to play around with scenarios. i.e. "if i drop my eating out to 250 pounds a month how much will that save me after 5 year s what will my acocunt balance be...
+- [ ] For this to be truly useful should also take into account non recurruing but guranteed costs
+    - [ ] e.g Investements growth can be calculated as an avg of x% pa, where the user can play around with different vlaues of x
+    - [ ]  amortized payments such as mortgage should be able to input formulas to figure out how the monthly payment will be split between interest and principal over time.
+- [ ] could be used for planning for big purchases like saving for a house, or preparing for lifestyle changes like having a new child.  
+- [ ] could maybe also be used for retirement planning, estimatign reduced or no income and seeing how long a portfolio will last spending vs investment growth.  
+
 ## Unversioned (Nice-to-Have)
 
 These are ideas worth capturing but not committed to any version.
@@ -98,6 +106,8 @@ These are ideas worth capturing but not committed to any version.
 
 ### AI
 - AI chat interface for querying finances ("how much did I spend on travel last quarter?")
+- Anomaly detection (flag unusual spending patterns)
+- Smart recurring transaction detection (auto-flag transactions that repeat monthly)
 
 ### Portfolio
 - Real-time stock price fetching for portfolio valuation
@@ -108,7 +118,6 @@ These are ideas worth capturing but not committed to any version.
 - Tax planning for capital gains
 - Early retirement planning (FIRE calculator)
 - Rental income tracking
-- Forecasting for big purchases (savings goal timeline)
 
 ### Integration
 - Obsidian plugin for inline finance queries
@@ -116,7 +125,6 @@ These are ideas worth capturing but not committed to any version.
 - Export to common accounting formats
 
 ### UI/UX
-- Mobile-responsive PWA
 - Customizable dashboard widgets
 
 ### Charting and Visualization
