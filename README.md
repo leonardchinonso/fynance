@@ -82,6 +82,8 @@ FYNANCE_LOG_LEVEL=info
 
 ## Local Development Setup
 
+> **Important:** During development always open `http://localhost:5173` (Vite dev server), not `http://localhost:7433`. The backend port serves a pre-compiled frontend bundle that is only updated when you run `make build`. The Vite dev server reflects your latest source changes instantly via HMR.
+
 ### Prerequisites
 
 - **Rust** 1.85+ MSRV: `curl https://sh.rustup.rs -sSf | sh`

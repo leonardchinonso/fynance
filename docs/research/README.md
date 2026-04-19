@@ -13,6 +13,7 @@ Research conducted April 2026 for the fynance project: a personal finance tracke
 | [05_budgeting_methodologies.md](05_budgeting_methodologies.md) | 50/30/20, zero-based, envelope methods, and projection |
 | [06_obsidian_plugins.md](06_obsidian_plugins.md) | Plugin ecosystem: Dataview, SQLite DB, Templater, Charts |
 | [07_claude_api.md](07_claude_api.md) | Claude API from Rust: tool use, batch, vision, prompt caching |
+| [prompts.md](prompts.md) | Original prompts used to generate project plans and research |
 
 ## Key Findings
 
