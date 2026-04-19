@@ -127,52 +127,28 @@ For both the CSV/PDF/IMAGE imports and be bulk upsert in points where we end up 
 
 ## Ope (Frontend / Import / Data Ingestion)
 
+### Settings Page: Remaining Work
 
-### Data Ingestion UX (Guided Monthly Flow)
+- [ ] **Consolidate Accounts and Data Ingestion into a single section.** The current two-section layout (Accounts + Data Ingestion) is wasteful and duplicates account lists. Merge into one "Accounts" section where each account card shows sort handle, ingestion visibility toggle, and edit/delete actions. Use icons, tooltips, or a section subtitle to explain the ingestion ordering.
+- [ ] **Fixed sidebar navigation.** The settings sidebar nav should be position-sticky/fixed so it stays visible while the main content scrolls. Currently it scrolls away with the page.
+- [ ] **Skeleton loading states.** Replace "No accounts yet" / "Loading categories..." empty states with skeleton cards that mimic the eventual content (e.g. 1 profile skeleton, 3 account skeletons, 6 category skeletons grouped). Data fills in once loaded.
+- [ ] **Test live endpoints via Playwright.** The create profile and create account endpoints exist in the BE. Wire up Playwright tests that actually create a profile and an account via the Settings UI in live mode and verify they persist.
+- [ ] **Test CSV import end-to-end via Playwright.** Upload a real CSV file through the import wizard in live mode and verify the import result (rows inserted, duplicates, etc.).
+- [ ] **Edit/delete buttons.** Currently disabled with "Coming soon" tooltips. Wire up when BE adds PATCH/DELETE endpoints for profiles and accounts.
 
-- [ ] Sort accounts in a user-defined order for the ingestion wizard
-- [ ] Allow accounts to be marked as "never show" (skipped from the ingestion list) this and above stored in the browser.
-- [ ] Ingestion wizard flow (browser):
-  1. Show next account in the sorted list
-  2. Prompt: upload source document (multiple) for this account
-  3. Dry run: preview transactions and holdings
-  4. Confirm or skip
-  5. Advance to the next account
-- [ ] This is the browser-side ingestion checklist already tracked in `08_mvp_phases_v2.md` Phase 3 — make sure the account ordering and skip preferences are wired in
+### Build: Fix Pre-existing TypeScript Errors
 
-### Infrastructure
+These errors exist in files that predate this PR but are now caught by CI's `tsc --noEmit`:
 
-- [ ] Multi-stage Dockerfile (node build, rust build, debian-slim runtime) + `docker-compose.yml` with volume mount for SQLite (from `12_frontend_backend_consolidation.md` Phase 6.4)
-
-### Settings Page (UI)
-
-A dedicated settings page for CRUD operations and app configuration.
-
-**Profiles:**
-- [ ] Create / modify / delete profiles
-
-**Accounts:**
-- [ ] Create / modify / delete accounts
-- [ ] Create / name holdings within accounts (separate from holding snapshots which are generated on imports). Question: is manual holding creation needed, or do we only get holdings from imports?
-- [ ] Sort accounts for the ingestion flow (sort order stored in browser localStorage)
-- [ ] Mark accounts as "hidden from ingestion flow" (stored in browser localStorage)
-
-**Categories and Category Groups:**
-- [ ] Create / modify / delete categories with descriptions
-- [ ] Create / modify / delete category groups
-- [ ] Budgets are set in the Budget view, not here
-
-**Data Source Toggle:**
-- [ ] Toggle between mock data and live data (live by default)
-- [ ] If `MOCK_ONLY` is set in the environment, default to mock and disable the toggle
-- [ ] Toggle value stored in browser localStorage so it persists across refreshes (ignored if `MOCK_ONLY` is set)
-
-**Appearance:**
-- [ ] Toggle light / dark mode / system default
+- [ ] `date_range_selector.tsx`: `ToggleGroup` value/onValueChange uses `string` instead of `string[]` (Base UI API)
+- [ ] `view_mode_switcher.tsx`: same ToggleGroup string vs string[] issue
+- [ ] `budget_spreadsheet.tsx`: unused `months` and `granularity` variables (TS6133)
+- [ ] `transactions.tsx`: unused `PieChart` import (TS6133)
+- [ ] `vite.config.ts`: `babel` property does not exist in React Compiler plugin `Options` type
 
 ### Transactions (UI)
 
-- [ ] When BE adds the `exclude_from_summary` flag, expose it in the transaction detail/edit view so users can toggle it per transaction (e.g. for internal self-transfers)
+- [ ] When BE adds the `exclude_from_summary` flag, wire up the toggle in the Exclude column (currently renders as disabled switch with tooltip)
 
 ### Budget (UI)
 
@@ -185,6 +161,34 @@ A dedicated settings page for CRUD operations and app configuration.
 
 - [ ] After BE work, drop the hand-written `PaginatedResponse<T>` in `types/api.ts` and import the generated binding instead. Small change, ~20 lines of backend code. (from `13_frontend_backend_handover_unimplemented.md` Section 6.1)
 
+### Completed (this PR: `feat/frontend-v0-burndown`)
+
+- [x] **DraggableList component** extracted from navbar saved views into reusable `draggable_list.tsx`
+- [x] **Settings page** created with 6 sections: Profiles, Accounts, Categories, Data Ingestion, Appearance, Data Source
+- [x] **Profiles section:** list profiles, add profile dialog (create via `POST /api/profiles`)
+- [x] **Accounts section:** list accounts with type badge and balance, add account dialog (create via `POST /api/accounts`)
+- [x] **Categories section:** grouped list with add/edit/delete (mock CRUD until BE adds endpoints)
+- [x] **Data Ingestion section:** account ordering via DraggableList, hide/show accounts, stored in localStorage
+- [x] **Appearance section:** Light/Dark/System theme toggle (moved from navbar)
+- [x] **Data Source section:** Live/Mock toggle with MOCK_ONLY env var support (moved from navbar)
+- [x] **Navbar changes:** removed theme and mock/live toggles, added Import CTA popover, added Settings gear icon
+- [x] **Import wizard** (`/import?mode=wizard`): step through accounts with file upload, skip, preview results, completion summary
+- [x] **Import single mode** (`/import?mode=single`): select account, upload files, view results
+- [x] **File upload component** with drag-and-drop, file list, deduplicate by name+size
+- [x] **Preview table** showing import stats (total, new, duplicates), bank detection, error table
+- [x] **Wizard progress sidebar** with check/skip/current icons per account
+- [x] **Import summary** with per-account result cards and navigation
+- [x] **Ingestion preferences hook** (`use_ingestion_preferences.ts`): localStorage-based account ordering
+- [x] **API service extensions:** `createProfile`, `createAccount`, category CRUD (mock), `importCsv` (multipart)
+- [x] **Default API mode flipped** from mock to live, added `VITE_MOCK_ONLY` support
+- [x] **Dockerfile** (multi-stage: Node frontend, Rust backend, debian-slim runtime)
+- [x] **docker-compose.yml** with GHCR image and persistent volume
+- [x] **GitHub Actions CI** (frontend lint+build, backend test+clippy)
+- [x] **GitHub Actions Docker publish** (auto-version tagging to GHCR on push to master)
+- [x] **Transaction exclude column** added to table (disabled switch with "Coming soon" tooltip)
+- [x] **shadcn Switch component** added
+- [x] **TypeScript errors fixed** for Base UI compatibility (render prop, ToggleGroup array API)
+
 ---
 
 ## Shared / Open Questions
@@ -192,4 +196,4 @@ A dedicated settings page for CRUD operations and app configuration.
    -  A rule is basically, 'all transactions to/from this sender should go to this category'
    -  We should maybe develop rules anyway as a v3 feature even if the ai thing works?
 -   T212 CSV: can closing positions be reliably derived from opening + trades? or maybe we append screenshots of current holdings as additional imports to the account
-
+- **`PATCH /api/accounts/:id/balance`**: This endpoint creates a `_CASH` holding snapshot. Since account balance is now derived from the sum of holdings (post migration 004), should this endpoint be removed or renamed to something like "add cash holding snapshot" to avoid confusion?
