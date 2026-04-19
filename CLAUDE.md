@@ -1,6 +1,7 @@
 # fynance — Claude Context
 
 Before starting any work, read `docs/fynance-project-note.md` for project goals, the design docs in `docs/design/`, and the current plan at `docs/plans/08_mvp_phases_v2.md`.
+Also read `.claude/memory/MEMORY.md` if it exists, and any individual memory files it references for session-derived patterns and known pitfalls.
 Do not make any changes to the code until you have 95% confidence in what you need to build. Ask me follow-up questions until you reach that confidence.
 
 ## Repo
