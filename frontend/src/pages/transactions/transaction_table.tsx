@@ -211,6 +211,9 @@ export function TransactionTable({
             <Select
               value={limit.toString()}
               onValueChange={(v) => {
+                if (v == null){
+                  return;
+                }
                 const newLimit = parseInt(v, 10)
                 localStorage.setItem(PAGE_SIZE_KEY, v)
                 onLimitChange(newLimit)

@@ -145,6 +145,8 @@ These errors exist in files that predate this PR but are now caught by CI's `tsc
 - [ ] `budget_spreadsheet.tsx`: unused `months` and `granularity` variables (TS6133)
 - [ ] `transactions.tsx`: unused `PieChart` import (TS6133)
 - [ ] `vite.config.ts`: `babel` property does not exist in React Compiler plugin `Options` type
+- [ ] undefined on reading from array index, then make sure to handle nullables
+- [ ] remove all type casting at the very least use type guards
 
 ### Transactions (UI)
 

@@ -110,8 +110,6 @@ function SectionBlock({
   section,
   rows,
   periods,
-  months,
-  granularity,
   getPeriodValue,
   getPeriodBudget,
 }: {

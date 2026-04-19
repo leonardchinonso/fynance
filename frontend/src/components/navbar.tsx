@@ -169,7 +169,7 @@ export function Navbar() {
 
           {/* Desktop: Profile selector */}
           <div className="hidden md:block">
-            <Select value={profileId ?? "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
+            <Select value={profileId ?? "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v ?? undefined)}>
               <SelectTrigger className="w-[140px]">
                 <span className="truncate">
                   {profileId ? profiles.find((p) => p.id === profileId)?.name ?? profileId : "All profiles"}
@@ -207,7 +207,7 @@ export function Navbar() {
             {/* Profile selector (mobile) */}
             <div className="flex items-center justify-between">
               <span className="text-sm">Profile</span>
-              <Select value={profileId ?? "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
+              <Select value={profileId ?? "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v ?? undefined)}>
                 <SelectTrigger className="w-[130px]">
                   <span className="truncate">
                     {profileId ? profiles.find((p) => p.id === profileId)?.name ?? profileId : "All profiles"}
