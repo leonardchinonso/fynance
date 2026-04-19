@@ -111,10 +111,9 @@ export function DateRangeSelector({
 
       {showGranularity && (
         <ToggleGroup
-          type="single"
-          value={granularity}
+          value={[granularity]}
           onValueChange={(v) => {
-            if (v) setGranularity(v as Granularity)
+            if (v) setGranularity(v[0] as Granularity)
           }}
           className="ml-auto"
         >

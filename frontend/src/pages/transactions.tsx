@@ -11,7 +11,7 @@ import { Currency } from "@/components/currency"
 import { TransactionTable } from "./transactions/transaction_table"
 import { TransactionBarChart } from "./transactions/transaction_bar_chart"
 import { TransactionPieChart } from "./transactions/transaction_pie_chart"
-import { Table2, BarChart3, PieChart, Search } from "lucide-react"
+import { Table2, BarChart3, Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {

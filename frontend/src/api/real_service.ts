@@ -3,10 +3,13 @@ import type {
   AccountSnapshot,
   BudgetRow,
   CashFlowMonth,
+  CategoryDetail,
   CategoryTotal,
   CategoryTotalFilters,
+  CreateAccountBody,
   Granularity,
   Holding,
+  ImportResult,
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
@@ -50,7 +53,19 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
-// Mock fallback for endpoints the backend doesn't have yet (currently: exportData)
+async function postMultipart<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(`${window.location.origin}${path}`, {
+    method: "POST",
+    body: formData,
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status} ${res.statusText}: ${text}`)
+  }
+  return res.json()
+}
+
+// Mock fallback for endpoints the backend doesn't have yet
 const mock = new MockApiService()
 
 /**
@@ -173,6 +188,44 @@ export class RealApiService implements ApiService {
       start,
       end,
     })
+  }
+
+  // ── Settings / CRUD ──────────────────────────────────────────────
+
+  async createProfile(body: { id: string; name: string }): Promise<Profile> {
+    return post<Profile>(`${BASE}/profiles`, body)
+  }
+
+  async createAccount(body: CreateAccountBody): Promise<Account> {
+    return post<Account>(`${BASE}/accounts`, body)
+  }
+
+  // Categories: mock fallback until BE adds category CRUD
+  async getCategoryDetails(): Promise<CategoryDetail[]> {
+    return mock.getCategoryDetails()
+  }
+
+  async createCategory(body: { name: string; description: string; group: string }): Promise<CategoryDetail> {
+    return mock.createCategory(body)
+  }
+
+  async updateCategory(id: string, body: { name?: string; description?: string; group?: string }): Promise<CategoryDetail> {
+    return mock.updateCategory(id, body)
+  }
+
+  async deleteCategory(id: string): Promise<void> {
+    return mock.deleteCategory(id)
+  }
+
+  // ── Import ────────────────────────────────────────────────────────
+
+  async importCsv(accountId: string, file: File): Promise<ImportResult> {
+    const formData = new FormData()
+    formData.append("file", file)
+    return postMultipart<ImportResult>(
+      `${BASE}/import/csv?account=${encodeURIComponent(accountId)}`,
+      formData
+    )
   }
 
   // ── Mock fallback (backend endpoint doesn't exist yet) ──────────

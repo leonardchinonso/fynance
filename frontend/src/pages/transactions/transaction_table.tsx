@@ -25,6 +25,13 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { CATEGORY_COLORS } from "@/lib/colors"
+import { Switch } from "@/components/ui/switch"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const PAGE_SIZE_KEY = "fynance-page-size"
@@ -43,6 +50,7 @@ const ALL_COLUMNS: Column[] = [
   { id: "amount", label: "Amount", defaultVisible: true },
   { id: "account", label: "Account", defaultVisible: true },
   { id: "source", label: "Source", defaultVisible: false },
+  { id: "exclude", label: "Exclude", defaultVisible: false },
 ]
 
 function getStoredColumns(): Set<string> {
@@ -106,6 +114,7 @@ export function TransactionTable({
             {isVisible("amount") && <TableHead className="text-right">Amount</TableHead>}
             {isVisible("account") && <TableHead>Account</TableHead>}
             {isVisible("source") && <TableHead>Source</TableHead>}
+            {isVisible("exclude") && <TableHead className="text-center">Exclude</TableHead>}
             <TableHead className="w-8">
               <ColumnSettings
                 columns={ALL_COLUMNS}
@@ -171,6 +180,20 @@ export function TransactionTable({
                   )}
                 </TableCell>
               )}
+              {isVisible("exclude") && (
+                <TableCell className="text-center">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger className="inline-flex">
+                        <Switch disabled checked={false} className="scale-75" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Coming soon: exclude from summaries</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </TableCell>
+              )}
               <TableCell />
             </TableRow>
           ))}
@@ -188,6 +211,9 @@ export function TransactionTable({
             <Select
               value={limit.toString()}
               onValueChange={(v) => {
+                if (v == null){
+                  return;
+                }
                 const newLimit = parseInt(v, 10)
                 localStorage.setItem(PAGE_SIZE_KEY, v)
                 onLimitChange(newLimit)

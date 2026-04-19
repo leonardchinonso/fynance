@@ -6,6 +6,8 @@ import { TransactionsPage } from "@/pages/transactions"
 import { BudgetPage } from "@/pages/budget"
 import { PortfolioPage } from "@/pages/portfolio"
 import { ReportsPage } from "@/pages/reports"
+import { SettingsPage } from "@/pages/settings"
+import { ImportPage } from "@/pages/import"
 
 function getHomepage(): string {
   try {
@@ -28,6 +30,8 @@ function Layout() {
           <Route path="/budget" element={<BudgetPage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/import" element={<ImportPage />} />
           <Route path="*" element={<Navigate to={homepage} replace />} />
         </Routes>
       </main>

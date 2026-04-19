@@ -20,10 +20,9 @@ export function ViewModeSwitcher({
 }: ViewModeSwitcherProps) {
   return (
     <ToggleGroup
-      type="single"
-      value={value}
+      value={[value]}
       onValueChange={(v) => {
-        if (v) onChange(v)
+        if (v) onChange(v[0])
       }}
     >
       {modes.map((mode) => (
