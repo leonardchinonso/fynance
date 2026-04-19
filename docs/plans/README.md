@@ -47,36 +47,43 @@ A personal finance tracker written in Rust with a local React web UI. Ingests ba
 
 ```
 fynance/
-├── Cargo.toml
-├── Cargo.lock
 ├── CLAUDE.md
 ├── Makefile                     # build frontend then cargo
+├── assets/
 ├── db/
-│   └── sql/schema.sql           # SQLite DDL
+│   └── sql/
+│       ├── schema.sql           # SQLite DDL
+│       └── migrations/
 ├── backend/
+│   ├── Cargo.toml
+│   ├── Cargo.lock
 │   ├── config/
-│   │   ├── categories.yaml
-│   │   └── rules.yaml
+│   │   └── categories.yaml
 │   └── src/
 │       ├── main.rs
+│       ├── lib.rs
 │       ├── cli.rs
 │       ├── model.rs
 │       ├── util.rs
 │       ├── storage/
 │       ├── importers/
-│       ├── categorizer/
-│       ├── budget/
-│       ├── portfolio/
 │       ├── server/
 │       └── commands/
 ├── frontend/                    # React + Vite + TS
 │   ├── package.json
+│   ├── vite.config.ts
 │   └── src/
 │       ├── main.tsx
 │       ├── App.tsx
 │       ├── pages/
 │       ├── components/
-│       └── api/
+│       ├── api/
+│       ├── bindings/            # ts-rs generated types
+│       ├── context/
+│       ├── data/                # mock data (removed when real API wired up)
+│       ├── hooks/
+│       ├── lib/
+│       └── types/
 ├── docs/
 │   ├── design/
 │   ├── plans/                   # This folder
