@@ -18,16 +18,16 @@ A personal finance tracker written in Rust with a local React web UI. Ingests ba
 | 08 | [08_mvp_phases_v2.md](08_mvp_phases_v2.md) | Phased plan (Axum + React) | **Closed** (remaining items carried forward to 15) |
 | 09 | [09_backend_implementation_plan.md](09_backend_implementation_plan.md) | Backend MVP executable checklist | **Closed** (phases 1-2 built, 3-6 superseded by 11) |
 | 10 | [10_llm_csv_import.md](10_llm_csv_import.md) | LLM-based CSV import design | **Closed** (built, replaces bank-specific parsers) |
-| 11 | [11_frontend_backend_consolidation.md](11_frontend_backend_consolidation.md) | Integrate frontend handover requirements into backend phases 3-6 | **Closed** (built, remaining items in 13/15) |
+| 11 | [11_frontend_backend_consolidation.md](11_frontend_backend_consolidation.md) | Integrate frontend handover requirements into backend phases 3-6 | **Closed** (BE built, remaining items in 15 and 17) |
 | 12 | [12_fingerprint_and_snapshot_improvements.md](12_fingerprint_and_snapshot_improvements.md) | Datetime-level granularity for fingerprints and snapshots | **Closed** (built, migrations applied) |
-| 13 | [13_frontend_backend_handover_unimplemented.md](13_frontend_backend_handover_unimplemented.md) | Unimplemented items from the frontend-backend handover | **Closed** (remaining items carried forward to 15) |
+| 13 | [13_frontend_backend_handover_unimplemented.md](13_frontend_backend_handover_unimplemented.md) | Audit of 18: which handover asks are not yet built | **Closed** (remaining items carried forward to 15) |
 | 14 | [14_holdings_consolidation_implementation.md](14_holdings_consolidation_implementation.md) | Consolidate portfolio_snapshots into holdings | **Closed** (built, portfolio_snapshots dropped) |
 | 15 | [15_v0_burndown.md](15_v0_burndown.md) | V0 burndown: everything needed to ship | **Active** (start here) |
 | 16 | [16_project_brief.md](16_project_brief.md) | Project goals, key decisions, open questions | Reference |
-| 17 | [17_stretch_goals.md](17_stretch_goals.md) | Post-V1 nice-to-have ideas | Reference |
-| 18 | [18_frontend_backend_handover.md](18_frontend_backend_handover.md) | Full API and model contract between frontend and backend | **Closed** (unimplemented items tracked in 13, then 15) |
+| 17 | [17_future_plans.md](17_future_plans.md) | Post-V0 roadmap (V1, V2, V3+) and unversioned ideas | Reference |
+| 18 | [18_frontend_backend_handover.md](18_frontend_backend_handover.md) | Full API and model contract between frontend and backend (created Apr 12, predates 13) | **Closed** (audited into 13, remaining items in 15) |
 | 19 | [19_portfolio_holdings_breakdown.md](19_portfolio_holdings_breakdown.md) | Deep-dive on portfolio and holdings architecture | Reference |
-| 20 | [20_frontend_review.md](20_frontend_review.md) | Frontend review: UX bugs and missing flows | **Closed** (issues addressed in subsequent work) |
+| 20 | [20_frontend_review.md](20_frontend_review.md) | Frontend review: UX bugs and missing flows | **Closed** (bug fixed, account creation UI in 15, CORS in 17) |
 
 ## Tech Stack
 

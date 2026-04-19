@@ -11,6 +11,7 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
 - [ ] Rename portfolio endpoint to `/api/holdings` (get rid of all references to `portfolio` as it's confusing, we don't need back compat)
 - [ ] Implement importing holding balances from documents, more below
 - [ ] Allow multiple cash holdings per account: the current `UNIQUE(account_id, symbol, as_of)` constraint and `_CASH` sentinel blocks Monzo pots and multi-currency balances. Resolve the design question and update schema + API accordingly (tracked in `13_frontend_backend_handover_unimplemented.md` Section 1)
+- [ ] Support marking a holding as closed (so it no longer shows in active views but history is preserved)
 
 ### Accounts
 
@@ -38,6 +39,11 @@ Categories move from the hard-coded `categories.yaml` into a proper DB table, us
   - [ ] This should be excluded from bulk read on the categories?
 
 > **Open question (Nonso):** where should budgets live
+
+### Transactions
+
+- [ ] Add an `exclude_from_summary` boolean flag on individual transactions (default false). Used for internal self-transfers (e.g. Monzo to Revolut) that should not distort spending/income summaries. Backend should respect this flag in all aggregation endpoints (spending grid, cash flow, by-category).
+> **Open Question for Nonso:** Fingerprint collision disambiguation. For banks that only provide date (no time), same-day same-amount transactions collide. Proposal: allow an optional `duplicate_index` field (integer, default 0) that becomes part of the fingerprint hash. The caller can set this when they know two rows are distinct transactions. Does this work or is there a better approach?
 
 ### API: Missing Endpoints
 
@@ -110,6 +116,11 @@ For both the CSV/PDF/IMAGE imports and be bulk upsert in points where we end up 
 - [ ] Currency must also be tracked at the holding level (schema has `currency` on holdings — verify this is surfaced correctly and not dropped anywhere in the pipeline)
 - [ ] Currency should likely also be stored on the budget level, basically anywhere a monetary value is stored it should be stored next to a currency (
   - [ ] v:10 maybe monetary value should become a new table entry with money and currency??? and then can be extending to a different type which is like stock + amount of shares held)
+- [ ] Amounts are always stored in source currency, never converted at ingestion. Add validation and document convention in code and API docs. (from `13_frontend_backend_handover_unimplemented.md` Section 3.2)
+
+### Type Sharing (ts-rs)
+
+- [ ] Introduce a generic `Paginated<T>` Rust struct with `#[derive(TS)]` so the frontend can drop the hand-written `PaginatedResponse<T>` in `types/api.ts` and import the generated binding instead. Small change, ~20 lines of backend code. (from `13_frontend_backend_handover_unimplemented.md` Section 6.1)
 
 
 ---
@@ -129,11 +140,46 @@ For both the CSV/PDF/IMAGE imports and be bulk upsert in points where we end up 
   5. Advance to the next account
 - [ ] This is the browser-side ingestion checklist already tracked in `08_mvp_phases_v2.md` Phase 3 — make sure the account ordering and skip preferences are wired in
 
+### Infrastructure
+
+- [ ] Multi-stage Dockerfile (node build, rust build, debian-slim runtime) + `docker-compose.yml` with volume mount for SQLite (from `11_frontend_backend_consolidation.md` Phase 6.4)
+
+### Settings Page (UI)
+
+A dedicated settings page for CRUD operations and app configuration.
+
+**Profiles:**
+- [ ] Create / modify / delete profiles
+
+**Accounts:**
+- [ ] Create / modify / delete accounts
+- [ ] Create / name holdings within accounts (separate from holding snapshots which are generated on imports). Question: is manual holding creation needed, or do we only get holdings from imports?
+- [ ] Sort accounts for the ingestion flow (sort order stored in browser localStorage)
+- [ ] Mark accounts as "hidden from ingestion flow" (stored in browser localStorage)
+
+**Categories and Category Groups:**
+- [ ] Create / modify / delete categories with descriptions
+- [ ] Create / modify / delete category groups
+- [ ] Budgets are set in the Budget view, not here
+
+**Data Source Toggle:**
+- [ ] Toggle between mock data and live data (live by default)
+- [ ] If `MOCK_ONLY` is set in the environment, default to mock and disable the toggle
+- [ ] Toggle value stored in browser localStorage so it persists across refreshes (ignored if `MOCK_ONLY` is set)
+
+**Appearance:**
+- [ ] Toggle light / dark mode / system default
+
+### Transactions (UI)
+
+- [ ] When BE adds the `exclude_from_summary` flag, expose it in the transaction detail/edit view so users can toggle it per transaction (e.g. for internal self-transfers)
+
 ### Budget (UI)
 
 - [ ] Every month has a budget; auto-carry from previous month unless overridden
 - [ ] Budget column in the spending table shows the **average** spend for that category (in the selected view range)
 - [ ] Hovering a cell in the budget table shows the cell's budget value as a tooltip
+- [ ] Add a toggle to show empty categories (stored in browser localStorage): either show only categories with transactions in the selected period, or show all categories even when rows are blank
 
 ---
 
