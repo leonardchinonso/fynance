@@ -10,6 +10,7 @@ RUN npm run build
 FROM rust:1.85-bookworm AS backend-build
 WORKDIR /app
 COPY backend/ backend/
+COPY db/ db/
 COPY --from=frontend-build /app/frontend/dist frontend/dist
 WORKDIR /app/backend
 RUN cargo build --release
