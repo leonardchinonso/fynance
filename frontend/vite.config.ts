@@ -7,9 +7,8 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     react({
-      babel: {
-        plugins: ["babel-plugin-react-compiler"],
-      },
+      // @ts-ignore - Vite 8 types are still stabilizing
+      reactCompiler: true,
     }),
   ],
   resolve: {

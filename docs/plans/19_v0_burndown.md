@@ -145,8 +145,14 @@ These errors exist in files that predate this PR but are now caught by CI's `tsc
 - [ ] `budget_spreadsheet.tsx`: unused `months` and `granularity` variables (TS6133)
 - [ ] `transactions.tsx`: unused `PieChart` import (TS6133)
 - [ ] `vite.config.ts`: `babel` property does not exist in React Compiler plugin `Options` type
+   - [ ] Above was fixed by using reactcompiler with ts-ignoer
+   - [ ] Once you push this change and the CI passes, you can verify it's working locally:Run your dev server (npm run dev).
+   - [ ] Open your browser and look at the Network tab or use the React DevTools.
+   - [ ] Check if your components show as "Memoized" or "Compiled." If they do, the new config is successfully talking to the compiler.
+   - [ ] Add a reminder to remove the ts ignore when we can.
 - [ ] undefined on reading from array index, then make sure to handle nullables
 - [ ] remove all type casting at the very least use type guards
+- [ ] Above were fixed
 
 ### Transactions (UI)
 
