@@ -7,9 +7,9 @@ import { Database, TestTube2, Info } from "lucide-react"
 export function DataSourceSection() {
   const [mode, setModeState] = useState<ApiMode>(getApiMode)
 
-  function handleChange(value: string) {
-    if (!value) return
-    const next = value as ApiMode
+  function handleChange(values: string[]) {
+    if (!values.length) return
+    const next = values[0] as ApiMode
     setApiMode(next)
     setModeState(next)
     window.location.reload()
@@ -37,7 +37,7 @@ export function DataSourceSection() {
         ) : (
           <div className="space-y-2">
             <label className="text-sm font-medium">API Mode</label>
-            <ToggleGroup type="single" value={mode} onValueChange={handleChange} className="justify-start">
+            <ToggleGroup value={[mode]} onValueChange={handleChange} className="justify-start">
               <ToggleGroupItem value="live" className="gap-1.5 px-3">
                 <Database className="h-4 w-4" /> Live
               </ToggleGroupItem>

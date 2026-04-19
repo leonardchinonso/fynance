@@ -124,18 +124,14 @@ export function AccountsSection({ accounts, profiles, onRefresh }: Props) {
                   </p>
                 )}
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" disabled>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
+                  <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" disabled />}>
+                    <Pencil className="h-3.5 w-3.5" />
                   </TooltipTrigger>
                   <TooltipContent>Edit coming soon</TooltipContent>
                 </Tooltip>
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" disabled>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                  <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" disabled />}>
+                    <Trash2 className="h-3.5 w-3.5" />
                   </TooltipTrigger>
                   <TooltipContent>Delete coming soon</TooltipContent>
                 </Tooltip>

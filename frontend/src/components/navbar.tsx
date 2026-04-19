@@ -144,11 +144,11 @@ export function Navbar() {
           {/* Desktop: Import CTA */}
           <div className="hidden md:block">
             <Popover>
-              <PopoverTrigger asChild>
-                <Button size="sm" className="h-8 gap-1.5">
-                  <Upload className="h-3.5 w-3.5" />
-                  <span className="hidden lg:inline">Import</span>
-                </Button>
+              <PopoverTrigger
+                render={<Button size="sm" className="h-8 gap-1.5" />}
+              >
+                <Upload className="h-3.5 w-3.5" />
+                <span className="hidden lg:inline">Import</span>
               </PopoverTrigger>
               <PopoverContent className="w-[220px] !p-1.5" align="end">
                 <NavLink
@@ -169,7 +169,7 @@ export function Navbar() {
 
           {/* Desktop: Profile selector */}
           <div className="hidden md:block">
-            <Select value={profileId || "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
+            <Select value={profileId ?? "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
               <SelectTrigger className="w-[140px]">
                 <span className="truncate">
                   {profileId ? profiles.find((p) => p.id === profileId)?.name ?? profileId : "All profiles"}
@@ -207,7 +207,7 @@ export function Navbar() {
             {/* Profile selector (mobile) */}
             <div className="flex items-center justify-between">
               <span className="text-sm">Profile</span>
-              <Select value={profileId || "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
+              <Select value={profileId ?? "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
                 <SelectTrigger className="w-[130px]">
                   <span className="truncate">
                     {profileId ? profiles.find((p) => p.id === profileId)?.name ?? profileId : "All profiles"}

@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react"
 import { useSearchParams, useNavigate } from "react-router-dom"
 import { api } from "@/api/client"
-import { getApiMode } from "@/api/client"
 import type { Account, ImportResult } from "@/types"
 import { useIngestionPreferences } from "@/hooks/use_ingestion_preferences"
 import { Card, CardContent } from "@/components/ui/card"

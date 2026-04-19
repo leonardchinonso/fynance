@@ -17,7 +17,7 @@ export function AppearanceSection() {
       <CardContent>
         <div className="space-y-2">
           <label className="text-sm font-medium">Theme</label>
-          <ToggleGroup type="single" value={theme} onValueChange={(v) => { if (v) setTheme(v as "light" | "dark" | "system") }}
+          <ToggleGroup value={[theme]} onValueChange={(v) => { if (v.length) setTheme(v[0] as "light" | "dark" | "system") }}
             className="justify-start">
             <ToggleGroupItem value="light" className="gap-1.5 px-3">
               <Sun className="h-4 w-4" /> Light

@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { Currency } from "@/components/currency"
 import { formatDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, Settings2, Check, EyeOff } from "lucide-react"
+import { ChevronLeft, ChevronRight, Settings2, Check } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -184,10 +184,8 @@ export function TransactionTable({
                 <TableCell className="text-center">
                   <TooltipProvider>
                     <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="inline-flex">
-                          <Switch disabled checked={false} className="scale-75" />
-                        </span>
+                      <TooltipTrigger className="inline-flex">
+                        <Switch disabled checked={false} className="scale-75" />
                       </TooltipTrigger>
                       <TooltipContent>
                         <p>Coming soon: exclude from summaries</p>
