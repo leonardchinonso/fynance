@@ -6,9 +6,13 @@ const STORAGE_KEY = "fynance-api-mode"
 
 export type ApiMode = "mock" | "live"
 
+/** When true, the app is locked to mock mode (set via VITE_MOCK_ONLY env var). */
+export const MOCK_ONLY = !!import.meta.env.VITE_MOCK_ONLY
+
 function getStoredMode(): ApiMode {
+  if (MOCK_ONLY) return "mock"
   const stored = localStorage.getItem(STORAGE_KEY)
-  return stored === "live" ? "live" : "mock"
+  return stored === "mock" ? "mock" : "live"
 }
 
 const mockService = new MockApiService()

@@ -3,10 +3,13 @@ import type {
   AccountSnapshot,
   BudgetRow,
   CashFlowMonth,
+  CategoryDetail,
   CategoryTotal,
   CategoryTotalFilters,
+  CreateAccountBody,
   Granularity,
   Holding,
+  ImportResult,
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
@@ -95,4 +98,17 @@ export interface ApiService {
 
   // Export
   exportData(format: string): Promise<void>
+
+  // ── Settings / CRUD ───────────────────────────────────────────────
+  createProfile(body: { id: string; name: string }): Promise<Profile>
+  createAccount(body: CreateAccountBody): Promise<Account>
+
+  // Categories (mock-only until BE adds category CRUD endpoints)
+  getCategoryDetails(): Promise<CategoryDetail[]>
+  createCategory(body: { name: string; description: string; group: string }): Promise<CategoryDetail>
+  updateCategory(id: string, body: { name?: string; description?: string; group?: string }): Promise<CategoryDetail>
+  deleteCategory(id: string): Promise<void>
+
+  // ── Import ────────────────────────────────────────────────────────
+  importCsv(accountId: string, file: File): Promise<ImportResult>
 }

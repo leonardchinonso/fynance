@@ -3,10 +3,13 @@ import type {
   AccountSnapshot,
   BudgetRow,
   CashFlowMonth,
+  CategoryDetail,
   CategoryTotal,
   CategoryTotalFilters,
+  CreateAccountBody,
   Granularity,
   Holding,
+  ImportResult,
   PaginatedResponse,
   PortfolioHistoryRow,
   PortfolioResponse,
@@ -528,5 +531,96 @@ export class MockApiService implements ApiService {
   async exportData(format: string): Promise<void> {
     await delay(DELAY_MS)
     console.log(`[Mock] Export requested: format=${format}`)
+  }
+
+  // ── Settings / CRUD ──────────────────────────────────────────────
+
+  async createProfile(body: { id: string; name: string }): Promise<Profile> {
+    await delay(DELAY_MS)
+    const profile: Profile = { id: body.id, name: body.name }
+    MOCK_PROFILES.push(profile)
+    return profile
+  }
+
+  async createAccount(body: CreateAccountBody): Promise<Account> {
+    await delay(DELAY_MS)
+    const account: Account = {
+      id: body.id,
+      name: body.name,
+      institution: body.institution,
+      type: body.type as Account["type"],
+      currency: body.currency ?? "GBP",
+      balance: null,
+      balance_date: null,
+      is_active: true,
+      notes: body.notes ?? null,
+      profile_ids: body.profile_ids ?? ["default"],
+      is_stale: null,
+    }
+    MOCK_ACCOUNTS.push(account)
+    return account
+  }
+
+  // Category details with mock groupings
+  private mockCategories: CategoryDetail[] = [
+    { id: "groceries", name: "Groceries", description: "Supermarkets and food shops", group: "Food" },
+    { id: "dining", name: "Dining & Bars", description: "Restaurants, pubs, cafes", group: "Food" },
+    { id: "rent", name: "Rent", description: "Monthly rent payments", group: "Housing" },
+    { id: "utilities", name: "Utilities", description: "Gas, electric, water, internet", group: "Housing" },
+    { id: "transport", name: "Transport", description: "Trains, buses, fuel", group: "Transport" },
+    { id: "entertainment", name: "Entertainment", description: "Subscriptions, cinema, events", group: "Lifestyle" },
+    { id: "shopping", name: "Shopping", description: "Clothing, electronics, general", group: "Lifestyle" },
+    { id: "health", name: "Health", description: "Gym, pharmacy, medical", group: "Health" },
+    { id: "salary", name: "Salary", description: "Employment income", group: "Income" },
+    { id: "transfers", name: "Transfers", description: "Self-transfers between accounts", group: "Transfers" },
+  ]
+
+  async getCategoryDetails(): Promise<CategoryDetail[]> {
+    await delay(DELAY_MS)
+    return [...this.mockCategories]
+  }
+
+  async createCategory(body: { name: string; description: string; group: string }): Promise<CategoryDetail> {
+    await delay(DELAY_MS)
+    const cat: CategoryDetail = {
+      id: body.name.toLowerCase().replace(/\s+/g, "-"),
+      name: body.name,
+      description: body.description,
+      group: body.group,
+    }
+    this.mockCategories.push(cat)
+    return cat
+  }
+
+  async updateCategory(id: string, body: { name?: string; description?: string; group?: string }): Promise<CategoryDetail> {
+    await delay(DELAY_MS)
+    const cat = this.mockCategories.find((c) => c.id === id)
+    if (!cat) throw new Error(`Category ${id} not found`)
+    if (body.name !== undefined) cat.name = body.name
+    if (body.description !== undefined) cat.description = body.description
+    if (body.group !== undefined) cat.group = body.group
+    return { ...cat }
+  }
+
+  async deleteCategory(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    const idx = this.mockCategories.findIndex((c) => c.id === id)
+    if (idx !== -1) this.mockCategories.splice(idx, 1)
+  }
+
+  // ── Import ────────────────────────────────────────────────────────
+
+  async importCsv(accountId: string, file: File): Promise<ImportResult> {
+    await delay(DELAY_MS * 2)
+    return {
+      rows_total: BigInt(42),
+      rows_inserted: BigInt(38),
+      rows_duplicate: BigInt(4),
+      filename: file.name,
+      account_id: accountId,
+      detected_bank: "monzo",
+      detection_confidence: 0.95,
+      errors: [],
+    }
   }
 }

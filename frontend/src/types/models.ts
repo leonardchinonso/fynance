@@ -12,7 +12,31 @@ export type { AccountSnapshot } from "@/bindings/AccountSnapshot"
 export type { HoldingType } from "@/bindings/HoldingType"
 export type { Holding } from "@/bindings/Holding"
 
+// ── From backend bindings (import-related) ─────────────────────────
+export type { ImportResult } from "@/bindings/ImportResult"
+export type { ImportRowError } from "@/bindings/ImportRowError"
+export type { BankFormat } from "@/bindings/BankFormat"
+
 // ── Local types (not yet in backend or differ for mock usage) ───────
+
+/** Category with description and group (mock-only until BE adds category CRUD). */
+export interface CategoryDetail {
+  id: string
+  name: string
+  description: string
+  group: string
+}
+
+/** Body for POST /api/accounts. */
+export interface CreateAccountBody {
+  id: string
+  name: string
+  institution: string
+  type: string
+  currency?: string
+  profile_ids?: string[]
+  notes?: string
+}
 
 export type IngestionStatus = "pending" | "completed" | "skipped"
 

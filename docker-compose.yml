@@ -1,0 +1,16 @@
+services:
+  fynance:
+    image: ghcr.io/leonardchinonso/fynance:latest
+    build: .
+    ports:
+      - "${FYNANCE_PORT:-7433}:7433"
+    volumes:
+      - fynance-data:/home/fynance/data
+    environment:
+      - FYNANCE_DB_PATH=/home/fynance/data/fynance.db
+      - FYNANCE_HOST=0.0.0.0
+      - FYNANCE_LOG_LEVEL=${FYNANCE_LOG_LEVEL:-info}
+    restart: unless-stopped
+
+volumes:
+  fynance-data:

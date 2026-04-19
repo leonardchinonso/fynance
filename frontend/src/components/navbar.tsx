@@ -1,9 +1,8 @@
-import { useState, useRef } from "react"
+import { useState } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useProfiles } from "@/context/profile_context"
 import { useUrlFilters } from "@/hooks/use_url_filters"
-import { useTheme } from "@/hooks/use_theme"
 import { usePinnedViews } from "@/hooks/use_pinned_views"
 import { useHomepage } from "@/hooks/use_homepage"
 import {
@@ -26,8 +25,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Sun, Moon, Monitor, Star, Pin, X, Bookmark, Menu, Database, TestTube2 } from "lucide-react"
-import { getApiMode, setApiMode, type ApiMode } from "@/api/client"
+import { Star, Pin, X, Bookmark, Menu, Upload, Settings as SettingsIcon } from "lucide-react"
+import { DraggableList, DragHandle } from "@/components/draggable_list"
 import { Badge } from "@/components/ui/badge"
 import {
   Popover,
@@ -45,7 +44,6 @@ const NAV_ITEMS = [
 export function Navbar() {
   const { profiles } = useProfiles()
   const { profileId, setProfileId } = useUrlFilters()
-  const { theme, setTheme } = useTheme()
   const { pinnedViews, pinCurrentView, unpinView, renamePinnedView, reorderPinnedViews } = usePinnedViews()
   const [dragUrl, setDragUrl] = useState<string | null>(null)
   const { homepage, setHomepage, isHomepage } = useHomepage()
@@ -54,14 +52,6 @@ export function Navbar() {
   const [showPinDialog, setShowPinDialog] = useState(false)
   const [pinLabel, setPinLabel] = useState("")
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [apiMode, setApiModeState] = useState<ApiMode>(getApiMode)
-
-  function toggleApiMode() {
-    const next: ApiMode = apiMode === "mock" ? "live" : "mock"
-    setApiMode(next)
-    setApiModeState(next)
-    window.location.reload()
-  }
 
   const nameExists = pinnedViews.some((v) => v.label.toLowerCase() === pinLabel.trim().toLowerCase())
 
@@ -113,7 +103,7 @@ export function Navbar() {
                 </button>
               </div>
             ))}
-            {/* Saved views dropdown - always visible */}
+            {/* Saved views dropdown */}
             <SavedViewsPopover
               pinnedViews={pinnedViews}
               dragUrl={dragUrl}
@@ -129,7 +119,7 @@ export function Navbar() {
             />
           </div>
 
-          {/* Mobile nav tabs - compact, no overflow */}
+          {/* Mobile nav tabs */}
           <div className="flex md:hidden items-center gap-0.5 flex-1 min-w-0">
             {NAV_ITEMS.map((item) => (
               <NavLink
@@ -151,22 +141,33 @@ export function Navbar() {
 
           <div className="flex-1 hidden md:block" />
 
-          {/* Desktop actions */}
-          <div className="hidden md:flex items-center gap-1">
-            <Button variant={apiMode === "live" ? "default" : "ghost"} size="sm" className="h-8 gap-1.5 px-2 text-xs"
-              onClick={toggleApiMode}
-              title={`API: ${apiMode} (click to toggle)`}>
-              {apiMode === "live" ? <Database className="h-3.5 w-3.5" /> : <TestTube2 className="h-3.5 w-3.5" />}
-              <span className="hidden lg:inline">{apiMode === "live" ? "Live" : "Mock"}</span>
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8"
-              onClick={() => { const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light"; setTheme(next) }}
-              title={`Theme: ${theme}`}>
-              {theme === "light" ? <Sun className="h-4 w-4" /> : theme === "dark" ? <Moon className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}
-            </Button>
+          {/* Desktop: Import CTA */}
+          <div className="hidden md:block">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button size="sm" className="h-8 gap-1.5">
+                  <Upload className="h-3.5 w-3.5" />
+                  <span className="hidden lg:inline">Import</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[220px] !p-1.5" align="end">
+                <NavLink
+                  to="/import?mode=single"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted transition-colors"
+                >
+                  Import to specific account
+                </NavLink>
+                <NavLink
+                  to="/import?mode=wizard"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted transition-colors"
+                >
+                  Monthly ingestion wizard
+                </NavLink>
+              </PopoverContent>
+            </Popover>
           </div>
 
-          {/* Profile selector - hidden on mobile (in hamburger menu) */}
+          {/* Desktop: Profile selector */}
           <div className="hidden md:block">
             <Select value={profileId || "all"} onValueChange={(v) => setProfileId(v === "all" ? undefined : v)}>
               <SelectTrigger className="w-[140px]">
@@ -180,6 +181,13 @@ export function Navbar() {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Desktop: Settings gear */}
+          <NavLink to="/settings" className="hidden md:block">
+            <Button variant="ghost" size="icon" className="h-8 w-8" title="Settings">
+              <SettingsIcon className="h-4 w-4" />
+            </Button>
+          </NavLink>
 
           {/* Mobile hamburger */}
           <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden"
@@ -195,7 +203,7 @@ export function Navbar() {
           <SheetHeader>
             <SheetTitle>Menu</SheetTitle>
           </SheetHeader>
-          <div className="mt-4 space-y-4">
+          <div className="mt-4 space-y-4 flex flex-col h-[calc(100%-3rem)]">
             {/* Profile selector (mobile) */}
             <div className="flex items-center justify-between">
               <span className="text-sm">Profile</span>
@@ -211,24 +219,16 @@ export function Navbar() {
                 </SelectContent>
               </Select>
             </div>
-            {/* API mode */}
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Data source</span>
-              <Button variant={apiMode === "live" ? "default" : "outline"} size="sm" className="h-7 gap-1.5 px-2 text-xs"
-                onClick={toggleApiMode}>
-                {apiMode === "live" ? <Database className="h-3.5 w-3.5" /> : <TestTube2 className="h-3.5 w-3.5" />}
-                {apiMode === "live" ? "Live" : "Mock"}
-              </Button>
-            </div>
-            {/* Theme */}
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Theme</span>
-              <div className="flex gap-1">
-                {(["light", "dark", "system"] as const).map((t) => (
-                  <Button key={t} variant={theme === t ? "secondary" : "ghost"} size="sm" className="h-7 px-2 text-xs capitalize"
-                    onClick={() => setTheme(t)}>{t}</Button>
-                ))}
-              </div>
+            {/* Import CTA (mobile) */}
+            <div className="space-y-1">
+              <NavLink to="/import?mode=single" onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted transition-colors">
+                <Upload className="h-4 w-4" /> Import to account
+              </NavLink>
+              <NavLink to="/import?mode=wizard" onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted transition-colors">
+                <Upload className="h-4 w-4" /> Monthly ingestion wizard
+              </NavLink>
             </div>
             {/* Save view */}
             <Button variant="outline" size="sm" className="w-full" onClick={() => { setMobileMenuOpen(false); setPinLabel(""); setShowPinDialog(true) }}>
@@ -257,6 +257,13 @@ export function Navbar() {
                 ))}
               </div>
             )}
+            {/* Settings (mobile, pinned to bottom) */}
+            <div className="mt-auto pt-4 border-t">
+              <NavLink to="/settings" onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted transition-colors">
+                <SettingsIcon className="h-4 w-4" /> Settings
+              </NavLink>
+            </div>
           </div>
         </SheetContent>
       </Sheet>
@@ -303,42 +310,6 @@ function SavedViewsPopover({
   const existingMatch = pinnedViews.find((v) => v.url === currentUrl)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState("")
-  const listRef = useRef<HTMLDivElement>(null)
-  const rectsRef = useRef<Map<string, DOMRect>>(new Map())
-
-  // FLIP animation: capture positions before render
-  function captureRects() {
-    if (!listRef.current) return
-    const items = listRef.current.querySelectorAll("[data-drag-item]")
-    const map = new Map<string, DOMRect>()
-    items.forEach((el) => {
-      const url = el.getAttribute("data-pin-id")
-      if (url) map.set(url, el.getBoundingClientRect())
-    })
-    rectsRef.current = map
-  }
-
-  // FLIP animation: animate from old positions to new
-  function animateRects() {
-    if (!listRef.current) return
-    const items = listRef.current.querySelectorAll("[data-drag-item]")
-    items.forEach((el) => {
-      const url = el.getAttribute("data-pin-id")
-      if (!url) return
-      const oldRect = rectsRef.current.get(url)
-      if (!oldRect) return
-      const newRect = el.getBoundingClientRect()
-      const deltaY = oldRect.top - newRect.top
-      if (Math.abs(deltaY) < 1) return
-      const htmlEl = el as HTMLElement
-      htmlEl.style.transition = "none"
-      htmlEl.style.transform = `translateY(${deltaY}px)`
-      requestAnimationFrame(() => {
-        htmlEl.style.transition = "transform 200ms ease"
-        htmlEl.style.transform = ""
-      })
-    })
-  }
 
   return (
     <Popover>
@@ -353,119 +324,15 @@ function SavedViewsPopover({
         {pinnedViews.length > 0 && (
           <>
             <p className="text-xs font-medium text-muted-foreground mb-1 px-1">Saved Views</p>
-            <div className="mb-1" ref={listRef}>
-              {pinnedViews.map((view, idx) => (
-                <div
-                  key={view.id}
-                  data-drag-item
-                  data-pin-id={view.id}
-                  className={cn(
-                    "flex items-center gap-0.5 group rounded-md",
-                    dragUrl === view.id && "invisible"
-                  )}
-                  style={{
-                    opacity: dragUrl !== null && dragUrl !== view.url ? 0.6 : 1,
-                    cursor: dragUrl === view.id ? "grabbing" : undefined,
-                  }}
-                  onPointerDown={(e) => {
-                    const target = e.target as HTMLElement
-                    if (!target.closest("[data-drag-handle]")) return
-                    e.preventDefault()
-                    const draggedId = view.id
-                    setDragUrl(draggedId)
-                    let settling = false
-
-                    // Create floating drag image
-                    const sourceEl = (e.currentTarget as HTMLElement)
-                    const sourceRect = sourceEl.getBoundingClientRect()
-                    const ghost = sourceEl.cloneNode(true) as HTMLElement
-                    ghost.style.cssText = `
-                      position: fixed;
-                      left: ${sourceRect.left}px;
-                      top: ${sourceRect.top}px;
-                      width: ${sourceRect.width}px;
-                      pointer-events: none;
-                      z-index: 9999;
-                      opacity: 0.9;
-                      background: hsl(var(--muted));
-                      border: 1px solid hsl(var(--border));
-                      border-radius: 6px;
-                      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                      transition: none;
-                    `
-                    document.body.appendChild(ghost)
-                    const offsetY = e.clientY - sourceRect.top
-
-                    const onMove = (ev: PointerEvent) => {
-                      // Move ghost to follow cursor Y, clamped within the list bounds
-                      if (listRef.current) {
-                        const listRect = listRef.current.getBoundingClientRect()
-                        const ghostHeight = sourceRect.height
-                        const minY = listRect.top
-                        const maxY = listRect.bottom - ghostHeight
-                        const targetY = Math.max(minY, Math.min(maxY, ev.clientY - offsetY))
-                        ghost.style.top = `${targetY}px`
-                      } else {
-                        ghost.style.top = `${ev.clientY - offsetY}px`
-                      }
-
-                      if (!listRef.current || settling) return
-
-                      const items = Array.from(listRef.current.querySelectorAll("[data-drag-item]"))
-                      const fromIdx = items.findIndex((el) => el.getAttribute("data-pin-id") === draggedId)
-                      if (fromIdx === -1) return
-
-                      // Step 1: Find which item the cursor is within (full bounding box)
-                      let toIdx = -1
-                      let targetRect: DOMRect | null = null
-                      for (let i = 0; i < items.length; i++) {
-                        if (i === fromIdx) continue
-                        const rect = items[i].getBoundingClientRect()
-                        if (ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
-                          toIdx = i
-                          targetRect = rect
-                          break
-                        }
-                      }
-
-                      // Step 2: Check if cursor is in the forgiving zone based on direction
-                      if (toIdx !== -1 && targetRect) {
-                        const threshold = targetRect.height * 0.25
-                        const isAbove = toIdx < fromIdx
-                        const inActiveZone = isAbove
-                          ? ev.clientY <= targetRect.bottom - threshold
-                          : ev.clientY >= targetRect.top + threshold
-                        if (!inActiveZone) toIdx = -1
-                      }
-
-                      if (toIdx === -1 || toIdx === fromIdx) return
-
-                      captureRects()
-                      reorderPinnedViews(fromIdx, toIdx)
-
-                      // Wait for React to commit new DOM, then FLIP animate
-                      settling = true
-                      requestAnimationFrame(() => requestAnimationFrame(() => {
-                        animateRects()
-                        // Allow next move after animation
-                        setTimeout(() => { settling = false }, 200)
-                      }))
-                    }
-                    const onUp = () => {
-                      setDragUrl(null)
-                      ghost.remove()
-                      document.removeEventListener("pointermove", onMove)
-                      document.removeEventListener("pointerup", onUp)
-                      document.body.style.cursor = ""
-                    }
-                    document.body.style.cursor = "grabbing"
-                    document.addEventListener("pointermove", onMove)
-                    document.addEventListener("pointerup", onUp)
-                  }}
-                >
-                  <span data-drag-handle className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground opacity-30 group-hover:opacity-70 shrink-0 touch-none" title="Drag to reorder">
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="3" cy="2" r="1"/><circle cx="7" cy="2" r="1"/><circle cx="3" cy="5" r="1"/><circle cx="7" cy="5" r="1"/><circle cx="3" cy="8" r="1"/><circle cx="7" cy="8" r="1"/></svg>
-                  </span>
+            <DraggableList
+              items={pinnedViews}
+              dragId={dragUrl}
+              onDragChange={setDragUrl}
+              onReorder={reorderPinnedViews}
+              listClassName="mb-1"
+              renderItem={(view) => (
+                <div className="flex items-center gap-0.5 group rounded-md">
+                  <DragHandle />
                   <button onClick={() => setHomepage(view.url)}
                     className="p-1 rounded hover:bg-muted transition-colors shrink-0"
                     title={isHomepage(view.url) ? "This is your homepage" : "Set as homepage"}>
@@ -501,8 +368,8 @@ function SavedViewsPopover({
                     <X className="h-3 w-3 text-muted-foreground" />
                   </button>
                 </div>
-              ))}
-            </div>
+              )}
+            />
             <div className="border-t border-border my-0.5" />
           </>
         )}

@@ -181,6 +181,10 @@ A dedicated settings page for CRUD operations and app configuration.
 - [ ] Hovering a cell in the budget table shows the cell's budget value as a tooltip
 - [ ] Add a toggle to show empty categories (stored in browser localStorage): either show only categories with transactions in the selected period, or show all categories even when rows are blank
 
+### Type Sharing (ts-rs)
+
+- [ ] After BE work, drop the hand-written `PaginatedResponse<T>` in `types/api.ts` and import the generated binding instead. Small change, ~20 lines of backend code. (from `13_frontend_backend_handover_unimplemented.md` Section 6.1)
+
 ---
 
 ## Shared / Open Questions
