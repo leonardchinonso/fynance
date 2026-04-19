@@ -2,20 +2,32 @@
 
 A personal finance tracker written in Rust with a local React web UI. Ingests bank CSV statements, categorizes transactions, stores everything in a per-user SQLite database, and serves a browser UI via a loopback-only Axum server.
 
-**The scope changed after Prompt 1.1**: Obsidian integration is dropped in favor of a purpose-built UI, and portfolio tracking is added. See `../design/` for the updated architecture rationale, and start at `08_mvp_phases_v2.md` when picking up work.
+**The scope changed after Prompt 1.1**: Obsidian integration is dropped in favor of a purpose-built UI, and portfolio tracking is added. See `../design/` for the updated architecture rationale. Current active work is tracked in `15_v0_burndown.md`.
 
 ## Plan Documents
 
-| File | Contents | Status |
-|---|---|---|
-| [01_architecture.md](01_architecture.md) | Axum + React system architecture, module graph, CLI surface | Active |
-| [02_data_model.md](02_data_model.md) | Rust types, full SQLite schema, queries | Active |
-| [03_importer.md](03_importer.md) | Monzo / Revolut / Lloyds CSV importer | Active |
-| [04_categorizer.md](04_categorizer.md) | Rules + Claude pipeline, taxonomy, data minimization | Active |
-| [05_obsidian_integration.md](05_obsidian_integration.md) | Obsidian setup | **DROPPED** (historical only) |
-| [06_budgeting.md](06_budgeting.md) | Budget engine, queries, API, UI layout | Active |
-| [07_phases.md](07_phases.md) | Original CLI + Obsidian phased plan | **SUPERSEDED** by `08_mvp_phases_v2.md` |
-| [08_mvp_phases_v2.md](08_mvp_phases_v2.md) | **Current phased plan (Axum + React)** | Active (start here) |
+| # | File | Contents | Status |
+|---|---|---|---|
+| 01 | [01_architecture.md](01_architecture.md) | Axum + React system architecture, module graph, CLI surface | **Closed** (built) |
+| 02 | [02_data_model.md](02_data_model.md) | Rust types, full SQLite schema, queries | **Closed** (built, evolved via migrations) |
+| 03 | [03_importer.md](03_importer.md) | Monzo / Revolut / Lloyds CSV importer | **Superseded** by `10_llm_csv_import.md` |
+| 04 | [04_categorizer.md](04_categorizer.md) | Rules + Claude pipeline, taxonomy, data minimization | **Deferred** (external agents handle categorization for MVP) |
+| 05 | [05_obsidian_integration.md](05_obsidian_integration.md) | Obsidian setup | **Dropped** |
+| 06 | [06_budgeting.md](06_budgeting.md) | Budget engine, queries, API, UI layout | **Closed** (built: standing budgets, overrides, spending grid) |
+| 07 | [07_phases.md](07_phases.md) | Original CLI + Obsidian phased plan | **Superseded** by `08_mvp_phases_v2.md` |
+| 08 | [08_mvp_phases_v2.md](08_mvp_phases_v2.md) | Phased plan (Axum + React) | **Closed** (remaining items carried forward to 15) |
+| 09 | [09_backend_implementation_plan.md](09_backend_implementation_plan.md) | Backend MVP executable checklist | **Closed** (phases 1-2 built, 3-6 superseded by 11) |
+| 10 | [10_llm_csv_import.md](10_llm_csv_import.md) | LLM-based CSV import design | **Closed** (built, replaces bank-specific parsers) |
+| 11 | [11_frontend_backend_consolidation.md](11_frontend_backend_consolidation.md) | Integrate frontend handover requirements into backend phases 3-6 | **Closed** (BE built, remaining items in 15 and 17) |
+| 12 | [12_fingerprint_and_snapshot_improvements.md](12_fingerprint_and_snapshot_improvements.md) | Datetime-level granularity for fingerprints and snapshots | **Closed** (built, migrations applied) |
+| 13 | [13_frontend_backend_handover_unimplemented.md](13_frontend_backend_handover_unimplemented.md) | Audit of 18: which handover asks are not yet built | **Closed** (remaining items carried forward to 15) |
+| 14 | [14_holdings_consolidation_implementation.md](14_holdings_consolidation_implementation.md) | Consolidate portfolio_snapshots into holdings | **Closed** (built, portfolio_snapshots dropped) |
+| 15 | [15_v0_burndown.md](15_v0_burndown.md) | V0 burndown: everything needed to ship | **Active** (start here) |
+| 16 | [16_project_brief.md](16_project_brief.md) | Project goals, key decisions, open questions | Reference |
+| 17 | [17_future_plans.md](17_future_plans.md) | Post-V0 roadmap (V1, V2, V3+) and unversioned ideas | Reference |
+| 18 | [18_frontend_backend_handover.md](18_frontend_backend_handover.md) | Full API and model contract between frontend and backend (created Apr 12, predates 13) | **Closed** (audited into 13, remaining items in 15) |
+| 19 | [19_portfolio_holdings_breakdown.md](19_portfolio_holdings_breakdown.md) | Deep-dive on portfolio and holdings architecture | Reference |
+| 20 | [20_frontend_review.md](20_frontend_review.md) | Frontend review: UX bugs and missing flows | **Closed** (bug fixed, account creation UI in 15, CORS in 17) |
 
 ## Tech Stack
 

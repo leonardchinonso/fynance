@@ -25,7 +25,7 @@ Where the frontend has diverged from the original plan, this document notes the 
 |---|---|---|
 | Field | Not present | `profile_ids: string[]` |
 
-**Context**: The backend `Account` struct has no profile/owner field at all. The frontend added `profile_ids: string[]` to support joint accounts (an account owned by multiple profiles). This was flagged as an open question in `fynance-project-note.md` ("Joint accounts: `Account.profile_id` becomes `Account.profile_ids: string[]`, or a separate `account_owners` join table").
+**Context**: The backend `Account` struct has no profile/owner field at all. The frontend added `profile_ids: string[]` to support joint accounts (an account owned by multiple profiles). This was flagged as an open question in `16_project_brief.md` ("Joint accounts: `Account.profile_id` becomes `Account.profile_ids: string[]`, or a separate `account_owners` join table").
 
 **Recommendation**: The frontend's `profile_ids: string[]` is the right call. It's simpler than a join table for the expected scale (tens of accounts, not millions). The backend should add this field to the Account model and schema:
 ```sql

@@ -95,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_budget_month ON budgets(month);
 -- "portfolio_snapshots" stores account-level balance snapshots for net worth trend
 -- charts. Holdings drill down into an account; snapshots aggregate up to net worth.
 -- Ope asked how holdings differs from portfolio. May not be needed for MVP.
--- See Open Questions in docs/fynance-project-note.md.
+-- See Open Questions in docs/plans/16_project_brief.md.
 CREATE TABLE IF NOT EXISTS holdings (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id      TEXT NOT NULL,
@@ -119,7 +119,7 @@ CREATE INDEX IF NOT EXISTS idx_holdings_symbol  ON holdings(symbol);
 -- ── ingestion_checklist ──────────────────────────────────────────────────
 -- DISCUSS: Is this table needed for MVP? Nonso suggested starting small and
 -- adding as needed. Could track ingestion status in-memory or derive from
--- import_log instead. See Open Questions in docs/fynance-project-note.md.
+-- import_log instead. See Open Questions in docs/plans/16_project_brief.md.
 -- Tracks the guided monthly ingestion flow.
 -- Each row represents whether an account has been updated for a given month.
 CREATE TABLE IF NOT EXISTS ingestion_checklist (
@@ -370,4 +370,4 @@ Other
     - `categories`: Persistent category table for UI editing. MVP reads from `config/rules.yaml`; API exposes read-only. Deferred to V1.
     - `stock_prices`: Historical price data for holdings valuation. MVP uses price at ingestion time only. Deferred to V1.
 
-Open questions related to the data model are tracked in the project-level Open Questions section of `docs/fynance-project-note.md`.
+Open questions related to the data model are tracked in the project-level Open Questions section of `docs/plans/16_project_brief.md`.

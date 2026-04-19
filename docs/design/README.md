@@ -9,6 +9,7 @@ These documents reflect the requirements from Prompt 1.1 — a rethink of the or
 | [03_data_model.md](03_data_model.md) | Data model covering transactions, budgets, and portfolio accounts |
 | [04_portfolio_overview.md](04_portfolio_overview.md) | Portfolio and diversity view design |
 | [05_security_isolation.md](05_security_isolation.md) | Multi-user local isolation model |
+| [06_entity_relations.md](06_entity_relations.md) | Entity relationship diagrams for all data models |
 
 ## Requirements (Prompt 1.1)
 
