@@ -16,15 +16,9 @@ pub enum AppError {
     /// 404: resource not found. code = "not_found"
     NotFound(String),
     /// 400: bad input with a specific machine-readable code.
-    BadRequest {
-        message: String,
-        code: &'static str,
-    },
+    BadRequest { message: String, code: &'static str },
     /// 409: conflict (e.g. duplicate ID). Specific machine-readable code.
-    Conflict {
-        message: String,
-        code: &'static str,
-    },
+    Conflict { message: String, code: &'static str },
     /// 401: missing or invalid bearer token. code = "unauthorized"
     Unauthorized(String),
     /// 500: unexpected internal failure. Message is NOT forwarded to clients.

@@ -404,9 +404,34 @@ pub struct Holding {
     #[serde(with = "serde_naive_datetime")]
     #[ts(type = "string")]
     pub as_of: NaiveDateTime,
-    /// Optional short display name (e.g. ticker alias).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub short_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_account: Option<String>,
+    #[serde(default)]
+    pub is_closed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct HoldingPreview {
+    pub account_id: String,
+    pub symbol: String,
+    pub sub_account: Option<String>,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub value: Decimal,
+    pub currency: String,
+    pub as_of: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HoldingsImportPayload {
+    pub account_id: String,
+    pub holdings: Vec<Holding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -493,10 +518,10 @@ impl BankFormat {
     }
 }
 
-/// Full portfolio snapshot returned by `GET /api/portfolio`.
+/// Full holdings summary returned by `GET /api/holdings/summary`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
-pub struct PortfolioResponse {
+pub struct HoldingsSummaryResponse {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub net_worth: Decimal,
@@ -536,10 +561,10 @@ pub struct BreakdownItem {
     pub percentage: f64,
 }
 
-/// One row in the `GET /api/portfolio/history` response.
+/// One row in the `GET /api/holdings/history` response.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
-pub struct PortfolioHistoryRow {
+pub struct HoldingsHistoryRow {
     /// Period label: "YYYY-MM" for monthly, "YYYY-Qn" for quarterly, "YYYY" for yearly.
     pub month: String,
     #[serde(with = "rust_decimal::serde::str")]
@@ -553,10 +578,10 @@ pub struct PortfolioHistoryRow {
     pub total_wealth: Decimal,
 }
 
-/// One row in the `GET /api/cash-flow` response.
+/// One row in the `GET /api/holdings/cash-flow` response.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
-pub struct CashFlowMonth {
+pub struct HoldingsCashFlowMonth {
     /// Period label: "YYYY-MM", "YYYY-Qn", or "YYYY".
     pub month: String,
     #[serde(with = "rust_decimal::serde::str")]

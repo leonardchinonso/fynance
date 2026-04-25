@@ -18,8 +18,9 @@ pub fn parse_date(s: &str) -> Result<NaiveDate, AppError> {
 /// Parse a datetime or date string into `NaiveDateTime`.
 /// Accepts `YYYY-MM-DDTHH:MM:SS` or `YYYY-MM-DD` (treated as T00:00:00).
 pub fn parse_naive_datetime(s: &str) -> Result<NaiveDateTime, AppError> {
-    crate::util::parse_naive_datetime(s)
-        .map_err(|_| AppError::bad_request(format!("invalid date or datetime: {s}"), "invalid_date"))
+    crate::util::parse_naive_datetime(s).map_err(|_| {
+        AppError::bad_request(format!("invalid date or datetime: {s}"), "invalid_date")
+    })
 }
 
 /// Validate that a `YYYY-MM` month string is well-formed.
@@ -81,8 +82,9 @@ pub fn validate_pagination(page: u32, limit: u32) -> Result<(), AppError> {
 
 /// Parse and validate a Decimal string. Returns `invalid_decimal` on failure.
 pub fn parse_decimal(s: &str) -> Result<Decimal, AppError> {
-    s.parse::<Decimal>()
-        .map_err(|_| AppError::bad_request(format!("invalid decimal value: {s}"), "invalid_decimal"))
+    s.parse::<Decimal>().map_err(|_| {
+        AppError::bad_request(format!("invalid decimal value: {s}"), "invalid_decimal")
+    })
 }
 
 /// Ensure a Decimal amount is non-negative. Returns `negative_amount` otherwise.
@@ -132,9 +134,5 @@ pub fn split_csv_param(s: &str) -> Option<Vec<String>> {
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty())
         .collect();
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts)
-    }
+    if parts.is_empty() { None } else { Some(parts) }
 }

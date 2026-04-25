@@ -12,13 +12,12 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::model::BankFormat;
 use super::unified::UnifiedStatementRow;
+use crate::model::BankFormat;
 
 // The system prompt is pinned in the repo so it can be reviewed in git and
 // diffed like any other source file.
-const SYSTEM_PROMPT: &str =
-    include_str!("../../config/prompts/statement_parser.txt");
+const SYSTEM_PROMPT: &str = include_str!("../../config/prompts/statement_parser.txt");
 
 // Truncate CSV input at this byte limit before sending to the LLM.
 // A yearly Monzo export is ~150 KB; this leaves headroom while keeping
@@ -166,23 +165,22 @@ impl StatementParser for LlmStatementParser {
             "received Anthropic response"
         );
 
-        let api_resp: AnthropicResponse =
-            serde_json::from_str(&body).with_context(|| {
-                format!(
-                    "parsing Anthropic response JSON (preview: {}...)",
-                    &body[..body.len().min(200)]
-                )
-            })?;
+        let api_resp: AnthropicResponse = serde_json::from_str(&body).with_context(|| {
+            format!(
+                "parsing Anthropic response JSON (preview: {}...)",
+                &body[..body.len().min(200)]
+            )
+        })?;
 
         let tool_input = api_resp
             .content
             .into_iter()
             .find_map(|block| match block {
-                ContentBlock::ToolUse { block_type, name, input }
-                    if block_type == "tool_use" && name == "parse_bank_statement" =>
-                {
-                    Some(input)
-                }
+                ContentBlock::ToolUse {
+                    block_type,
+                    name,
+                    input,
+                } if block_type == "tool_use" && name == "parse_bank_statement" => Some(input),
                 _ => None,
             })
             .ok_or_else(|| {
@@ -344,14 +342,22 @@ impl StatementParser for MockStatementParser {
 
 #[cfg(test)]
 mod tests {
-    use rust_decimal::Decimal;
     use chrono::NaiveDate;
+    use rust_decimal::Decimal;
 
     use super::*;
 
-    fn make_row(date: &str, description: &str, amount: &str, confidence: f32) -> UnifiedStatementRow {
+    fn make_row(
+        date: &str,
+        description: &str,
+        amount: &str,
+        confidence: f32,
+    ) -> UnifiedStatementRow {
         UnifiedStatementRow {
-            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap().and_hms_opt(0, 0, 0).unwrap(),
+            date: NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
             description: description.to_string(),
             amount: amount.parse::<Decimal>().unwrap(),
             currency: "GBP".to_string(),

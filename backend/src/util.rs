@@ -208,9 +208,18 @@ mod tests {
     #[test]
     fn fingerprint_changes_with_any_field() {
         let base = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
-        assert_ne!(base, fingerprint("2026-03-11T08:30:00", "-5.50", "monzo-current")); // different date
-        assert_ne!(base, fingerprint("2026-03-10T08:30:00", "-5.51", "monzo-current")); // different amount
-        assert_ne!(base, fingerprint("2026-03-10T08:30:00", "-5.50", "revolut-main")); // different account
+        assert_ne!(
+            base,
+            fingerprint("2026-03-11T08:30:00", "-5.50", "monzo-current")
+        ); // different date
+        assert_ne!(
+            base,
+            fingerprint("2026-03-10T08:30:00", "-5.51", "monzo-current")
+        ); // different amount
+        assert_ne!(
+            base,
+            fingerprint("2026-03-10T08:30:00", "-5.50", "revolut-main")
+        ); // different account
     }
 
     #[test]
@@ -224,13 +233,19 @@ mod tests {
     #[test]
     fn parse_naive_datetime_full() {
         let dt = parse_naive_datetime("2026-03-10T14:30:00").unwrap();
-        assert_eq!(dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "2026-03-10T14:30:00");
+        assert_eq!(
+            dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            "2026-03-10T14:30:00"
+        );
     }
 
     #[test]
     fn parse_naive_datetime_date_only_defaults_midnight() {
         let dt = parse_naive_datetime("2026-03-10").unwrap();
-        assert_eq!(dt.format("%Y-%m-%dT%H:%M:%S").to_string(), "2026-03-10T00:00:00");
+        assert_eq!(
+            dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            "2026-03-10T00:00:00"
+        );
     }
 
     #[test]

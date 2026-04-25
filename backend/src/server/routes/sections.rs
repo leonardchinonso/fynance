@@ -49,7 +49,9 @@ pub async fn replace_sections(
     }
 
     if body.is_empty() {
-        tracing::warn!("PUT /api/sections called with empty array: all section mappings will be cleared");
+        tracing::warn!(
+            "PUT /api/sections called with empty array: all section mappings will be cleared"
+        );
     }
 
     {

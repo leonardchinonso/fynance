@@ -9,9 +9,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use fynance::importers::Importer;
 use fynance::importers::csv_importer::CsvImporter;
 use fynance::importers::llm_parser::MockStatementParser;
-use fynance::importers::Importer;
 use fynance::model::BankFormat;
 use fynance::storage::Db;
 use rust_decimal::Decimal;
@@ -87,8 +87,14 @@ fn imports_lloyds_csv_and_flips_debit_sign() {
     let (txs, _) = db.get_transactions(&Default::default()).unwrap();
     // Exactly two negative amounts and one positive; the fixture already
     // encodes the correct signs from the LLM (negative = debit convention).
-    assert_eq!(txs.iter().filter(|t| t.amount.is_sign_negative()).count(), 2);
-    assert_eq!(txs.iter().filter(|t| t.amount.is_sign_positive()).count(), 1);
+    assert_eq!(
+        txs.iter().filter(|t| t.amount.is_sign_negative()).count(),
+        2
+    );
+    assert_eq!(
+        txs.iter().filter(|t| t.amount.is_sign_positive()).count(),
+        1
+    );
     assert_eq!(total_amount(&db), Decimal::new(249170, 2));
 }
 

@@ -7,7 +7,6 @@ pub mod health;
 pub mod holdings;
 pub mod import_api;
 pub mod ingestion;
-pub mod portfolio;
 pub mod profiles;
 pub mod sections;
 pub mod transactions;

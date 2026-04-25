@@ -9,7 +9,10 @@ pub mod validation;
 
 use std::sync::{Arc, Mutex};
 
-use axum::{Router, middleware, routing::{get, patch, post, put}};
+use axum::{
+    Router, middleware,
+    routing::{get, patch, post, put},
+};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
@@ -40,7 +43,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route("/sections", get(routes::sections::list_sections))
         .route("/sections", put(routes::sections::replace_sections))
         // ── Transactions ───────────────────────────────────────────────────
-        .route("/transactions", get(routes::transactions::list_transactions))
+        .route(
+            "/transactions",
+            get(routes::transactions::list_transactions),
+        )
         .route(
             "/transactions/by-category",
             get(routes::transactions::transactions_by_category),
@@ -66,32 +72,38 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/budget/spending-grid",
             get(routes::budget::get_spending_grid),
         )
-        .route(
-            "/budget/:month",
-            get(routes::budget::get_budget_for_month),
-        )
+        .route("/budget/:month", get(routes::budget::get_budget_for_month))
         .route("/budget", post(routes::budget::set_standing_budget))
         .route(
             "/budget/override",
             post(routes::budget::set_budget_override),
         )
-        // ── Portfolio ──────────────────────────────────────────────────────
-        .route("/portfolio", get(routes::portfolio::get_portfolio))
-        .route(
-            "/portfolio/history",
-            get(routes::portfolio::get_portfolio_history),
-        )
-        .route(
-            "/portfolio/balances",
-            get(routes::portfolio::get_portfolio_balances),
-        )
-        // ── Cash flow ──────────────────────────────────────────────────────
-        .route("/cash-flow", get(routes::portfolio::get_cash_flow))
         // ── Holdings ───────────────────────────────────────────────────────
         .route("/holdings", get(routes::holdings::list_holdings))
         .route(
+            "/holdings/summary",
+            get(routes::holdings::get_holdings_summary),
+        )
+        .route(
+            "/holdings/history",
+            get(routes::holdings::get_holdings_history),
+        )
+        .route(
+            "/holdings/balances",
+            get(routes::holdings::get_holdings_balances),
+        )
+        .route(
+            "/holdings/cash-flow",
+            get(routes::holdings::get_holdings_cash_flow),
+        )
+        .route("/holdings/import", post(routes::holdings::import_holdings))
+        .route(
             "/holdings/:account_id",
             post(routes::holdings::post_holdings),
+        )
+        .route(
+            "/holdings/:account_id/:symbol",
+            patch(routes::holdings::patch_holding),
         )
         // ── Ingestion checklist ────────────────────────────────────────────
         .route(

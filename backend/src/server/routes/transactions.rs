@@ -132,9 +132,7 @@ pub async fn transactions_by_category(
 
 // ── GET /api/transactions/categories ─────────────────────────────────────────
 
-pub async fn list_categories(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, AppError> {
+pub async fn list_categories(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
     let categories = {
         let db = state.db.lock().expect("db mutex poisoned");
         db.get_all_categories()?
@@ -185,9 +183,7 @@ pub async fn patch_transaction(
     }
 
     // Re-fetch the updated row.
-    let updated = db
-        .get_transaction_by_id(&id)?
-        .unwrap_or(tx); // fall back to pre-update copy if re-fetch fails
+    let updated = db.get_transaction_by_id(&id)?.unwrap_or(tx); // fall back to pre-update copy if re-fetch fails
     Ok(Json(updated))
 }
 
@@ -202,4 +198,3 @@ pub async fn list_transaction_accounts(
     };
     Ok(Json(serde_json::to_value(accounts)?))
 }
-

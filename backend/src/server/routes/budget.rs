@@ -86,7 +86,10 @@ pub async fn set_standing_budget(
     Json(body): Json<SetStandingBudgetBody>,
 ) -> Result<Json<Value>, AppError> {
     if body.category.is_empty() {
-        return Err(AppError::bad_request("category must not be empty", "invalid_category"));
+        return Err(AppError::bad_request(
+            "category must not be empty",
+            "invalid_category",
+        ));
     }
     let amount = parse_decimal(&body.amount)?;
     require_non_negative(amount)?;
@@ -116,7 +119,10 @@ pub async fn set_budget_override(
 ) -> Result<Json<Value>, AppError> {
     parse_month(&body.month)?;
     if body.category.is_empty() {
-        return Err(AppError::bad_request("category must not be empty", "invalid_category"));
+        return Err(AppError::bad_request(
+            "category must not be empty",
+            "invalid_category",
+        ));
     }
     let amount = parse_decimal(&body.amount)?;
     require_non_negative(amount)?;
@@ -127,4 +133,3 @@ pub async fn set_budget_override(
     }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
-

@@ -43,7 +43,9 @@ pub async fn mark_complete(
     {
         let db = state.db.lock().expect("db mutex poisoned");
         if !db.account_exists(&account_id)? {
-            return Err(AppError::NotFound(format!("account {account_id} not found")));
+            return Err(AppError::NotFound(format!(
+                "account {account_id} not found"
+            )));
         }
         db.mark_checklist_complete(&month, &account_id, notes.as_deref())?;
     }

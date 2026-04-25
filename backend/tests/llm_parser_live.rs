@@ -13,9 +13,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use fynance::importers::Importer;
 use fynance::importers::csv_importer::CsvImporter;
 use fynance::importers::llm_parser::LlmStatementParser;
-use fynance::importers::Importer;
 use fynance::model::BankFormat;
 use fynance::storage::Db;
 use tempfile::tempdir;

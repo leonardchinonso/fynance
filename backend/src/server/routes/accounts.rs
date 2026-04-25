@@ -51,7 +51,10 @@ pub async fn create_account(
     Json(body): Json<CreateAccountBody>,
 ) -> Result<Json<Account>, AppError> {
     if body.id.is_empty() {
-        return Err(AppError::bad_request("id must not be empty", "invalid_account_id"));
+        return Err(AppError::bad_request(
+            "id must not be empty",
+            "invalid_account_id",
+        ));
     }
 
     let account_type = AccountType::parse(&body.account_type).ok_or_else(|| {

@@ -3,6 +3,10 @@ backend/target/
 /.claude/
 .env
 
+# Backend
+backend/workings/
+backend/prompts.md
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

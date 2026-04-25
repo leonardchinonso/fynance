@@ -42,7 +42,11 @@ pub fn run(db: &Db, path: &Path, account_id: &str) -> Result<()> {
                 "unknown bank ({:.0}% confidence)",
                 result.detection_confidence * 100.0
             ),
-            b => format!("{} ({:.0}%)", b.as_str(), result.detection_confidence * 100.0),
+            b => format!(
+                "{} ({:.0}%)",
+                b.as_str(),
+                result.detection_confidence * 100.0
+            ),
         };
         println!(
             "{}: {} new, {} duplicates [{}]",

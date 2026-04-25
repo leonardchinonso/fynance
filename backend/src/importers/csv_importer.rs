@@ -36,8 +36,7 @@ pub struct CsvImporter {
 
 impl Importer for CsvImporter {
     fn import(&self, path: &Path, account_id: &str, db: &Db) -> Result<ImportResult> {
-        let raw = fs::read_to_string(path)
-            .with_context(|| format!("reading {path:?}"))?;
+        let raw = fs::read_to_string(path).with_context(|| format!("reading {path:?}"))?;
         let filename = path
             .file_name()
             .and_then(|n| n.to_str())

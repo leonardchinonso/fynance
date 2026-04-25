@@ -265,17 +265,15 @@ pub async fn import_bulk(
                         min_row_confidence,
                     ) {
                         Ok(r) => r,
-                        Err(e) => {
-                            ImportResult {
-                                filename: filename.clone(),
-                                account_id: account_id.clone(),
-                                errors: vec![crate::model::ImportRowError {
-                                    index: 0,
-                                    reason: e.to_string(),
-                                }],
-                                ..ImportResult::default()
-                            }
-                        }
+                        Err(e) => ImportResult {
+                            filename: filename.clone(),
+                            account_id: account_id.clone(),
+                            errors: vec![crate::model::ImportRowError {
+                                index: 0,
+                                reason: e.to_string(),
+                            }],
+                            ..ImportResult::default()
+                        },
                     }
                 };
 
@@ -319,7 +317,10 @@ async fn extract_csv_from_multipart(
                 .await
                 .map_err(|e| AppError::bad_request(e.to_string(), "invalid_csv"))?;
             if bytes.is_empty() {
-                return Err(AppError::bad_request("uploaded file is empty", "missing_file"));
+                return Err(AppError::bad_request(
+                    "uploaded file is empty",
+                    "missing_file",
+                ));
             }
             let raw = String::from_utf8(bytes.to_vec())
                 .map_err(|_| AppError::bad_request("CSV file is not valid UTF-8", "invalid_csv"))?;

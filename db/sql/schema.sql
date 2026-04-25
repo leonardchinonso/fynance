@@ -35,14 +35,16 @@ CREATE INDEX IF NOT EXISTS idx_tx_month    ON transactions(substr(date, 1, 7));
 -- Append-only audit trail of every file / payload ingested. Used by the
 -- stats command and, later, the UI, to show ingestion history.
 CREATE TABLE IF NOT EXISTS import_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename        TEXT NOT NULL,
-    account_id      TEXT NOT NULL,
-    rows_total      INTEGER NOT NULL,
-    rows_inserted   INTEGER NOT NULL,
-    rows_duplicate  INTEGER NOT NULL,
-    source          TEXT NOT NULL DEFAULT 'csv',
-    imported_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename              TEXT NOT NULL,
+    account_id            TEXT NOT NULL,
+    rows_total            INTEGER NOT NULL,
+    rows_inserted         INTEGER NOT NULL,
+    rows_duplicate        INTEGER NOT NULL,
+    source                TEXT NOT NULL DEFAULT 'csv',
+    detected_bank         TEXT,
+    detection_confidence  REAL,
+    imported_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- ── accounts ──────────────────────────────────────────────────────────────
@@ -55,7 +57,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     balance         TEXT,
     balance_date    TEXT,
     is_active       INTEGER NOT NULL DEFAULT 1,
-    notes           TEXT
+    notes           TEXT,
+    profile_ids     TEXT NOT NULL DEFAULT '[]'
 );
 
 -- ── budgets ───────────────────────────────────────────────────────────────
@@ -83,14 +86,19 @@ CREATE TABLE IF NOT EXISTS holdings (
     value           TEXT NOT NULL,
     currency        TEXT NOT NULL DEFAULT 'GBP',
     as_of           TEXT NOT NULL,
+    short_name      TEXT,
+    sub_account     TEXT,
+    is_closed       INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    UNIQUE(account_id, symbol, as_of),
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_holdings_account ON holdings(account_id);
-CREATE INDEX IF NOT EXISTS idx_holdings_as_of   ON holdings(as_of);
-CREATE INDEX IF NOT EXISTS idx_holdings_symbol  ON holdings(symbol);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_holdings_identity
+    ON holdings(account_id, symbol, COALESCE(sub_account, ''), as_of);
+CREATE INDEX IF NOT EXISTS idx_holdings_account   ON holdings(account_id);
+CREATE INDEX IF NOT EXISTS idx_holdings_as_of     ON holdings(as_of);
+CREATE INDEX IF NOT EXISTS idx_holdings_symbol    ON holdings(symbol);
+CREATE INDEX IF NOT EXISTS idx_holdings_is_closed ON holdings(is_closed);
 
 -- ── ingestion_checklist ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ingestion_checklist (
