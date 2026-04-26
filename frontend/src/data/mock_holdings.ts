@@ -18,6 +18,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "11580.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 2,
@@ -31,6 +33,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "7276.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 3,
@@ -44,6 +48,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "5160.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 4,
@@ -57,6 +63,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "6849.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 5,
@@ -70,6 +78,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "5984.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 6,
@@ -83,6 +93,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "6001.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   // Sam's T212 ISA
   {
@@ -97,6 +109,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "19300.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 8,
@@ -110,6 +124,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "2975.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 9,
@@ -123,6 +139,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "2580.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 10,
@@ -136,6 +154,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "3744.00",
     currency: "GBP",
     as_of: "2026-03-20",
+    sub_account: null,
+    is_closed: false,
   },
   // Alex's pension holdings
   {
@@ -150,6 +170,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "29104.00",
     currency: "GBP",
     as_of: "2026-03-01",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 12,
@@ -163,6 +185,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "29336.00",
     currency: "GBP",
     as_of: "2026-03-01",
+    sub_account: null,
+    is_closed: false,
   },
   // Sam's pension holdings
   {
@@ -177,6 +201,8 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "20640.00",
     currency: "GBP",
     as_of: "2026-03-01",
+    sub_account: null,
+    is_closed: false,
   },
   {
     id: 14,
@@ -190,5 +216,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     value: "20544.00",
     currency: "GBP",
     as_of: "2026-03-01",
+    sub_account: null,
+    is_closed: false,
   },
 ]

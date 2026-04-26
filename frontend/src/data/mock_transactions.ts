@@ -183,10 +183,12 @@ function generateFromTemplates(
           currency: "GBP",
           account_id: t.account,
           category: t.category,
+          category_id: null,
           category_source: t.category_source,
           confidence: t.confidence,
           notes: null,
           is_recurring: t.is_recurring,
+          exclude_from_summary: false,
           fingerprint: makeFingerprint(counter),
           fitid: null,
         })

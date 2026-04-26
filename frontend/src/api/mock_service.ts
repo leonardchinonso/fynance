@@ -191,6 +191,7 @@ export class MockApiService implements ApiService {
       const budgeted = parseFloat(b.amount)
       return {
         category: b.category,
+        category_id: null,
         budgeted: b.amount,
         actual: actual.toFixed(2),
         percent: budgeted > 0 ? Math.round((actual / budgeted) * 100) : 0,
@@ -268,6 +269,7 @@ export class MockApiService implements ApiService {
 
       rows.push({
         category: cat,
+        category_id: null,
         section: getSection(cat),
         periods: monthValues,
         average: avg.toFixed(2),
@@ -295,15 +297,16 @@ export class MockApiService implements ApiService {
    */
   async setStandingBudget(body: SetStandingBudgetBody): Promise<void> {
     await delay(DELAY_MS)
+    const categoryName = body.category ?? body.category_id ?? "Unknown"
     const existing = MOCK_BUDGETS.find(
-      (b) => b.month === "" && b.category === body.category
+      (b) => b.month === "" && b.category === categoryName
     )
     if (existing) {
       existing.amount = body.amount
     } else {
       MOCK_BUDGETS.push({
         month: "",
-        category: body.category,
+        category: categoryName,
         amount: body.amount,
       })
     }
@@ -315,15 +318,16 @@ export class MockApiService implements ApiService {
    */
   async setBudgetOverride(body: SetBudgetOverrideBody): Promise<void> {
     await delay(DELAY_MS)
+    const categoryName = body.category ?? body.category_id ?? "Unknown"
     const existing = MOCK_BUDGETS.find(
-      (b) => b.month === body.month && b.category === body.category
+      (b) => b.month === body.month && b.category === categoryName
     )
     if (existing) {
       existing.amount = body.amount
     } else {
       MOCK_BUDGETS.push({
         month: body.month,
-        category: body.category,
+        category: categoryName,
         amount: body.amount,
       })
     }
