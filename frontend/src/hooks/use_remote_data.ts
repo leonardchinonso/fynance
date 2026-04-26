@@ -62,11 +62,13 @@ export function useRemoteData<T>(
   // the guard below prevents a redundant `reloading` transition — hard wins.
   useEffect(() => {
     if (isFirstRender.current) return
-    setState(prev =>
-      prev.status === "succeeded" || prev.status === "reloading"
-        ? RemoteData.reloading(prev.value)
-        : prev // already loading or failed — don't regress
-    )
+    setState(prev => {
+      if (prev.status === "succeeded" || prev.status === "reloading")
+        return RemoteData.reloading(prev.value)
+      if (prev.status === "failed")
+        return RemoteData.loading<T>() // retry from failed shows skeleton
+      return prev // already loading — no change
+    })
     let cancelled = false
     fetcher()
       .then(v => { if (!cancelled) setState(RemoteData.succeeded(v)) })
