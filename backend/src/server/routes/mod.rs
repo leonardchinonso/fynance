@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod budget;
+pub mod categories;
 pub mod docs;
 pub mod health;
 pub mod holdings;

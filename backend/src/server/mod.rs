@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Router, middleware,
-    routing::{get, patch, post, put},
+    routing::{delete, get, patch, post, put},
 };
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -39,6 +39,13 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         // ── Profiles ───────────────────────────────────────────────────────
         .route("/profiles", get(routes::profiles::list_profiles))
         .route("/profiles", post(routes::profiles::create_profile))
+        // ── Categories ─────────────────────────────────────────────────────
+        .route("/categories", post(routes::categories::create_category))
+        .route("/categories", get(routes::categories::list_categories))
+        .route("/categories/resolve", get(routes::categories::resolve_category))
+        .route("/categories/:id", get(routes::categories::get_category))
+        .route("/categories/:id", patch(routes::categories::update_category))
+        .route("/categories/:id", delete(routes::categories::delete_category))
         // ── Section mappings ───────────────────────────────────────────────
         .route("/sections", get(routes::sections::list_sections))
         .route("/sections", put(routes::sections::replace_sections))

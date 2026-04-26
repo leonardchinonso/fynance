@@ -4,4 +4,12 @@ import type { CategorySource } from "./CategorySource";
 /**
  * Input record for `POST /api/import` (structured JSON from external agents).
  */
-export type ImportTransaction = { date: string, description: string, amount: string, currency: string | null, category: string | null, category_source: CategorySource | null, notes: string | null, is_recurring: boolean | null, };
+export type ImportTransaction = { date: string, description: string, amount: string, currency: string | null, 
+/**
+ * Legacy category name (kept for backward compat with old agents)
+ */
+category: string | null, 
+/**
+ * Preferred: FK to categories.id (leaf node)
+ */
+category_id: string | null, category_source: CategorySource | null, notes: string | null, is_recurring: boolean | null, exclude_from_summary: boolean | null, };

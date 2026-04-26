@@ -4,4 +4,12 @@
  * Request body for `POST /api/budget`. Sets a standing monthly target
  * for one category that applies to every month unless overridden.
  */
-export type SetStandingBudgetBody = { category: string, amount: string, };
+export type SetStandingBudgetBody = { 
+/**
+ * Preferred: FK to categories.id (leaf)
+ */
+category_id: string | null, 
+/**
+ * Legacy: category name string (still accepted for backward compat)
+ */
+category: string | null, amount: string, };

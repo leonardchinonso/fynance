@@ -5,6 +5,10 @@
  */
 export type BudgetRow = { category: string, 
 /**
+ * FK to categories.id
+ */
+category_id: string | null, 
+/**
  * Effective budget for this month (standing or override). Null if not set.
  */
 budgeted: string | null, 

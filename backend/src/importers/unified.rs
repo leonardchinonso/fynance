@@ -93,10 +93,12 @@ impl Transaction {
             currency: row.currency,
             account_id: account_id.to_string(),
             category,
+            category_id: None,
             category_source,
             confidence: None,
             notes: row.notes,
             is_recurring: false,
+            exclude_from_summary: false,
             fingerprint: fp,
             fitid: row.fitid,
         }

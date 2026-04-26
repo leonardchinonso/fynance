@@ -77,7 +77,12 @@ pub async fn get_spending_grid(
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SetStandingBudgetBody {
-    pub category: String,
+    /// Preferred: FK to categories.id (leaf)
+    #[serde(default)]
+    pub category_id: Option<String>,
+    /// Legacy: category name string (still accepted for backward compat)
+    #[serde(default)]
+    pub category: Option<String>,
     pub amount: String,
 }
 
@@ -85,19 +90,31 @@ pub async fn set_standing_budget(
     State(state): State<AppState>,
     Json(body): Json<SetStandingBudgetBody>,
 ) -> Result<Json<Value>, AppError> {
-    if body.category.is_empty() {
-        return Err(AppError::bad_request(
-            "category must not be empty",
-            "invalid_category",
-        ));
-    }
     let amount = parse_decimal(&body.amount)?;
     require_non_negative(amount)?;
 
-    {
-        let db = state.db.lock().expect("db mutex poisoned");
-        db.set_standing_budget(&body.category, amount)?;
-    }
+    let db = state.db.lock().expect("db mutex poisoned");
+
+    let category_id = if let Some(ref cid) = body.category_id {
+        cid.clone()
+    } else if let Some(ref name) = body.category {
+        if name.is_empty() {
+            return Err(AppError::bad_request("category must not be empty", "invalid_category"));
+        }
+        let cat = db.resolve_category_by_name(name)?
+            .ok_or_else(|| AppError::bad_request(
+                format!("category '{}' not found", name),
+                "invalid_category",
+            ))?;
+        cat.id
+    } else {
+        return Err(AppError::bad_request(
+            "request body must include category_id or category",
+            "invalid_category",
+        ));
+    };
+
+    db.set_standing_budget(&category_id, amount)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -109,7 +126,12 @@ pub async fn set_standing_budget(
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SetBudgetOverrideBody {
     pub month: String,
-    pub category: String,
+    /// Preferred: FK to categories.id (leaf)
+    #[serde(default)]
+    pub category_id: Option<String>,
+    /// Legacy: category name string (still accepted for backward compat)
+    #[serde(default)]
+    pub category: Option<String>,
     pub amount: String,
 }
 
@@ -118,18 +140,30 @@ pub async fn set_budget_override(
     Json(body): Json<SetBudgetOverrideBody>,
 ) -> Result<Json<Value>, AppError> {
     parse_month(&body.month)?;
-    if body.category.is_empty() {
-        return Err(AppError::bad_request(
-            "category must not be empty",
-            "invalid_category",
-        ));
-    }
     let amount = parse_decimal(&body.amount)?;
     require_non_negative(amount)?;
 
-    {
-        let db = state.db.lock().expect("db mutex poisoned");
-        db.set_budget_override(&body.month, &body.category, amount)?;
-    }
+    let db = state.db.lock().expect("db mutex poisoned");
+
+    let category_id = if let Some(ref cid) = body.category_id {
+        cid.clone()
+    } else if let Some(ref name) = body.category {
+        if name.is_empty() {
+            return Err(AppError::bad_request("category must not be empty", "invalid_category"));
+        }
+        let cat = db.resolve_category_by_name(name)?
+            .ok_or_else(|| AppError::bad_request(
+                format!("category '{}' not found", name),
+                "invalid_category",
+            ))?;
+        cat.id
+    } else {
+        return Err(AppError::bad_request(
+            "request body must include category_id or category",
+            "invalid_category",
+        ));
+    };
+
+    db.set_budget_override(&body.month, &category_id, amount)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -4,4 +4,12 @@
  * Request body for `POST /api/budget/override`. Sets a per-month override
  * on top of the standing budget for one category.
  */
-export type SetBudgetOverrideBody = { month: string, category: string, amount: string, };
+export type SetBudgetOverrideBody = { month: string, 
+/**
+ * Preferred: FK to categories.id (leaf)
+ */
+category_id: string | null, 
+/**
+ * Legacy: category name string (still accepted for backward compat)
+ */
+category: string | null, amount: string, };

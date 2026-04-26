@@ -9,27 +9,50 @@
 -- debit. Every row carries a stable SHA-256 fingerprint so that repeat
 -- imports of overlapping statements are idempotent.
 CREATE TABLE IF NOT EXISTS transactions (
-    id              TEXT PRIMARY KEY,
-    date            TEXT NOT NULL,
-    description     TEXT NOT NULL,
-    normalized      TEXT NOT NULL,
-    amount          TEXT NOT NULL,
-    currency        TEXT NOT NULL DEFAULT 'GBP',
-    account_id      TEXT NOT NULL,
-    category        TEXT,
-    category_source TEXT,
-    confidence      REAL,
-    notes           TEXT,
-    is_recurring    INTEGER NOT NULL DEFAULT 0,
-    fingerprint     TEXT NOT NULL UNIQUE,
-    fitid           TEXT,
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    id                   TEXT PRIMARY KEY,
+    date                 TEXT NOT NULL,
+    description          TEXT NOT NULL,
+    normalized           TEXT NOT NULL,
+    amount               TEXT NOT NULL,
+    currency             TEXT NOT NULL DEFAULT 'GBP',
+    account_id           TEXT NOT NULL,
+    category             TEXT,
+    category_id          TEXT,
+    category_source      TEXT,
+    confidence           REAL,
+    notes                TEXT,
+    is_recurring         INTEGER NOT NULL DEFAULT 0,
+    exclude_from_summary INTEGER NOT NULL DEFAULT 0,
+    fingerprint          TEXT NOT NULL UNIQUE,
+    fitid                TEXT,
+    created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_tx_date     ON transactions(date);
-CREATE INDEX IF NOT EXISTS idx_tx_account  ON transactions(account_id);
-CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category);
-CREATE INDEX IF NOT EXISTS idx_tx_month    ON transactions(substr(date, 1, 7));
+CREATE INDEX IF NOT EXISTS idx_tx_date        ON transactions(date);
+CREATE INDEX IF NOT EXISTS idx_tx_account     ON transactions(account_id);
+CREATE INDEX IF NOT EXISTS idx_tx_category    ON transactions(category);
+CREATE INDEX IF NOT EXISTS idx_tx_category_id ON transactions(category_id);
+CREATE INDEX IF NOT EXISTS idx_tx_month       ON transactions(substr(date, 1, 7));
+CREATE INDEX IF NOT EXISTS idx_tx_exclude_summary ON transactions(exclude_from_summary);
+
+-- ── categories ───────────────────────────────────────────────────────────
+-- Hierarchical category taxonomy. Parent categories (parent_id IS NULL)
+-- exist for grouping; only leaf children are assignable to transactions.
+-- Max depth: 2 (parent + child). Seeded from categories.yaml on first startup.
+CREATE TABLE IF NOT EXISTS categories (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL UNIQUE,
+    parent_id     TEXT,
+    display_order INTEGER DEFAULT 0,
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (parent_id) REFERENCES categories(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_id);
+CREATE INDEX IF NOT EXISTS idx_categories_active ON categories(is_active);
 
 -- ── import_log ────────────────────────────────────────────────────────────
 -- Append-only audit trail of every file / payload ingested. Used by the
@@ -63,11 +86,13 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 -- ── budgets ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS budgets (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    month           TEXT NOT NULL,
-    category        TEXT NOT NULL,
-    amount          TEXT NOT NULL,
-    UNIQUE(month, category)
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    month       TEXT NOT NULL,
+    category    TEXT,
+    category_id TEXT,
+    amount      TEXT NOT NULL,
+    UNIQUE(month, category_id),
+    FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_budget_month ON budgets(month);
@@ -136,30 +161,37 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 
 -- ── section_mappings ──────────────────────────────────────────────────────────
--- Maps each budget category to a display section for the spending grid.
+-- Maps each parent budget category to a display section for the spending grid.
 -- Valid sections: Income | Bills | Spending | Irregular | Transfers.
 -- Seeded with defaults on first startup; user-customisable via PUT /api/sections.
 CREATE TABLE IF NOT EXISTS section_mappings (
-    section  TEXT NOT NULL,
-    category TEXT NOT NULL UNIQUE
+    section     TEXT NOT NULL,
+    category    TEXT,
+    category_id TEXT UNIQUE,
+    FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
 -- ── standing_budgets ──────────────────────────────────────────────────────────
 -- One standing monthly target per category. Applies to every month unless
--- a budget_overrides row exists for that (month, category) pair.
+-- a budget_overrides row exists for that (month, category_id) pair.
 CREATE TABLE IF NOT EXISTS standing_budgets (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    category TEXT NOT NULL UNIQUE,
-    amount   TEXT NOT NULL
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    category    TEXT,
+    category_id TEXT,
+    amount      TEXT NOT NULL,
+    UNIQUE(category_id),
+    FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
 -- ── budget_overrides ──────────────────────────────────────────────────────────
 -- Per-month overrides on top of standing budgets (e.g. higher food budget
 -- in December). COALESCE(override.amount, standing.amount) is the effective value.
 CREATE TABLE IF NOT EXISTS budget_overrides (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    month    TEXT NOT NULL,
-    category TEXT NOT NULL,
-    amount   TEXT NOT NULL,
-    UNIQUE(month, category)
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    month       TEXT NOT NULL,
+    category    TEXT,
+    category_id TEXT,
+    amount      TEXT NOT NULL,
+    UNIQUE(month, category_id),
+    FOREIGN KEY (category_id) REFERENCES categories(id)
 );

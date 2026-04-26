@@ -5,7 +5,11 @@
  * (e.g. "2026-01", "2026-Q1", "2026") to the spending total as a Decimal
  * string, or null if there were no transactions in that period.
  */
-export type SpendingGridRow = { category: string, section: string, 
+export type SpendingGridRow = { category: string, 
+/**
+ * FK to categories.id
+ */
+category_id: string | null, section: string, 
 /**
  * Period key -> decimal string (or null). Amounts are signed:
  * negative = expense, positive = income/credit.

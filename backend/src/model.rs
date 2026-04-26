@@ -32,13 +32,53 @@ pub struct Transaction {
     pub amount: Decimal,
     pub currency: String,
     pub account_id: String,
+    /// Display name "Parent: Child" (resolved via JOIN, or legacy string from CSV)
     pub category: Option<String>,
+    /// FK to categories.id; only leaf nodes are valid
+    pub category_id: Option<String>,
     pub category_source: Option<CategorySource>,
     pub confidence: Option<f64>,
     pub notes: Option<String>,
     pub is_recurring: bool,
+    pub exclude_from_summary: bool,
     pub fingerprint: String,
     pub fitid: Option<String>,
+}
+
+/// A hierarchical category entry.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct Category {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub display_order: i32,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Tree node used in `GET /api/categories` response.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct CategoryNode {
+    pub id: String,
+    pub name: String,
+    pub children: Vec<CategoryNode>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateCategoryPayload {
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub display_order: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PatchCategoryPayload {
+    pub name: Option<String>,
+    pub parent_id: Option<String>,
+    pub display_order: Option<i32>,
 }
 
 /// Where a transaction's category came from. Phase 1 only writes `Rule`
@@ -191,6 +231,9 @@ impl Granularity {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SpendingGridRow {
     pub category: String,
+    /// FK to categories.id
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<String>,
     pub section: String,
     /// Period key -> decimal string (or null). Amounts are signed:
     /// negative = expense, positive = income/credit.
@@ -212,6 +255,9 @@ pub struct SpendingGridRow {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct BudgetRow {
     pub category: String,
+    /// FK to categories.id
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<String>,
     /// Effective budget for this month (standing or override). Null if not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budgeted: Option<String>,
@@ -255,20 +301,26 @@ impl TransactionDirection {
     }
 }
 
-/// Maps one budget category to a spending-grid section.
+/// Maps one parent budget category to a spending-grid section.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SectionMapping {
     /// One of: Income | Bills | Spending | Irregular | Transfers
     pub section: String,
-    pub category: String,
+    /// Legacy display name (kept for backward compat)
+    pub category: Option<String>,
+    /// FK to parent categories.id
+    pub category_id: Option<String>,
 }
 
 /// A standing monthly budget target for one category.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct StandingBudget {
-    pub category: String,
+    /// Legacy display name (kept for backward compat)
+    pub category: Option<String>,
+    /// FK to categories.id (leaf)
+    pub category_id: Option<String>,
     pub amount: String,
 }
 
@@ -294,14 +346,20 @@ pub struct ImportTransaction {
     pub amount: Decimal,
     #[serde(default)]
     pub currency: Option<String>,
+    /// Legacy category name (kept for backward compat with old agents)
     #[serde(default)]
     pub category: Option<String>,
+    /// Preferred: FK to categories.id (leaf node)
+    #[serde(default)]
+    pub category_id: Option<String>,
     #[serde(default)]
     pub category_source: Option<CategorySource>,
     #[serde(default)]
     pub notes: Option<String>,
     #[serde(default)]
     pub is_recurring: Option<bool>,
+    #[serde(default)]
+    pub exclude_from_summary: Option<bool>,
 }
 
 /// Request body for `POST /api/import`.
