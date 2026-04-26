@@ -59,4 +59,5 @@ jobs:
               echo "Failed to push tag after $max_retries attempts"
               exit 1
             fi
+            sleep $((RANDOM % 5 + 1))
           done
