@@ -1,5 +1,12 @@
 import { useState } from "react"
 import type { Transaction } from "@/types"
+import type { RemoteData } from "@/lib/remote_data"
+import { visitRemoteData } from "@/lib/remote_data"
+import type { TransactionsData } from "@/hooks/data"
+import { TableSkeleton } from "@/components/skeletons"
+import { NonIdealState } from "@/components/non_ideal_state"
+import { ReloadingOverlay } from "@/components/reloading_overlay"
+import { EmptyState } from "@/components/empty_state"
 import {
   Table,
   TableBody,
@@ -66,6 +73,43 @@ function getCategoryColor(category: string): string {
   return CATEGORY_COLORS[parent] ?? "#78716c"
 }
 
+interface TransactionTableOuterProps {
+  data: RemoteData<TransactionsData>
+  page: number
+  pageSize: number
+  onPageChange: (page: number) => void
+  onPageSizeChange: (size: number) => void
+  accountNames: Record<string, string>
+  onResetFilters?: () => void
+}
+
+export function TransactionTable({
+  data, page, pageSize, onPageChange, onPageSizeChange, accountNames, onResetFilters,
+}: TransactionTableOuterProps) {
+  return visitRemoteData(data, {
+    notLoaded: () => <TableSkeleton rows={25} cols={5} />,
+    failed: (error) => <NonIdealState title="Could not load transactions" description={error} />,
+    hasValue: ({ result }) => (
+      <div className="relative">
+        {result.data.length === 0 ? (
+          <EmptyState action={onResetFilters ? { label: "Reset filters", onClick: onResetFilters } : undefined} />
+        ) : (
+          <TransactionTableInternal
+            transactions={result.data}
+            total={result.total}
+            page={page}
+            limit={pageSize}
+            onPageChange={onPageChange}
+            onLimitChange={onPageSizeChange}
+            accountNames={accountNames}
+          />
+        )}
+        <ReloadingOverlay active={data.status === "reloading"} />
+      </div>
+    ),
+  })
+}
+
 interface TransactionTableProps {
   transactions: Transaction[]
   total: number
@@ -76,7 +120,7 @@ interface TransactionTableProps {
   accountNames?: Record<string, string>
 }
 
-export function TransactionTable({
+function TransactionTableInternal({
   transactions,
   total,
   page,

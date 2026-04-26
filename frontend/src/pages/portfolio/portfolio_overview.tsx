@@ -5,6 +5,12 @@ import type {
   InvestmentMetrics,
   PortfolioResponse,
 } from "@/types"
+import type { RemoteData } from "@/lib/remote_data"
+import { visitRemoteData } from "@/lib/remote_data"
+import type { PortfolioPageData } from "@/hooks/data"
+import { PortfolioOverviewSkeleton } from "@/components/skeletons"
+import { NonIdealState } from "@/components/non_ideal_state"
+import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Currency } from "@/components/currency"
 import { InteractivePie } from "@/components/charts"
@@ -14,6 +20,31 @@ import {
 } from "lucide-react"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
+
+export function PortfolioOverview({ data, dateLabel }: { data: RemoteData<PortfolioPageData>; dateLabel?: string }) {
+  return visitRemoteData(data, {
+    notLoaded: () => <PortfolioOverviewSkeleton />,
+    failed: (error) => <NonIdealState title="Could not load portfolio" description={error} />,
+    hasValue: ({ portfolio, history, cashFlow, allHoldings }) => {
+      const startNetWorth = history.length >= 1 ? history[0].total_wealth : undefined
+      const endNetWorth = history.length >= 1 ? history[history.length - 1].total_wealth : undefined
+      return (
+        <div className="relative">
+          <PortfolioOverviewInternal
+            portfolio={portfolio}
+            startNetWorth={startNetWorth}
+            endNetWorth={endNetWorth}
+            dateLabel={dateLabel}
+            cashFlow={cashFlow}
+            holdings={allHoldings}
+            investmentMetrics={portfolio.investment_metrics}
+          />
+          <ReloadingOverlay active={data.status === "reloading"} />
+        </div>
+      )
+    },
+  })
+}
 
 interface PortfolioOverviewProps {
   portfolio: PortfolioResponse
@@ -25,7 +56,7 @@ interface PortfolioOverviewProps {
   investmentMetrics?: InvestmentMetrics
 }
 
-export function PortfolioOverview({
+function PortfolioOverviewInternal({
   portfolio,
   startNetWorth,
   endNetWorth,

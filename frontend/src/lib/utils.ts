@@ -23,6 +23,7 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 
 export function formatCurrency(amount: string, currency: string = "GBP"): string {
   const num = parseFloat(amount)
+  if (!amount || isNaN(num)) return "-"
   const symbol = CURRENCY_SYMBOLS[currency] ?? currency + " "
   const abs = Math.abs(num)
   const formatted =
@@ -32,6 +33,14 @@ export function formatCurrency(amount: string, currency: string = "GBP"): string
       maximumFractionDigits: 2,
     })
   return num < 0 ? `-${formatted}` : formatted
+}
+
+export function categoryLeaf(category: string): string {
+  return category.split(": ").pop() ?? category
+}
+
+export function categoryParent(category: string): string {
+  return category.split(":")[0].trim()
 }
 
 export function formatDate(dateStr: string): string {

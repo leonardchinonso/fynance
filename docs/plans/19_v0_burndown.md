@@ -221,9 +221,11 @@ CSV is supported. PDFs and images deferred to V1.
   - Backend: standing_budgets + budget_overrides tables with auto-carry via COALESCE (db.rs)
   - Frontend: SpendingGridRow includes budget field, displayed in spending grid view
   - API calls exist: setStandingBudget (POST /api/budget), setBudgetOverride (POST /api/budget/override)
-- ⚠️ Budget editing UI: **Deferred**
-  - API endpoints ready but no UI components to set/override budgets
-  - Could be added in next phase: dialog to edit standing budgets and monthly overrides
+- [x] ✅ Budget editing UI: **Done**
+  - Inline edit popover on the Budget column in the spending grid
+  - Clicking the budget cell for any category opens a popover to set the standing monthly budget
+  - Saves via `POST /api/budget` (standing) or `POST /api/budget/override` (monthly)
+  - Grid refreshes automatically after saving
 - ⚠️ Average spend calculation: deferred
 - ⚠️ Budget tooltip on hover: deferred
 - ⚠️ Show empty categories toggle: deferred

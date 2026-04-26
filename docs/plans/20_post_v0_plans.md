@@ -79,7 +79,66 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ### Document Storage
 
-- [ ] Creating documents as a first-class primitive: for each import (CSV/PDF/image), preserve the source document. Each transaction has a "source" button showing the original file. Documents also appear on a dedicated documents page. Also support uploading documents that don't feed into any import, just for central storage. (from V0 burndown, marked V5)
+Creating documents as a first-class primitive. Every import source file is preserved and linked back from the import log and from individual transactions.
+
+#### Storage location
+
+Files are stored on the local filesystem in a `documents/` subdirectory alongside the SQLite database (i.e. `~/.local/share/fynance/documents/` on Linux, equivalent OS data dir on macOS/Windows). This keeps everything self-contained in the same directory the user already backs up for the DB, and avoids SQLite BLOB bloat on large PDFs or images.
+
+Each file is written once and never mutated. Filename on disk: `<import_log_id>_<original_filename>` — the id prefix guarantees uniqueness if the same filename is uploaded twice.
+
+#### Schema changes
+
+Add a `documents` table as a first-class entity:
+
+```sql
+CREATE TABLE IF NOT EXISTS documents (
+    id          TEXT PRIMARY KEY,           -- UUID
+    filename    TEXT NOT NULL,              -- original uploaded filename
+    file_path   TEXT NOT NULL UNIQUE,       -- absolute path on disk
+    mime_type   TEXT NOT NULL,              -- e.g. text/csv, application/pdf, image/png
+    size_bytes  INTEGER NOT NULL,
+    uploaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+```
+
+Add `document_id` FK to `import_log`:
+
+```sql
+-- add to import_log table
+document_id TEXT REFERENCES documents(id)  -- null for imports before V5
+```
+
+Add `import_log_id` FK to `transactions` (so any transaction can trace back to its source document via the log):
+
+```sql
+-- add to transactions table
+import_log_id INTEGER REFERENCES import_log(id)  -- null for transactions before V5
+```
+
+#### API
+
+```
+GET  /api/documents                    -- list all stored documents
+GET  /api/documents/:id                -- document metadata
+GET  /api/documents/:id/download       -- stream the file bytes back to the browser
+POST /api/documents                    -- upload a standalone document (no import)
+DELETE /api/documents/:id              -- delete file from disk and row from DB
+GET  /api/import/history               -- import_log rows with document_id joined
+```
+
+#### UI
+
+- Documents page: table of all stored files with filename, type, size, upload date, linked account, download button, delete button.
+- Transaction row: "Source" icon that links to the originating document's download URL (only shown when `import_log_id` is set).
+- Import flow: after a successful import, the stored document appears immediately in the documents list.
+- Standalone upload: drag-drop area on the documents page to store files that aren't tied to an import (e.g. PDFs for reference).
+
+#### Notes
+
+- The `documents/` directory should be included in any backup advice surfaced in the UI (alongside the `.db` file).
+- If a document is deleted, `import_log.document_id` is set to null but the log row and transactions are preserved.
+- No deduplication of file contents at V5 — same bytes uploaded twice creates two document rows. Can revisit with a content hash in V6+ if needed.
 
 ---
 

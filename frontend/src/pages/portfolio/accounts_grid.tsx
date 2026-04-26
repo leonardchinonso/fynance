@@ -1,5 +1,11 @@
 import { useState } from "react"
-import type { Account, AccountSnapshot } from "@/types"
+import type { Account, AccountSnapshot, Profile } from "@/types"
+import type { RemoteData } from "@/lib/remote_data"
+import { visitRemoteData } from "@/lib/remote_data"
+import type { PortfolioPageData } from "@/hooks/data"
+import { AccountsGridSkeleton } from "@/components/skeletons"
+import { NonIdealState } from "@/components/non_ideal_state"
+import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Currency } from "@/components/currency"
@@ -8,11 +14,36 @@ import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { EmptyState } from "@/components/empty_state"
 import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
+  Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
+
+export function AccountsGrid({
+  data, profilesData, onAccountClick,
+}: {
+  data: RemoteData<PortfolioPageData>
+  profilesData: RemoteData<Profile[]>
+  onAccountClick: (accountId: string) => void
+}) {
+  return visitRemoteData(data, {
+    notLoaded: () => <AccountsGridSkeleton />,
+    failed: (error) => <NonIdealState title="Could not load accounts" description={error} />,
+    hasValue: ({ portfolio, accountBalances }) => {
+      const profiles = profilesData.status === "succeeded" || profilesData.status === "reloading"
+        ? profilesData.value : []
+      return (
+        <div className="relative">
+          <AccountsGridInternal
+            accounts={portfolio.accounts}
+            onAccountClick={onAccountClick}
+            profiles={profiles}
+            balances={accountBalances}
+          />
+          <ReloadingOverlay active={data.status === "reloading"} />
+        </div>
+      )
+    },
+  })
+}
 
 interface AccountsGridProps {
   accounts: Account[]
@@ -22,7 +53,7 @@ interface AccountsGridProps {
   balances?: AccountSnapshot[]
 }
 
-export function AccountsGrid({
+function AccountsGridInternal({
   accounts,
   onAccountClick,
   profiles,

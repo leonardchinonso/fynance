@@ -1,4 +1,10 @@
 import type { PortfolioResponse, Holding } from "@/types"
+import type { RemoteData } from "@/lib/remote_data"
+import { visitRemoteData } from "@/lib/remote_data"
+import type { PortfolioPageData } from "@/hooks/data"
+import { PortfolioChartsSkeleton } from "@/components/skeletons"
+import { NonIdealState } from "@/components/non_ideal_state"
+import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { InteractivePie } from "@/components/charts"
 import { ACCOUNT_TYPE_COLORS } from "@/lib/colors"
 import { EmptyState } from "@/components/empty_state"
@@ -11,12 +17,20 @@ const STOCK_COLORS = [
   "#06b6d4", "#eab308", "#6366f1", "#14b8a6", "#ef4444",
 ]
 
-interface PortfolioChartsProps {
-  portfolio: PortfolioResponse
-  holdings?: Holding[]
+export function PortfolioCharts({ data }: { data: RemoteData<PortfolioPageData> }) {
+  return visitRemoteData(data, {
+    notLoaded: () => <PortfolioChartsSkeleton />,
+    failed: (error) => <NonIdealState title="Could not load charts" description={error} />,
+    hasValue: ({ portfolio, allHoldings }) => (
+      <div className="relative">
+        <PortfolioChartsInternal portfolio={portfolio} holdings={allHoldings} />
+        <ReloadingOverlay active={data.status === "reloading"} />
+      </div>
+    ),
+  })
 }
 
-export function PortfolioCharts({ portfolio, holdings = [] }: PortfolioChartsProps) {
+function PortfolioChartsInternal({ portfolio, holdings = [] }: { portfolio: PortfolioResponse; holdings?: Holding[] }) {
   const byTypeData = portfolio.by_type.map((item) => ({
     name: item.label.charAt(0).toUpperCase() + item.label.slice(1),
     value: parseFloat(item.value),
@@ -24,18 +38,9 @@ export function PortfolioCharts({ portfolio, holdings = [] }: PortfolioChartsPro
   const byTypeColors = portfolio.by_type.map(
     (item) => ACCOUNT_TYPE_COLORS[item.label as keyof typeof ACCOUNT_TYPE_COLORS] ?? "#78716c"
   )
+  const byInstData = portfolio.by_institution.map((item) => ({ name: item.label, value: parseFloat(item.value) }))
+  const byAssetClassData = portfolio.by_asset_class.map((item) => ({ name: item.label, value: parseFloat(item.value) }))
 
-  const byInstData = portfolio.by_institution.map((item) => ({
-    name: item.label,
-    value: parseFloat(item.value),
-  }))
-
-  const byAssetClassData = portfolio.by_asset_class.map((item) => ({
-    name: item.label,
-    value: parseFloat(item.value),
-  }))
-
-  // Stocks breakdown (aggregate by short_name)
   const holdingsByName = new Map<string, number>()
   for (const h of holdings) {
     const key = h.short_name ?? h.symbol
@@ -48,14 +53,7 @@ export function PortfolioCharts({ portfolio, holdings = [] }: PortfolioChartsPro
   const totalStr = formatCurrency(portfolio.net_worth)
   const stocksTotal = formatCurrency(byStockData.reduce((s, d) => s + d.value, 0).toFixed(2))
 
-  // All four charts would render empty - surface a single explanation
-  // instead of four blank donuts.
-  const isEmpty =
-    byTypeData.length === 0 &&
-    byInstData.length === 0 &&
-    byAssetClassData.length === 0 &&
-    byStockData.length === 0
-  if (isEmpty) {
+  if (byTypeData.length === 0 && byInstData.length === 0 && byAssetClassData.length === 0 && byStockData.length === 0) {
     return <EmptyState />
   }
 
