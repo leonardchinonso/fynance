@@ -1,5 +1,6 @@
 import { useState } from "react"
 import type { Transaction } from "@/types"
+import { api } from "@/api/client"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { TransactionsData } from "@/hooks/data"
@@ -33,12 +34,6 @@ import {
 } from "@/components/ui/popover"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { Switch } from "@/components/ui/switch"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const PAGE_SIZE_KEY = "fynance-page-size"
@@ -121,7 +116,7 @@ interface TransactionTableProps {
 }
 
 function TransactionTableInternal({
-  transactions,
+  transactions: initialTransactions,
   total,
   page,
   limit,
@@ -131,6 +126,16 @@ function TransactionTableInternal({
 }: TransactionTableProps) {
   const totalPages = Math.ceil(total / limit)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
+  const [transactions, setTransactions] = useState(initialTransactions)
+
+  async function toggleExclude(id: string, current: boolean) {
+    setTransactions(prev => prev.map(t => t.id === id ? { ...t, exclude_from_summary: !current } : t))
+    try {
+      await api.patchTransaction(id, { exclude_from_summary: !current })
+    } catch {
+      setTransactions(prev => prev.map(t => t.id === id ? { ...t, exclude_from_summary: current } : t))
+    }
+  }
 
   function toggleColumn(colId: string) {
     setVisibleColumns((prev) => {
@@ -226,16 +231,11 @@ function TransactionTableInternal({
               )}
               {isVisible("exclude") && (
                 <TableCell className="text-center">
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger className="inline-flex">
-                        <Switch disabled checked={false} className="scale-75" />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Coming soon: exclude from summaries</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <Switch
+                    checked={t.exclude_from_summary}
+                    onCheckedChange={() => toggleExclude(t.id, t.exclude_from_summary)}
+                    className="scale-75"
+                  />
                 </TableCell>
               )}
               <TableCell />

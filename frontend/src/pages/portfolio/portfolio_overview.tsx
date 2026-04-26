@@ -7,7 +7,7 @@ import type {
 } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
-import type { PortfolioPageData } from "@/hooks/data"
+import type { PortfolioSummaryData } from "@/hooks/data"
 import { PortfolioOverviewSkeleton } from "@/components/skeletons"
 import { NonIdealState } from "@/components/non_ideal_state"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -21,7 +21,7 @@ import {
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
 
-export function PortfolioOverview({ data, dateLabel }: { data: RemoteData<PortfolioPageData>; dateLabel?: string }) {
+export function PortfolioOverview({ data, dateLabel }: { data: RemoteData<PortfolioSummaryData>; dateLabel?: string }) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioOverviewSkeleton />,
     failed: (error) => <NonIdealState title="Could not load portfolio" description={error} />,

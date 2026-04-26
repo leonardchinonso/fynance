@@ -3,10 +3,12 @@ import type {
   AccountSnapshot,
   BudgetRow,
   CashFlowMonth,
-  CategoryDetail,
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
+  CreateCategoryBody,
+  PatchCategoryBody,
+  PatchTransactionBody,
   Granularity,
   Holding,
   ImportResult,
@@ -20,6 +22,8 @@ import type {
   Transaction,
   TransactionFilters,
 } from "@/types"
+import type { Category } from "@/bindings/Category"
+import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { ApiService } from "./service"
 import {
   MOCK_PROFILES,
@@ -297,39 +301,27 @@ export class MockApiService implements ApiService {
    */
   async setStandingBudget(body: SetStandingBudgetBody): Promise<void> {
     await delay(DELAY_MS)
-    const categoryName = body.category ?? body.category_id ?? "Unknown"
+    const categoryKey = body.category_id ?? "Unknown"
     const existing = MOCK_BUDGETS.find(
-      (b) => b.month === "" && b.category === categoryName
+      (b) => b.month === "" && b.category === categoryKey
     )
     if (existing) {
       existing.amount = body.amount
     } else {
-      MOCK_BUDGETS.push({
-        month: "",
-        category: categoryName,
-        amount: body.amount,
-      })
+      MOCK_BUDGETS.push({ month: "", category: categoryKey, amount: body.amount })
     }
   }
 
-  /**
-   * Mock of `POST /api/budget/override` - sets a per-month override on
-   * top of the standing budget.
-   */
   async setBudgetOverride(body: SetBudgetOverrideBody): Promise<void> {
     await delay(DELAY_MS)
-    const categoryName = body.category ?? body.category_id ?? "Unknown"
+    const categoryKey = body.category_id ?? "Unknown"
     const existing = MOCK_BUDGETS.find(
-      (b) => b.month === body.month && b.category === categoryName
+      (b) => b.month === body.month && b.category === categoryKey
     )
     if (existing) {
       existing.amount = body.amount
     } else {
-      MOCK_BUDGETS.push({
-        month: body.month,
-        category: categoryName,
-        amount: body.amount,
-      })
+      MOCK_BUDGETS.push({ month: body.month, category: categoryKey, amount: body.amount })
     }
   }
 
@@ -565,51 +557,95 @@ export class MockApiService implements ApiService {
     return account
   }
 
-  // Category details with mock groupings
-  private mockCategories: CategoryDetail[] = [
-    { id: "groceries", name: "Groceries", description: "Supermarkets and food shops", group: "Food" },
-    { id: "dining", name: "Dining & Bars", description: "Restaurants, pubs, cafes", group: "Food" },
-    { id: "rent", name: "Rent", description: "Monthly rent payments", group: "Housing" },
-    { id: "utilities", name: "Utilities", description: "Gas, electric, water, internet", group: "Housing" },
-    { id: "transport", name: "Transport", description: "Trains, buses, fuel", group: "Transport" },
-    { id: "entertainment", name: "Entertainment", description: "Subscriptions, cinema, events", group: "Lifestyle" },
-    { id: "shopping", name: "Shopping", description: "Clothing, electronics, general", group: "Lifestyle" },
-    { id: "health", name: "Health", description: "Gym, pharmacy, medical", group: "Health" },
-    { id: "salary", name: "Salary", description: "Employment income", group: "Income" },
-    { id: "transfers", name: "Transfers", description: "Self-transfers between accounts", group: "Transfers" },
+  private mockCategoryTree: CategoryNode[] = [
+    { id: "food", name: "Food", children: [
+      { id: "groceries", name: "Groceries", children: [] },
+      { id: "dining", name: "Dining & Bars", children: [] },
+    ]},
+    { id: "housing", name: "Housing", children: [
+      { id: "rent", name: "Rent", children: [] },
+      { id: "utilities", name: "Utilities", children: [] },
+    ]},
+    { id: "transport", name: "Transport", children: [
+      { id: "transport-general", name: "Transport", children: [] },
+    ]},
+    { id: "lifestyle", name: "Lifestyle", children: [
+      { id: "entertainment", name: "Entertainment", children: [] },
+      { id: "shopping", name: "Shopping", children: [] },
+    ]},
+    { id: "health", name: "Health", children: [
+      { id: "health-general", name: "Health", children: [] },
+    ]},
+    { id: "income", name: "Income", children: [
+      { id: "salary", name: "Salary", children: [] },
+    ]},
+    { id: "transfers", name: "Transfers", children: [
+      { id: "transfers-general", name: "Transfers", children: [] },
+    ]},
   ]
 
-  async getCategoryDetails(): Promise<CategoryDetail[]> {
+  async getCategoryDetails(): Promise<CategoryNode[]> {
     await delay(DELAY_MS)
-    return [...this.mockCategories]
+    return JSON.parse(JSON.stringify(this.mockCategoryTree))
   }
 
-  async createCategory(body: { name: string; description: string; group: string }): Promise<CategoryDetail> {
+  async createCategory(body: CreateCategoryBody): Promise<Category> {
     await delay(DELAY_MS)
-    const cat: CategoryDetail = {
+    const now = new Date().toISOString()
+    const cat: Category = {
       id: body.name.toLowerCase().replace(/\s+/g, "-"),
       name: body.name,
-      description: body.description,
-      group: body.group,
+      parent_id: body.parent_id ?? null,
+      display_order: body.display_order ?? 0,
+      is_active: true,
+      created_at: now,
+      updated_at: now,
     }
-    this.mockCategories.push(cat)
+    if (!cat.parent_id) {
+      this.mockCategoryTree.push({ id: cat.id, name: cat.name, children: [] })
+    } else {
+      const parent = this.mockCategoryTree.find(p => p.id === cat.parent_id)
+      if (parent) parent.children.push({ id: cat.id, name: cat.name, children: [] })
+    }
     return cat
   }
 
-  async updateCategory(id: string, body: { name?: string; description?: string; group?: string }): Promise<CategoryDetail> {
+  async updateCategory(id: string, body: PatchCategoryBody): Promise<Category> {
     await delay(DELAY_MS)
-    const cat = this.mockCategories.find((c) => c.id === id)
-    if (!cat) throw new Error(`Category ${id} not found`)
-    if (body.name !== undefined) cat.name = body.name
-    if (body.description !== undefined) cat.description = body.description
-    if (body.group !== undefined) cat.group = body.group
-    return { ...cat }
+    const now = new Date().toISOString()
+    for (const node of this.mockCategoryTree) {
+      if (node.id === id) {
+        if (body.name) node.name = body.name
+        return { id, name: node.name, parent_id: null, display_order: 0, is_active: true, created_at: now, updated_at: now }
+      }
+      for (const child of node.children) {
+        if (child.id === id) {
+          if (body.name) child.name = body.name
+          return { id, name: child.name, parent_id: node.id, display_order: 0, is_active: true, created_at: now, updated_at: now }
+        }
+      }
+    }
+    throw new Error(`Category ${id} not found`)
   }
 
   async deleteCategory(id: string): Promise<void> {
     await delay(DELAY_MS)
-    const idx = this.mockCategories.findIndex((c) => c.id === id)
-    if (idx !== -1) this.mockCategories.splice(idx, 1)
+    const topIdx = this.mockCategoryTree.findIndex(n => n.id === id)
+    if (topIdx !== -1) { this.mockCategoryTree.splice(topIdx, 1); return }
+    for (const node of this.mockCategoryTree) {
+      const childIdx = node.children.findIndex(c => c.id === id)
+      if (childIdx !== -1) { node.children.splice(childIdx, 1); return }
+    }
+  }
+
+  async patchTransaction(id: string, body: PatchTransactionBody): Promise<Transaction> {
+    await delay(DELAY_MS)
+    const tx = MOCK_TRANSACTIONS.find(t => t.id === id)
+    if (!tx) throw new Error(`Transaction ${id} not found`)
+    if (body.exclude_from_summary !== undefined) tx.exclude_from_summary = body.exclude_from_summary
+    if (body.notes !== undefined) tx.notes = body.notes
+    if (body.category_id !== undefined) tx.category_id = body.category_id
+    return { ...tx }
   }
 
   // ── Import ────────────────────────────────────────────────────────

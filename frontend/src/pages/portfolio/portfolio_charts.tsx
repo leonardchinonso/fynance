@@ -1,7 +1,7 @@
 import type { PortfolioResponse, Holding } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
-import type { PortfolioPageData } from "@/hooks/data"
+import type { PortfolioSummaryData } from "@/hooks/data"
 import { PortfolioChartsSkeleton } from "@/components/skeletons"
 import { NonIdealState } from "@/components/non_ideal_state"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -17,7 +17,7 @@ const STOCK_COLORS = [
   "#06b6d4", "#eab308", "#6366f1", "#14b8a6", "#ef4444",
 ]
 
-export function PortfolioCharts({ data }: { data: RemoteData<PortfolioPageData> }) {
+export function PortfolioCharts({ data }: { data: RemoteData<PortfolioSummaryData> }) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioChartsSkeleton />,
     failed: (error) => <NonIdealState title="Could not load charts" description={error} />,

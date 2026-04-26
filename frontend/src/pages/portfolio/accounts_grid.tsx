@@ -2,7 +2,7 @@ import { useState } from "react"
 import type { Account, AccountSnapshot, Profile } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
-import type { PortfolioPageData } from "@/hooks/data"
+import type { PortfolioAccountsData } from "@/hooks/data"
 import { AccountsGridSkeleton } from "@/components/skeletons"
 import { NonIdealState } from "@/components/non_ideal_state"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -20,20 +20,20 @@ import {
 export function AccountsGrid({
   data, profilesData, onAccountClick,
 }: {
-  data: RemoteData<PortfolioPageData>
+  data: RemoteData<PortfolioAccountsData>
   profilesData: RemoteData<Profile[]>
   onAccountClick: (accountId: string) => void
 }) {
   return visitRemoteData(data, {
     notLoaded: () => <AccountsGridSkeleton />,
     failed: (error) => <NonIdealState title="Could not load accounts" description={error} />,
-    hasValue: ({ portfolio, accountBalances }) => {
+    hasValue: ({ accounts, accountBalances }) => {
       const profiles = profilesData.status === "succeeded" || profilesData.status === "reloading"
         ? profilesData.value : []
       return (
         <div className="relative">
           <AccountsGridInternal
-            accounts={portfolio.accounts}
+            accounts={accounts}
             onAccountClick={onAccountClick}
             profiles={profiles}
             balances={accountBalances}

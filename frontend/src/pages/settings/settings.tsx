@@ -5,18 +5,16 @@ import { useAccounts } from "@/hooks/data"
 import { ProfilesSection } from "./profiles_section"
 import { AccountsSection } from "./accounts_section"
 import { CategoriesSection } from "./categories_section"
-import { IngestionSection } from "./ingestion_section"
 import { AppearanceSection } from "./appearance_section"
 import { DataSourceSection } from "./data_source_section"
-import { User, Building2, Tag, Upload, Palette, Database } from "lucide-react"
+import { User, Building2, Tag, Palette, Database } from "lucide-react"
 
 const SECTIONS = [
-  { id: "profiles",    label: "Profiles",       icon: User },
-  { id: "accounts",    label: "Accounts",        icon: Building2 },
-  { id: "categories",  label: "Categories",      icon: Tag },
-  { id: "ingestion",   label: "Data Ingestion",  icon: Upload },
-  { id: "appearance",  label: "Appearance",      icon: Palette },
-  { id: "data-source", label: "Data Source",     icon: Database },
+  { id: "profiles",    label: "Profiles",    icon: User },
+  { id: "accounts",    label: "Accounts",    icon: Building2 },
+  { id: "categories",  label: "Categories",  icon: Tag },
+  { id: "appearance",  label: "Appearance",  icon: Palette },
+  { id: "data-source", label: "Data Source", icon: Database },
 ] as const
 
 export function SettingsPage() {
@@ -84,7 +82,6 @@ export function SettingsPage() {
         <ProfilesSection data={profilesData} onRefresh={refresh} />
         <AccountsSection data={accountsData} profilesData={profilesData} onRefresh={refresh} />
         <CategoriesSection />
-        <IngestionSection />
         <AppearanceSection />
         <DataSourceSection />
       </div>

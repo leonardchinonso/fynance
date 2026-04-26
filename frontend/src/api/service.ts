@@ -3,10 +3,12 @@ import type {
   AccountSnapshot,
   BudgetRow,
   CashFlowMonth,
-  CategoryDetail,
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
+  CreateCategoryBody,
+  PatchCategoryBody,
+  PatchTransactionBody,
   Granularity,
   Holding,
   ImportResult,
@@ -20,6 +22,8 @@ import type {
   Transaction,
   TransactionFilters,
 } from "@/types"
+import type { Category } from "@/bindings/Category"
+import type { CategoryNode } from "@/bindings/CategoryNode"
 
 /**
  * ApiService defines the contract between the frontend and backend.
@@ -103,11 +107,11 @@ export interface ApiService {
   createProfile(body: { id: string; name: string }): Promise<Profile>
   createAccount(body: CreateAccountBody): Promise<Account>
 
-  // Categories (mock-only until BE adds category CRUD endpoints)
-  getCategoryDetails(): Promise<CategoryDetail[]>
-  createCategory(body: { name: string; description: string; group: string }): Promise<CategoryDetail>
-  updateCategory(id: string, body: { name?: string; description?: string; group?: string }): Promise<CategoryDetail>
+  getCategoryDetails(): Promise<CategoryNode[]>
+  createCategory(body: CreateCategoryBody): Promise<Category>
+  updateCategory(id: string, body: PatchCategoryBody): Promise<Category>
   deleteCategory(id: string): Promise<void>
+  patchTransaction(id: string, body: PatchTransactionBody): Promise<Transaction>
 
   // ── Import ────────────────────────────────────────────────────────
   importCsv(accountId: string, file: File): Promise<ImportResult>

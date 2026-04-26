@@ -3,10 +3,12 @@ import type {
   AccountSnapshot,
   BudgetRow,
   CashFlowMonth,
-  CategoryDetail,
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
+  CreateCategoryBody,
+  PatchCategoryBody,
+  PatchTransactionBody,
   Granularity,
   Holding,
   ImportResult,
@@ -20,6 +22,8 @@ import type {
   Transaction,
   TransactionFilters,
 } from "@/types"
+import type { Category } from "@/bindings/Category"
+import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { ApiService } from "./service"
 import { MockApiService } from "./mock_service"
 
@@ -63,6 +67,27 @@ async function postMultipart<T>(path: string, formData: FormData): Promise<T> {
     throw new Error(`${res.status} ${res.statusText}: ${text}`)
   }
   return res.json()
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${window.location.origin}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status} ${res.statusText}: ${text}`)
+  }
+  return res.json()
+}
+
+async function del(path: string): Promise<void> {
+  const res = await fetch(`${window.location.origin}${path}`, { method: "DELETE" })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status} ${res.statusText}: ${text}`)
+  }
 }
 
 // Mock fallback for endpoints the backend doesn't have yet
@@ -200,21 +225,24 @@ export class RealApiService implements ApiService {
     return post<Account>(`${BASE}/accounts`, body)
   }
 
-  // Categories: mock fallback until BE adds category CRUD
-  async getCategoryDetails(): Promise<CategoryDetail[]> {
-    return mock.getCategoryDetails()
+  async getCategoryDetails(): Promise<CategoryNode[]> {
+    return get<CategoryNode[]>(`${BASE}/categories`)
   }
 
-  async createCategory(body: { name: string; description: string; group: string }): Promise<CategoryDetail> {
-    return mock.createCategory(body)
+  async createCategory(body: CreateCategoryBody): Promise<Category> {
+    return post<Category>(`${BASE}/categories`, body)
   }
 
-  async updateCategory(id: string, body: { name?: string; description?: string; group?: string }): Promise<CategoryDetail> {
-    return mock.updateCategory(id, body)
+  async updateCategory(id: string, body: PatchCategoryBody): Promise<Category> {
+    return patch<Category>(`${BASE}/categories/${id}`, body)
   }
 
   async deleteCategory(id: string): Promise<void> {
-    return mock.deleteCategory(id)
+    return del(`${BASE}/categories/${id}`)
+  }
+
+  async patchTransaction(id: string, body: PatchTransactionBody): Promise<Transaction> {
+    return patch<Transaction>(`${BASE}/transactions/${id}`, body)
   }
 
   // ── Import ────────────────────────────────────────────────────────

@@ -184,9 +184,9 @@ CSV is supported. PDFs and images deferred to V1.
 
 ### Settings Page: Remaining Work
 
-- ⚠️ **Consolidate Accounts and Data Ingestion.** Two-section layout needs consolidation (deferred for now)
-- ⚠️ **Fixed sidebar navigation.** Sticky positioning not yet implemented
-- ⚠️ **Skeleton loading states.** Not yet implemented
+- [x] ✅ **Consolidate Accounts and Data Ingestion.** Ingestion section merged into Accounts — drag-to-reorder and eye toggle now on each account row. Separate Data Ingestion section removed.
+- [x] ✅ **Fixed sidebar navigation.** `overflow-x-hidden` removed from `main` in App.tsx — sticky now works correctly.
+- [x] ✅ **Skeleton loading states.** Implemented via RemoteData system — all pages and leaf components show skeletons on load.
 - ⚠️ **Playwright tests for profile/account creation.** Test infrastructure ready, tests not yet written
 - ⚠️ **Playwright tests for CSV import.** Test infrastructure ready, tests not yet written
 - ⚠️ **Edit/delete buttons.** Disabled with "Coming soon" tooltips (backend PATCH/DELETE not yet added)
@@ -212,8 +212,7 @@ CSV is supported. PDFs and images deferred to V1.
 - [x] ✅ `exclude_from_summary` flag in backend
   - Backend fully implements flag with database storage and query filtering
   - UI renders disabled switch with "Coming soon" tooltip (transactions.tsx)
-  - Frontend support: ready to wire when UI enhancement is prioritized
-  - No blocking issues; can be enabled in next phase
+  - [x] ✅ UI switch now functional — clicking toggles the flag via `PATCH /api/transactions/:id` with optimistic update
 
 ### Budget (UI)
 

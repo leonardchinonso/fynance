@@ -2,7 +2,6 @@ import { useState } from "react"
 import type { PortfolioHistoryRow, Granularity } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
-import type { PortfolioPageData } from "@/hooks/data"
 import { PortfolioHistorySkeleton } from "@/components/skeletons"
 import { NonIdealState } from "@/components/non_ideal_state"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -14,11 +13,11 @@ import {
 import { formatCurrency, formatMonth, getQuarter, getYear } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 
-export function PortfolioHistory({ data, granularity }: { data: RemoteData<PortfolioPageData>; granularity: Granularity }) {
+export function PortfolioHistory({ data, granularity }: { data: RemoteData<PortfolioHistoryRow[]>; granularity: Granularity }) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioHistorySkeleton />,
     failed: (error) => <NonIdealState title="Could not load history" description={error} />,
-    hasValue: ({ history }) => (
+    hasValue: (history) => (
       <div className="relative">
         <PortfolioHistoryInternal history={history} granularity={granularity} />
         <ReloadingOverlay active={data.status === "reloading"} />

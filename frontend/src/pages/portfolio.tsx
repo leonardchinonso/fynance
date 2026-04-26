@@ -10,7 +10,7 @@ import { HoldingsDetail } from "./portfolio/holdings_detail"
 import { PortfolioCharts } from "./portfolio/portfolio_charts"
 import { PortfolioHistory } from "./portfolio/portfolio_history"
 import { LayoutDashboard, Grid3X3, PieChart, LineChart } from "lucide-react"
-import { usePortfolio } from "@/hooks/data"
+import { usePortfolioSummary, usePortfolioAccounts, usePortfolioHistoryData } from "@/hooks/data"
 
 const VIEW_MODES = [
   { value: "overview",  label: "Overview",  icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -23,14 +23,16 @@ export function PortfolioPage() {
   const { view, setView, profileId, start, end, granularity } = useUrlFilters()
   const { profilesData } = useProfiles()
 
-  const portfolioData = usePortfolio(start, end, granularity, profileId)
+  const summaryData  = usePortfolioSummary(start, end, granularity, profileId)
+  const accountsData = usePortfolioAccounts(start, end, profileId)
+  const historyData  = usePortfolioHistoryData(start, end, granularity, profileId)
 
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
 
-  // Derive selected account name from loaded data when available
+  // Derive selected account name when accounts data is available
   const selectedAccountName =
-    portfolioData.status === "succeeded" || portfolioData.status === "reloading"
-      ? (portfolioData.value.portfolio.accounts.find(a => a.id === selectedAccountId)?.name ?? "")
+    accountsData.status === "succeeded" || accountsData.status === "reloading"
+      ? (accountsData.value.accounts.find(a => a.id === selectedAccountId)?.name ?? "")
       : ""
 
   const activeView = view === "table" ? "overview" : view
@@ -45,23 +47,16 @@ export function PortfolioPage() {
       </div>
 
       {activeView === "overview" && (
-        <PortfolioOverview
-          data={portfolioData}
-          dateLabel={`${start} to ${end}`}
-        />
+        <PortfolioOverview data={summaryData} dateLabel={`${start} to ${end}`} />
       )}
       {activeView === "accounts" && (
-        <AccountsGrid
-          data={portfolioData}
-          profilesData={profilesData}
-          onAccountClick={setSelectedAccountId}
-        />
+        <AccountsGrid data={accountsData} profilesData={profilesData} onAccountClick={setSelectedAccountId} />
       )}
       {activeView === "charts" && (
-        <PortfolioCharts data={portfolioData} />
+        <PortfolioCharts data={summaryData} />
       )}
       {activeView === "history" && (
-        <PortfolioHistory data={portfolioData} granularity={granularity} />
+        <PortfolioHistory data={historyData} granularity={granularity} />
       )}
 
       <HoldingsDetail
