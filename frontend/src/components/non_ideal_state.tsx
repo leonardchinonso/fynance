@@ -72,7 +72,7 @@ export function NonIdealState({
   }
 
   return (
-    <div className={cn("flex flex-col items-center justify-center gap-3 py-12 text-center text-muted-foreground", className)}>
+    <div className={cn("flex flex-col items-center justify-center gap-3 py-12 text-center text-muted-foreground min-h-[240px]", className)}>
       <span>{resolvedIcon}</span>
       <div className="space-y-1">
         <p className="text-base font-medium text-foreground">{title}</p>
