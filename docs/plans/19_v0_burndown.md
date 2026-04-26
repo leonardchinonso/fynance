@@ -228,6 +228,14 @@ CSV is supported. PDFs and images deferred to V1.
 - ⚠️ Budget tooltip on hover: deferred
 - ⚠️ Show empty categories toggle: deferred
 
+### Category / Category ID Cleanup
+
+- ⚠️ **Drop dual `category` + `category_id` handling in the frontend**: **Pending**
+  - Multiple bindings (`Transaction`, `SectionMapping`, `BudgetRow`, `SetStandingBudgetBody`, `StandingBudget`, `ImportTransaction`, `SpendingGridRow`) now carry both `category: string | null` (legacy name) and `category_id: string | null` (FK)
+  - The backend already resolves names to IDs; the legacy string field is only needed for backward compat with old agents
+  - Once all agents are updated to send `category_id`, drop `category` from all request/response types and remove the dual-path handling in `mock_service.ts` and any components reading both fields
+  - Coordinate with Nonso: backend should enforce `category_id`-only once legacy path is confirmed unused
+
 ### Type Sharing (ts-rs)
 
 - ⚠️ Drop hand-written `PaginatedResponse<T>`: **Deferred**
