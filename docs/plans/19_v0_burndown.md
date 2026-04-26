@@ -49,20 +49,21 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
 
 ### Categories
 
-Categories stored in section_mappings table (not a full categories table, but category grouping via sections).
+**Model:** Hierarchical categories table (parent-child max depth 2) linked to display sections via section_mappings.
 
-**Model:** Section mappings link categories to display sections (Income | Bills | Spending | Irregular | Transfers)
-
-- [x] ✅ Categories linked to sections (section_mappings table, lines 142-145)
-  - Schema includes `section TEXT NOT NULL` and `category TEXT NOT NULL UNIQUE`
+- [x] ✅ Full categories table created (schema.sql, lines 43-52)
+  - id (TEXT PRIMARY KEY), name (TEXT UNIQUE), parent_id, display_order, is_active, created/updated timestamps
+  - Supports hierarchical structure: parent categories for grouping, leaf nodes assignable to transactions
+  - Seeded from categories.yaml on first startup
+  - Routes: GET/POST/PATCH/DELETE for category CRUD (routes/categories.rs)
+- [x] ✅ Categories linked to sections (section_mappings table, lines 163-172)
+  - Schema maps category_id to section (Income | Bills | Spending | Irregular | Transfers)
   - Routes: PUT /api/sections replaces all section mappings (sections.rs)
   - Routes: GET /api/sections lists current mappings
 - [x] ✅ Category-transaction association
-  - Transaction model includes `category: Option<String>` (model.rs:35)
-  - PATCH /api/transactions/:id allows updating category (transactions.rs)
-- ⚠️ Note: Full categories table (with id, name, description) not created yet
-  - Current design uses section_mappings for display grouping
-  - Category names are free-form strings on transactions
+  - Transaction model includes `category: Option<String>` (legacy) and `category_id: Option<String>` (FK)
+  - schema.sql: category_id foreign key to categories.id (line 20, 29)
+  - PATCH /api/transactions/:id allows updating category_id (transactions.rs:213)
 
 ### Transactions
 
