@@ -81,18 +81,26 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
 
 ### API: Endpoints
 
-Implemented bulk endpoints for transactions, holdings, categories, and accounts:
+Implemented endpoints by entity:
 
 | Entity | Endpoints | Status |
 |---|---|---|
-| Transactions | GET /api/transactions, PATCH /api/transactions/:id, GET /api/transactions/by-category | ✅ Done |
-| Holdings | GET /api/holdings, POST /api/holdings/import (dry_run), POST /api/holdings/:account_id, PATCH /api/holdings/:account_id/:symbol | ✅ Done |
-| Categories | GET /api/transactions/categories, PUT /api/sections | ✅ Done (via sections) |
+| Transactions | GET /api/transactions, PATCH /api/transactions/:id, GET /api/transactions/by-category, GET /api/transactions/categories, GET /api/transactions/accounts | ✅ Done |
+| Holdings | GET /api/holdings, POST /api/holdings/import (?dry_run), POST /api/holdings/:account_id, PATCH /api/holdings/:account_id/:symbol, (+ summary/history/balances/cash-flow views) | ✅ Done |
+| Categories | POST /api/categories, GET /api/categories, GET /api/categories/:id, GET /api/categories/resolve, PATCH /api/categories/:id, DELETE /api/categories/:id | ✅ Done (full CRUD) |
+| Sections | GET /api/sections, PUT /api/sections (replaces all mappings) | ✅ Done |
 | Accounts | GET /api/accounts, POST /api/accounts, PATCH /api/accounts/:id/balance | ✅ Done |
+| Profiles | GET /api/profiles, POST /api/profiles | ✅ Done (no DELETE yet) |
+| Import | POST /api/import (JSON), POST /api/import/csv, POST /api/import/bulk | ✅ Done (no dry_run) |
+| Budget | GET /api/budget/:month, POST /api/budget (standing), POST /api/budget/override (monthly) | ✅ Done |
 
 Dry-run support:
-- [x] ✅ Transactions: handled in import flow (import_api.rs)
+- ⚠️ Transactions: **NOT implemented** for POST /api/import or POST /api/import/csv/bulk
+  - Currently all imports commit immediately to database
+  - Could be added in future: would require LLM re-processing or token caching
 - [x] ✅ Holdings: `?dry_run=true` query param returns previews without committing (holdings.rs:346, 365-368)
+  - Returns HoldingPreview list with status field
+  - Supports efficient confirmation via repeated call with dry_run=false
 - [x] ✅ Every endpoint documented in OpenAPI spec (GET /api/docs)
 
 ### Document imports
@@ -125,9 +133,12 @@ CSV is supported. PDFs and images deferred to V1.
 
 ### API Documentation
 
-- [x] ✅ `GET /api/docs` returns OpenAPI spec (routes/docs.rs:8)
+- [x] ✅ `GET /api/docs` returns OpenAPI 3.1 spec (routes/docs.rs:35)
 - [x] ✅ Endpoints documented with schemas and examples
-- ⚠️ Category taxonomy documentation: partially done (sections are documented, but full category list not yet)
+- [x] ✅ Category taxonomy documentation: fully embedded in OpenAPI spec
+  - Full category tree from categories.yaml embedded in response (routes/docs.rs:24, 286)
+  - Includes all parent-child relationships and display order
+  - Available at /api/docs under "x-categories" component
 
 ### Dry run
 
@@ -206,10 +217,13 @@ CSV is supported. PDFs and images deferred to V1.
 
 ### Budget (UI)
 
-- ⚠️ Budget display and auto-carry
-  - **Status:** Partially deferred (backend budgets table exists, UI integration pending)
-  - Monthly budget storage ready
-  - UI components need wiring to backend endpoints
+- [x] ✅ Budget display (read-only)
+  - Backend: standing_budgets + budget_overrides tables with auto-carry via COALESCE (db.rs)
+  - Frontend: SpendingGridRow includes budget field, displayed in spending grid view
+  - API calls exist: setStandingBudget (POST /api/budget), setBudgetOverride (POST /api/budget/override)
+- ⚠️ Budget editing UI: **Deferred**
+  - API endpoints ready but no UI components to set/override budgets
+  - Could be added in next phase: dialog to edit standing budgets and monthly overrides
 - ⚠️ Average spend calculation: deferred
 - ⚠️ Budget tooltip on hover: deferred
 - ⚠️ Show empty categories toggle: deferred
@@ -227,7 +241,7 @@ CSV is supported. PDFs and images deferred to V1.
 - [x] **Settings page** created with 6 sections: Profiles, Accounts, Categories, Data Ingestion, Appearance, Data Source
 - [x] **Profiles section:** list profiles, add profile dialog (create via `POST /api/profiles`)
 - [x] **Accounts section:** list accounts with type badge and balance, add account dialog (create via `POST /api/accounts`)
-- [x] **Categories section:** grouped list with add/edit/delete (mock CRUD until BE adds endpoints)
+- [x] **Categories section:** grouped list with add/edit/delete (backend CRUD endpoints available: POST/GET/PATCH/DELETE /api/categories)
 - [x] **Data Ingestion section:** account ordering via DraggableList, hide/show accounts, stored in localStorage
 - [x] **Appearance section:** Light/Dark/System theme toggle (moved from navbar)
 - [x] **Data Source section:** Live/Mock toggle with MOCK_ONLY env var support (moved from navbar)
@@ -266,45 +280,76 @@ CSV is supported. PDFs and images deferred to V1.
 **✅ Backend (Nonso) — SUBSTANTIALLY COMPLETE**
 
 Completed:
-- Holdings/Portfolio endpoints fully renamed to /api/holdings/* (8 endpoints)
-- Multiple cash holdings support (sub_account field + unique constraint)
-- Closed holdings feature (is_closed flag)
-- Account type enum with 8 types
-- Budget system (standing + monthly overrides) with full query support
-- Category-transaction linking via hierarchical categories table + section mappings
-- All transaction CRUD operations including exclude_from_summary filtering
-- All account CRUD operations
-- Dry-run support for holdings import
+- Holdings/Portfolio endpoints fully renamed to /api/holdings/* with dry-run support
+- Multiple cash holdings per account (sub_account field, multi-currency via unique constraint)
+- Closed holdings support (is_closed flag with index for queries)
+- Full account lifecycle: GET, POST, PATCH (balance only)
+- Account type enum with 8 types (Checking, Savings, Investment, Credit, Cash, Pension, Property, Mortgage)
+- Budget system: standing budgets + monthly overrides with auto-carry via COALESCE queries
+- Categories: hierarchical table (parent-child) with full CRUD (POST/GET/PATCH/DELETE/resolve)
+- Category to section mappings (Income | Bills | Spending | Irregular | Transfers)
+- Transactions: GET/PATCH with category_id FK and exclude_from_summary filtering
+- `exclude_from_summary` flag: database field, filtering in all aggregations, PATCH support
+- Profile management: GET, POST (no DELETE yet)
+- CSV import with bank detection (Monzo, Revolut, Lloyds)
+- JSON structured import API (POST /api/import) for external agents
+- Bulk import endpoints (POST /api/import/bulk)
 - Currency tracking at all levels (transactions, holdings, budgets)
-- OpenAPI documentation endpoint (/api/docs)
-- `exclude_from_summary` flag: database storage, filtering in all aggregations, PATCH support
+- OpenAPI 3.1 documentation with embedded category taxonomy (GET /api/docs)
+- API token generation and validation (bearer token auth)
 
 Deferred to V1+:
-- PDF/image document imports
-- Generic `Paginated<T>` type (current endpoints return arrays/single objects)
-- CSV import dry-run preview (dry-run works for holdings only)
-- Fingerprint collision disambiguation
-- Automatic holding snapshot extraction from imports
+- **PDF/image document imports** (requires LLM extraction)
+- **Transactions dry-run** (only holdings has ?dry_run=true)
+- **CSV import dry-run** (would need LLM re-processing or token caching)
+- **Generic `Paginated<T>` type** (current endpoints return arrays or single objects)
+- **Fingerprint collision disambiguation** (using simple sha256(datetime, amount, account_id))
+- **Automatic holding snapshot extraction from imports** (manual entry required)
+- **DELETE endpoints** for accounts, profiles (POST/GET only)
+- **Account PATCH endpoints** (only balance endpoint exists)
+- **T212 PDF parsing** (no PDF support in V0)
 
 **✅ Frontend (Ope) — BUILD PASSING, CORE COMPLETE**
 
 Completed:
-- Settings page with 6 sections (Profiles, Accounts, Categories, Data Ingestion, Appearance, Data Source)
-- Profile/Account management
-- Import wizard (both wizard and single-file modes)
-- File upload with drag-drop
-- Docker build & CI/CD (multi-stage, GHCR publishing)
-- All TypeScript errors fixed (type bindings, mock data updated)
-- All UI components for basic workflows
-- Frontend successfully builds with new backend field types
-- Mock data aligned with backend schema (sub_account, is_closed, category_id, exclude_from_summary)
+- **Settings page** with 6 sections: Profiles, Accounts, Categories, Data Ingestion, Appearance, Data Source
+- **Profile management** (list, create via POST /api/profiles)
+- **Account management** (list, create, view balance, type badges)
+- **Categories management** (grouped list; backend CRUD endpoints available)
+- **Import workflow**: dual modes (wizard with account stepping, single-file mode)
+- **File upload** with drag-drop, file dedup by name+size, bank detection feedback
+- **Import preview** with stats (total/new/duplicates), error table, dry-run support
+- **Budget display** (spending grid with monthly/quarterly/yearly granularity, budget amounts shown)
+- **Portfolio view** (holdings summary, account balances, asset allocation)
+- **Transactions view** (list, category editing, search/filter)
+- **Reports view** (spending by category, cash flow analysis)
+- **Navbar**: Import CTA (popover), Settings icon, theme toggle
+- **DraggableList** component (reusable, used for account ordering in ingestion preferences)
+- **Ingestion preferences** (account ordering, hide/show) persisted to localStorage
+- **Live/Mock toggle** (VITE_MOCK_ONLY env var support)
+- **Theme toggle** (Light/Dark/System) persisted to localStorage
+- **Docker build** (multi-stage: Node frontend, Rust backend, debian-slim runtime)
+- **GitHub Actions CI** (lint+build frontend, test+clippy backend)
+- **GitHub Actions publish** (auto-version tagging to GHCR on push to master)
+- **TypeScript bindings** auto-generated from Rust via ts-rs
+- **All TypeScript errors fixed** (mock data updated for sub_account, is_closed, category_id, exclude_from_summary)
+- **Frontend builds successfully** without errors
 
 Pending (deferred for later phases):
-- Skeleton loading states
-- Sticky sidebar nav
-- Budget UI integration with backend (backend ready, UI wiring deferred)
-- Edit/delete buttons for accounts (icons present, disabled with "Coming soon")
-- E2E Playwright tests for live endpoints
-- Empty category toggle
+- **Budget editing UI** (API endpoints ready: setStandingBudget, setBudgetOverride; UI not wired)
+- **Skeleton loading states** (components exist, not integrated into all pages)
+- **Sticky sidebar nav**
+- **Edit/delete buttons** for accounts/profiles (icons present, disabled with "Coming soon" tooltips)
+- **E2E Playwright tests** (infrastructure ready, tests not written)
+- **Empty categories toggle** (in spending grid)
+- **Transaction exclude_from_summary toggle** (disabled with "Coming soon" tooltip, backend ready)
+- **Average spend calculation** in budget view
+- **Budget hover tooltip** showing spending trend
 
-**Impact:** MVP is ready for early testing. All critical backend features implemented. Frontend compiles and routes to live API (mock/live toggle available). Core workflows (import, budgeting, portfolio, transactions) functional. Polish items (skeletons, tests, UI enhancements) scheduled for next phase.
+**Impact:** MVP is ready for early testing. All critical backend features implemented and wired to frontend. Frontend builds without errors and can switch between mock/live API modes. Core workflows fully functional:
+- Import CSV files from banks (Monzo, Revolut, Lloyds supported)
+- View transactions and categorize them
+- Monitor spending via budget grid
+- View investment portfolio and cash holdings
+- Manage accounts and profiles
+Polish items (loading states, edit dialogs, tests) scheduled for next phase.
