@@ -173,7 +173,7 @@ export class RealApiService implements ApiService {
   async getPortfolio(profileId?: string): Promise<PortfolioResponse> {
     const params: Record<string, string> = {}
     if (profileId) params.profile_id = profileId
-    return get<PortfolioResponse>(`${BASE}/portfolio`, params)
+    return get<PortfolioResponse>(`${BASE}/holdings/summary`, params)
   }
 
   async getPortfolioHistory(
@@ -184,7 +184,7 @@ export class RealApiService implements ApiService {
   ): Promise<PortfolioHistoryRow[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    return get<PortfolioHistoryRow[]>(`${BASE}/portfolio/history`, params)
+    return get<PortfolioHistoryRow[]>(`${BASE}/holdings/history`, params)
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {
@@ -199,7 +199,7 @@ export class RealApiService implements ApiService {
   ): Promise<CashFlowMonth[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    return get<CashFlowMonth[]>(`${BASE}/cash-flow`, params)
+    return get<CashFlowMonth[]>(`${BASE}/holdings/cash-flow`, params)
   }
 
   async getAccountBalances(
@@ -207,12 +207,7 @@ export class RealApiService implements ApiService {
     end: string,
     _profileId?: string
   ): Promise<AccountSnapshot[]> {
-    // Backend endpoint is /api/portfolio/balances. The non-summary mode
-    // returns the full per-account snapshot list; omit ?summary=true.
-    return get<AccountSnapshot[]>(`${BASE}/portfolio/balances`, {
-      start,
-      end,
-    })
+    return get<AccountSnapshot[]>(`${BASE}/holdings/balances`, { start, end })
   }
 
   // ── Settings / CRUD ──────────────────────────────────────────────
