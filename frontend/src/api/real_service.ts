@@ -221,7 +221,9 @@ export class RealApiService implements ApiService {
   }
 
   async getCategoryDetails(): Promise<CategoryNode[]> {
-    return get<CategoryNode[]>(`${BASE}/categories`)
+    // Backend returns HashMap<section, Vec<CategoryNode>> — flatten to a single array
+    const grouped = await get<Record<string, CategoryNode[]>>(`${BASE}/categories`)
+    return Object.values(grouped).flat()
   }
 
   async createCategory(body: CreateCategoryBody): Promise<Category> {
