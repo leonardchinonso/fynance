@@ -6,6 +6,9 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ## V1 (Immediate next steps after V0)
 
+### Features
+- [ ] ISA remaining allowance tracking (as a part of ISA accounts.
+
 ### CI/CD and Release Pipeline
 
 - [ ] `ci.yml`: fmt, clippy, test, frontend build + typecheck (from `12_frontend_backend_consolidation.md` Phase 6.5)
