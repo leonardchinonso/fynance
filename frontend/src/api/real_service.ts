@@ -3,10 +3,12 @@ import type {
   AccountSnapshot,
   BudgetRow,
   CashFlowMonth,
-  CategoryDetail,
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
+  CreateCategoryBody,
+  PatchCategoryBody,
+  PatchTransactionBody,
   Granularity,
   Holding,
   ImportResult,
@@ -20,6 +22,8 @@ import type {
   Transaction,
   TransactionFilters,
 } from "@/types"
+import type { Category } from "@/bindings/Category"
+import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { ApiService } from "./service"
 import { MockApiService } from "./mock_service"
 
@@ -63,6 +67,27 @@ async function postMultipart<T>(path: string, formData: FormData): Promise<T> {
     throw new Error(`${res.status} ${res.statusText}: ${text}`)
   }
   return res.json()
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${window.location.origin}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status} ${res.statusText}: ${text}`)
+  }
+  return res.json()
+}
+
+async function del(path: string): Promise<void> {
+  const res = await fetch(`${window.location.origin}${path}`, { method: "DELETE" })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status} ${res.statusText}: ${text}`)
+  }
 }
 
 // Mock fallback for endpoints the backend doesn't have yet
@@ -111,7 +136,11 @@ export class RealApiService implements ApiService {
   }
 
   async getCategories(): Promise<string[]> {
-    return get<string[]>(`${BASE}/transactions/categories`)
+    const grouped = await get<Record<string, { id: string; name: string; children?: { id: string; name: string }[] }[]>>(`${BASE}/transactions/categories`)
+    return Object.values(grouped).flat().flatMap(node => [
+      node.name,
+      ...(node.children ?? []).map(c => c.name),
+    ])
   }
 
   async getAccounts(profileId?: string): Promise<Account[]> {
@@ -148,7 +177,7 @@ export class RealApiService implements ApiService {
   async getPortfolio(profileId?: string): Promise<PortfolioResponse> {
     const params: Record<string, string> = {}
     if (profileId) params.profile_id = profileId
-    return get<PortfolioResponse>(`${BASE}/portfolio`, params)
+    return get<PortfolioResponse>(`${BASE}/holdings/summary`, params)
   }
 
   async getPortfolioHistory(
@@ -159,7 +188,7 @@ export class RealApiService implements ApiService {
   ): Promise<PortfolioHistoryRow[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    return get<PortfolioHistoryRow[]>(`${BASE}/portfolio/history`, params)
+    return get<PortfolioHistoryRow[]>(`${BASE}/holdings/history`, params)
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {
@@ -174,7 +203,7 @@ export class RealApiService implements ApiService {
   ): Promise<CashFlowMonth[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    return get<CashFlowMonth[]>(`${BASE}/cash-flow`, params)
+    return get<CashFlowMonth[]>(`${BASE}/holdings/cash-flow`, params)
   }
 
   async getAccountBalances(
@@ -182,12 +211,7 @@ export class RealApiService implements ApiService {
     end: string,
     _profileId?: string
   ): Promise<AccountSnapshot[]> {
-    // Backend endpoint is /api/portfolio/balances. The non-summary mode
-    // returns the full per-account snapshot list; omit ?summary=true.
-    return get<AccountSnapshot[]>(`${BASE}/portfolio/balances`, {
-      start,
-      end,
-    })
+    return get<AccountSnapshot[]>(`${BASE}/holdings/balances`, { start, end })
   }
 
   // ── Settings / CRUD ──────────────────────────────────────────────
@@ -200,21 +224,26 @@ export class RealApiService implements ApiService {
     return post<Account>(`${BASE}/accounts`, body)
   }
 
-  // Categories: mock fallback until BE adds category CRUD
-  async getCategoryDetails(): Promise<CategoryDetail[]> {
-    return mock.getCategoryDetails()
+  async getCategoryDetails(): Promise<CategoryNode[]> {
+    // Backend returns HashMap<section, Vec<CategoryNode>> — flatten to a single array
+    const grouped = await get<Record<string, CategoryNode[]>>(`${BASE}/categories`)
+    return Object.values(grouped).flat()
   }
 
-  async createCategory(body: { name: string; description: string; group: string }): Promise<CategoryDetail> {
-    return mock.createCategory(body)
+  async createCategory(body: CreateCategoryBody): Promise<Category> {
+    return post<Category>(`${BASE}/categories`, body)
   }
 
-  async updateCategory(id: string, body: { name?: string; description?: string; group?: string }): Promise<CategoryDetail> {
-    return mock.updateCategory(id, body)
+  async updateCategory(id: string, body: PatchCategoryBody): Promise<Category> {
+    return patch<Category>(`${BASE}/categories/${id}`, body)
   }
 
   async deleteCategory(id: string): Promise<void> {
-    return mock.deleteCategory(id)
+    return del(`${BASE}/categories/${id}`)
+  }
+
+  async patchTransaction(id: string, body: PatchTransactionBody): Promise<Transaction> {
+    return patch<Transaction>(`${BASE}/transactions/${id}`, body)
   }
 
   // ── Import ────────────────────────────────────────────────────────

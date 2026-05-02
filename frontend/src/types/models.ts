@@ -19,12 +19,25 @@ export type { BankFormat } from "@/bindings/BankFormat"
 
 // ── Local types (not yet in backend or differ for mock usage) ───────
 
-/** Category with description and group (mock-only until BE adds category CRUD). */
-export interface CategoryDetail {
-  id: string
+/** Request body for POST /api/categories. */
+export interface CreateCategoryBody {
   name: string
-  description: string
-  group: string
+  parent_id?: string
+  display_order?: number
+}
+
+/** Request body for PATCH /api/categories/:id. */
+export interface PatchCategoryBody {
+  name?: string
+  parent_id?: string
+  display_order?: number
+}
+
+/** Request body for PATCH /api/transactions/:id. */
+export interface PatchTransactionBody {
+  category_id?: string
+  notes?: string
+  exclude_from_summary?: boolean
 }
 
 /** Body for POST /api/accounts. */

@@ -42,7 +42,9 @@ const NAV_ITEMS = [
 ]
 
 export function Navbar() {
-  const { profiles } = useProfiles()
+  const { profilesData } = useProfiles()
+  const profiles = profilesData.status === "succeeded" || profilesData.status === "reloading"
+    ? profilesData.value : []
   const { profileId, setProfileId } = useUrlFilters()
   const { pinnedViews, pinCurrentView, unpinView, renamePinnedView, reorderPinnedViews } = usePinnedViews()
   const [dragUrl, setDragUrl] = useState<string | null>(null)

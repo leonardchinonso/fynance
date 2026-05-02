@@ -1,5 +1,13 @@
 import { useState } from "react"
 import type { Transaction } from "@/types"
+import { api } from "@/api/client"
+import type { RemoteData } from "@/lib/remote_data"
+import { visitRemoteData } from "@/lib/remote_data"
+import type { TransactionsData } from "@/hooks/data"
+import { TableSkeleton } from "@/components/skeletons"
+import { NonIdealState } from "@/components/non_ideal_state"
+import { ReloadingOverlay } from "@/components/reloading_overlay"
+import { EmptyState } from "@/components/empty_state"
 import {
   Table,
   TableBody,
@@ -26,12 +34,6 @@ import {
 } from "@/components/ui/popover"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { Switch } from "@/components/ui/switch"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const PAGE_SIZE_KEY = "fynance-page-size"
@@ -66,6 +68,43 @@ function getCategoryColor(category: string): string {
   return CATEGORY_COLORS[parent] ?? "#78716c"
 }
 
+interface TransactionTableOuterProps {
+  data: RemoteData<TransactionsData>
+  page: number
+  pageSize: number
+  onPageChange: (page: number) => void
+  onPageSizeChange: (size: number) => void
+  accountNames: Record<string, string>
+  onResetFilters?: () => void
+}
+
+export function TransactionTable({
+  data, page, pageSize, onPageChange, onPageSizeChange, accountNames, onResetFilters,
+}: TransactionTableOuterProps) {
+  return visitRemoteData(data, {
+    notLoaded: () => <TableSkeleton rows={25} cols={5} />,
+    failed: (error) => <NonIdealState title="Could not load transactions" description={error} />,
+    hasValue: ({ result }) => (
+      <div className="relative">
+        {result.data.length === 0 ? (
+          <EmptyState action={onResetFilters ? { label: "Reset filters", onClick: onResetFilters } : undefined} />
+        ) : (
+          <TransactionTableInternal
+            transactions={result.data}
+            total={result.total}
+            page={page}
+            limit={pageSize}
+            onPageChange={onPageChange}
+            onLimitChange={onPageSizeChange}
+            accountNames={accountNames}
+          />
+        )}
+        <ReloadingOverlay active={data.status === "reloading"} />
+      </div>
+    ),
+  })
+}
+
 interface TransactionTableProps {
   transactions: Transaction[]
   total: number
@@ -76,8 +115,8 @@ interface TransactionTableProps {
   accountNames?: Record<string, string>
 }
 
-export function TransactionTable({
-  transactions,
+function TransactionTableInternal({
+  transactions: initialTransactions,
   total,
   page,
   limit,
@@ -87,6 +126,16 @@ export function TransactionTable({
 }: TransactionTableProps) {
   const totalPages = Math.ceil(total / limit)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
+  const [transactions, setTransactions] = useState(initialTransactions)
+
+  async function toggleExclude(id: string, current: boolean) {
+    setTransactions(prev => prev.map(t => t.id === id ? { ...t, exclude_from_summary: !current } : t))
+    try {
+      await api.patchTransaction(id, { exclude_from_summary: !current })
+    } catch {
+      setTransactions(prev => prev.map(t => t.id === id ? { ...t, exclude_from_summary: current } : t))
+    }
+  }
 
   function toggleColumn(colId: string) {
     setVisibleColumns((prev) => {
@@ -182,16 +231,11 @@ export function TransactionTable({
               )}
               {isVisible("exclude") && (
                 <TableCell className="text-center">
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger className="inline-flex">
-                        <Switch disabled checked={false} className="scale-75" />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Coming soon: exclude from summaries</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <Switch
+                    checked={t.exclude_from_summary}
+                    onCheckedChange={() => toggleExclude(t.id, t.exclude_from_summary)}
+                    className="scale-75"
+                  />
                 </TableCell>
               )}
               <TableCell />

@@ -271,3 +271,29 @@ function ChartAreaSkeleton({ title, height = 320, legendCount = 4 }: { title: nu
 export function ChartSkeleton({ height = 320 }: { height?: number }) {
   return <ChartAreaSkeleton title={32} height={height} legendCount={4} />
 }
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+
+/**
+ * Generic settings list skeleton — shared by Profiles, Accounts, Categories,
+ * and Ingestion sections. All four render as a vertical list of uniform bordered
+ * rows with the same structure: icon + name + subtitle + badge + action buttons.
+ */
+export function SettingsListSkeleton({ rows = 4 }: { rows?: number }) {
+  return (
+    <div className="space-y-2">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 rounded-lg border p-3">
+          <Bone className="h-8 w-8 rounded-full shrink-0" />
+          <div className="flex-1 space-y-1.5">
+            <Bone className="h-3 w-32" />
+            <Bone className="h-2.5 w-20" />
+          </div>
+          <Bone className="h-5 w-14 rounded-full" />
+          <Bone className="h-7 w-7 rounded-md" />
+          <Bone className="h-7 w-7 rounded-md" />
+        </div>
+      ))}
+    </div>
+  )
+}

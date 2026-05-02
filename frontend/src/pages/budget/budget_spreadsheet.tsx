@@ -1,24 +1,36 @@
 import type { SpendingGridRow, Granularity } from "@/types"
+import type { RemoteData } from "@/lib/remote_data"
+import { visitRemoteData } from "@/lib/remote_data"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import {
-  cn,
-  formatCurrency,
-  groupMonthsByGranularity,
-  getMonthsForPeriod,
-  formatPeriodKey,
+  cn, formatCurrency, categoryLeaf, groupMonthsByGranularity, getMonthsForPeriod, formatPeriodKey,
 } from "@/lib/utils"
+import { SpreadsheetSkeleton } from "@/components/skeletons"
+import { NonIdealState } from "@/components/non_ideal_state"
+import { ReloadingOverlay } from "@/components/reloading_overlay"
+import { EmptyState } from "@/components/empty_state"
+import { BudgetEditPopover } from "./budget_edit_popover"
 
 interface BudgetSpreadsheetProps {
-  rows: SpendingGridRow[]
+  data: RemoteData<SpendingGridRow[]>
   months: string[]
   granularity: Granularity
+  onBudgetSaved?: () => void
+}
+
+export function BudgetSpreadsheet({ data, months, granularity, onBudgetSaved }: BudgetSpreadsheetProps) {
+  return visitRemoteData(data, {
+    notLoaded: () => <SpreadsheetSkeleton />,
+    failed: (error) => <NonIdealState title="Could not load budget" description={error} action={onBudgetSaved ? { label: "Try again", onClick: onBudgetSaved } : undefined} />,
+    hasValue: (rows) => (
+      <div className="relative">
+        <BudgetSpreadsheetInternal rows={rows} months={months} granularity={granularity} onBudgetSaved={onBudgetSaved} />
+        <ReloadingOverlay active={data.status === "reloading"} />
+      </div>
+    ),
+  })
 }
 
 function cellColor(value: string, budget: string | null): string {
@@ -33,33 +45,30 @@ function cellColor(value: string, budget: string | null): string {
   return ""
 }
 
-export function BudgetSpreadsheet({ rows, months, granularity }: BudgetSpreadsheetProps) {
+function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }: {
+  rows: SpendingGridRow[]; months: string[]; granularity: Granularity; onBudgetSaved?: () => void
+}) {
+  if (rows.length === 0) return <EmptyState />
+
   const periods = groupMonthsByGranularity(months, granularity)
 
-  // For quarterly/yearly budgets, multiply the monthly budget by the number of months in the period
   function getPeriodBudget(monthlyBudget: string | null, periodKey: string): string | null {
     if (!monthlyBudget) return null
     const periodMonths = getMonthsForPeriod(months, periodKey, granularity)
-    const multiplier = periodMonths.length
-    return (parseFloat(monthlyBudget) * multiplier).toFixed(2)
+    return (parseFloat(monthlyBudget) * periodMonths.length).toFixed(2)
   }
 
-  // Aggregate a row's values for a period
   function getPeriodValue(row: SpendingGridRow, periodKey: string): string | null {
     const periodMonths = getMonthsForPeriod(months, periodKey, granularity)
     let total = 0
     let hasData = false
     for (const m of periodMonths) {
       const val = row.periods[m]
-      if (val !== null) {
-        total += parseFloat(val)
-        hasData = true
-      }
+      if (val !== null) { total += parseFloat(val); hasData = true }
     }
     return hasData ? total.toFixed(2) : null
   }
 
-  // Group rows by section
   const sections = ["Income", "Bills", "Spending", "Irregular", "Transfers"]
   const grouped = new Map<string, SpendingGridRow[]>()
   for (const s of sections) grouped.set(s, [])
@@ -97,6 +106,7 @@ export function BudgetSpreadsheet({ rows, months, granularity }: BudgetSpreadshe
                 granularity={granularity}
                 getPeriodValue={getPeriodValue}
                 getPeriodBudget={getPeriodBudget}
+                onBudgetSaved={onBudgetSaved}
               />
             )
           })}
@@ -107,11 +117,7 @@ export function BudgetSpreadsheet({ rows, months, granularity }: BudgetSpreadshe
 }
 
 function SectionBlock({
-  section,
-  rows,
-  periods,
-  getPeriodValue,
-  getPeriodBudget,
+  section, rows, periods, getPeriodValue, getPeriodBudget, onBudgetSaved,
 }: {
   section: string
   rows: SpendingGridRow[]
@@ -120,83 +126,66 @@ function SectionBlock({
   granularity: Granularity
   getPeriodValue: (row: SpendingGridRow, periodKey: string) => string | null
   getPeriodBudget: (budget: string | null, periodKey: string) => string | null
+  onBudgetSaved?: () => void
 }) {
-  // Compute section totals per period
   const totals: Record<string, number | null> = {}
   for (const p of periods) totals[p] = null
   for (const row of rows) {
     for (const p of periods) {
       const val = getPeriodValue(row, p)
-      if (val !== null) {
-        totals[p] = (totals[p] ?? 0) + Math.abs(parseFloat(val))
-      }
+      if (val !== null) totals[p] = (totals[p] ?? 0) + Math.abs(parseFloat(val))
     }
   }
   const periodsWithTotals = Object.values(totals).filter((v) => v !== null) as number[]
-  const totalAvg =
-    periodsWithTotals.length > 0
-      ? periodsWithTotals.reduce((s, v) => s + v, 0) / periodsWithTotals.length
-      : 0
+  const totalAvg = periodsWithTotals.length > 0
+    ? periodsWithTotals.reduce((s, v) => s + v, 0) / periodsWithTotals.length
+    : 0
 
   return (
     <>
-      {/* Section header */}
       <TableRow className="bg-muted/50">
-        <TableCell
-          colSpan={periods.length + 3}
-          className="sticky left-0 font-semibold text-xs uppercase tracking-wider"
-        >
+        <TableCell colSpan={periods.length + 3} className="sticky left-0 font-semibold text-xs uppercase tracking-wider">
           {section}
         </TableCell>
       </TableRow>
-      {/* Data rows */}
       {rows.map((row) => {
         const rowValues = periods.map((p) => getPeriodValue(row, p))
         const nonNullValues = rowValues.filter((v) => v !== null) as string[]
-        const rowAvg =
-          nonNullValues.length > 0
-            ? nonNullValues.reduce((s, v) => s + Math.abs(parseFloat(v)), 0) / nonNullValues.length
-            : null
+        const rowAvg = nonNullValues.length > 0
+          ? nonNullValues.reduce((s, v) => s + Math.abs(parseFloat(v)), 0) / nonNullValues.length
+          : null
 
         return (
           <TableRow key={row.category}>
             <TableCell className="sticky left-0 bg-background text-sm z-10">
-              {row.category.split(": ").pop()}
+              {categoryLeaf(row.category)}
             </TableCell>
             {periods.map((p, i) => {
               const val = rowValues[i]
-              if (val === null) {
-                return (
-                  <TableCell key={p} className="text-right text-sm text-muted-foreground/30">
-                    -
-                  </TableCell>
-                )
-              }
+              if (val === null) return (
+                <TableCell key={p} className="text-right text-sm text-muted-foreground/30">-</TableCell>
+              )
               const periodBudget = getPeriodBudget(row.budget, p)
               return (
-                <TableCell
-                  key={p}
-                  className={cn(
-                    "text-right text-sm tabular-nums",
-                    row.section !== "Income" && cellColor(val, periodBudget)
-                  )}
-                >
+                <TableCell key={p} className={cn("text-right text-sm tabular-nums", row.section !== "Income" && cellColor(val, periodBudget))}>
                   {formatCurrency(Math.abs(parseFloat(val)).toFixed(2))}
                 </TableCell>
               )
             })}
             <TableCell className="text-right text-sm tabular-nums font-medium">
-              {rowAvg !== null
-                ? formatCurrency(rowAvg.toFixed(2))
-                : "-"}
+              {rowAvg !== null ? formatCurrency(rowAvg.toFixed(2)) : "-"}
             </TableCell>
             <TableCell className="text-right text-sm tabular-nums">
-              {row.budget ? formatCurrency(row.budget) : "-"}
+              <BudgetEditPopover
+                category={row.category}
+                category_id={row.category_id}
+                currentBudget={row.budget ?? null}
+                onSaved={onBudgetSaved}
+              />
             </TableCell>
           </TableRow>
         )
       })}
-      {/* Section total */}
       <TableRow className="border-t-2">
         <TableCell className="sticky left-0 bg-background font-medium text-sm z-10">
           Total {section}

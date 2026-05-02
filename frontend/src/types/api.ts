@@ -57,4 +57,4 @@ export interface DateRange {
 
 // Re-export model types used in API responses
 export type { Account, AccountSnapshot, AccountType, Holding, Transaction } from "./models"
-export type { CategoryDetail, CreateAccountBody, ImportResult } from "./models"
+export type { CreateAccountBody, CreateCategoryBody, PatchCategoryBody, PatchTransactionBody, ImportResult } from "./models"

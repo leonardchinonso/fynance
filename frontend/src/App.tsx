@@ -21,9 +21,10 @@ function Layout() {
   const homepage = getHomepage()
 
   return (
-    <div className="min-h-screen bg-background overflow-x-hidden">
+    <div className="flex flex-col h-screen bg-background overflow-x-hidden">
       <Navbar />
-      <main className="mx-auto max-w-[1600px] px-3 sm:px-6 py-4 sm:py-6 w-full overflow-x-hidden">
+      <main className="flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-[1600px] px-3 sm:px-6 py-4 sm:py-6 w-full">
         <Routes>
           <Route path="/" element={<Navigate to={homepage} replace />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
@@ -34,6 +35,7 @@ function Layout() {
           <Route path="/import" element={<ImportPage />} />
           <Route path="*" element={<Navigate to={homepage} replace />} />
         </Routes>
+      </div>
       </main>
     </div>
   )
