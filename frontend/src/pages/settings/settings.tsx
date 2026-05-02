@@ -35,7 +35,7 @@ export function SettingsPage() {
 
   return (
     <div className="flex gap-6">
-      <nav className="hidden lg:block w-48 shrink-0 sticky top-20 self-start">
+      <nav className="hidden lg:block w-48 shrink-0 sticky top-0 self-start">
         <div className="space-y-0.5">
           {SECTIONS.map(({ id, label, icon: Icon }) => (
             <button
