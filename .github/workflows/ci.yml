@@ -55,3 +55,20 @@ jobs:
           workspaces: backend
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  docker-dry-run:
+    name: Docker build (dry run)
+    needs: backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
