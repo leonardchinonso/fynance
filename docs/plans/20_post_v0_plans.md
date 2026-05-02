@@ -51,11 +51,32 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ## V2
 
-### Display Currency
+### Multi-Currency Normalization
 
-- [ ] Allow user to set a preferred display currency (stored in FE, maybe also in BE profile)
-- [ ] All monetary values in UI show converted amount with source amount as tooltip
-- [ ] Conversion uses exchange rates for historical accuracy (from `13_frontend_backend_handover_unimplemented.md` Section 3.3)
+Values are always stored in source currency at ingestion (never converted on write). Conversion happens at query time on the backend when aggregating across accounts.
+
+#### Preferred currency
+- [ ] Add `preferred_currency: String` field to the profile (default `"GBP"`). This is the currency all aggregated totals are normalized to.
+- [ ] Expose `GET /api/profiles/:id` and `PATCH /api/profiles/:id` so the frontend can read and update it.
+
+#### Exchange rate resolution
+- [ ] On each holdings summary request, fetch current exchange rates for any non-preferred currencies present in the portfolio.
+- [ ] **Built-in provider:** [frankfurter.app](https://frankfurter.app) — free, no API key, ECB data, supports latest and historical rates. Use as the default.
+- [ ] **User-configurable provider (V3+):** store an optional `fx_provider_url` and `fx_api_key` on the profile so users can bring their own FX API (e.g. Open Exchange Rates, Fixer, CurrencyBeacon). The backend calls whatever URL the user has configured, falling back to frankfurter if none set.
+- [ ] Cache fetched rates in an `exchange_rates` table (schema already designed in `docs/plans/13_frontend_backend_handover_unimplemented.md`) keyed by `(base, quote, date, source)`. Re-use cached rate if one exists for today before hitting the network.
+
+#### `display_currency` on aggregated values
+- [ ] Add optional `display_currency: Option<String>` to `BreakdownItem` and top-level summary fields. Resolution rules:
+  - Single account/holding: always the source currency (e.g. `"NGN"`)
+  - Aggregation where all contributing accounts share the same source currency: use that currency
+  - Aggregation with mixed source currencies: omit `display_currency` — frontend falls back to `preferred_currency` label
+- [ ] GT Bank institution row example: all holdings are NGN → `display_currency: "NGN"`, value shown as converted GBP amount, tooltip shows ₦ raw value.
+- [ ] "By Asset Class → Cash" example: mixes NGN + GBP → no `display_currency`, value shown in preferred currency only.
+
+#### Frontend
+- [ ] All monetary values in portfolio summary use the converted (preferred currency) amount for the number, and `display_currency` symbol for the label when present.
+- [ ] Tooltip on each value shows the raw source-currency amount when `display_currency` differs from `preferred_currency`.
+- [ ] Settings page: preferred currency picker on the profile section.
 
 ---
 
@@ -66,15 +87,21 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 - [ ] Develop rules-based per-sender category assignment as a fallback or complement to AI categorization (from V0 burndown shared questions)
 - [ ] A rule is: "all transactions to/from this sender go to this category"
 
+### User-Configurable FX Provider
+
+- [ ] Settings page: FX provider section — URL template and API key input, stored on the profile.
+- [ ] Backend: when fetching exchange rates, use the user-configured provider if set, fall back to frankfurter.
+- [ ] Long-term: allow users to register multiple providers with priority order.
 
 ---
 
 ## V4
 
-### Exchange Rates Table (FE)
+### Historical Exchange Rates
 
-- [ ] Frontend currency conversion at display time: load exchange rates for a given date and convert holdings/transactions to preferred currency
-- [ ] Note: holdings snapshots already capture value + currency at snapshot date, so historical values are preserved. This is purely a display-time convenience for multi-currency views. (from `13_frontend_backend_handover_unimplemented.md` Section 3.1)
+- [ ] Use `as_of` date on holdings snapshots to fetch the exchange rate that was current at snapshot time, not today's rate, for accurate historical net worth chart values.
+- [ ] `exchange_rates` table already caches by date — historical lookups just query that table, fetching from the provider if the date is missing.
+- [ ] Note: holdings snapshots already capture value + currency at snapshot date, so the raw data is already correct — this is purely about using the right rate per date when aggregating history.
 
 ---
 

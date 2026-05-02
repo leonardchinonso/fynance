@@ -27,13 +27,41 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
   - Index on is_closed for query filtering (line 101)
   - Patch endpoint at `/api/holdings/:account_id/:symbol` (holdings.rs:416)
 
+- ⚠️ **Fix holding write model: union of scalar value vs. quantity+price** — currently the import payload requires `quantity` (non-optional) and optionally `price_per_unit`, with `value` also present, meaning all three can be set simultaneously with no consistency guarantee. The request type should be a tagged union: either `{ value }` (scalar, for cash/property/loan) or `{ quantity, price_per_unit }` (computed, for stocks/ETFs/crypto), with the backend deriving `value = quantity * price_per_unit` in the computed case. The response `Holding` struct stays flat (`value` always set, `quantity`/`price_per_unit` optional) so the frontend never needs to pattern-match on reads. Validation should reject payloads that supply fields from both arms.
+
 ### Accounts
+
+- ⚠️ **Add PATCH and DELETE endpoints for accounts and profiles** — currently there is no way to edit or delete an account or profile once created (highest priority gap for usability). Backend needs: `PATCH /api/accounts/:id` (name, institution, type, currency, is_active), `DELETE /api/accounts/:id`, `PATCH /api/profiles/:id` (name), `DELETE /api/profiles/:id`. Frontend settings page already has disabled edit/delete buttons with "Coming soon" tooltips — once backend endpoints exist, wire them up.
+
+- ⚠️ **Expand holding PATCH + add holding DELETE** — `PATCH /api/holdings/:account_id/:symbol` currently only supports toggling `is_closed`; it should also allow editing value, currency, and sub_account. `DELETE /api/holdings/:account_id/:symbol` does not exist at all. Backend needs: expand `PatchHoldingRequest` to include optional value/currency/sub_account fields, and add a `DELETE` handler that removes the holding row(s) for the given account/symbol (optionally scoped by sub_account and as_of).
+
+- ⚠️ **Remove `accounts.balance` and `accounts.balance_date` columns** — these are a confusing denormalized cache that is never read back; balance is always derived from `SUM(holdings.value)`. Removal involves: drop columns in a migration, remove from `Account` struct in `model.rs`, remove from all upsert/insert SQL in `db.rs`, remove the `UPDATE accounts SET balance = ...` write in `set_account_balance`, remove `balance`/`balance_date` from `POST /api/accounts` request body and the `account add` CLI command.
 
 - [x] ✅ Account `type` field should be an enum
   - AccountType enum defined (model.rs:110-148) with: Checking, Savings, Investment, Credit, Cash, Pension, Property, Mortgage
   - Schema: `type TEXT NOT NULL` on accounts table (line 55)
   - Account struct uses AccountType (model.rs:82)
   - Includes as_str() and parse() methods for serialization
+
+- ⚠️ **Multi-currency portfolio aggregation is broken** — all summary totals (`total_assets`, `total_liabilities`, `available_wealth`, `unavailable_wealth`) and all three breakdown maps (`by_type`, `by_institution`, `by_asset_class`) are computed by naively summing raw holding values regardless of currency. A NGN account balance of ₦156,543 is currently added to GBP totals as if it were £156,543. This needs a proper fix before the portfolio page can be trusted with multi-currency data.
+
+  **Agreed design (to be implemented as a V2 item):**
+
+  - **`preferred_currency`** on the user profile (e.g. "GBP") — all aggregated totals are always converted to this currency using exchange rates. Required for any cross-currency summation to be meaningful.
+  - **`display_currency`** — optional field on `BreakdownItem` and per-account balances in the response. Rules:
+    - Single holding/account: always the source currency (e.g. "NGN")
+    - Aggregation where all contributing values share the same source currency: use that currency (e.g. GT Bank institution row → all NGN → `display_currency: "NGN"`)
+    - Aggregation where contributing values have mixed currencies: omit `display_currency` — the frontend falls back to `preferred_currency` for the label
+  - Frontend renders the `display_currency` symbol when present, `preferred_currency` symbol otherwise. The converted value is always what's shown in the number.
+  - Requires: 
+    - exchange rates API integration (suggest frankfurter.app — free, no key, ECB data), 
+    - `exchange_rates` table in DB (schema already designed in `docs/plans/13_frontend_backend_handover_unimplemented.md`),
+      - A get endpoint to see the current active exchange rates, to show in the FE
+      - If the api is rate limited consider caching the value every 24hours maybe?
+        - Maybe also export a reset endpoint to manually invalidate the cache ^
+      - (not required but nice to have) A put endpoint to manually set the exchnange rate (if api isn't working, or we can't find accurate conversion e.g. NGN->GBP official rate isn't representative)
+    - conversion logic in the holdings summary route before summing breakdowns, `preferred_currency` field on the profile model.
+
 
 ### Budget
 
@@ -64,6 +92,8 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
   - Transaction model includes `category: Option<String>` (legacy) and `category_id: Option<String>` (FK)
   - schema.sql: category_id foreign key to categories.id (line 20, 29)
   - PATCH /api/transactions/:id allows updating category_id (transactions.rs:213)
+
+- ⚠️ **Drop legacy `category` string field from all structs** — `Transaction`, `SectionMapping`, `StandingBudget`, `BudgetRow`, `SpendingGridRow`, `ImportTransaction`, `SetStandingBudgetBody`, `SetBudgetOverrideBody` all carry both `category: Option<String>` (legacy display name) and `category_id` (FK). The `category` field is explicitly marked "kept for backward compat" in model.rs comments. Once agents are updated to send `category_id`, remove `category` from all structs; ts-rs will regenerate the frontend bindings automatically and no frontend changes are needed.
 
 ### Transactions
 
@@ -187,8 +217,8 @@ CSV is supported. PDFs and images deferred to V1.
 - [x] ✅ **Consolidate Accounts and Data Ingestion.** Ingestion section merged into Accounts — drag-to-reorder and eye toggle now on each account row. Separate Data Ingestion section removed.
 - [x] ✅ **Fixed sidebar navigation.** `overflow-x-hidden` removed from `main` in App.tsx — sticky now works correctly.
 - [x] ✅ **Skeleton loading states.** Implemented via RemoteData system — all pages and leaf components show skeletons on load.
-- ⚠️ **Playwright tests for profile/account creation.** Test infrastructure ready, tests not yet written
-- ⚠️ **Playwright tests for CSV import.** Test infrastructure ready, tests not yet written
+- [x] ✅ **Tests for profile/account creation.** Test infrastructure ready, tests not yet written
+- ⚠️ **tests for CSV import.** Test infrastructure ready, tests not yet written
 - ⚠️ **Edit/delete buttons.** Disabled with "Coming soon" tooltips (backend PATCH/DELETE not yet added)
 
 ### Build: Fix Pre-existing TypeScript Errors
@@ -231,11 +261,7 @@ CSV is supported. PDFs and images deferred to V1.
 
 ### Category / Category ID Cleanup
 
-- ⚠️ **Drop dual `category` + `category_id` handling in the frontend**: **Pending**
-  - Multiple bindings (`Transaction`, `SectionMapping`, `BudgetRow`, `SetStandingBudgetBody`, `StandingBudget`, `ImportTransaction`, `SpendingGridRow`) now carry both `category: string | null` (legacy name) and `category_id: string | null` (FK)
-  - The backend already resolves names to IDs; the legacy string field is only needed for backward compat with old agents
-  - Once all agents are updated to send `category_id`, drop `category` from all request/response types and remove the dual-path handling in `mock_service.ts` and any components reading both fields
-  - Coordinate with Nonso: backend should enforce `category_id`-only once legacy path is confirmed unused
+- ✅ **Frontend bindings are auto-generated from Rust via ts-rs — no frontend changes needed here.** Once the backend drops the legacy `category` field from its structs, the bindings regenerate automatically and the frontend just follows.
 
 ### Type Sharing (ts-rs)
 

@@ -37,7 +37,7 @@ export function HoldingsDetail({ accountId, accountName, onClose }: HoldingsDeta
 
   return (
     <Sheet open={!!accountId} onOpenChange={() => onClose()}>
-      <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+      <SheetContent className="w-full sm:max-w-4xl overflow-y-auto px-6">
         <SheetHeader>
           <SheetTitle>{accountName} Holdings</SheetTitle>
         </SheetHeader>
