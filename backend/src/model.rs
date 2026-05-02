@@ -502,6 +502,9 @@ pub enum HoldingType {
     Bond,
     Crypto,
     Cash,
+    Property,
+    Loan,
+    Credit,
 }
 
 impl HoldingType {
@@ -513,6 +516,9 @@ impl HoldingType {
             Self::Bond => "bond",
             Self::Crypto => "crypto",
             Self::Cash => "cash",
+            Self::Property => "property",
+            Self::Loan => "loan",
+            Self::Credit => "credit",
         }
     }
 
@@ -524,6 +530,9 @@ impl HoldingType {
             "bond" => Some(Self::Bond),
             "crypto" => Some(Self::Crypto),
             "cash" => Some(Self::Cash),
+            "property" => Some(Self::Property),
+            "loan" => Some(Self::Loan),
+            "credit" => Some(Self::Credit),
             _ => None,
         }
     }

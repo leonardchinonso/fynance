@@ -69,7 +69,7 @@ export function StyledLineChart({
       <ResponsiveContainer width="100%" height={height + (showBrush ? 40 : 0)}>
         <LineChart
           data={data}
-          margin={{ top: 8, right: 16, bottom: 0, left: 16 }}
+          margin={{ top: 8, right: 32, bottom: 0, left: 16 }}
           onMouseMove={(state) => {
             if (onActiveIndexChange && state?.activeTooltipIndex !== undefined) {
               onActiveIndexChange(state.activeTooltipIndex)
@@ -79,7 +79,7 @@ export function StyledLineChart({
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
           <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />
-          <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
+          <YAxis width={90} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
           <Tooltip
             content={<ChartTooltip />}
             position={mousePos ?? undefined}
