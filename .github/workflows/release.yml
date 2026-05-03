@@ -49,8 +49,8 @@ jobs:
             if [ -z "$latest" ]; then
               next="v0.1.0"
             else
-              major=$(echo $latest | cut -d. -f1 | tr -d 'v')
-              minor=$(echo $latest | cut -d. -f2)
+              major=$(echo "$latest" | cut -d. -f1 | tr -d 'v')
+              minor=$(echo "$latest" | cut -d. -f2)
               next="v${major}.$((minor + 1)).0"
             fi
           fi
@@ -58,7 +58,7 @@ jobs:
           echo "Tagging $next"
           git tag "$next"
           git push origin "$next"
-          echo "tag=$next" >> $GITHUB_OUTPUT
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
 
   build-linux:
     name: Build binary (linux)
@@ -153,14 +153,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          assets="artifacts/fynance-linux-x86_64/fynance-linux-x86_64"
+          assets=("artifacts/fynance-linux-x86_64/fynance-linux-x86_64")
           if [ "${{ github.event.inputs.include_macos }}" = "true" ]; then
-            assets="$assets artifacts/fynance-macos-aarch64/fynance-macos-aarch64"
+            assets+=("artifacts/fynance-macos-aarch64/fynance-macos-aarch64")
           fi
           if [ "${{ github.event.inputs.include_windows }}" = "true" ]; then
-            assets="$assets artifacts/fynance-windows-x86_64.exe/fynance-windows-x86_64.exe"
+            assets+=("artifacts/fynance-windows-x86_64.exe/fynance-windows-x86_64.exe")
           fi
           gh release create "${{ needs.tag.outputs.tag }}" \
             --title "${{ needs.tag.outputs.tag }}" \
             --generate-notes \
-            $assets
+            "${assets[@]}"
