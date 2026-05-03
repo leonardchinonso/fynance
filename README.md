@@ -1,24 +1,10 @@
-# fynance
+<table><tr><td><h1>fynance</h1></td><td align="right"><a href="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml"><img src="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml/badge.svg?branch=master" alt="Release build"></a> <a href="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml"><img src="https://img.shields.io/github/commits-since/leonardchinonso/fynance/latest?label=unreleased%20commits" alt="Commits since latest release"></a> <a href="https://github.com/leonardchinonso/fynance/releases/latest"><img src="https://img.shields.io/github/v/release/leonardchinonso/fynance?label=version" alt="Latest release"></a></td></tr></table>
 
 Personal finance tracker with a Rust backend and React web UI. Import bank CSV exports (Monzo, Revolut, Lloyds), track budgets and net worth, all from your browser. External AI agents handle categorization and data extraction via the REST API.
 
 <p align="center">
   <a href="https://fynance-3c.vercel.app">
     <img src="https://img.shields.io/badge/Live%20Demo-Try%20it%20now-1a9e8f?style=for-the-badge&logoColor=white" alt="Live Demo" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml">
-    <img src="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml/badge.svg?branch=master" alt="Release build" />
-  </a>
-  &nbsp;
-  <a href="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml">
-    <img src="https://img.shields.io/github/commits-since/leonardchinonso/fynance/latest?label=unreleased%20commits" alt="Commits since latest release" />
-  </a>
-  &nbsp;
-  <a href="https://github.com/leonardchinonso/fynance/releases/latest">
-    <img src="https://img.shields.io/github/v/release/leonardchinonso/fynance?label=version" alt="Latest release" />
   </a>
 </p>
 
