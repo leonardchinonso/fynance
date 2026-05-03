@@ -2,7 +2,7 @@ import type { CategoryTotal } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import { ChartSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { ColoredBarChart } from "@/components/charts"
 import { CATEGORY_COLORS } from "@/lib/colors"
@@ -11,7 +11,7 @@ import { categoryParent } from "@/lib/utils"
 export function TransactionBarChart({ data }: { data: RemoteData<CategoryTotal[]> }) {
   return visitRemoteData(data, {
     notLoaded: () => <ChartSkeleton height={320} />,
-    failed: (error) => <NonIdealState title="Could not load chart" description={error} layout="horizontal" />,
+    failed: (error) => <AuthAwareError error={error} />,
     hasValue: (totals) => (
       <div className="relative">
         <TransactionBarChartInternal totals={totals} />

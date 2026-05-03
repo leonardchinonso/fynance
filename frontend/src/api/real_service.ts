@@ -1,3 +1,16 @@
+import { getAuthToken } from "./client"
+
+export class AuthError extends Error {
+  constructor(public readonly hasToken: boolean) {
+    super(
+      hasToken
+        ? "Your token may be expired or invalid."
+        : "Authorization required. You may need to generate an API token."
+    )
+    this.name = "AuthError"
+  }
+}
+
 import type {
   Account,
   AccountSnapshot,
@@ -36,7 +49,11 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
       if (v !== undefined && v !== "") url.searchParams.set(k, v)
     }
   }
-  const res = await fetch(url.toString())
+  const token = getAuthToken()
+  const headers: Record<string, string> = {}
+  if (token) headers["Authorization"] = `Bearer ${token}`
+  const res = await fetch(url.toString(), { headers })
+  if (res.status === 401) throw new AuthError(!!token)
   if (!res.ok) {
     const body = await res.text()
     throw new Error(`${res.status} ${res.statusText}: ${body}`)
@@ -45,11 +62,14 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
+  const token = getAuthToken()
+  const authHeader = token ? { Authorization: `Bearer ${token}` } : {}
   const res = await fetch(`${window.location.origin}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeader },
     body: JSON.stringify(body),
   })
+  if (res.status === 401) throw new AuthError(!!token)
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`${res.status} ${res.statusText}: ${text}`)
@@ -58,10 +78,15 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function postMultipart<T>(path: string, formData: FormData): Promise<T> {
+  const token = getAuthToken()
+  const headers: Record<string, string> = {}
+  if (token) headers["Authorization"] = `Bearer ${token}`
   const res = await fetch(`${window.location.origin}${path}`, {
     method: "POST",
+    headers,
     body: formData,
   })
+  if (res.status === 401) throw new AuthError(!!token)
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`${res.status} ${res.statusText}: ${text}`)
@@ -70,11 +95,14 @@ async function postMultipart<T>(path: string, formData: FormData): Promise<T> {
 }
 
 async function patch<T>(path: string, body: unknown): Promise<T> {
+  const token = getAuthToken()
+  const authHeader = token ? { Authorization: `Bearer ${token}` } : {}
   const res = await fetch(`${window.location.origin}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeader },
     body: JSON.stringify(body),
   })
+  if (res.status === 401) throw new AuthError(!!token)
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`${res.status} ${res.statusText}: ${text}`)
@@ -83,7 +111,11 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function del(path: string): Promise<void> {
-  const res = await fetch(`${window.location.origin}${path}`, { method: "DELETE" })
+  const token = getAuthToken()
+  const headers: Record<string, string> = {}
+  if (token) headers["Authorization"] = `Bearer ${token}`
+  const res = await fetch(`${window.location.origin}${path}`, { method: "DELETE", headers })
+  if (res.status === 401) throw new AuthError(!!token)
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`${res.status} ${res.statusText}: ${text}`)

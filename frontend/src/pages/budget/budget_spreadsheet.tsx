@@ -8,7 +8,7 @@ import {
   cn, formatCurrency, categoryLeaf, groupMonthsByGranularity, getMonthsForPeriod, formatPeriodKey,
 } from "@/lib/utils"
 import { SpreadsheetSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { EmptyState } from "@/components/empty_state"
 import { BudgetEditPopover } from "./budget_edit_popover"
@@ -23,7 +23,7 @@ interface BudgetSpreadsheetProps {
 export function BudgetSpreadsheet({ data, months, granularity, onBudgetSaved }: BudgetSpreadsheetProps) {
   return visitRemoteData(data, {
     notLoaded: () => <SpreadsheetSkeleton />,
-    failed: (error) => <NonIdealState title="Could not load budget" description={error} action={onBudgetSaved ? { label: "Try again", onClick: onBudgetSaved } : undefined} />,
+    failed: (error) => <AuthAwareError error={error} onRetry={onBudgetSaved} />,
     hasValue: (rows) => (
       <div className="relative">
         <BudgetSpreadsheetInternal rows={rows} months={months} granularity={granularity} onBudgetSaved={onBudgetSaved} />

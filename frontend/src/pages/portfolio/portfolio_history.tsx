@@ -3,7 +3,7 @@ import type { PortfolioHistoryRow, Granularity } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import { PortfolioHistorySkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { StyledLineChart } from "@/components/charts"
 import { EmptyState } from "@/components/empty_state"
@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils"
 export function PortfolioHistory({ data, granularity }: { data: RemoteData<PortfolioHistoryRow[]>; granularity: Granularity }) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioHistorySkeleton />,
-    failed: (error) => <NonIdealState title="Could not load history" description={error} />,
+    failed: (error) => <AuthAwareError error={error} />,
     hasValue: (history) => (
       <div className="relative">
         <PortfolioHistoryInternal history={history} granularity={granularity} />

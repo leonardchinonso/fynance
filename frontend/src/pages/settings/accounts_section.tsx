@@ -6,7 +6,7 @@ import { visitRemoteData } from "@/lib/remote_data"
 import { useIngestionPreferences } from "@/hooks/use_ingestion_preferences"
 import { DraggableList, DragHandle } from "@/components/draggable_list"
 import { SettingsListSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -47,7 +47,7 @@ export function AccountsSection({ data, profilesData, onRefresh }: Props) {
       <CardContent>
         {visitRemoteData(data, {
           notLoaded: () => <SettingsListSkeleton rows={4} />,
-          failed: (error) => <NonIdealState title="Could not load accounts" description={error} action={{ label: "Try again", onClick: onRefresh }} />,
+          failed: (error) => <AuthAwareError error={error} onRetry={onRefresh} />,
           hasValue: (accounts) => <AccountsList accounts={accounts} />,
         })}
       </CardContent>
