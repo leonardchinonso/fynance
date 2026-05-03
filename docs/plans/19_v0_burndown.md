@@ -279,6 +279,7 @@ CSV is supported. PDFs and images deferred to V1.
 - [x] **Categories section:** grouped list with add/edit/delete (backend CRUD endpoints available: POST/GET/PATCH/DELETE /api/categories)
 - [x] **Data Ingestion section:** account ordering via DraggableList, hide/show accounts, stored in localStorage
 - [x] **Appearance section:** Light/Dark/System theme toggle (moved from navbar)
+  - ⚠️ **"System" mode broken on mobile** — on mobile devices, selecting "System" does not detect/apply the OS dark mode preference. Light/Dark manual selections work fine; only auto-detection is affected.
 - [x] **Data Source section:** Live/Mock toggle with MOCK_ONLY env var support (moved from navbar)
 - [x] **Navbar changes:** removed theme and mock/live toggles, added Import CTA popover, added Settings gear icon
 - [x] **Import wizard** (`/import?mode=wizard`): step through accounts with file upload, skip, preview results, completion summary
