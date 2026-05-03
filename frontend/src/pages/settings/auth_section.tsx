@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Eye, EyeOff, KeyRound, Terminal } from "lucide-react"
-import { getAuthToken, setAuthToken } from "@/api/client"
+import { getAuthToken, setAuthToken, MOCK_ONLY } from "@/api/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -65,25 +65,27 @@ export function AuthSection() {
               type={showToken ? "text" : "password"}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              placeholder="fyn_..."
+              placeholder={MOCK_ONLY ? "The demo webpage does not support API tokens" : "fyn_..."}
               className="pr-10"
+              disabled={MOCK_ONLY}
             />
             <button
               type="button"
               onClick={() => setShowToken((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              disabled={MOCK_ONLY}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors disabled:pointer-events-none disabled:opacity-50"
             >
               {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
-          <p className="text-xs text-muted-foreground">Tokens start with fyn_...</p>
+          {!MOCK_ONLY && <p className="text-xs text-muted-foreground">Tokens start with fyn_...</p>}
         </div>
 
         <div className="flex items-center gap-2">
-          <Button onClick={handleSave} disabled={!isDirty} size="sm">
+          <Button onClick={handleSave} disabled={MOCK_ONLY || !isDirty} size="sm">
             Save
           </Button>
-          {storedToken && (
+          {storedToken && !MOCK_ONLY && (
             <Button onClick={handleClear} variant="destructive" size="sm">
               Clear
             </Button>
