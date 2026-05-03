@@ -18,3 +18,4 @@ frontend/.vite/
 
 #/target
 .playwright-mcp/
+.vercel
