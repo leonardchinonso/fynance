@@ -30,7 +30,7 @@ export function DataSourceSection() {
             <div>
               <p className="text-sm font-medium">Mock mode is enforced</p>
               <p className="text-xs text-muted-foreground">
-                The VITE_MOCK_ONLY environment variable is set. The toggle is disabled.
+                The demo webpage can only use mock data.
               </p>
             </div>
           </div>
