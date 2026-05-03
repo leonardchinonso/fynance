@@ -7,6 +7,14 @@ on:
         description: "Version tag (e.g. v1.2.0). Leave blank to auto-increment from latest tag."
         required: false
         default: ""
+      include_macos:
+        description: "Build macOS binary (uses paid Actions minutes)"
+        type: boolean
+        default: false
+      include_windows:
+        description: "Build Windows binary (uses paid Actions minutes)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -62,12 +70,16 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset_name: fynance-linux-x86_64
+            enabled: true
           - os: macos-latest
             target: aarch64-apple-darwin
             asset_name: fynance-macos-aarch64
+            enabled: ${{ github.event.inputs.include_macos == 'true' }}
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset_name: fynance-windows-x86_64.exe
+            enabled: ${{ github.event.inputs.include_windows == 'true' }}
+    if: matrix.enabled == true || matrix.enabled == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -138,9 +150,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          assets="artifacts/fynance-linux-x86_64/fynance-linux-x86_64"
+          if [ "${{ github.event.inputs.include_macos }}" = "true" ]; then
+            assets="$assets artifacts/fynance-macos-aarch64/fynance-macos-aarch64"
+          fi
+          if [ "${{ github.event.inputs.include_windows }}" = "true" ]; then
+            assets="$assets artifacts/fynance-windows-x86_64.exe/fynance-windows-x86_64.exe"
+          fi
           gh release create "${{ needs.tag.outputs.tag }}" \
             --title "${{ needs.tag.outputs.tag }}" \
             --generate-notes \
-            artifacts/fynance-linux-x86_64/fynance-linux-x86_64 \
-            artifacts/fynance-macos-aarch64/fynance-macos-aarch64 \
-            "artifacts/fynance-windows-x86_64.exe/fynance-windows-x86_64.exe"
+            $assets
