@@ -1,13 +1,15 @@
 import { getAuthToken } from "./client"
 
 export class AuthError extends Error {
-  constructor(public readonly hasToken: boolean) {
+  hasToken: boolean
+  constructor(hasToken: boolean) {
     super(
       hasToken
         ? "Your token may be expired or invalid."
         : "Authorization required. You may need to generate an API token."
     )
     this.name = "AuthError"
+    this.hasToken = hasToken
   }
 }
 
@@ -63,10 +65,11 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const token = getAuthToken()
-  const authHeader = token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (token) headers["Authorization"] = `Bearer ${token}`
   const res = await fetch(`${window.location.origin}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeader },
+    headers,
     body: JSON.stringify(body),
   })
   if (res.status === 401) throw new AuthError(!!token)
@@ -96,10 +99,11 @@ async function postMultipart<T>(path: string, formData: FormData): Promise<T> {
 
 async function patch<T>(path: string, body: unknown): Promise<T> {
   const token = getAuthToken()
-  const authHeader = token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (token) headers["Authorization"] = `Bearer ${token}`
   const res = await fetch(`${window.location.origin}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeader },
+    headers,
     body: JSON.stringify(body),
   })
   if (res.status === 401) throw new AuthError(!!token)
