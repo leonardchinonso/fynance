@@ -1,65 +1,41 @@
-name: Docker publish
+name: Release
 
 on:
-  push:
-    branches: [master]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v1.2.0). Leave blank to auto-increment from latest tag."
+        required: false
+        default: ""
 
 permissions:
   contents: write
   packages: write
 
 concurrency:
-  group: docker-publish
+  group: release
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Build & push to GHCR
+  tag:
+    name: Determine version tag
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Compute next version
-        id: version
-        run: |
-          git fetch --tags
-          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n1)
-          if [ -z "$latest" ]; then
-            next="v0.1.0"
-          else
-            major=$(echo $latest | cut -d. -f1 | tr -d 'v')
-            minor=$(echo $latest | cut -d. -f2)
-            next="v${major}.$((minor + 1)).0"
-          fi
-          echo "version=$next" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          build-args: |
-            APP_VERSION=${{ steps.version.outputs.version }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/fynance:latest
-            ghcr.io/${{ github.repository_owner }}/fynance:${{ steps.version.outputs.version }}
-
-      - name: Tag and push version
+      - name: Compute and push tag
+        id: tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          max_retries=5
-          attempt=0
-          while [ $attempt -lt $max_retries ]; do
+
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            next="${{ github.event.inputs.version }}"
+          else
             git fetch --tags
             latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n1)
             if [ -z "$latest" ]; then
@@ -69,16 +45,106 @@ jobs:
               minor=$(echo $latest | cut -d. -f2)
               next="v${major}.$((minor + 1)).0"
             fi
-            echo "Attempt $((attempt + 1)): tagging $next"
-            if git tag "$next" && git push origin "$next"; then
-              echo "Tagged $next successfully"
-              break
-            fi
-            git tag -d "$next" 2>/dev/null || true
-            attempt=$((attempt + 1))
-            if [ $attempt -eq $max_retries ]; then
-              echo "Failed to push tag after $max_retries attempts"
-              exit 1
-            fi
-            sleep $((RANDOM % 5 + 1))
-          done
+          fi
+
+          echo "Tagging $next"
+          git tag "$next"
+          git push origin "$next"
+          echo "tag=$next" >> $GITHUB_OUTPUT
+
+  build-binaries:
+    name: Build binary (${{ matrix.target }})
+    needs: tag
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_name: fynance-linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset_name: fynance-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset_name: fynance-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_name: fynance-windows-x86_64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Build binary
+        run: cargo build --release --manifest-path backend/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Rename binary (Unix)
+        if: matrix.os != 'windows-latest'
+        run: cp backend/target/${{ matrix.target }}/release/fynance ${{ matrix.asset_name }}
+
+      - name: Rename binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cp backend/target/${{ matrix.target }}/release/fynance.exe ${{ matrix.asset_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  publish:
+    name: Publish Docker image & GitHub Release
+    needs: [tag, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            APP_VERSION=${{ needs.tag.outputs.tag }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fynance:latest
+            ghcr.io/${{ github.repository_owner }}/fynance:${{ needs.tag.outputs.tag }}
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ needs.tag.outputs.tag }}" \
+            --title "${{ needs.tag.outputs.tag }}" \
+            --generate-notes \
+            artifacts/fynance-linux-x86_64/fynance-linux-x86_64 \
+            artifacts/fynance-macos-x86_64/fynance-macos-x86_64 \
+            artifacts/fynance-macos-aarch64/fynance-macos-aarch64 \
+            "artifacts/fynance-windows-x86_64.exe/fynance-windows-x86_64.exe"
