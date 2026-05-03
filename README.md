@@ -2,75 +2,123 @@
 
 Personal finance tracker with a Rust backend and React web UI. Import bank CSV exports (Monzo, Revolut, Lloyds), track budgets and net worth, all from your browser. External AI agents handle categorization and data extraction via the REST API.
 
-## Tech Stack
+<p align="center">
+  <a href="https://fynance-3c.vercel.app">
+    <img src="https://img.shields.io/badge/Live%20Demo-Try%20it%20now-1a9e8f?style=for-the-badge&logoColor=white" alt="Live Demo" />
+  </a>
+</p>
 
-- **Backend:** Rust, Axum, SQLite (rusqlite), Tokio
-- **Frontend:** React 19, React Compiler, Vite, TypeScript, Tailwind, shadcn-ui, Recharts
-- **AI:** External agents categorize and extract data, pushing results through the API. Agent-readable OpenAPI docs at `/api/docs`.
-- **Deployment:** Docker, single container, SQLite on a volume
+## Running fynance
 
-## Deployment (Docker)
+### Option 1: Local binary (personal use on your own machine)
 
-The simplest way to run fynance. Requires only Docker and Docker Compose.
+**Prerequisites:** Nothing. Just download the binary and run it. No Rust, no Node.js, no Docker.
 
-1. Copy and configure the environment file:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` and fill in your values (see [Environment Variables](#environment-variables) below).
+Download the binary for your platform from [GitHub Releases](https://github.com/leonardchinonso/fynance/releases):
 
-2. Start the app:
-   ```bash
-   docker compose up -d
-   ```
+| Platform | File |
+|---|---|
+| Linux (x86_64) | `fynance-linux-x86_64` |
+| macOS (Apple Silicon) | `fynance-macos-aarch64` |
+| macOS (Intel) | `fynance-macos-x86_64` |
+| Windows | `fynance-windows-x86_64.exe` |
 
-3. Open `http://localhost:7433` in your browser.
+**Linux / macOS:**
+```bash
+chmod +x fynance-*        # make it executable
+sudo mv fynance-* /usr/local/bin/fynance   # put it on your PATH
+fynance serve
+```
 
-The database is created automatically on first run. Data persists in a Docker volume across restarts.
+**Windows:**
+
+Rename the downloaded file to `fynance.exe`, move it somewhere on your PATH (e.g. `C:\Users\<you>\bin\`), then run:
+```powershell
+fynance serve
+```
+
+The app opens automatically in your browser at `http://localhost:7433`. Your data is stored in the OS default location:
+- Linux: `~/.local/share/fynance/fynance.db`
+- macOS: `~/Library/Application Support/fynance/`
+- Windows: `%APPDATA%\fynance\`
+
+#### Updating
+
+Download the latest binary from [GitHub Releases](https://github.com/leonardchinonso/fynance/releases) and replace the existing one on your PATH.
+
+### Option 2: Docker (always-on, self-hosted)
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) and Docker Compose. No Rust, no Node.js, no build step.
+
+Use this if you want fynance running persistently on a home server or NAS, surviving reboots automatically.
+
+Create a `docker-compose.yml`:
+
+```yaml
+services:
+  fynance:
+    image: ghcr.io/leonardchinonso/fynance:latest
+    ports:
+      - "7433:7433"
+    volumes:
+      - fynance-data:/home/fynance/data
+    environment:
+      - FYNANCE_HOST=0.0.0.0
+      - FYNANCE_DB_PATH=/home/fynance/data/fynance.db
+      - FYNANCE_LOG_LEVEL=info
+    restart: unless-stopped
+
+volumes:
+  fynance-data:
+```
+
+Then run:
+
+```bash
+docker compose up -d
+```
+
+Open `http://localhost:7433` in your browser. The database is created automatically and persists in a Docker volume across restarts.
 
 ```bash
 docker compose logs -f fynance   # view logs
 docker compose down              # stop
 docker compose down -v           # stop and delete all data
-docker compose up -d --build     # rebuild locally after code changes
 ```
 
-### Updating
+> **Note:** `FYNANCE_HOST=0.0.0.0` is required in Docker so that port mapping can reach the server. If you are deploying behind a reverse proxy and want to restrict which network interface accepts connections, bind the port to a specific IP instead, for example `"192.168.1.49:7433:7433"`.
 
-Pre-built images are published to GitHub Container Registry on every push to `main`. To update a running deployment:
+#### Updating
+
+Pre-built images are published to GitHub Container Registry on every merge to master:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-To pin to a specific release version, set the image in `docker-compose.yml`:
+To pin to a specific release:
 ```yaml
-image: ghcr.io/<owner>/fynance:v0.3.0
+image: ghcr.io/leonardchinonso/fynance:v0.9.0
 ```
 
-### Releases
-
-Releases are created manually via the GitHub Actions UI. Go to Actions > Release > Run workflow, enter a version tag (e.g., `v0.3.0`), and it builds, publishes the Docker image, and creates a GitHub Release with auto-generated release notes.
-
-## Environment Variables
+### Environment Variables
 
 Configuration is managed through a `.env` file at the project root. The repo includes a `.env.example` with safe defaults. Copy it to `.env` and fill in your values. The `.env` file is gitignored and should never be committed.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `FYNANCE_PORT` | `7433` | No | HTTP server port (serves both web UI and REST API) |
-| `FYNANCE_HOST` | `127.0.0.1` | No | Bind address. Set to `0.0.0.0` in Docker (done automatically by the Docker image) |
-| `FYNANCE_DB_PATH` | OS data dir | No | Full path to the SQLite database file. In Docker this is set to `/home/fynance/data/fynance.db` automatically |
-| `ANTHROPIC_API_KEY` | (none) | No | Not needed for MVP. Internal AI workflows are deferred. Categorization is handled by external AI agents that push data through the API |
+| `FYNANCE_HOST` | `127.0.0.1` | No | Bind address. Set to `0.0.0.0` in Docker so port mapping can reach the server |
+| `FYNANCE_DB_PATH` | OS data dir | No | Full path to the SQLite database file. In Docker set to `/home/fynance/data/fynance.db` |
 | `FYNANCE_LOG_LEVEL` | `info` | No | Log verbosity. Options: `trace`, `debug`, `info`, `warn`, `error` |
 | `FYNANCE_ADDITIONAL_DOCS` | (none) | No | Path to additional documentation for AI agents building against this environment |
 
-Example `.env` for local development:
+Example `.env` for local binary use:
 ```env
 FYNANCE_PORT=7433
 FYNANCE_HOST=127.0.0.1
-FYNANCE_LOG_LEVEL=debug
+FYNANCE_LOG_LEVEL=info
 ```
 
 Example `.env` for Docker deployment:
@@ -78,18 +126,45 @@ Example `.env` for Docker deployment:
 FYNANCE_PORT=7433
 FYNANCE_LOG_LEVEL=info
 ```
-(Docker sets `FYNANCE_HOST` and `FYNANCE_DB_PATH` automatically via the Dockerfile, no need to override them.)
+(Docker sets `FYNANCE_HOST` and `FYNANCE_DB_PATH` via the compose file, no need to override them.)
+
+## Releases
+
+A new minor version is created automatically on every merge to master. The workflow builds and pushes the Docker image, compiles binaries for all platforms, increments the minor version tag (e.g., `v0.9.0` → `v0.10.0`), and publishes a GitHub Release with auto-generated notes and the compiled binaries attached. There is no manual release flow at this time.
+
+## CLI
+
+```bash
+fynance serve [--port 7433] [--no-open]      # Start local web UI
+fynance import <file|dir> --account <id>     # Import CSV statements
+fynance account add --id <id> --name <name> --institution <inst> --type <type>
+fynance account set-balance <id> <amount> --date YYYY-MM-DD
+fynance account list
+fynance budget set --month YYYY-MM --category <c> --amount N
+fynance budget status
+fynance stats
+fynance export --year YYYY --format csv
+fynance token create --name <name>           # generate API token for programmatic access
+fynance token list
+fynance token revoke --name <name>
+```
 
 ## Local Development Setup
 
-> **Important:** During development always open `http://localhost:5173` (Vite dev server), not `http://localhost:7433`. The backend port serves a pre-compiled frontend bundle that is only updated when you run `make build`. The Vite dev server reflects your latest source changes instantly via HMR.
+> **Important:** During development always open `http://localhost:5173` (Vite dev server), not `http://localhost:7433`. The backend port serves a pre-compiled frontend bundle only updated when you run `make build`. The Vite dev server reflects your latest source changes instantly via HMR.
+
+### Tech Stack
+
+- **Backend:** Rust (edition 2024, MSRV 1.85), Axum, SQLite via rusqlite, Tokio
+- **Frontend:** React 19, React Compiler, Vite, TypeScript, Tailwind, shadcn-ui, Recharts
+- **AI:** External agents categorize and extract data, pushing results through the REST API. Agent-readable OpenAPI docs at `/api/docs`.
+- **Deployment:** Standalone binary or Docker, SQLite on disk or a volume
 
 ### Prerequisites
 
-- **Rust** 1.85+ MSRV: `curl https://sh.rustup.rs -sSf | sh`
+- **Rust** 1.85+: `curl https://sh.rustup.rs -sSf | sh`
 - **Node.js** 22+ and **npm**: From [nodejs.org](https://nodejs.org)
 - **`cargo-watch`** (optional, for live reload): `cargo install cargo-watch`
-- **.env file** with API keys (see [Environment Variables](#environment-variables) above)
 
 ### Initial Setup
 
@@ -103,20 +178,17 @@ cd fynance
 # 2. Copy and configure the environment file
 cp .env.example .env
 $EDITOR .env
-# Fill in at least: FYNANCE_ANTHROPIC_API_KEY for CSV imports
 
 # 3. Install frontend dependencies
-cd frontend
-npm install
-cd ..
+cd frontend && npm install && cd ..
 
-# 4. Do an initial frontend build (required for Rust embedded UI)
+# 4. Do an initial frontend build (required for the Rust embedded UI)
 cd frontend && npm run build && cd ..
 ```
 
 ### Running the Full Stack (End-to-End Testing)
 
-This is the recommended workflow for active development on both frontend and backend. You will have two dev servers running: Vite for the frontend and Axum for the backend. The frontend will proxy API calls to the backend, so you can interact with the real API while developing.
+The recommended workflow for active development on both frontend and backend. Two dev servers run simultaneously: Vite for the frontend and Axum for the backend. The frontend proxies API calls to the backend so you interact with the real API while developing.
 
 **Terminal 1** — Backend with live reload:
 ```bash
@@ -132,19 +204,12 @@ npm run dev
 ```
 Vite dev server starts on `http://localhost:5173` with instant hot reload.
 
-**Browser:**
-```
-Open http://localhost:5173
-```
-
-The frontend automatically proxies `/api/*` requests to the backend:
+Open `http://localhost:5173`. The frontend automatically proxies `/api/*` requests to the backend:
 ```
 Browser (localhost:5173)
   ├── page/assets --> Vite dev server (instant HMR)
   └── /api/*      --> proxied to Axum backend (localhost:7433)
 ```
-
-Frontend changes appear instantly. Backend changes take a few seconds to recompile.
 
 ### Running the Backend Only
 
@@ -172,90 +237,26 @@ cd frontend
 npm run dev
 ```
 
-Open `http://localhost:5173`. The frontend is configured to proxy `/api/*` requests to `http://localhost:7433`, so you need a running backend (see above).
+Open `http://localhost:5173`. The frontend proxies `/api/*` requests to `http://localhost:7433`, so a running backend is required. If it is not running, API calls will fail. You can point to a different backend by editing the `proxy` configuration in `frontend/vite.config.ts`.
 
-If the backend is not running, API calls will fail. You can point to a different backend by editing `frontend/vite.config.ts` (the `proxy` configuration).
-
-### One-Command Full Build
-
-To build both frontend and backend for production (or to verify everything compiles):
+### Build
 
 ```bash
-make build
+make build           # frontend + backend (production)
+cargo build          # backend only
+cd frontend && npm run build   # frontend only
 ```
 
-This runs `npm run build` in the frontend folder, then `cargo build --release` in the backend. The result is a single binary in `backend/target/release/fynance` with the compiled React app embedded.
-
-To build only the backend:
-```bash
-cd backend && cargo build --release
-```
-
-To build only the frontend:
-```bash
-cd frontend && npm run build
-```
-
-### Typical Development Workflows
-
-#### Scenario 1: Backend Changes Only (Rust)
-
-You have the backend running and want to iterate on the API or database logic.
-
-```bash
-# Terminal 1: Backend with live reload
-cd backend && cargo watch -x 'run -- serve --no-open'
-
-# Terminal 2: Optional, to make requests manually
-curl http://localhost:7433/api/health
-curl http://localhost:7433/api/docs    # OpenAPI schema
-```
-
-#### Scenario 2: Frontend Changes Only (React/TypeScript)
-
-You have both frontend and backend running and want to iterate on the UI.
-
-```bash
-# Terminal 1: Backend (can be idle, requests will still work)
-cd backend && cargo watch -x 'run -- serve --no-open'
-
-# Terminal 2: Frontend with HMR
-cd frontend && npm run dev
-
-# Browser: Open http://localhost:5173
-# Make changes to src/**/*.tsx - they appear instantly
-```
-
-#### Scenario 3: End-to-End Testing (Both Stacks)
-
-You want to test the full flow: user interaction → API call → database → response → UI update.
-
-Follow the instructions in [Running the Full Stack](#running-the-full-stack-end-to-end-testing) above.
-
-#### Scenario 4: Testing the Production Binary
-
-After a full build, you can run the compiled binary locally:
-
-```bash
-make build
-./backend/target/release/fynance serve
-```
-
-Open `http://localhost:7433`. The frontend is embedded, so no separate dev server is needed. This is the same binary you would ship in Docker.
+`make build` runs `npm run build` in the frontend folder then `cargo build --release` in the backend. The result is a single binary at `backend/target/release/fynance` with the compiled React app embedded.
 
 ### Testing and Validation
 
-Before pushing code, run tests and linters:
+PRs that fail CI will not be merged. Before pushing, run:
 
 ```bash
-# All backend tests (no API key needed)
-cd backend && cargo test
-
-# Lint
-cargo clippy --all-targets -- -D warnings
-
-# Format check
-cargo fmt --check
+cd backend && cargo test                          # all backend tests
+cargo clippy --all-targets -- -D warnings         # lint (zero warnings enforced)
+cargo fmt --check                                 # formatting
 ```
 
 For the live smoke test against the real Anthropic API:
@@ -264,22 +265,10 @@ cd backend
 FYNANCE_ANTHROPIC_API_KEY=<your-key> cargo test -- --ignored
 ```
 
-### Importing Real Bank Data
-
-Once the backend is running, you can import real CSV bank statements:
-
-```bash
-fynance account add --id my-monzo --name "Monzo" --institution Monzo --type checking --currency GBP
-fynance import ~/Downloads/monzo-statement.csv --account my-monzo
-fynance stats    # verify the import
-```
-
-The frontend will then show the imported transactions in the Transactions view and include them in budget/portfolio calculations.
-
 ### How It All Works Together
 
 ```
-Development Flow:
+Development:
 ├── Frontend (Vite @ localhost:5173)
 │   ├── src/ (TypeScript + React)
 │   ├── npm run build --> dist/
@@ -291,77 +280,38 @@ Development Flow:
 │   └── cargo run -- serve    --> HTTP server
 │
 ├── Database (SQLite)
-│   └── ~/.local/share/fynance/fynance.db (macOS: ~/Library/Application Support/fynance/)
+│   └── ~/.local/share/fynance/fynance.db
 │
 └── Browser
-    ├── Request GET /app/transactions
-    ├── Vite responds with React bundle
-    ├── React mounts, fetches GET /api/transactions
-    ├── Proxy sends to Axum backend
+    ├── React bundle served by Vite (dev) or Axum (prod)
+    ├── React fetches GET /api/transactions
     ├── Axum queries SQLite, returns JSON
     └── React renders the data
 ```
 
-In production:
-- Build frontend with `npm run build`.
-- Embed the `dist/` folder into the Rust binary via `include_dir!`.
-- Compile the Rust binary: `cargo build --release`.
-- Run the single binary: `./target/release/fynance serve`.
-- Everything is served from `http://localhost:7433` with no separate dev servers.
-
-## Build
-
-```bash
-make build           # frontend + backend (production)
-cargo build          # backend only
-cargo test           # run tests
-cargo clippy --all-targets -- -D warnings   # lint
-cargo fmt            # format
-```
-
-## CLI
-
-```bash
-fynance serve [--port 7433] [--no-open]      # Start local web UI
-fynance import <file|dir> --account <id>     # Import CSV statements
-fynance categorize [--batch]                  # Run categorization pipeline
-fynance account add --id <id> --name <name> --institution <inst> --type <type>
-fynance account set-balance <id> <amount> --date YYYY-MM-DD
-fynance account list
-fynance budget set --month YYYY-MM --category <c> --amount N
-fynance budget status
-fynance stats
-fynance export --year YYYY --format csv
-fynance monthly                               # import + categorize + snapshot
-```
-
-## Project Structure
+### Project Structure
 
 ```
 fynance/
-├── frontend/                # React 19 app (see frontend/README.md for full structure)
+├── frontend/                # React 19 app (see frontend/README.md)
 │   └── src/
-│       └── types/           # TypeScript interfaces (auto-generated by ts-rs from Rust later)
+│       └── types/           # TypeScript interfaces (auto-generated by ts-rs from Rust)
 ├── backend/                 # Rust crate (see backend/README.md)
 │   ├── src/
 │   └── config/              # categories.yaml, rules.yaml
-├── db/                      # SQLite schema and migrations (see db/README.md)
+├── db/                      # SQLite schema and migrations
 ├── assets/                  # Shared assets (logo, etc.)
 ├── docs/                    # Design docs, plans, research
-│   ├── design/
-│   ├── plans/
-│   └── research/
 ├── .github/workflows/       # CI/CD
 ├── docker-compose.yml
 ├── Dockerfile
 ├── Makefile
 ├── .env.example
-├── CLAUDE.md                # AI agent context for this project
 └── README.md
 ```
 
-## How It Works
+### How It Works
 
-The Rust binary serves both the API and the frontend. At build time, Vite compiles the React app to static files, which get embedded into the Rust binary via `include_dir!`. At runtime, Axum serves everything from a single process: API routes at `/api/*`, the React app at everything else.
+The Rust binary serves both the API and the frontend from a single process and port. At build time, Vite compiles the React app to static files, which get embedded into the Rust binary via `include_dir!`. At runtime, Axum serves API routes at `/api/*` and the React app at everything else.
 
 In development, the frontend runs on its own Vite dev server with hot reload, and proxies API calls to the Rust backend. No embedding happens during dev.
