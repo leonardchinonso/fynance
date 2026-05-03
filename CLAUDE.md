@@ -188,6 +188,16 @@ See `docs/design/05_security_isolation.md` for details.
 
 - **ci.yml**: Runs on every push and PR to master. Jobs: `actionlint` (workflow linting), `frontend` (tsc + build + upload artifact), `backend` (clippy + tests, needs frontend artifact), `docker-dry-run` (build only, no push).
 - **release.yml**: Manual trigger only (`workflow_dispatch`). Computes/pushes a version tag, builds Linux binary (always), macOS/Windows (opt-in), pushes Docker image to GHCR, creates GitHub Release with binaries attached.
+- **vercel-deploy** (job inside ci.yml): Runs on every push to master after the `frontend` job succeeds, reusing its build artifact. Deploys to Vercel (https://fynance-3c.vercel.app) via `vercel deploy --prebuilt` using three GitHub repo secrets: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
+
+### Vercel Token Renewal
+
+The `VERCEL_TOKEN` secret in the GitHub repo expires **2027-05-03**. To renew:
+1. Go to https://vercel.com/account/tokens
+2. Create a new token scoped to `3dos-projects`, no expiry or 1 year
+3. Run: `gh secret set VERCEL_TOKEN --repo leonardchinonso/fynance --body "<new_token>"`
+4. Revoke the old token from the Vercel dashboard
+5. Update the expiry date in this file
 
 ## Git Workflow
 
