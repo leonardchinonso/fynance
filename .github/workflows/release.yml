@@ -31,7 +31,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -65,15 +65,15 @@ jobs:
     needs: tag
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
       - run: cd frontend && npm ci && npm run build
       - run: cargo build --release --manifest-path backend/Cargo.toml
       - run: cp backend/target/release/fynance fynance-linux-x86_64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fynance-linux-x86_64
           path: fynance-linux-x86_64
@@ -84,17 +84,17 @@ jobs:
     if: ${{ github.event.inputs.include_macos == 'true' }}
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
       - run: cd frontend && npm ci && npm run build
       - run: cargo build --release --manifest-path backend/Cargo.toml --target aarch64-apple-darwin
       - run: cp backend/target/aarch64-apple-darwin/release/fynance fynance-macos-aarch64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fynance-macos-aarch64
           path: fynance-macos-aarch64
@@ -105,15 +105,15 @@ jobs:
     if: ${{ github.event.inputs.include_windows == 'true' }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
       - run: cd frontend && npm ci && npm run build
       - run: cargo build --release --manifest-path backend/Cargo.toml
       - run: cp backend/target/release/fynance.exe fynance-windows-x86_64.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fynance-windows-x86_64.exe
           path: fynance-windows-x86_64.exe
@@ -124,17 +124,17 @@ jobs:
     if: always() && needs.build-linux.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -145,7 +145,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/fynance:${{ needs.tag.outputs.tag }}
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
