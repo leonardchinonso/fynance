@@ -60,65 +60,68 @@ jobs:
           git push origin "$next"
           echo "tag=$next" >> $GITHUB_OUTPUT
 
-  build-binaries:
-    name: Build binary (${{ matrix.target }})
+  build-linux:
+    name: Build binary (linux)
     needs: tag
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            asset_name: fynance-linux-x86_64
-            enabled: true
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            asset_name: fynance-macos-aarch64
-            enabled: ${{ github.event.inputs.include_macos == 'true' }}
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            asset_name: fynance-windows-x86_64.exe
-            enabled: ${{ github.event.inputs.include_windows == 'true' }}
-    if: matrix.enabled == true || matrix.enabled == 'true'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
-
-      - name: Build frontend
-        run: |
-          cd frontend
-          npm ci
-          npm run build
-
-      - name: Build binary
-        run: cargo build --release --manifest-path backend/Cargo.toml --target ${{ matrix.target }}
-
-      - name: Rename binary (Unix)
-        if: matrix.os != 'windows-latest'
-        run: cp backend/target/${{ matrix.target }}/release/fynance ${{ matrix.asset_name }}
-
-      - name: Rename binary (Windows)
-        if: matrix.os == 'windows-latest'
-        run: cp backend/target/${{ matrix.target }}/release/fynance.exe ${{ matrix.asset_name }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - run: cd frontend && npm ci && npm run build
+      - run: cargo build --release --manifest-path backend/Cargo.toml
+      - run: cp backend/target/release/fynance fynance-linux-x86_64
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}
+          name: fynance-linux-x86_64
+          path: fynance-linux-x86_64
+
+  build-macos:
+    name: Build binary (macos)
+    needs: tag
+    if: ${{ github.event.inputs.include_macos == 'true' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: cd frontend && npm ci && npm run build
+      - run: cargo build --release --manifest-path backend/Cargo.toml --target aarch64-apple-darwin
+      - run: cp backend/target/aarch64-apple-darwin/release/fynance fynance-macos-aarch64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fynance-macos-aarch64
+          path: fynance-macos-aarch64
+
+  build-windows:
+    name: Build binary (windows)
+    needs: tag
+    if: ${{ github.event.inputs.include_windows == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: cd frontend && npm ci && npm run build
+      - run: cargo build --release --manifest-path backend/Cargo.toml
+      - run: cp backend/target/release/fynance.exe fynance-windows-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fynance-windows-x86_64.exe
+          path: fynance-windows-x86_64.exe
 
   publish:
     name: Publish Docker image & GitHub Release
-    needs: [tag, build-binaries]
+    needs: [tag, build-linux, build-macos, build-windows]
+    if: always() && needs.build-linux.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
