@@ -7,6 +7,13 @@ on:
     branches: [master]
 
 jobs:
+  actionlint:
+    name: Lint GitHub Actions workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: raven-actions/actionlint@v2
+
   frontend:
     name: Frontend lint & build
     runs-on: ubuntu-latest
