@@ -43,25 +43,8 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
   - Account struct uses AccountType (model.rs:82)
   - Includes as_str() and parse() methods for serialization
 
-- ⚠️ **Multi-currency portfolio aggregation is broken** — all summary totals (`total_assets`, `total_liabilities`, `available_wealth`, `unavailable_wealth`) and all three breakdown maps (`by_type`, `by_institution`, `by_asset_class`) are computed by naively summing raw holding values regardless of currency. A NGN account balance of ₦156,543 is currently added to GBP totals as if it were £156,543. This needs a proper fix before the portfolio page can be trusted with multi-currency data.
 
-  **Agreed design (to be implemented as a V2 item):**
-
-  - **`preferred_currency`** on the user profile (e.g. "GBP") — all aggregated totals are always converted to this currency using exchange rates. Required for any cross-currency summation to be meaningful.
-  - **`display_currency`** — optional field on `BreakdownItem` and per-account balances in the response. Rules:
-    - Single holding/account: always the source currency (e.g. "NGN")
-    - Aggregation where all contributing values share the same source currency: use that currency (e.g. GT Bank institution row → all NGN → `display_currency: "NGN"`)
-    - Aggregation where contributing values have mixed currencies: omit `display_currency` — the frontend falls back to `preferred_currency` for the label
-  - Frontend renders the `display_currency` symbol when present, `preferred_currency` symbol otherwise. The converted value is always what's shown in the number.
-  - Requires: 
-    - exchange rates API integration (suggest frankfurter.app — free, no key, ECB data), 
-    - `exchange_rates` table in DB (schema already designed in `docs/plans/13_frontend_backend_handover_unimplemented.md`),
-      - A get endpoint to see the current active exchange rates, to show in the FE
-      - If the api is rate limited consider caching the value every 24hours maybe?
-        - Maybe also export a reset endpoint to manually invalidate the cache ^
-      - (not required but nice to have) A put endpoint to manually set the exchnange rate (if api isn't working, or we can't find accurate conversion e.g. NGN->GBP official rate isn't representative)
-    - conversion logic in the holdings summary route before summing breakdowns, `preferred_currency` field on the profile model.
-
+- ⚠️ **Multi-currency: fulfill all backend asks** — portfolio aggregation is currently broken (NGN totals added to GBP as if 1:1). Full spec: [docs/plans/22_multi_currency.md](22_multi_currency.md) (backend section: data model changes, `user_fx_rates` table, profile fields, FX rate endpoints, conversion logic, `display_currency` on breakdown rows, unconverted holdings response).
 
 ### Budget
 
@@ -220,6 +203,7 @@ CSV is supported. PDFs and images deferred to V1.
 - [x] ✅ **Tests for profile/account creation.** Test infrastructure ready, tests not yet written
 - ⚠️ **tests for CSV import.** Test infrastructure ready, tests not yet written
 - ⚠️ **Edit/delete buttons.** Disabled with "Coming soon" tooltips (backend PATCH/DELETE not yet added)
+- ⚠️ **Multi-currency: fulfill all frontend asks** — Settings currency section, preferred currency picker, exchange rate inputs, portfolio page display using `preferred_currency` and `display_currency`, unconverted holdings warning banner. Full spec: [docs/plans/22_multi_currency.md](22_multi_currency.md) (frontend section).
 
 ### Build: Fix Pre-existing TypeScript Errors
 
