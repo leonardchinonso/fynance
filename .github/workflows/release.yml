@@ -153,12 +153,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          assets=("artifacts/fynance-linux-x86_64/fynance-linux-x86_64")
+          assets=("artifacts/fynance-linux-x86_64")
           if [ "${{ github.event.inputs.include_macos }}" = "true" ]; then
-            assets+=("artifacts/fynance-macos-aarch64/fynance-macos-aarch64")
+            assets+=("artifacts/fynance-macos-aarch64")
           fi
           if [ "${{ github.event.inputs.include_windows }}" = "true" ]; then
-            assets+=("artifacts/fynance-windows-x86_64.exe/fynance-windows-x86_64.exe")
+            assets+=("artifacts/fynance-windows-x86_64.exe")
           fi
           gh release create "${{ needs.tag.outputs.tag }}" \
             --title "${{ needs.tag.outputs.tag }}" \
