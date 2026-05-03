@@ -4,7 +4,7 @@ import type { Profile } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import { SettingsListSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -15,7 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 export function ProfilesSection({ data, onRefresh }: { data: RemoteData<Profile[]>; onRefresh: () => void }) {
   return visitRemoteData(data, {
     notLoaded: () => <ProfilesCard loading onRefresh={onRefresh}><SettingsListSkeleton rows={3} /></ProfilesCard>,
-    failed: (error) => <ProfilesCard onRefresh={onRefresh}><NonIdealState title="Could not load profiles" description={error} action={{ label: "Try again", onClick: onRefresh }} /></ProfilesCard>,
+    failed: (error) => <ProfilesCard onRefresh={onRefresh}><AuthAwareError error={error} onRetry={onRefresh} /></ProfilesCard>,
     hasValue: (profiles) => <ProfilesCard onRefresh={onRefresh}><ProfilesList profiles={profiles} /></ProfilesCard>,
   })
 }

@@ -4,7 +4,7 @@ import type { CategoryNode } from "@/bindings/CategoryNode"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useCategories } from "@/hooks/data"
 import { SettingsListSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -74,7 +74,7 @@ export function CategoriesSection() {
       <CardContent>
         {visitRemoteData(categoriesData, {
           notLoaded: () => <SettingsListSkeleton rows={6} />,
-          failed: (error) => <NonIdealState title="Could not load categories" description={error} action={{ label: "Try again", onClick: refresh }} />,
+          failed: (error) => <AuthAwareError error={error} onRetry={refresh} />,
           hasValue: (nodes) => <CategoryTree nodes={nodes} onEdit={openEdit} onDelete={handleDelete} />,
         })}
       </CardContent>

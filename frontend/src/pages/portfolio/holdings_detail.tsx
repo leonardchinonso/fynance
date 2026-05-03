@@ -10,7 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Currency } from "@/components/currency"
 import { EmptyState } from "@/components/empty_state"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { LoadingSpinner } from "@/components/loading_spinner"
 
 interface HoldingsDetailProps {
@@ -24,7 +24,7 @@ export function HoldingsDetail({ accountId, accountName, onClose }: HoldingsDeta
 
   const content = visitRemoteData(holdingsData, {
     notLoaded: () => <LoadingSpinner />,
-    failed: (error) => <NonIdealState title="Could not load holdings" description={error} className="mt-4" />,
+    failed: (error) => <AuthAwareError error={error} />,
     hasValue: (holdings) =>
       holdings.length === 0 ? (
         <div className="mt-4">

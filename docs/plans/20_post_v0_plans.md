@@ -8,6 +8,7 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ### Features
 - [ ] ISA remaining allowance tracking (as a part of ISA accounts.
+- [ ] **Login page + credential management:** Dedicated `/login` page where users enter their bearer token. Auto-redirect to login on 401 if no token is set in localStorage. V2: multi-user session model with per-user credentials and a server-side revocation UI.
 
 ### CI/CD and Release Pipeline
 

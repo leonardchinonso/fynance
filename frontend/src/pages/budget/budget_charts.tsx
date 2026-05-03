@@ -2,7 +2,7 @@ import type { SpendingGridRow, Granularity } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import { BudgetChartsSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { BudgetStackedBar } from "./budget_stacked_bar"
 import { BudgetLineChart } from "./budget_line_chart"
@@ -17,7 +17,7 @@ interface BudgetChartsProps {
 export function BudgetCharts({ data, months, granularity }: BudgetChartsProps) {
   return visitRemoteData(data, {
     notLoaded: () => <BudgetChartsSkeleton />,
-    failed: (error) => <NonIdealState title="Could not load charts" description={error} />,
+    failed: (error) => <AuthAwareError error={error} />,
     hasValue: (rows) => (
       <div className="relative">
         <BudgetChartsInternal rows={rows} months={months} granularity={granularity} />

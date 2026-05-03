@@ -44,3 +44,16 @@ export function setApiMode(mode: ApiMode) {
   currentMode = mode
   localStorage.setItem(STORAGE_KEY, mode)
 }
+
+export const AUTH_TOKEN_KEY = "fynance-auth-token"
+
+export function getAuthToken(): string | null {
+  try { return localStorage.getItem(AUTH_TOKEN_KEY) || null } catch { return null }
+}
+
+export function setAuthToken(token: string | null) {
+  try {
+    if (token) localStorage.setItem(AUTH_TOKEN_KEY, token)
+    else localStorage.removeItem(AUTH_TOKEN_KEY)
+  } catch {}
+}

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { useProfiles } from "@/context/profile_context"
 import { useAccounts } from "@/hooks/data"
@@ -7,7 +7,8 @@ import { AccountsSection } from "./accounts_section"
 import { CategoriesSection } from "./categories_section"
 import { AppearanceSection } from "./appearance_section"
 import { DataSourceSection } from "./data_source_section"
-import { User, Building2, Tag, Palette, Database } from "lucide-react"
+import { AuthSection } from "./auth_section"
+import { User, Building2, Tag, Palette, Database, KeyRound } from "lucide-react"
 
 const SECTIONS = [
   { id: "profiles",    label: "Profiles",    icon: User },
@@ -15,6 +16,7 @@ const SECTIONS = [
   { id: "categories",  label: "Categories",  icon: Tag },
   { id: "appearance",  label: "Appearance",  icon: Palette },
   { id: "data-source", label: "Data Source", icon: Database },
+  { id: "auth",        label: "Auth",        icon: KeyRound },
 ] as const
 
 export function SettingsPage() {
@@ -28,14 +30,27 @@ export function SettingsPage() {
     refreshAccounts()
   }
 
-  function scrollTo(id: string) {
+  function scrollTo(id: string, updateHash = true) {
     setActiveSection(id)
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+    if (updateHash) {
+      history.replaceState(null, "", `#${id}`)
+    }
   }
+
+  useEffect(() => {
+    function handleHash() {
+      const hash = window.location.hash.replace("#", "")
+      if (hash && SECTIONS.some((s) => s.id === hash)) scrollTo(hash, false)
+    }
+    handleHash()
+    window.addEventListener("hashchange", handleHash)
+    return () => window.removeEventListener("hashchange", handleHash)
+  }, [])
 
   return (
     <div className="flex gap-6">
-      <nav className="hidden lg:block w-48 shrink-0 sticky top-0 self-start">
+      <nav className="hidden lg:block w-48 shrink-0 sticky top-6 self-start">
         <div className="space-y-0.5">
           {SECTIONS.map(({ id, label, icon: Icon }) => (
             <button
@@ -84,6 +99,7 @@ export function SettingsPage() {
         <CategoriesSection />
         <AppearanceSection />
         <DataSourceSection />
+        <AuthSection />
       </div>
     </div>
   )

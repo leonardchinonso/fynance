@@ -5,7 +5,7 @@ import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { TransactionsData } from "@/hooks/data"
 import { TableSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { EmptyState } from "@/components/empty_state"
 import {
@@ -83,7 +83,7 @@ export function TransactionTable({
 }: TransactionTableOuterProps) {
   return visitRemoteData(data, {
     notLoaded: () => <TableSkeleton rows={25} cols={5} />,
-    failed: (error) => <NonIdealState title="Could not load transactions" description={error} />,
+    failed: (error) => <AuthAwareError error={error} />,
     hasValue: ({ result }) => (
       <div className="relative">
         {result.data.length === 0 ? (

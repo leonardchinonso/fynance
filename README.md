@@ -81,6 +81,16 @@ docker compose up -d
 
 Open `http://localhost:7433` in your browser. The database is created automatically and persists in a Docker volume across restarts.
 
+**Auth token (required for Docker deployments):**
+
+When running via Docker, all API requests require a bearer token. Generate one after starting the container:
+
+```bash
+docker exec <container_name> fynance token create --name browser
+```
+
+Copy the output (`fyn_...`) and paste it into **Settings > Auth** in the web UI. The token is stored in your browser and sent automatically with every request. Run `docker compose ps` to find the container name.
+
 ```bash
 docker compose logs -f fynance   # view logs
 docker compose down              # stop

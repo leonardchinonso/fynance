@@ -4,7 +4,7 @@ import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioAccountsData } from "@/hooks/data"
 import { AccountsGridSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -26,7 +26,7 @@ export function AccountsGrid({
 }) {
   return visitRemoteData(data, {
     notLoaded: () => <AccountsGridSkeleton />,
-    failed: (error) => <NonIdealState title="Could not load accounts" description={error} />,
+    failed: (error) => <AuthAwareError error={error} />,
     hasValue: ({ accounts, accountBalances }) => {
       const profiles = profilesData.status === "succeeded" || profilesData.status === "reloading"
         ? profilesData.value : []

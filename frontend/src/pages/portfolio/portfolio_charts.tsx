@@ -3,7 +3,7 @@ import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioSummaryData } from "@/hooks/data"
 import { PortfolioChartsSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { InteractivePie } from "@/components/charts"
 import { ACCOUNT_TYPE_COLORS } from "@/lib/colors"
@@ -20,7 +20,7 @@ const STOCK_COLORS = [
 export function PortfolioCharts({ data }: { data: RemoteData<PortfolioSummaryData> }) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioChartsSkeleton />,
-    failed: (error) => <NonIdealState title="Could not load charts" description={error} />,
+    failed: (error) => <AuthAwareError error={error} />,
     hasValue: ({ portfolio, allHoldings }) => (
       <div className="relative">
         <PortfolioChartsInternal portfolio={portfolio} holdings={allHoldings} />

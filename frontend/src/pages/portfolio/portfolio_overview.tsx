@@ -9,7 +9,7 @@ import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioSummaryData } from "@/hooks/data"
 import { PortfolioOverviewSkeleton } from "@/components/skeletons"
-import { NonIdealState } from "@/components/non_ideal_state"
+import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Currency } from "@/components/currency"
@@ -24,7 +24,7 @@ import { formatCurrency } from "@/lib/utils"
 export function PortfolioOverview({ data, dateLabel }: { data: RemoteData<PortfolioSummaryData>; dateLabel?: string }) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioOverviewSkeleton />,
-    failed: (error) => <NonIdealState title="Could not load portfolio" description={error} />,
+    failed: (error) => <AuthAwareError error={error} />,
     hasValue: ({ portfolio, history, cashFlow, allHoldings }) => {
       const startNetWorth = history.length >= 1 ? history[0].total_wealth : undefined
       const endNetWorth = history.length >= 1 ? history[history.length - 1].total_wealth : undefined
