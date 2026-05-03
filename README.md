@@ -8,6 +8,20 @@ Personal finance tracker with a Rust backend and React web UI. Import bank CSV e
   </a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml">
+    <img src="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml/badge.svg?branch=master" alt="Release build" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/leonardchinonso/fynance/actions/workflows/release.yml">
+    <img src="https://img.shields.io/github/commits-since/leonardchinonso/fynance/latest?label=unreleased%20commits" alt="Commits since latest release" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/leonardchinonso/fynance/releases/latest">
+    <img src="https://img.shields.io/github/v/release/leonardchinonso/fynance?label=version" alt="Latest release" />
+  </a>
+</p>
+
 ## Running fynance
 
 ### Option 1: Local binary (personal use on your own machine)
