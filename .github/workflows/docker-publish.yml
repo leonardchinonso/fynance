@@ -63,9 +63,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
             asset_name: fynance-linux-x86_64
           - os: macos-latest
-            target: x86_64-apple-darwin
-            asset_name: fynance-macos-x86_64
-          - os: macos-latest
             target: aarch64-apple-darwin
             asset_name: fynance-macos-aarch64
           - os: windows-latest
@@ -145,6 +142,5 @@ jobs:
             --title "${{ needs.tag.outputs.tag }}" \
             --generate-notes \
             artifacts/fynance-linux-x86_64/fynance-linux-x86_64 \
-            artifacts/fynance-macos-x86_64/fynance-macos-x86_64 \
             artifacts/fynance-macos-aarch64/fynance-macos-aarch64 \
             "artifacts/fynance-windows-x86_64.exe/fynance-windows-x86_64.exe"

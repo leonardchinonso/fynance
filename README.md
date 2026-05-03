@@ -20,7 +20,6 @@ Download the binary for your platform from [GitHub Releases](https://github.com/
 |---|---|
 | Linux (x86_64) | `fynance-linux-x86_64` |
 | macOS (Apple Silicon) | `fynance-macos-aarch64` |
-| macOS (Intel) | `fynance-macos-x86_64` |
 | Windows | `fynance-windows-x86_64.exe` |
 
 **Linux / macOS:**
