@@ -27,6 +27,9 @@ WORKDIR /home/fynance
 
 COPY --from=backend-build /app/backend/target/release/fynance /usr/local/bin/fynance
 
+ARG APP_VERSION=dev
+LABEL org.opencontainers.image.version="${APP_VERSION}"
+
 ENV FYNANCE_HOST=0.0.0.0
 ENV FYNANCE_PORT=7433
 ENV FYNANCE_DB_PATH=/home/fynance/data/fynance.db
