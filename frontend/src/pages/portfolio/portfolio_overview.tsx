@@ -1,4 +1,4 @@
-import { useState, useRef } from "react"
+import { useState } from "react"
 import type React from "react"
 import type {
   BreakdownItem,
@@ -138,7 +138,7 @@ function PortfolioOverviewInternal({
 }: PortfolioOverviewProps) {
   const { setFilter } = useUrlFilters()
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const pieCardRef = useRef<HTMLDivElement>(null)
+
 
   const preferredCurrency = portfolio.preferred_currency
   const startNw = startNetWorth ? parseFloat(startNetWorth) : null
@@ -399,7 +399,7 @@ function PortfolioOverviewInternal({
 
         {/* Portfolio breakdown pie */}
         {pieData.length > 0 && (
-          <Card className="overflow-hidden py-0 gap-0 h-[300px]" ref={pieCardRef}>
+          <Card className="overflow-hidden py-0 gap-0 h-[300px]">
             <div className="flex h-full">
               {/* Main pie area */}
               <div className="flex-1 min-w-0 flex flex-col">
@@ -425,7 +425,6 @@ function PortfolioOverviewInternal({
                     outerRadius={90}
                     label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
                     legendPosition="left"
-                    boundaryRef={pieCardRef}
                   />
                 </div>
               </div>

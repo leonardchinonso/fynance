@@ -50,6 +50,14 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 - [ ] Tighten CORS from `CorsLayer::permissive()` to explicit `http://127.0.0.1:<port>` and `http://localhost:<port>` origins (from `17_frontend_review.md`)
 
+### Bugs
+- [ ] Mouse scrolling really quickly on the recharts pie chart sometiems fails to trigger the onMouseLeave event
+  - Root cause: Recharts maintains its own internal `active` state for the tooltip independently of React state. Our `activeIndex` and `mousePos` state clear correctly, but Recharts' internal state does not, causing the tooltip and active shape to remain visible.
+  - Confirmed via logging: when stuck, `activeIndex: undefined, mousePos: null` in React state, but `rechartsTooltip.active: true` from within the `content` render prop.
+  - Also observed: `onPointerMove` fires outside the container boundary (pointer capture behaviour), producing negative `mousePos.x` values that keep the tooltip alive even after our state is nominally cleared.
+  - Attempts that did not fully resolve it: moving `onMouseLeave` to `<PieChart>` (bounding box vs SVG path), `mouseInsideRef` guard on slice enter, interval-based position check, `pointerleave` + `pointerenter` listeners, `effectiveActiveIndex` derived from `mousePos`.
+  - Likely fix direction: pass `active={false}` explicitly to `<Tooltip>` when we want it hidden (controlled mode), which bypasses Recharts' internal state entirely. Not yet attempted.
+
 ---
 
 ## V2
