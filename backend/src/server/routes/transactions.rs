@@ -12,6 +12,7 @@ use crate::server::validation::{
     parse_date, split_csv_param, validate_date_range, validate_pagination,
 };
 use crate::storage::TransactionFilters;
+use crate::util::fx::FxRateMap;
 
 
 // ── GET /api/transactions ─────────────────────────────────────────────────────
@@ -136,12 +137,19 @@ pub async fn transactions_by_category(
         ..TransactionFilters::default()
     };
 
-    let totals = {
+    let (totals, preferred_currency) = {
         let db = state.db.lock().expect("db mutex poisoned");
-        db.get_transactions_by_category(&filters, direction)?
+        let currencies = db.get_currencies()?;
+        let fx = FxRateMap::new(currencies)?;
+        let totals = db.get_transactions_by_category(&filters, direction, &fx)?;
+        let preferred = fx.preferred().to_string();
+        (totals, preferred)
     };
 
-    Ok(Json(serde_json::to_value(totals)?))
+    Ok(Json(serde_json::json!({
+        "preferred_currency": preferred_currency,
+        "rows": totals
+    })))
 }
 
 // ── GET /api/transactions/categories ─────────────────────────────────────────

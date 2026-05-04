@@ -44,7 +44,7 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
   - Includes as_str() and parse() methods for serialization
 
 
-- ⚠️ **Multi-currency: fulfill all backend asks** — portfolio aggregation is currently broken (NGN totals added to GBP as if 1:1). Full spec: [docs/plans/22_multi_currency.md](22_multi_currency.md) (backend section: data model changes, `user_fx_rates` table, profile fields, FX rate endpoints, conversion logic, `display_currency` on breakdown rows, unconverted holdings response).
+- [x] ✅ **Multi-currency: fulfill all backend asks** — currencies table, FX conversion at query time, display_currency on all 6 aggregating endpoints. Full spec: [docs/plans/22_multi_currency.md](22_multi_currency.md).
 
 ### Budget
 

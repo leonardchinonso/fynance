@@ -13,6 +13,7 @@ use crate::server::validation::{
     parse_date, parse_decimal, parse_granularity, parse_month, require_non_negative,
     validate_date_range,
 };
+use crate::util::fx::FxRateMap;
 
 // ── GET /api/budget/:month ────────────────────────────────────────────────────
 
@@ -21,11 +22,18 @@ pub async fn get_budget_for_month(
     Path(month): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     parse_month(&month)?;
-    let rows = {
+    let (rows, preferred_currency) = {
         let db = state.db.lock().expect("db mutex poisoned");
-        db.get_effective_budget(&month)?
+        let currencies = db.get_currencies()?;
+        let fx = FxRateMap::new(currencies)?;
+        let rows = db.get_effective_budget(&month, &fx)?;
+        let preferred = fx.preferred().to_string();
+        (rows, preferred)
     };
-    Ok(Json(serde_json::to_value(rows)?))
+    Ok(Json(serde_json::json!({
+        "preferred_currency": preferred_currency,
+        "rows": rows
+    })))
 }
 
 // ── GET /api/budget/spending-grid ────────────────────────────────────────────
@@ -62,12 +70,19 @@ pub async fn get_spending_grid(
 
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
 
-    let rows = {
+    let (rows, preferred_currency) = {
         let db = state.db.lock().expect("db mutex poisoned");
-        db.get_spending_grid(start, end, &granularity, profile_id)?
+        let currencies = db.get_currencies()?;
+        let fx = FxRateMap::new(currencies)?;
+        let rows = db.get_spending_grid(start, end, &granularity, profile_id, &fx)?;
+        let preferred = fx.preferred().to_string();
+        (rows, preferred)
     };
 
-    Ok(Json(serde_json::to_value(rows)?))
+    Ok(Json(serde_json::json!({
+        "preferred_currency": preferred_currency,
+        "rows": rows
+    })))
 }
 
 // ── POST /api/budget ──────────────────────────────────────────────────────────

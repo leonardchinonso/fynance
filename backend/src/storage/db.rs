@@ -16,7 +16,7 @@ use rust_decimal::Decimal;
 use crate::model::{
     Account, AccountSnapshot, AccountType, BalanceDelta, BudgetRow, Category, CategoryNode,
     CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
-    Granularity, Holding, HoldingPreview, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
+    Currency, Granularity, Holding, HoldingPreview, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
     ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentMetrics,
     PatchCategoryPayload, Profile, SectionMapping, SpendingGridRow, StandingBudget, Transaction,
 };
@@ -121,6 +121,140 @@ impl Db {
         }
 
         Ok(Self { conn })
+    }
+
+    // ── Currencies ───────────────────────────────────────────────────────────
+
+    pub fn get_currencies(&self) -> Result<Vec<Currency>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT code, is_preferred, fx_rate, updated_at FROM currencies ORDER BY is_preferred DESC, code"
+        )?;
+
+        let currencies = stmt.query_map([], |row| {
+            let code: String = row.get(0)?;
+            let is_preferred: bool = row.get::<_, i32>(1)? == 1;
+            let fx_rate_str: String = row.get(2)?;
+            let updated_at: Option<String> = row.get(3)?;
+            Ok((code, is_preferred, fx_rate_str, updated_at))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        currencies
+            .into_iter()
+            .map(|(code, is_preferred, fx_rate_str, updated_at)| {
+                let fx_rate = fx_rate_str
+                    .parse::<Decimal>()
+                    .with_context(|| format!("invalid fx_rate for currency {code}"))?;
+                Ok(Currency {
+                    code,
+                    is_preferred,
+                    fx_rate,
+                    updated_at: if is_preferred { None } else { updated_at },
+                })
+            })
+            .collect()
+    }
+
+    pub fn currency_exists(&self, code: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM currencies WHERE code = ?1",
+            params![code],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn create_currency(&self, code: &str, fx_rate: Decimal) -> Result<Currency> {
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        self.conn.execute(
+            "INSERT INTO currencies (code, is_preferred, fx_rate, updated_at) VALUES (?1, 0, ?2, ?3)",
+            params![code, fx_rate.to_string(), now],
+        )?;
+
+        Ok(Currency {
+            code: code.to_string(),
+            is_preferred: false,
+            fx_rate,
+            updated_at: Some(now),
+        })
+    }
+
+    pub fn update_currency_rate(&self, code: &str, fx_rate: Decimal) -> Result<Currency> {
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let rows = self.conn.execute(
+            "UPDATE currencies SET fx_rate = ?1, updated_at = ?2 WHERE code = ?3 AND is_preferred = 0",
+            params![fx_rate.to_string(), now, code],
+        )?;
+
+        if rows == 0 {
+            let exists = self.currency_exists(code)?;
+            if exists {
+                anyhow::bail!("cannot update the exchange rate for the preferred currency");
+            } else {
+                anyhow::bail!("currency {code} not found");
+            }
+        }
+
+        Ok(Currency {
+            code: code.to_string(),
+            is_preferred: false,
+            fx_rate,
+            updated_at: Some(now),
+        })
+    }
+
+    pub fn set_preferred_currency(&self, code: &str) -> Result<()> {
+        if !self.currency_exists(code)? {
+            anyhow::bail!("currency {code} not found");
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+
+        tx.execute("UPDATE currencies SET is_preferred = 0 WHERE is_preferred = 1", [])?;
+        tx.execute(
+            "UPDATE currencies SET is_preferred = 1, fx_rate = '1', updated_at = NULL WHERE code = ?1",
+            params![code],
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_currency(&self, code: &str) -> Result<()> {
+        let is_preferred: Option<i32> = self.conn.query_row(
+            "SELECT is_preferred FROM currencies WHERE code = ?1",
+            params![code],
+            |row| row.get(0),
+        ).optional()?;
+
+        let is_preferred = match is_preferred {
+            Some(v) => v,
+            None => anyhow::bail!("currency {code} not found"),
+        };
+
+        if is_preferred == 1 {
+            anyhow::bail!("cannot delete the preferred currency; set a different preferred currency first");
+        }
+
+        let holding_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM holdings WHERE currency = ?1", params![code], |r| r.get(0),
+        )?;
+        let account_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM accounts WHERE currency = ?1", params![code], |r| r.get(0),
+        )?;
+        let transaction_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE currency = ?1", params![code], |r| r.get(0),
+        )?;
+
+        let total = holding_count + account_count + transaction_count;
+        if total > 0 {
+            anyhow::bail!(
+                "cannot delete currency '{code}': in use by {holding_count} holdings, {account_count} accounts, {transaction_count} transactions"
+            );
+        }
+
+        self.conn.execute("DELETE FROM currencies WHERE code = ?1", params![code])?;
+        Ok(())
     }
 
     // ── Profiles ─────────────────────────────────────────────────────────────
@@ -605,8 +739,11 @@ impl Db {
         &self,
         filters: &TransactionFilters,
         direction: Option<crate::model::TransactionDirection>,
+        fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<CategoryTotal>> {
         use crate::model::TransactionDirection;
+        use crate::util::fx::CurrencyAggregator;
+        use std::collections::HashMap;
 
         let mut conditions: Vec<String> = vec![
             "(t.category_id IS NOT NULL OR t.category IS NOT NULL)".to_string(),
@@ -661,13 +798,13 @@ impl Db {
         let sum_expr = match direction {
             Some(TransactionDirection::Outflow) => {
                 conditions.push("CAST(t.amount AS REAL) < 0".to_string());
-                "SUM(ABS(CAST(t.amount AS REAL)))"
+                "ABS(CAST(t.amount AS REAL))"
             }
             Some(TransactionDirection::Income) => {
                 conditions.push("CAST(t.amount AS REAL) > 0".to_string());
-                "SUM(CAST(t.amount AS REAL))"
+                "CAST(t.amount AS REAL)"
             }
-            None => "SUM(CAST(t.amount AS REAL))",
+            None => "CAST(t.amount AS REAL)",
         };
 
         let join = if need_account_join {
@@ -685,33 +822,45 @@ impl Db {
                        ELSE NULL END,
                   t.category
                 ) AS category_display,
+                t.currency,
                 {sum_expr} AS total
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
               LEFT JOIN categories pc ON pc.id = c.parent_id
               {join}
               WHERE {where_clause}
-              GROUP BY category_display
-              ORDER BY total DESC"
+              GROUP BY category_display, t.currency
+              ORDER BY category_display"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt
+        let raw: Vec<(String, String, f64)> = stmt
             .query_map(
                 rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
                 |row| {
                     let category: String = row.get(0)?;
-                    let total: f64 = row.get(1)?;
-                    Ok((category, total))
+                    let currency: String = row.get(1)?;
+                    let total: f64 = row.get(2)?;
+                    Ok((category, currency, total))
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        Ok(rows
+        let mut categories_map: HashMap<String, CurrencyAggregator> = HashMap::new();
+        for (category, currency, total_f64) in raw {
+            let total = Decimal::try_from(total_f64).unwrap_or_default();
+            categories_map
+                .entry(category)
+                .or_default()
+                .add(total, &currency, fx);
+        }
+
+        Ok(categories_map
             .into_iter()
-            .map(|(category, total)| CategoryTotal {
+            .map(|(category, agg)| CategoryTotal {
                 category,
-                total: Decimal::try_from(total).unwrap_or_default().to_string(),
+                total: agg.converted_sum().to_string(),
+                display_currency: agg.display_currency(fx.preferred()),
             })
             .collect())
     }
@@ -1051,7 +1200,10 @@ impl Db {
     /// Returns effective budget rows for `month`, merging standing targets with
     /// per-month overrides. Includes actual spend from transactions.
     /// Excludes transactions with `exclude_from_summary = 1`.
-    pub fn get_effective_budget(&self, month: &str) -> Result<Vec<BudgetRow>> {
+    pub fn get_effective_budget(&self, month: &str, fx: &crate::util::fx::FxRateMap) -> Result<Vec<BudgetRow>> {
+        use crate::util::fx::CurrencyAggregator;
+        use std::collections::HashMap;
+
         let sql = r"
             SELECT
                 COALESCE(sb.category_id, t_agg.category_id) AS cat_id,
@@ -1061,25 +1213,27 @@ impl Db {
                   sb.category
                 ) AS category_display,
                 COALESCE(bo.amount, sb.amount) AS budgeted,
-                COALESCE(t_agg.actual, '0') AS actual
+                t_agg.category_id,
+                t_agg.amount,
+                t_agg.currency
             FROM standing_budgets sb
             LEFT JOIN budget_overrides bo
                 ON bo.category_id = sb.category_id AND bo.month = ?1
             LEFT JOIN (
                 SELECT category_id,
-                       CAST(SUM(ABS(CAST(amount AS REAL))) AS TEXT) AS actual
+                       CAST(ABS(CAST(amount AS REAL)) AS TEXT) AS amount,
+                       currency
                 FROM transactions
                 WHERE substr(date, 1, 7) = ?1
                   AND CAST(amount AS REAL) < 0
                   AND category_id IS NOT NULL
                   AND exclude_from_summary = 0
-                GROUP BY category_id
             ) t_agg ON t_agg.category_id = sb.category_id
             LEFT JOIN categories c ON c.id = COALESCE(sb.category_id, t_agg.category_id)
             LEFT JOIN categories pc ON pc.id = c.parent_id
             WHERE sb.category_id IS NOT NULL
 
-            UNION
+            UNION ALL
 
             SELECT
                 t_agg2.category_id AS cat_id,
@@ -1089,16 +1243,18 @@ impl Db {
                   NULL
                 ) AS category_display,
                 bo2.amount AS budgeted,
-                t_agg2.actual
+                t_agg2.category_id,
+                t_agg2.amount,
+                t_agg2.currency
             FROM (
                 SELECT category_id,
-                       CAST(SUM(ABS(CAST(amount AS REAL))) AS TEXT) AS actual
+                       CAST(ABS(CAST(amount AS REAL)) AS TEXT) AS amount,
+                       currency
                 FROM transactions
                 WHERE substr(date, 1, 7) = ?1
                   AND CAST(amount AS REAL) < 0
                   AND category_id IS NOT NULL
                   AND exclude_from_summary = 0
-                GROUP BY category_id
             ) t_agg2
             LEFT JOIN budget_overrides bo2
                 ON bo2.category_id = t_agg2.category_id AND bo2.month = ?1
@@ -1111,21 +1267,54 @@ impl Db {
             ORDER BY category_display
         ";
 
+        type RawBudgetRow = (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
         let mut stmt = self.conn.prepare(sql)?;
-        let rows = stmt
+        let raw: Vec<RawBudgetRow> = stmt
             .query_map(params![month, month, month], |row| {
-                let category_id: Option<String> = row.get(0)?;
-                let category: Option<String> = row.get(1)?;
-                let budgeted: Option<String> = row.get(2)?;
-                let actual: String = row.get(3)?;
-                Ok((category_id, category, budgeted, actual))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        Ok(rows
-            .into_iter()
-            .map(|(category_id, category, budgeted, actual)| {
-                let actual_dec: Decimal = actual.parse().unwrap_or_default();
+        let mut categories_map: HashMap<String, (Option<String>, Option<String>, CurrencyAggregator)> = HashMap::new();
+
+        for (cat_id, _category_display, budgeted, _t_cat_id, amount_str, currency) in raw {
+            let key = cat_id.clone().unwrap_or_else(|| "unknown".to_string());
+            let entry = categories_map
+                .entry(key)
+                .or_insert_with(|| {
+                    (
+                        cat_id.clone(),
+                        budgeted.clone(),
+                        Default::default(),
+                    )
+                });
+
+            if let (Some(amount_s), Some(curr)) = (amount_str, currency) {
+                if let Ok(amount) = amount_s.parse::<Decimal>() {
+                    entry.2.add(amount, &curr, fx);
+                }
+            }
+        }
+
+        // Deduplicate by category_id and collect budgeted values
+        let mut final_rows: Vec<_> = categories_map
+            .into_values()
+            .map(|(category_id, budgeted, actual_agg)| {
+                let actual_dec = actual_agg.converted_sum();
                 let percent = budgeted.as_ref().and_then(|b| {
                     b.parse::<Decimal>().ok().and_then(|budget| {
                         if budget.is_zero() {
@@ -1138,15 +1327,39 @@ impl Db {
                         }
                     })
                 });
+
+                // Get the category display from a fresh query to avoid dedup issues
+                let category_display = category_id
+                    .as_ref()
+                    .and_then(|cid| {
+                        self.conn
+                            .query_row(
+                                r"SELECT CASE WHEN c.parent_id IS NOT NULL THEN pc.name || ': ' || c.name
+                                           ELSE c.name END
+                                   FROM categories c
+                                   LEFT JOIN categories pc ON pc.id = c.parent_id
+                                   WHERE c.id = ?1",
+                                params![cid],
+                                |row| row.get::<_, Option<String>>(0),
+                            )
+                            .ok()
+                            .flatten()
+                    })
+                    .unwrap_or_else(|| "Unknown".to_string());
+
                 BudgetRow {
-                    category: category.unwrap_or_else(|| "Unknown".to_string()),
+                    category: category_display,
                     category_id,
                     budgeted,
                     actual: actual_dec.to_string(),
+                    actual_display: actual_agg.display_currency(fx.preferred()),
                     percent,
                 }
             })
-            .collect())
+            .collect();
+
+        final_rows.sort_by(|a, b| a.category.cmp(&b.category));
+        Ok(final_rows)
     }
 
     /// Spending grid: aggregated spending per category per time period.
@@ -1157,7 +1370,10 @@ impl Db {
         end: NaiveDate,
         granularity: &Granularity,
         profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<SpendingGridRow>> {
+        use crate::util::fx::CurrencyAggregator;
+
         let period_expr = match granularity {
             Granularity::Monthly => "substr(t.date, 1, 7)".to_string(),
             Granularity::Quarterly => concat!(
@@ -1204,6 +1420,7 @@ impl Db {
                 t.category_id,
                 COALESCE(sm.section, 'Spending') AS section,
                 {period_expr} AS period,
+                t.currency,
                 SUM(CAST(t.amount AS REAL)) AS period_total
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
@@ -1211,8 +1428,8 @@ impl Db {
               LEFT JOIN section_mappings sm ON sm.category_id = COALESCE(c.parent_id, c.id)
               {join}
               WHERE {where_clause}
-              GROUP BY category_display, period
-              ORDER BY category_display, period"
+              GROUP BY category_display, period, t.currency
+              ORDER BY category_display, period, t.currency"
         );
 
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
@@ -1223,10 +1440,10 @@ impl Db {
         base_args.extend(extra_args);
 
         let mut stmt = self.conn.prepare(&sql)?;
-        let raw: Vec<(String, Option<String>, String, String, f64)> = stmt
+        let raw: Vec<(String, Option<String>, String, String, String, f64)> = stmt
             .query_map(
                 rusqlite::params_from_iter(base_args.iter().map(|b| b.as_ref())),
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
@@ -1243,40 +1460,75 @@ impl Db {
             .collect()
         };
 
-        // Build the grid rows
-        let mut grid: HashMap<String, SpendingGridRow> = HashMap::new();
-        for (category, category_id, section, period, total_f64) in raw {
+        // Build the grid rows with CurrencyAggregator tracking
+        let mut grid: HashMap<String, (SpendingGridRow, CurrencyAggregator, HashMap<String, CurrencyAggregator>)> = HashMap::new();
+        for (category, category_id, section, period, currency, total_f64) in raw {
             let total_dec = Decimal::try_from(total_f64).unwrap_or_default();
+            let key = category.clone();
             let entry = grid
-                .entry(category.clone())
-                .or_insert_with(|| SpendingGridRow {
-                    category: category.clone(),
-                    category_id: category_id.clone(),
-                    section: section.clone(),
-                    periods: HashMap::new(),
-                    average: None,
-                    budget: None,
-                    total: None,
+                .entry(key)
+                .or_insert_with(|| {
+                    (
+                        SpendingGridRow {
+                            category: category.clone(),
+                            category_id: category_id.clone(),
+                            section: section.clone(),
+                            periods: HashMap::new(),
+                            periods_display: HashMap::new(),
+                            average: None,
+                            average_display: None,
+                            budget: None,
+                            total: None,
+                            total_display: None,
+                        },
+                        Default::default(),
+                        HashMap::new(),
+                    )
                 });
-            entry.periods.insert(period, Some(total_dec.to_string()));
+
+            entry.0.periods.insert(period.clone(), Some(total_dec.to_string()));
+            entry.1.add(total_dec, &currency, fx);
+
+            entry
+                .2
+                .entry(period)
+                .or_default()
+                .add(total_dec, &currency, fx);
         }
 
         // Compute totals, averages, and attach budgets
         let mut result: Vec<SpendingGridRow> = grid
             .into_values()
-            .map(|mut row| {
-                let vals: Vec<Decimal> = row
+            .map(|(mut row, total_agg, period_aggs)| {
+                for (period, agg) in period_aggs {
+                    if let Some(display) = agg.display_currency(fx.preferred()) {
+                        row.periods_display.insert(period, display);
+                    }
+                }
+
+                let total_converted = total_agg.converted_sum();
+                if total_converted != Decimal::ZERO {
+                    row.total = Some(total_converted.to_string());
+                }
+                if let Some(display) = total_agg.display_currency(fx.preferred()) {
+                    row.total_display = Some(display);
+                }
+
+                let non_zero_periods = row
                     .periods
                     .values()
                     .filter_map(|v| v.as_ref())
                     .filter_map(|s| s.parse::<Decimal>().ok())
-                    .collect();
-                if !vals.is_empty() {
-                    let sum: Decimal = vals.iter().sum();
-                    row.total = Some(sum.to_string());
-                    let count = Decimal::from(vals.len() as u64);
-                    row.average = Some((sum / count).to_string());
+                    .filter(|d| d != &Decimal::ZERO)
+                    .count();
+                if non_zero_periods > 0 && !total_converted.is_zero() {
+                    let avg = total_converted / Decimal::from(non_zero_periods as u64);
+                    row.average = Some(avg.to_string());
+                    if let Some(ref total_display) = row.total_display {
+                        row.average_display = Some(total_display.clone());
+                    }
                 }
+
                 if let Some(ref cid) = row.category_id {
                     row.budget = budgets.get(cid).cloned();
                 }
@@ -1618,27 +1870,39 @@ impl Db {
         to: NaiveDate,
         granularity: &Granularity,
         profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<HoldingsHistoryRow>> {
+        use crate::util::fx::CurrencyAggregator;
+
         let periods = generate_period_end_dates(from, to, granularity);
         let mut rows = Vec::new();
 
         for (label, period_end) in periods {
             let accounts = self.get_portfolio_as_of(period_end, profile_id)?;
-            let available: Decimal = accounts
-                .iter()
-                .filter(|a| is_available_account(&a.account_type))
-                .filter_map(|a| a.balance)
-                .sum();
-            let unavailable: Decimal = accounts
-                .iter()
-                .filter(|a| !is_available_account(&a.account_type))
-                .filter_map(|a| a.balance)
-                .sum();
+            let mut available_agg: CurrencyAggregator = Default::default();
+            let mut unavailable_agg: CurrencyAggregator = Default::default();
+
+            for account in accounts {
+                if let Some(balance) = account.balance {
+                    if is_available_account(&account.account_type) {
+                        available_agg.add(balance, &account.currency, fx);
+                    } else {
+                        unavailable_agg.add(balance, &account.currency, fx);
+                    }
+                }
+            }
+
+            let available = available_agg.converted_sum();
+            let unavailable = unavailable_agg.converted_sum();
+
             rows.push(HoldingsHistoryRow {
                 month: label,
                 available_wealth: available,
+                available_wealth_display: available_agg.display_currency(fx.preferred()),
                 unavailable_wealth: unavailable,
+                unavailable_wealth_display: unavailable_agg.display_currency(fx.preferred()),
                 total_wealth: available + unavailable,
+                total_wealth_display: None,
             });
         }
 
@@ -1786,7 +2050,11 @@ impl Db {
         end: NaiveDate,
         profile_id: Option<&str>,
         granularity: &Granularity,
+        fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<HoldingsCashFlowMonth>> {
+        use crate::util::fx::CurrencyAggregator;
+        use std::collections::HashMap;
+
         let period_expr = match granularity {
             Granularity::Monthly => "substr(t.date, 1, 7)".to_string(),
             Granularity::Quarterly => concat!(
@@ -1820,13 +2088,14 @@ impl Db {
         let sql = format!(
             r"SELECT
                 {period_expr} AS period,
+                t.currency,
                 SUM(CASE WHEN CAST(t.amount AS REAL) > 0 THEN CAST(t.amount AS REAL) ELSE 0 END) AS income,
                 SUM(CASE WHEN CAST(t.amount AS REAL) < 0 THEN ABS(CAST(t.amount AS REAL)) ELSE 0 END) AS spending
               FROM transactions t
               {join}
               WHERE {where_clause}
-              GROUP BY period
-              ORDER BY period"
+              GROUP BY period, t.currency
+              ORDER BY period, t.currency"
         );
 
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
@@ -1837,21 +2106,42 @@ impl Db {
         base_args.extend(extra_args);
 
         let mut stmt = self.conn.prepare(&sql)?;
-        let raw: Vec<(String, f64, f64)> = stmt
+        let raw: Vec<(String, String, f64, f64)> = stmt
             .query_map(
                 rusqlite::params_from_iter(base_args.iter().map(|b| b.as_ref())),
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        Ok(raw
-            .into_iter()
-            .map(|(period, income_f, spending_f)| HoldingsCashFlowMonth {
-                month: period,
-                income: Decimal::try_from(income_f).unwrap_or_default(),
-                spending: Decimal::try_from(spending_f).unwrap_or_default(),
-            })
-            .collect())
+        let mut periods_map: HashMap<String, (CurrencyAggregator, CurrencyAggregator)> = HashMap::new();
+        for (period, currency, income_f, spending_f) in raw {
+            let income = Decimal::try_from(income_f).unwrap_or_default();
+            let spending = Decimal::try_from(spending_f).unwrap_or_default();
+            let entry = periods_map.entry(period).or_insert_with(|| {
+                (Default::default(), Default::default())
+            });
+            entry.0.add(income, &currency, fx);
+            entry.1.add(spending, &currency, fx);
+        }
+
+        // Generate all periods and collect results in order
+        let periods = generate_period_end_dates(start, end, granularity);
+        let mut result = Vec::new();
+        for (label, _) in periods {
+            let (income_agg, spending_agg) = periods_map
+                .get(&label)
+                .cloned()
+                .unwrap_or_else(|| (Default::default(), Default::default()));
+            result.push(HoldingsCashFlowMonth {
+                month: label,
+                income: income_agg.converted_sum(),
+                income_display: income_agg.display_currency(fx.preferred()),
+                spending: spending_agg.converted_sum(),
+                spending_display: spending_agg.display_currency(fx.preferred()),
+            });
+        }
+
+        Ok(result)
     }
 
     /// Returns the latest holdings (carry-forward) for all specified accounts.
@@ -2462,6 +2752,7 @@ fn seed_defaults(conn: &Connection) -> Result<()> {
     seed_categories(conn)?;
     migrate_category_data(conn)?;
     seed_section_mappings(conn)?;
+    seed_currencies(conn)?;
     Ok(())
 }
 
@@ -2537,6 +2828,28 @@ fn seed_section_mappings(conn: &Connection) -> Result<()> {
             )?;
         }
     }
+    Ok(())
+}
+
+fn seed_currencies(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO currencies (code, is_preferred, fx_rate, updated_at) VALUES (?1, 1, '1', NULL)",
+        params!["GBP"],
+    )?;
+
+    conn.execute_batch(
+        "INSERT OR IGNORE INTO currencies (code, is_preferred, fx_rate, updated_at)
+         SELECT DISTINCT currency, 0, '1', NULL
+         FROM (
+             SELECT currency FROM transactions
+             UNION
+             SELECT currency FROM accounts
+             UNION
+             SELECT currency FROM holdings
+         )
+         WHERE currency NOT IN (SELECT code FROM currencies)"
+    )?;
+
     Ok(())
 }
 

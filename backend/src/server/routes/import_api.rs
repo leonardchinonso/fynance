@@ -16,6 +16,7 @@ use crate::model::{BankFormat, ImportLog, ImportPayload, ImportResult};
 use crate::server::auth::AuthContext;
 use crate::server::error::AppError;
 use crate::server::state::AppState;
+use crate::server::validation::validate_currency;
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
 
@@ -51,6 +52,12 @@ pub async fn import_json(
             format!("account {} not found", payload.account_id),
             "account_not_found",
         ));
+    }
+
+    // Validate currencies for all transactions in the batch.
+    for t in &payload.transactions {
+        let currency = t.currency.as_deref().unwrap_or("GBP");
+        validate_currency(&db, currency)?;
     }
 
     let result = db.insert_transactions_bulk(&payload.account_id, &payload.transactions)?;

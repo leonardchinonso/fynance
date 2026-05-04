@@ -8,6 +8,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use rust_decimal::Decimal;
 
 use crate::server::error::AppError;
+use crate::storage::Db;
 
 /// Parse an ISO 8601 date string (`YYYY-MM-DD`). Returns `invalid_date` on failure.
 pub fn parse_date(s: &str) -> Result<NaiveDate, AppError> {
@@ -135,4 +136,15 @@ pub fn split_csv_param(s: &str) -> Option<Vec<String>> {
         .filter(|p| !p.is_empty())
         .collect();
     if parts.is_empty() { None } else { Some(parts) }
+}
+
+/// Validate that a currency code exists in the currencies table.
+pub fn validate_currency(db: &Db, currency: &str) -> Result<(), AppError> {
+    if !db.currency_exists(currency)? {
+        return Err(AppError::bad_request(
+            format!("Currency '{currency}' is not configured. Add it in Settings before using it."),
+            "currency_not_configured",
+        ));
+    }
+    Ok(())
 }

@@ -49,7 +49,11 @@ Each non-preferred currency row shows when its rate was last updated: "Last upda
 
 ### Data model
 
-#### `currencies` table (new, app-level)
+#### `currencies` table (new, app-level) ✅
+
+- [x] Table created in [`db/sql/schema.sql`](../../db/sql/schema.sql) with `code`, `is_preferred`, `fx_rate`, `updated_at` columns.
+- [x] GBP seeded as preferred on startup; existing data currencies backfilled — `seed_currencies()` in [`backend/src/storage/db.rs`](../../backend/src/storage/db.rs).
+- [x] All three invariants (exactly one preferred, positive rate, preferred rate always `'1'`) enforced at the app layer.
 
 One row per currency in use. This is global — not scoped to a profile or user. `code` is the primary key (ISO 4217 codes are unique).
 
@@ -73,7 +77,7 @@ Rate convention: `fx_rate` is always expressed as **1 unit of `current_base_curr
 
 `updated_at` is surfaced in the API response and shown in the frontend as a staleness indicator.
 
-#### No changes to `profile` table
+#### No changes to `profile` table ✅
 
 Currency config is app-level. `preferred_currency` and `supported_currencies` are **not** added to the profile.
 
@@ -81,7 +85,13 @@ Currency config is app-level. `preferred_currency` and `supported_currencies` ar
 
 Not created in V0. Reserved for the V2 auto-fetch cache. See V2 section.
 
-### API
+### API ✅
+
+- [x] All four endpoints implemented in [`backend/src/server/routes/currencies.rs`](../../backend/src/server/routes/currencies.rs) and registered in `server/mod.rs`.
+- [x] ISO 4217 validation on `POST` (full code list hardcoded in `currencies.rs`).
+- [x] `set_preferred_currency` is atomic — wraps in a transaction in `db.rs`.
+- [x] `fx_rate` update rejected for the preferred row.
+- [x] `DELETE` rejected with descriptive error if currency is preferred or referenced by holdings/accounts/transactions.
 
 All currency operations go through a single `/api/currencies` endpoint family — no separate `/api/fx-rates`.
 
@@ -116,11 +126,15 @@ Setting `is_preferred: true` on a currency atomically clears `is_preferred` on t
 ```
 The preferred currency always has `fx_rate: "1"` and `updated_at: null` (it is never manually set by the user).
 
-### Write-time currency validation
+### Write-time currency validation ✅
+
+- [x] `validate_currency()` helper in [`backend/src/server/validation.rs`](../../backend/src/server/validation.rs) applied to `POST /api/import`, `POST /api/holdings/import`, `POST /api/holdings/:account_id`, and `POST /api/accounts`.
 
 Any endpoint that creates or updates a holding, account, or transaction must validate that the supplied `currency` exists in the `currencies` table. If it does not, return a 422 with a clear error: `"Currency 'EUR' is not configured. Add it in Settings before using it."` This is enforced at the API layer before any DB write.
 
-### Conversion logic (V0)
+### Conversion logic (V0) ✅
+
+- [x] `FxRateMap` and `CurrencyAggregator` implemented in [`backend/src/util/fx.rs`](../../backend/src/util/fx.rs). Loaded once per request, passed into all aggregation DB methods.
 
 When computing any aggregated value:
 
@@ -129,7 +143,10 @@ When computing any aggregated value:
 3. Multiply `value * fx_rate` to get the amount in `preferred_currency`, then sum.
 4. All aggregated totals in responses are in `preferred_currency`. Every aggregating response includes a top-level `preferred_currency: String` field so the frontend always knows the denomination.
 
-### `display_currency` — the rule
+### `display_currency` — the rule ✅
+
+- [x] `DisplayCurrency` struct defined in `model.rs`, exported to frontend bindings via ts-rs.
+- [x] `CurrencyAggregator::display_currency()` in `util/fx.rs` implements the single-source-currency rule uniformly across all endpoints.
 
 Every aggregating endpoint applies this rule uniformly:
 
@@ -152,13 +169,17 @@ pub struct DisplayCurrency {
 
 ---
 
-### Per-endpoint `display_currency` spec
+### Per-endpoint `display_currency` spec ✅
+
+- [x] All 7 endpoints implemented. Conversion and `display_currency` logic applied in Rust after fetching rows from SQLite; SQL updated to group by currency where needed.
 
 Conversion and `display_currency` logic is applied in Rust after fetching rows from SQLite. SQL queries do not change.
 
 ---
 
-#### 1. `GET /api/holdings/summary` → `HoldingsSummaryResponse`
+#### 1. `GET /api/holdings/summary` → `HoldingsSummaryResponse` ✅
+
+- [x] `preferred_currency` added to `HoldingsSummaryResponse`; breakdown maps aggregated via `CurrencyAggregator` in `routes/holdings.rs`. `display_currency` added to `BreakdownItem` in `model.rs`.
 
 Add `preferred_currency: String` at the top level.
 
@@ -194,7 +215,9 @@ Example — `by_asset_class` Cash (mixes GBP + NGN): no `display_currency` — m
 
 ---
 
-#### 2. `GET /api/holdings/history` → `Vec<HoldingsHistoryRow>`
+#### 2. `GET /api/holdings/history` → `Vec<HoldingsHistoryRow>` ✅
+
+- [x] `available_wealth_display`, `unavailable_wealth_display`, `total_wealth_display` added to `HoldingsHistoryRow`; aggregation converted in `db.rs::get_monthly_net_worth()`.
 
 Almost always mixed-currency. Include `display_currency` fields for correctness on single-currency portfolios.
 
@@ -223,13 +246,17 @@ pub struct HoldingsHistoryRow {
 
 ---
 
-#### 3. `GET /api/holdings/balances` → `Vec<AccountSnapshot>` or `Vec<BalanceDelta>`
+#### 3. `GET /api/holdings/balances` → `Vec<AccountSnapshot>` or `Vec<BalanceDelta>` ✅
+
+- [x] No changes needed — per-account, no cross-currency summing. Both structs already carry `currency: String`.
 
 Per-account balances — no cross-currency summing within a row. **No change to these structs.** Both already carry `currency: String`.
 
 ---
 
-#### 4. `GET /api/holdings/cash-flow` → `Vec<HoldingsCashFlowMonth>`
+#### 4. `GET /api/holdings/cash-flow` → `Vec<HoldingsCashFlowMonth>` ✅
+
+- [x] `income_display` and `spending_display` added to `HoldingsCashFlowMonth`; SQL now groups by `(period, currency)` and aggregation done in `db.rs::get_cash_flow()`.
 
 ```rust
 pub struct HoldingsCashFlowMonth {
@@ -250,7 +277,9 @@ pub struct HoldingsCashFlowMonth {
 
 ---
 
-#### 5. `GET /api/budget/spending-grid` → `Vec<SpendingGridRow>`
+#### 5. `GET /api/budget/spending-grid` → `Vec<SpendingGridRow>` ✅
+
+- [x] `periods_display`, `average_display`, `total_display` added to `SpendingGridRow`; SQL groups by `(category, period, currency)` and per-period `CurrencyAggregator` maps built in `db.rs::get_spending_grid()`.
 
 `periods` values, `average`, and `total` are all converted to `preferred_currency`. Add a parallel display map for the per-period values:
 
@@ -275,7 +304,9 @@ pub struct SpendingGridRow {
 
 ---
 
-#### 6. `GET /api/budget/:month` → `Vec<BudgetRow>`
+#### 6. `GET /api/budget/:month` → `Vec<BudgetRow>` ✅
+
+- [x] `actual_display` added to `BudgetRow`; SQL ungrouped, aggregation by category done in `db.rs::get_effective_budget()` via `CurrencyAggregator`.
 
 `budgeted` is user-entered in `preferred_currency` — no display_currency needed. `actual` is the converted sum of transactions.
 
@@ -293,7 +324,9 @@ pub struct BudgetRow {
 
 ---
 
-#### 7. `GET /api/transactions/by-category` → `Vec<CategoryTotal>`
+#### 7. `GET /api/transactions/by-category` → `Vec<CategoryTotal>` ✅
+
+- [x] `display_currency` added to `CategoryTotal`; SQL now groups by `(category, currency)` and aggregation done in `db.rs::get_transactions_by_category()`.
 
 ```rust
 pub struct CategoryTotal {
