@@ -6,7 +6,7 @@ import type { InvestmentMetrics } from "./InvestmentMetrics";
 /**
  * Full holdings summary returned by `GET /api/holdings/summary`.
  */
-export type HoldingsSummaryResponse = { net_worth: string, currency: string, 
+export type HoldingsSummaryResponse = { net_worth: string, preferred_currency: string, 
 /**
  * ISO 8601 date the response was computed for (the `as_of` parameter or today).
  */

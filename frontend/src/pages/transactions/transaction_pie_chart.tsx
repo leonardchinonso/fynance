@@ -7,6 +7,7 @@ import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { InteractivePie } from "@/components/charts"
 import { formatCurrency, categoryParent } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
+import { usePreferredCurrency } from "@/context/preferred_currency_context"
 
 export function TransactionPieChart({ data }: { data: RemoteData<CategoryTotal[]> }) {
   return visitRemoteData(data, {
@@ -22,6 +23,7 @@ export function TransactionPieChart({ data }: { data: RemoteData<CategoryTotal[]
 }
 
 function TransactionPieChartInternal({ totals }: { totals: CategoryTotal[] }) {
+  const preferredCurrency = usePreferredCurrency()
   const byParent = new Map<string, number>()
   for (const row of totals) {
     const parent = categoryParent(row.category)
@@ -41,7 +43,7 @@ function TransactionPieChartInternal({ totals }: { totals: CategoryTotal[] }) {
       <InteractivePie
         data={pieData}
         colors={colors}
-        label={`Total: ${formatCurrency(totalSpending.toFixed(2))}`}
+        label={`Total: ${formatCurrency(totalSpending.toFixed(2), preferredCurrency)}`}
         height={320}
         innerRadius={70}
         outerRadius={120}

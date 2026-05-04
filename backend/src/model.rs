@@ -523,6 +523,14 @@ pub struct Holding {
     pub is_closed: bool,
 }
 
+/// Internal row type used only by `get_holdings_for_summary` -- not serialized.
+#[derive(Debug, Clone)]
+pub struct HoldingSummaryRow {
+    pub holding: Holding,
+    pub account_type: AccountType,
+    pub institution: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct HoldingPreview {

@@ -1,14 +1,15 @@
 import { useState } from "react"
-import type { Account, AccountSnapshot, Profile } from "@/types"
+import type { Account, AccountSnapshot, Currency, Profile } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioAccountsData } from "@/hooks/data"
+import { useHoldings } from "@/hooks/data"
 import { AccountsGridSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Currency } from "@/components/currency"
+import { MoneyDisplay } from "@/components/currency"
 import { daysSince, formatCurrency, formatDate } from "@/lib/utils"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { EmptyState } from "@/components/empty_state"
@@ -27,7 +28,7 @@ export function AccountsGrid({
   return visitRemoteData(data, {
     notLoaded: () => <AccountsGridSkeleton />,
     failed: (error) => <AuthAwareError error={error} />,
-    hasValue: ({ accounts, accountBalances }) => {
+    hasValue: ({ accounts, accountBalances, currencies }) => {
       const profiles = profilesData.status === "succeeded" || profilesData.status === "reloading"
         ? profilesData.value : []
       return (
@@ -37,6 +38,7 @@ export function AccountsGrid({
             onAccountClick={onAccountClick}
             profiles={profiles}
             balances={accountBalances}
+            currencies={currencies}
           />
           <ReloadingOverlay active={data.status === "reloading"} />
         </div>
@@ -51,6 +53,7 @@ interface AccountsGridProps {
   profiles: { id: string; name: string }[]
   startDate?: string
   balances?: AccountSnapshot[]
+  currencies?: Currency[]
 }
 
 function AccountsGridInternal({
@@ -58,6 +61,7 @@ function AccountsGridInternal({
   onAccountClick,
   profiles,
   balances,
+  currencies = [],
 }: AccountsGridProps) {
   const [selectedNonInvestment, setSelectedNonInvestment] = useState<Account | null>(null)
 
@@ -76,8 +80,15 @@ function AccountsGridInternal({
     }
   }
 
-  // Compute delta from earliest snapshot for each account
-  const deltas = new Map<string, number>()
+  // Build FX rate lookup for converting non-preferred balances
+  const preferredCurrency = currencies.find(c => c.is_preferred)?.code ?? "GBP"
+  const fxRates = new Map<string, number>()
+  for (const c of currencies) fxRates.set(c.code, parseFloat(c.fx_rate))
+  const toPreferred = (value: number, currency: string) =>
+    value * (fxRates.get(currency) ?? 1)
+
+  // Compute delta (in account's own currency) from earliest snapshot
+  const deltas = new Map<string, { value: number; currency: string }>()
   if (balances && balances.length > 0) {
     const byAccount = new Map<string, AccountSnapshot[]>()
     for (const s of balances) {
@@ -86,13 +97,11 @@ function AccountsGridInternal({
       byAccount.set(s.account_id, arr)
     }
     for (const [accId, snaps] of byAccount) {
-      const sorted = [...snaps].sort((a, b) =>
-        a.as_of.localeCompare(b.as_of)
-      )
+      const sorted = [...snaps].sort((a, b) => a.as_of.localeCompare(b.as_of))
       if (sorted.length >= 2) {
         const first = parseFloat(sorted[0].balance)
         const last = parseFloat(sorted[sorted.length - 1].balance)
-        deltas.set(accId, last - first)
+        deltas.set(accId, { value: last - first, currency: sorted[0].currency })
       }
     }
   }
@@ -120,6 +129,8 @@ function AccountsGridInternal({
                     key={account.id}
                     account={account}
                     delta={deltas.get(account.id)}
+                    preferredCurrency={preferredCurrency}
+                    toPreferred={toPreferred}
                     onClick={() => {
                       if (account.type === "investment" || account.type === "pension") {
                         onAccountClick(account.id)
@@ -147,10 +158,14 @@ function AccountsGridInternal({
 function AccountCard({
   account,
   delta,
+  preferredCurrency,
+  toPreferred,
   onClick,
 }: {
   account: Account
-  delta?: number
+  delta?: { value: number; currency: string }
+  preferredCurrency: string
+  toPreferred: (value: number, currency: string) => number
   onClick: () => void
 }) {
   const stale =
@@ -182,26 +197,34 @@ function AccountCard({
         </span>
       </CardHeader>
       <CardContent>
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-baseline gap-2 flex-wrap">
           <span className="text-xl font-semibold tabular-nums">
-            <Currency
+            <MoneyDisplay
               amount={account.balance ?? "0"}
               currency={account.currency}
               colorize={false}
             />
           </span>
-          {delta !== undefined && delta !== 0 && (
+          {account.currency !== preferredCurrency && account.balance && (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              ({formatCurrency(
+                toPreferred(parseFloat(account.balance), account.currency).toFixed(2),
+                preferredCurrency
+              )})
+            </span>
+          )}
+          {delta !== undefined && delta.value !== 0 && (
             <span
               className={`flex items-center gap-0.5 text-xs font-medium ${
-                delta >= 0 ? "text-green-500" : "text-red-500"
+                delta.value >= 0 ? "text-green-500" : "text-red-500"
               }`}
             >
-              {delta >= 0 ? (
+              {delta.value >= 0 ? (
                 <TrendingUp className="h-3 w-3" />
               ) : (
                 <TrendingDown className="h-3 w-3" />
               )}
-              {formatCurrency(Math.abs(delta).toFixed(2))}
+              {formatCurrency(Math.abs(delta.value).toFixed(2), delta.currency)}
             </span>
           )}
         </div>
@@ -223,7 +246,14 @@ function AccountDetailSheet({
   account: Account | null
   onClose: () => void
 }) {
+  const holdingsData = useHoldings(account?.id ?? null)
+
   if (!account) return null
+
+  const holdings =
+    holdingsData.status === "succeeded" || holdingsData.status === "reloading"
+      ? holdingsData.value
+      : []
 
   return (
     <Sheet open={!!account} onOpenChange={() => onClose()}>
@@ -234,10 +264,7 @@ function AccountDetailSheet({
         <div className="space-y-4">
           <div className="space-y-2">
             <DetailRow label="Institution" value={account.institution} />
-            <DetailRow
-              label="Type"
-              value={ACCOUNT_TYPE_LABELS[account.type]}
-            />
+            <DetailRow label="Type" value={ACCOUNT_TYPE_LABELS[account.type]} />
             <DetailRow label="Currency" value={account.currency} />
             <DetailRow
               label="Balance"
@@ -247,10 +274,30 @@ function AccountDetailSheet({
               label="Last Updated"
               value={account.balance_date ? formatDate(account.balance_date) : "Never"}
             />
-            {account.notes && (
-              <DetailRow label="Notes" value={account.notes} />
-            )}
+            {account.notes && <DetailRow label="Notes" value={account.notes} />}
           </div>
+
+          {holdings.length > 1 && (
+            <div className="space-y-2 pt-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Holdings
+              </p>
+              {[...holdings]
+                .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
+                .map((h) => (
+                  <div
+                    key={`${h.account_id}-${h.symbol}`}
+                    className="flex justify-between items-center py-1.5 border-b border-border/50"
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">{h.name}</span>
+                      <span className="text-xs text-muted-foreground">{h.symbol}</span>
+                    </div>
+                    <MoneyDisplay amount={h.value} currency={h.currency} colorize={parseFloat(h.value) < 0} />
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       </SheetContent>
     </Sheet>

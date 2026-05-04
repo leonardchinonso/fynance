@@ -9,6 +9,7 @@ import {
   eachMonthOfInterval,
   differenceInDays,
 } from "date-fns"
+import type { DisplayCurrency } from "@/bindings/DisplayCurrency"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -149,4 +150,37 @@ export function formatPeriodKey(
 ): string {
   if (granularity === "monthly") return formatMonthShort(key)
   return key // Q1 2024 or 2024 are already readable
+}
+
+/**
+ * Format a monetary value for display.
+ * Uses display_currency when present (foreign-currency single-source value),
+ * otherwise falls back to the preferred currency.
+ */
+export function formatMonetary(
+  value: string,
+  preferredCurrency: string,
+  display?: DisplayCurrency | null
+): string {
+  if (display) return formatCurrency(display.value, display.currency)
+  return formatCurrency(value, preferredCurrency)
+}
+
+/**
+ * Returns a primary label and an optional secondary label (for tooltips).
+ * When display_currency is present, primary shows the foreign value and
+ * secondary shows the preferred-currency equivalent.
+ */
+export function formatMonetaryWithFallback(
+  value: string,
+  preferredCurrency: string,
+  display?: DisplayCurrency | null
+): { primary: string; secondary?: string } {
+  if (display) {
+    return {
+      primary: formatCurrency(display.value, display.currency),
+      secondary: formatCurrency(value, preferredCurrency),
+    }
+  }
+  return { primary: formatCurrency(value, preferredCurrency) }
 }

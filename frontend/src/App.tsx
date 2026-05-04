@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { ProfileProvider } from "@/context/profile_context"
+import { PreferredCurrencyProvider } from "@/context/preferred_currency_context"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Navbar } from "@/components/navbar"
 import { TransactionsPage } from "@/pages/transactions"
@@ -45,9 +46,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <ProfileProvider>
-        <TooltipProvider>
-          <Layout />
-        </TooltipProvider>
+        <PreferredCurrencyProvider>
+          <TooltipProvider>
+            <Layout />
+          </TooltipProvider>
+        </PreferredCurrencyProvider>
       </ProfileProvider>
     </BrowserRouter>
   )

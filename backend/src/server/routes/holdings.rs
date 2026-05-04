@@ -115,13 +115,14 @@ pub async fn get_holdings_summary(
         .checked_sub_months(chrono::Months::new(12))
         .unwrap_or(as_of);
 
-    let (accounts, investment_metrics, fx) = {
+    let (accounts, holding_rows, investment_metrics, fx) = {
         let db = state.db.lock().expect("db mutex poisoned");
         let accounts = db.get_portfolio_as_of(as_of, profile_id)?;
+        let holding_rows = db.get_holdings_for_summary(as_of, profile_id)?;
         let metrics = db.compute_investment_metrics(metrics_start, as_of, profile_id)?;
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
-        (accounts, metrics, fx)
+        (accounts, holding_rows, metrics, fx)
     };
 
     let mut total_assets = Decimal::ZERO;
@@ -133,9 +134,9 @@ pub async fn get_holdings_summary(
     let mut by_institution_map: HashMap<String, CurrencyAggregator> = HashMap::new();
     let mut by_asset_class_map: HashMap<String, CurrencyAggregator> = HashMap::new();
 
-    for account in &accounts {
-        let balance = account.balance.unwrap_or(Decimal::ZERO);
-        let converted = fx.convert(balance, &account.currency);
+    for row in &holding_rows {
+        let h = &row.holding;
+        let converted = fx.convert(h.value, &h.currency);
 
         if converted >= Decimal::ZERO {
             total_assets += converted;
@@ -143,30 +144,29 @@ pub async fn get_holdings_summary(
             total_liabilities += converted;
         }
 
-        if is_available_account(&account.account_type) {
+        if is_available_account(&row.account_type) {
             available_wealth += converted;
         } else {
             unavailable_wealth += converted;
         }
 
-        let abs_balance = balance.abs();
         by_type_map
-            .entry(account.account_type.as_str().to_string())
+            .entry(row.account_type.as_str().to_string())
             .or_default()
-            .add(abs_balance, &account.currency, &fx);
+            .add(h.value, &h.currency, &fx);
         by_institution_map
-            .entry(account.institution.clone())
+            .entry(row.institution.clone())
             .or_default()
-            .add(abs_balance, &account.currency, &fx);
+            .add(h.value, &h.currency, &fx);
         by_asset_class_map
-            .entry(account_type_to_asset_class(&account.account_type).to_string())
+            .entry(account_type_to_asset_class(&row.account_type).to_string())
             .or_default()
-            .add(abs_balance, &account.currency, &fx);
+            .add(h.value, &h.currency, &fx);
     }
 
     let net_worth = total_assets + total_liabilities;
 
-    let total_abs = total_assets.abs() + total_liabilities.abs();
+    let total_abs = net_worth;
     let to_breakdown = |map: HashMap<String, CurrencyAggregator>| -> Vec<BreakdownItem> {
         let mut items: Vec<BreakdownItem> = map
             .into_iter()

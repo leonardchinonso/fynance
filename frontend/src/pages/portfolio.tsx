@@ -20,7 +20,7 @@ const VIEW_MODES = [
 ]
 
 export function PortfolioPage() {
-  const { view, setView, profileId, start, end, granularity } = useUrlFilters()
+  const { view, setView, profileId, start, end, granularity, splitStocks, includeLocked, hideSmall } = useUrlFilters()
   const { profilesData } = useProfiles()
 
   const summaryData  = usePortfolioSummary(start, end, granularity, profileId)
@@ -47,7 +47,7 @@ export function PortfolioPage() {
       </div>
 
       {activeView === "overview" && (
-        <PortfolioOverview data={summaryData} dateLabel={`${start} to ${end}`} />
+        <PortfolioOverview data={summaryData} dateLabel={`${start} to ${end}`} splitStocks={splitStocks} includeLocked={includeLocked} hideSmall={hideSmall} />
       )}
       {activeView === "accounts" && (
         <AccountsGrid data={accountsData} profilesData={profilesData} onAccountClick={setSelectedAccountId} />

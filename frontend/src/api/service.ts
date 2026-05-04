@@ -7,6 +7,7 @@ import type {
   CategoryTotalFilters,
   CreateAccountBody,
   CreateCategoryBody,
+  Currency,
   PatchCategoryBody,
   PatchTransactionBody,
   Granularity,
@@ -112,6 +113,12 @@ export interface ApiService {
   updateCategory(id: string, body: PatchCategoryBody): Promise<Category>
   deleteCategory(id: string): Promise<void>
   patchTransaction(id: string, body: PatchTransactionBody): Promise<Transaction>
+
+  // ── Currencies ────────────────────────────────────────────────────
+  getCurrencies(): Promise<Currency[]>
+  createCurrency(body: { code: string; fx_rate: string }): Promise<Currency>
+  updateCurrency(code: string, body: { fx_rate?: string; is_preferred?: boolean }): Promise<Currency>
+  deleteCurrency(code: string): Promise<void>
 
   // ── Import ────────────────────────────────────────────────────────
   importCsv(accountId: string, file: File): Promise<ImportResult>

@@ -7,7 +7,9 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 ## V1 (Immediate next steps after V0)
 
 ### Features
-- [ ] ISA remaining allowance tracking (as a part of ISA accounts.
+- [ ] **ISA allowance tracking:** Per-account annual allowance cap (e.g. £20,000 for a Stocks ISA). Track how much has been deposited in the current tax year vs. the limit. Show a progress bar + remaining allowance in the account detail sheet. Tax year resets on 6 April. Allowance is per-account-type (S&S ISA, Cash ISA, LISA each have separate rules). UI: a small "ISA" badge on the account card that turns amber/red as the limit approaches.
+- [ ] **Mortgage overpayment allowance tracking:** Per-account annual overpayment cap (typically 10% of outstanding balance, but user-configurable). Track total overpayments made in the current mortgage year vs. the cap. Show remaining headroom in the account sheet. Trigger: a holding or account-level `overpayment_limit` field (absolute amount or % of balance, with a year-start date). UI: shown only on accounts of type `mortgage` or where the field is set.
+- [ ] **Per-holding custom metadata fields:** A flexible `JSONB`-style (or separate key-value table) `metadata` field on holdings for user-defined annotations. Examples: purchase price / cost basis for CGT tracking, vesting date for RSUs, sector tag, broker reference. API: `PATCH /api/holdings/:account_id/:symbol` extended to accept `metadata: Record<string, string>`. UI: an expandable "Details" row in the holdings sheet showing key-value pairs, editable inline. This is also the natural foundation for the ISA and mortgage features above.
 - [ ] **Login page + credential management:** Dedicated `/login` page where users enter their bearer token. Auto-redirect to login on 401 if no token is set in localStorage. V2: multi-user session model with per-user credentials and a server-side revocation UI.
 
 ### CI/CD and Release Pipeline
@@ -47,6 +49,14 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 ### CORS
 
 - [ ] Tighten CORS from `CorsLayer::permissive()` to explicit `http://127.0.0.1:<port>` and `http://localhost:<port>` origins (from `17_frontend_review.md`)
+
+### Bugs
+- [ ] Mouse scrolling really quickly on the recharts pie chart sometiems fails to trigger the onMouseLeave event
+  - Root cause: Recharts maintains its own internal `active` state for the tooltip independently of React state. Our `activeIndex` and `mousePos` state clear correctly, but Recharts' internal state does not, causing the tooltip and active shape to remain visible.
+  - Confirmed via logging: when stuck, `activeIndex: undefined, mousePos: null` in React state, but `rechartsTooltip.active: true` from within the `content` render prop.
+  - Also observed: `onPointerMove` fires outside the container boundary (pointer capture behaviour), producing negative `mousePos.x` values that keep the tooltip alive even after our state is nominally cleared.
+  - Attempts that did not fully resolve it: moving `onMouseLeave` to `<PieChart>` (bounding box vs SVG path), `mouseInsideRef` guard on slice enter, interval-based position check, `pointerleave` + `pointerenter` listeners, `effectiveActiveIndex` derived from `mousePos`.
+  - Likely fix direction: pass `active={false}` explicitly to `<Tooltip>` when we want it hidden (controlled mode), which bypasses Recharts' internal state entirely. Not yet attempted.
 
 ---
 

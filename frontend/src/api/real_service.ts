@@ -22,6 +22,7 @@ import type {
   CategoryTotalFilters,
   CreateAccountBody,
   CreateCategoryBody,
+  Currency,
   PatchCategoryBody,
   PatchTransactionBody,
   Granularity,
@@ -168,7 +169,8 @@ export class RealApiService implements ApiService {
       params.categories = filters.categories.join(",")
     if (filters.profile_id) params.profile_id = filters.profile_id
     if (filters.direction) params.direction = filters.direction
-    return get<CategoryTotal[]>(`${BASE}/transactions/by-category`, params)
+    const res = await get<{ preferred_currency: string; rows: CategoryTotal[] }>(`${BASE}/transactions/by-category`, params)
+    return res.rows
   }
 
   async getCategories(): Promise<string[]> {
@@ -186,7 +188,8 @@ export class RealApiService implements ApiService {
   }
 
   async getBudget(month: string): Promise<BudgetRow[]> {
-    return get<BudgetRow[]>(`${BASE}/budget/${month}`)
+    const res = await get<{ preferred_currency: string; rows: BudgetRow[] }>(`${BASE}/budget/${month}`)
+    return res.rows
   }
 
   async getSpendingGrid(
@@ -197,7 +200,8 @@ export class RealApiService implements ApiService {
   ): Promise<SpendingGridRow[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    return get<SpendingGridRow[]>(`${BASE}/budget/spending-grid`, params)
+    const res = await get<{ preferred_currency: string; rows: SpendingGridRow[] }>(`${BASE}/budget/spending-grid`, params)
+    return res.rows
   }
 
   async setStandingBudget(body: SetStandingBudgetBody): Promise<void> {
@@ -224,7 +228,8 @@ export class RealApiService implements ApiService {
   ): Promise<PortfolioHistoryRow[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    return get<PortfolioHistoryRow[]>(`${BASE}/holdings/history`, params)
+    const res = await get<{ preferred_currency: string; rows: PortfolioHistoryRow[] }>(`${BASE}/holdings/history`, params)
+    return res.rows
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {
@@ -239,7 +244,8 @@ export class RealApiService implements ApiService {
   ): Promise<CashFlowMonth[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    return get<CashFlowMonth[]>(`${BASE}/holdings/cash-flow`, params)
+    const res = await get<{ preferred_currency: string; rows: CashFlowMonth[] }>(`${BASE}/holdings/cash-flow`, params)
+    return res.rows
   }
 
   async getAccountBalances(
@@ -291,6 +297,24 @@ export class RealApiService implements ApiService {
       `${BASE}/import/csv?account=${encodeURIComponent(accountId)}`,
       formData
     )
+  }
+
+  // ── Currencies ────────────────────────────────────────────────────
+
+  async getCurrencies(): Promise<Currency[]> {
+    return get<Currency[]>(`${BASE}/currencies`)
+  }
+
+  async createCurrency(body: { code: string; fx_rate: string }): Promise<Currency> {
+    return post<Currency>(`${BASE}/currencies`, body)
+  }
+
+  async updateCurrency(code: string, body: { fx_rate?: string; is_preferred?: boolean }): Promise<Currency> {
+    return patch<Currency>(`${BASE}/currencies/${code}`, body)
+  }
+
+  async deleteCurrency(code: string): Promise<void> {
+    return del(`${BASE}/currencies/${code}`)
   }
 
   // ── Mock fallback (backend endpoint doesn't exist yet) ──────────

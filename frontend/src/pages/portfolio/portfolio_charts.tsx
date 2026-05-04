@@ -50,8 +50,9 @@ function PortfolioChartsInternal({ portfolio, holdings = [] }: { portfolio: Port
     .map(([name, value]) => ({ name, value: parseFloat(value.toFixed(2)) }))
     .sort((a, b) => b.value - a.value)
 
-  const totalStr = formatCurrency(portfolio.net_worth)
-  const stocksTotal = formatCurrency(byStockData.reduce((s, d) => s + d.value, 0).toFixed(2))
+  const preferredCurrency = portfolio.preferred_currency
+  const totalStr = formatCurrency(portfolio.net_worth, preferredCurrency)
+  const stocksTotal = formatCurrency(byStockData.reduce((s, d) => s + d.value, 0).toFixed(2), preferredCurrency)
 
   if (byTypeData.length === 0 && byInstData.length === 0 && byAssetClassData.length === 0 && byStockData.length === 0) {
     return <EmptyState />

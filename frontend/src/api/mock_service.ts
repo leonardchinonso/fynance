@@ -7,6 +7,7 @@ import type {
   CategoryTotalFilters,
   CreateAccountBody,
   CreateCategoryBody,
+  Currency,
   PatchCategoryBody,
   PatchTransactionBody,
   Granularity,
@@ -36,6 +37,12 @@ import {
 import { delay, getMonthFromDate, getMonthsInRange } from "@/lib/utils"
 
 const DELAY_MS = 1000
+
+const mockCurrencies: Currency[] = [
+  { code: "GBP", is_preferred: true, fx_rate: "1", updated_at: null },
+  { code: "NGN", is_preferred: false, fx_rate: "0.00051", updated_at: "2026-04-01T10:00:00Z" },
+  { code: "USD", is_preferred: false, fx_rate: "0.79", updated_at: "2026-03-15T08:00:00Z" },
+]
 
 // Available/unavailable account type classification
 const AVAILABLE_TYPES = new Set(["checking", "savings", "investment", "cash", "credit"])
@@ -151,7 +158,7 @@ export class MockApiService implements ApiService {
 
     // DESC order to match the backend's ORDER BY total DESC
     return Array.from(totals.entries())
-      .map(([category, total]) => ({ category, total: total.toFixed(2) }))
+      .map(([category, total]) => ({ category, total: total.toFixed(2), display_currency: null }))
       .sort((a, b) => parseFloat(b.total) - parseFloat(a.total))
   }
 
@@ -198,6 +205,7 @@ export class MockApiService implements ApiService {
         category_id: null,
         budgeted: b.amount,
         actual: actual.toFixed(2),
+        actual_display: null,
         percent: budgeted > 0 ? Math.round((actual / budgeted) * 100) : 0,
       }
     })
@@ -276,9 +284,12 @@ export class MockApiService implements ApiService {
         category_id: null,
         section: getSection(cat),
         periods: monthValues,
+        periods_display: {},
         average: avg.toFixed(2),
+        average_display: null,
         budget: budget?.amount ?? null,
         total: total.toFixed(2),
+        total_display: null,
       })
     }
 
@@ -392,6 +403,7 @@ export class MockApiService implements ApiService {
           label,
           value: val.toFixed(2),
           percentage: total > 0 ? (val / total) * 100 : 0,
+          display_currency: null,
         }))
         .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
     }
@@ -405,7 +417,7 @@ export class MockApiService implements ApiService {
 
     return {
       net_worth: netWorth.toFixed(2),
-      currency: "GBP",
+      preferred_currency: "GBP",
       as_of: "2026-03-20",
       total_assets: totalAssets.toFixed(2),
       total_liabilities: totalLiabilities.toFixed(2),
@@ -465,8 +477,11 @@ export class MockApiService implements ApiService {
       .map(([month, { available, unavailable }]) => ({
         month,
         available_wealth: available.toFixed(2),
+        available_wealth_display: null,
         unavailable_wealth: unavailable.toFixed(2),
+        unavailable_wealth_display: null,
         total_wealth: (available + unavailable).toFixed(2),
+        total_wealth_display: null,
       }))
   }
 
@@ -506,7 +521,9 @@ export class MockApiService implements ApiService {
       .map(([month, { income, spending }]) => ({
         month,
         income: income.toFixed(2),
+        income_display: null,
         spending: spending.toFixed(2),
+        spending_display: null,
       }))
   }
 
@@ -646,6 +663,40 @@ export class MockApiService implements ApiService {
     if (body.notes !== undefined) tx.notes = body.notes
     if (body.category_id !== undefined) tx.category_id = body.category_id
     return { ...tx }
+  }
+
+  // ── Currencies ────────────────────────────────────────────────────
+
+  async getCurrencies(): Promise<Currency[]> {
+    await delay(DELAY_MS)
+    return [...mockCurrencies]
+  }
+
+  async createCurrency(body: { code: string; fx_rate: string }): Promise<Currency> {
+    await delay(DELAY_MS)
+    const currency: Currency = { code: body.code, is_preferred: false, fx_rate: body.fx_rate, updated_at: new Date().toISOString() }
+    mockCurrencies.push(currency)
+    return currency
+  }
+
+  async updateCurrency(code: string, body: { fx_rate?: string; is_preferred?: boolean }): Promise<Currency> {
+    await delay(DELAY_MS)
+    const idx = mockCurrencies.findIndex(c => c.code === code)
+    if (idx === -1) throw new Error(`Currency ${code} not found`)
+    if (body.is_preferred) {
+      for (const c of mockCurrencies) c.is_preferred = false
+    }
+    if (body.fx_rate !== undefined) mockCurrencies[idx].fx_rate = body.fx_rate
+    if (body.is_preferred !== undefined) mockCurrencies[idx].is_preferred = body.is_preferred
+    if (body.fx_rate !== undefined) mockCurrencies[idx].updated_at = new Date().toISOString()
+    return { ...mockCurrencies[idx] }
+  }
+
+  async deleteCurrency(code: string): Promise<void> {
+    await delay(DELAY_MS)
+    const idx = mockCurrencies.findIndex(c => c.code === code)
+    if (idx === -1) throw new Error(`Currency ${code} not found`)
+    mockCurrencies.splice(idx, 1)
   }
 
   // ── Import ────────────────────────────────────────────────────────
