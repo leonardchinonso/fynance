@@ -5,8 +5,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import {
-  cn, formatCurrency, formatMonetary, categoryLeaf, groupMonthsByGranularity, getMonthsForPeriod, formatPeriodKey,
+  cn, formatCurrency, categoryLeaf, groupMonthsByGranularity, getMonthsForPeriod, formatPeriodKey,
 } from "@/lib/utils"
+import { DualAmount } from "@/components/currency"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
 import { SpreadsheetSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
@@ -171,13 +172,13 @@ function SectionBlock({
               )
               const periodBudget = getPeriodBudget(row.budget, p)
               return (
-                <TableCell key={p} className={cn("text-right text-sm tabular-nums", row.section !== "Income" && cellColor(val, periodBudget))}>
-                  {formatMonetary(Math.abs(parseFloat(val)).toFixed(2), preferredCurrency, row.periods_display[p])}
+                <TableCell key={p} className={cn("text-right text-sm", row.section !== "Income" && cellColor(val, periodBudget))}>
+                  <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={row.periods_display[p]} secondaryFirst />
                 </TableCell>
               )
             })}
-            <TableCell className="text-right text-sm tabular-nums font-medium">
-              {rowAvg !== null ? formatMonetary(rowAvg.toFixed(2), preferredCurrency, row.average_display) : "-"}
+            <TableCell className="text-right text-sm font-medium">
+              {rowAvg !== null ? <DualAmount value={rowAvg.toFixed(2)} preferredCurrency={preferredCurrency} display={row.average_display} secondaryFirst /> : "-"}
             </TableCell>
             <TableCell className="text-right text-sm tabular-nums">
               <BudgetEditPopover

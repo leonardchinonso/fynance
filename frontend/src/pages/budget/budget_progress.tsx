@@ -1,7 +1,7 @@
 import type { BudgetRow } from "@/types"
 import { Progress } from "@/components/ui/progress"
-import { Currency } from "@/components/currency"
-import { cn, formatMonetary } from "@/lib/utils"
+import { MoneyDisplay, DualAmount } from "@/components/currency"
+import { cn } from "@/lib/utils"
 import { getBudgetProgressClass, getBudgetStatusClass } from "@/lib/colors"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
 
@@ -32,9 +32,10 @@ export function BudgetProgress({ rows }: BudgetProgressProps) {
               className={cn("h-2", getBudgetProgressClass(pct))}
             />
             <div className="mt-1.5 flex justify-between text-xs text-muted-foreground">
-              <span>
-                {formatMonetary(row.actual, preferredCurrency, row.actual_display)} /{" "}
-                <Currency amount={budgeted} currency={preferredCurrency} colorize={false} />
+              <span className="flex items-baseline gap-1 flex-wrap">
+                <DualAmount value={row.actual} preferredCurrency={preferredCurrency} display={row.actual_display} />
+                <span>/</span>
+                <MoneyDisplay amount={budgeted} currency={preferredCurrency} colorize={false} />
               </span>
               <span>
                 {parseFloat(budgeted) - parseFloat(row.actual) > 0

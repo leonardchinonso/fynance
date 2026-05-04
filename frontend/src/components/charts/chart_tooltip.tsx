@@ -60,34 +60,28 @@ export function ChartTooltip({
 
 /**
  * Tooltip for pie/donut charts showing percentage.
+ * `total` is passed from InteractivePie since Recharts does not include percent in tooltipPayload items.
  */
 export function PieTooltip({
   active,
   payload,
-}: TooltipProps<number, string>) {
+  total,
+}: TooltipProps<number, string> & { total?: number }) {
   if (!active || !payload || payload.length === 0) return null
 
   const entry = payload[0]
   const value = entry.value as number
-  // Compute percentage from all pie data
-  const allData = entry.payload?.payload
-  let percent = 0
-  if (allData && Array.isArray(allData)) {
-    const total = allData.reduce((s: number, d: { value: number }) => s + d.value, 0)
-    percent = total > 0 ? (value / total) * 100 : 0
-  } else {
-    // Fallback: Recharts sometimes puts percent on the payload
-    percent = (entry.payload?.percent ?? 0) * 100
-  }
+  const percent = total && total > 0 ? (value / total) * 100 : 0
+  const fullName: string | undefined = entry.payload?.fullName
 
   return (
     <div className="rounded-lg border border-border/50 bg-popover px-3 py-2 shadow-xl">
       <div className="flex items-center gap-2 text-sm">
         <span
           className="inline-block h-2.5 w-2.5 rounded-sm shrink-0"
-          style={{ backgroundColor: entry.payload?.fill }}
+          style={{ backgroundColor: (entry as { fill?: string }).fill ?? entry.payload?.fill }}
         />
-        <span className="font-medium text-foreground">{entry.name}</span>
+        <span className="font-medium text-foreground">{fullName ?? entry.name}</span>
       </div>
       <div className="mt-1 text-sm tabular-nums">
         <span className="text-foreground font-medium">

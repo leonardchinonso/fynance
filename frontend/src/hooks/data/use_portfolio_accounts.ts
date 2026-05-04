@@ -1,5 +1,5 @@
 import { api } from "@/api/client"
-import type { Account, AccountSnapshot } from "@/types"
+import type { Account, AccountSnapshot, Currency } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { useRemoteData } from "@/hooks/use_remote_data"
 
@@ -7,6 +7,7 @@ import { useRemoteData } from "@/hooks/use_remote_data"
 export interface PortfolioAccountsData {
   accounts: Account[]
   accountBalances: AccountSnapshot[]
+  currencies: Currency[]
 }
 
 /**
@@ -22,11 +23,12 @@ export function usePortfolioAccounts(
 ): RemoteData<PortfolioAccountsData> {
   const [data] = useRemoteData(
     async () => {
-      const [portfolioResponse, accountBalances] = await Promise.all([
+      const [portfolioResponse, accountBalances, currencies] = await Promise.all([
         api.getPortfolio(profileId),
         api.getAccountBalances(start, end, profileId),
+        api.getCurrencies(),
       ])
-      return { accounts: portfolioResponse.accounts, accountBalances }
+      return { accounts: portfolioResponse.accounts, accountBalances, currencies }
     },
     { hard: [profileId], soft: [start, end] },
   )

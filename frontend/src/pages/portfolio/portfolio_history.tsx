@@ -10,7 +10,8 @@ import { EmptyState } from "@/components/empty_state"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import { formatCurrency, formatMonth, formatMonetary, getQuarter, getYear } from "@/lib/utils"
+import { formatCurrency, formatMonth, getQuarter, getYear } from "@/lib/utils"
+import { DualAmount } from "@/components/currency"
 import { cn } from "@/lib/utils"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
 
@@ -152,14 +153,14 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
                   <TableCell className="font-medium">
                     {formatPeriodLabel(row.month, granularity)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMonetary(row.available_wealth, preferredCurrency, row.available_wealth_display)}
+                  <TableCell className="text-right">
+                    <DualAmount value={row.available_wealth} preferredCurrency={preferredCurrency} display={row.available_wealth_display} secondaryFirst />
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMonetary(row.unavailable_wealth, preferredCurrency, row.unavailable_wealth_display)}
+                  <TableCell className="text-right">
+                    <DualAmount value={row.unavailable_wealth} preferredCurrency={preferredCurrency} display={row.unavailable_wealth_display} secondaryFirst />
                   </TableCell>
-                  <TableCell className="text-right tabular-nums font-medium">
-                    {formatMonetary(row.total_wealth, preferredCurrency, row.total_wealth_display)}
+                  <TableCell className="text-right font-medium">
+                    <DualAmount value={row.total_wealth} preferredCurrency={preferredCurrency} display={row.total_wealth_display} secondaryFirst />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {change !== null ? (

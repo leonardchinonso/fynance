@@ -19,7 +19,7 @@ const DEFAULT_COLORS = [
 ]
 
 interface InteractivePieProps {
-  data: { name: string; value: number }[]
+  data: { name: string; value: number; fullName?: string }[]
   colors?: string[]
   label?: string
   height?: number
@@ -47,6 +47,9 @@ export function InteractivePie({
     name: `${d.name} (${total > 0 ? ((d.value / total) * 100).toFixed(0) : 0}%)`,
     color: colors[i % colors.length],
   }))
+
+  const pieTooltip = (props: Parameters<typeof PieTooltip>[0]) =>
+    PieTooltip({ ...props, total })
 
   function handleMouseMove(e: React.MouseEvent) {
     if (!containerRef.current) return
@@ -94,7 +97,7 @@ export function InteractivePie({
             ))}
           </Pie>
           <Tooltip
-            content={<PieTooltip />}
+            content={pieTooltip}
             position={mousePos ?? undefined}
             wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
             isAnimationActive={false}

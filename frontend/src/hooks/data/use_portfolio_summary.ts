@@ -1,5 +1,5 @@
 import { api } from "@/api/client"
-import type { CashFlowMonth, Granularity, Holding, PortfolioHistoryRow, PortfolioResponse } from "@/types"
+import type { CashFlowMonth, Currency, Granularity, Holding, PortfolioHistoryRow, PortfolioResponse } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { useRemoteData } from "@/hooks/use_remote_data"
 
@@ -11,6 +11,8 @@ export interface PortfolioSummaryData {
   cashFlow: CashFlowMonth[]
   /** Holdings for all investment + pension accounts. */
   allHoldings: Holding[]
+  /** FX rates keyed by currency code, for converting holding values. */
+  currencies: Currency[]
 }
 
 /**
@@ -28,10 +30,11 @@ export function usePortfolioSummary(
 ): RemoteData<PortfolioSummaryData> {
   const [data] = useRemoteData(
     async () => {
-      const [portfolio, history, cashFlow] = await Promise.all([
+      const [portfolio, history, cashFlow, currencies] = await Promise.all([
         api.getPortfolio(profileId),
         api.getPortfolioHistory(start, end, granularity, profileId),
         api.getCashFlow(start, end, granularity, profileId),
+        api.getCurrencies(),
       ])
 
       const investmentAccountIds = portfolio.accounts
@@ -43,7 +46,7 @@ export function usePortfolioSummary(
       )
       const allHoldings = holdingsPerAccount.flat()
 
-      return { portfolio, history, cashFlow, allHoldings }
+      return { portfolio, history, cashFlow, allHoldings, currencies }
     },
     { hard: [profileId], soft: [start, end, granularity] },
   )

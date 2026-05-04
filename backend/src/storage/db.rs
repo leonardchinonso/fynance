@@ -16,7 +16,8 @@ use rust_decimal::Decimal;
 use crate::model::{
     Account, AccountSnapshot, AccountType, BalanceDelta, BudgetRow, Category, CategoryNode,
     CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
-    Currency, Granularity, Holding, HoldingPreview, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
+    Currency, Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType,
+    HoldingsCashFlowMonth, HoldingsHistoryRow,
     ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentMetrics,
     PatchCategoryPayload, Profile, SectionMapping, SpendingGridRow, StandingBudget, Transaction,
 };
@@ -2142,6 +2143,68 @@ impl Db {
         }
 
         Ok(result)
+    }
+
+    /// Returns individual holdings for all accounts of a profile, point-in-time
+    /// (carry-forward to `as_of`), along with account metadata needed for
+    /// breakdowns. Used by the summary handler so that negative holdings
+    /// (loans, mortgages) count as liabilities separately from positive
+    /// holdings in the same account.
+    pub fn get_holdings_for_summary(
+        &self,
+        as_of: NaiveDate,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<HoldingSummaryRow>> {
+        let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
+
+        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id {
+            let pattern = format!("%\"{pid}\"%");
+            ("AND a.profile_ids LIKE ?2".to_string(), Some(pattern))
+        } else {
+            (String::new(), None)
+        };
+
+        let sql = format!(
+            r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
+                     h.quantity, h.price_per_unit, h.value, h.currency,
+                     h.as_of, h.short_name, h.sub_account, h.is_closed,
+                     a.type AS account_type, a.institution, a.profile_ids
+              FROM holdings h
+              JOIN accounts a ON a.id = h.account_id
+              WHERE a.is_active = 1
+                {profile_filter}
+                AND h.is_closed = 0
+                AND h.as_of = (
+                    SELECT MAX(h2.as_of) FROM holdings h2
+                    WHERE h2.account_id = h.account_id
+                      AND h2.is_closed = 0
+                      AND h2.as_of <= ?1
+                )
+              ORDER BY h.account_id, h.symbol"
+        );
+
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<HoldingSummaryRow> {
+            let account_type_str: String = row.get(12)?;
+            let institution: String = row.get(13)?;
+            let holding = row_to_holding(row)?;
+            Ok(HoldingSummaryRow {
+                holding,
+                account_type: AccountType::parse(&account_type_str)
+                    .unwrap_or(AccountType::Checking),
+                institution,
+            })
+        };
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows: Vec<HoldingSummaryRow> = if let Some(ref pat) = profile_arg {
+            stmt.query_map(rusqlite::params![as_of_str, pat], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(rusqlite::params![as_of_str], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        Ok(rows)
     }
 
     /// Returns the latest holdings (carry-forward) for all specified accounts.

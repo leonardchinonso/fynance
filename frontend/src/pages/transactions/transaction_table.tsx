@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Currency } from "@/components/currency"
+import { MoneyDisplay } from "@/components/currency"
 import { formatDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ChevronLeft, ChevronRight, Settings2, Check } from "lucide-react"
@@ -207,7 +207,7 @@ function TransactionTableInternal({
               )}
               {isVisible("amount") && (
                 <TableCell className="text-right">
-                  <Currency amount={t.amount} currency={t.currency} />
+                  <MoneyDisplay amount={t.amount} currency={t.currency} />
                 </TableCell>
               )}
               {isVisible("account") && (
