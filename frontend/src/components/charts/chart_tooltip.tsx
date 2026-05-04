@@ -1,5 +1,6 @@
 import type { TooltipProps } from "recharts"
 import { formatCurrency } from "@/lib/utils"
+import type { PieDataItem } from "./interactive_pie"
 
 /**
  * Styled tooltip matching Tremor's visual design.
@@ -61,25 +62,32 @@ export function ChartTooltip({
 /**
  * Tooltip for pie/donut charts showing percentage.
  * `total` is passed from InteractivePie since Recharts does not include percent in tooltipPayload items.
+ * `data` is passed so we can look up `otherItems` for the "Others" grouped slice.
  */
 export function PieTooltip({
   active,
   payload,
   total,
-}: TooltipProps<number, string> & { total?: number }) {
+  data,
+}: TooltipProps<number, string> & { total?: number; data?: PieDataItem[] }) {
   if (!active || !payload || payload.length === 0) return null
 
   const entry = payload[0]
   const value = entry.value as number
   const percent = total && total > 0 ? (value / total) * 100 : 0
   const fullName: string | undefined = entry.payload?.fullName
+  const color = (entry as { fill?: string }).fill ?? entry.payload?.fill
+
+  // Find otherItems from the data array by matching name
+  const dataItem = data?.find(d => d.name === entry.name)
+  const otherItems = dataItem?.otherItems
 
   return (
-    <div className="rounded-lg border border-border/50 bg-popover px-3 py-2 shadow-xl">
+    <div className="rounded-lg border border-border/50 bg-popover px-3 py-2 shadow-xl max-w-56">
       <div className="flex items-center gap-2 text-sm">
         <span
           className="inline-block h-2.5 w-2.5 rounded-sm shrink-0"
-          style={{ backgroundColor: (entry as { fill?: string }).fill ?? entry.payload?.fill }}
+          style={{ backgroundColor: color }}
         />
         <span className="font-medium text-foreground">{fullName ?? entry.name}</span>
       </div>
@@ -91,6 +99,16 @@ export function PieTooltip({
           ({percent.toFixed(1)}%)
         </span>
       </div>
+      {otherItems && otherItems.length > 0 && (
+        <div className="mt-2 border-t border-border/40 pt-2 space-y-1">
+          {otherItems.map((item, i) => (
+            <div key={i} className="flex justify-between gap-3 text-xs text-muted-foreground">
+              <span className="truncate">{item.name}</span>
+              <span className="tabular-nums shrink-0">{formatCurrency(item.value.toFixed(2))}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

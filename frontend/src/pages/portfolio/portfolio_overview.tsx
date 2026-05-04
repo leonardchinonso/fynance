@@ -1,3 +1,4 @@
+import { useState, useRef } from "react"
 import type React from "react"
 import type {
   BreakdownItem,
@@ -10,20 +11,41 @@ import type {
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioSummaryData } from "@/hooks/data"
+import { useUrlFilters } from "@/hooks/use_url_filters"
 import { PortfolioOverviewSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Switch } from "@/components/ui/switch"
 import { MoneyDisplay, DualAmount } from "@/components/currency"
 import { InteractivePie } from "@/components/charts"
+import type { PieDataItem } from "@/components/charts/interactive_pie"
 import {
   TrendingUp, TrendingDown, Wallet, PiggyBank, Building2, Shield,
   ArrowUpRight, ArrowDownRight, BarChart3, Lock, CreditCard, Home,
-  Landmark, Banknote,
+  Landmark, Banknote, Settings2,
 } from "lucide-react"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
+import { cn } from "@/lib/utils"
+
+// Asset class labels from backend account_type_to_asset_class()
+const LOCKED_ASSET_CLASSES = new Set(["Pension", "Property", "Debt"])
+
+const ASSET_CLASS_COLORS: Record<string, string> = {
+  Stocks:   "#a855f7",
+  Pension:  "#6366f1",
+  Cash:     "#22c55e",
+  Credit:   "#ef4444",
+  Property: "#14b8a6",
+  Debt:     "#f87171",
+}
+
+const STOCK_COLORS = [
+  "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
+  "#06b6d4", "#eab308", "#6366f1", "#14b8a6", "#ef4444",
+]
 
 function RichTooltipContent({
   side, align, children,
@@ -41,7 +63,19 @@ function RichTooltipContent({
   )
 }
 
-export function PortfolioOverview({ data, dateLabel }: { data: RemoteData<PortfolioSummaryData>; dateLabel?: string }) {
+export function PortfolioOverview({
+  data,
+  dateLabel,
+  splitStocks,
+  includeLocked,
+  hideSmall,
+}: {
+  data: RemoteData<PortfolioSummaryData>
+  dateLabel?: string
+  splitStocks: boolean
+  includeLocked: boolean
+  hideSmall: boolean
+}) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioOverviewSkeleton />,
     failed: (error) => <AuthAwareError error={error} />,
@@ -63,6 +97,9 @@ export function PortfolioOverview({ data, dateLabel }: { data: RemoteData<Portfo
             pensionAccountIds={pensionAccountIds}
             currencies={currencies}
             investmentMetrics={portfolio.investment_metrics}
+            splitStocks={splitStocks}
+            includeLocked={includeLocked}
+            hideSmall={hideSmall}
           />
           <ReloadingOverlay active={data.status === "reloading"} />
         </div>
@@ -81,6 +118,9 @@ interface PortfolioOverviewProps {
   pensionAccountIds?: Set<string>
   currencies?: Currency[]
   investmentMetrics?: InvestmentMetrics
+  splitStocks: boolean
+  includeLocked: boolean
+  hideSmall: boolean
 }
 
 function PortfolioOverviewInternal({
@@ -92,7 +132,14 @@ function PortfolioOverviewInternal({
   pensionAccountIds = new Set(),
   currencies = [] as Currency[],
   investmentMetrics,
+  splitStocks,
+  includeLocked,
+  hideSmall,
 }: PortfolioOverviewProps) {
+  const { setFilter } = useUrlFilters()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const pieCardRef = useRef<HTMLDivElement>(null)
+
   const preferredCurrency = portfolio.preferred_currency
   const startNw = startNetWorth ? parseFloat(startNetWorth) : null
   const endNw = endNetWorth ? parseFloat(endNetWorth) : null
@@ -106,45 +153,40 @@ function PortfolioOverviewInternal({
   const available = parseFloat(portfolio.available_wealth)
   const availablePct = netWorth > 0 ? (available / netWorth) * 100 : 0
 
-  // Income/outgoing totals
   const totalIncome = cashFlow.reduce((s, m) => s + parseFloat(m.income), 0)
   const totalSpending = cashFlow.reduce((s, m) => s + parseFloat(m.spending), 0)
   const monthCount = cashFlow.length || 1
   const avgIncome = totalIncome / monthCount
   const avgSpending = totalSpending / monthCount
 
-  // Build FX rate lookup: currency code → rate-to-preferred (GBP = 1)
   const fxRates = new Map<string, number>()
-  for (const c of currencies) {
-    fxRates.set(c.code, parseFloat(c.fx_rate))
-  }
+  for (const c of currencies) fxRates.set(c.code, parseFloat(c.fx_rate))
   const toPreferred = (value: number, currency: string) =>
     value * (fxRates.get(currency) ?? 1)
 
-  // Stocks breakdown — exclude pension holdings (tracked separately, skew the chart)
-  const holdingsByName = new Map<string, { value: number; fullName: string }>()
-  for (const h of holdings.filter(h => !pensionAccountIds.has(h.account_id))) {
-    const key = h.short_name ?? h.symbol
-    const converted = toPreferred(parseFloat(h.value), h.currency)
-    const existing = holdingsByName.get(key)
-    if (existing) {
-      existing.value += converted
-    } else {
-      holdingsByName.set(key, { value: converted, fullName: h.name })
-    }
-  }
-  const stocksData = Array.from(holdingsByName.entries())
-    .map(([shortName, { value, fullName }]) => ({
-      name: shortName,
-      fullName,
-      value: parseFloat(value.toFixed(2)),
-    }))
-    .sort((a, b) => b.value - a.value)
+  // Build full ungrouped data first to assign stable colors, then apply grouping
+  const allPieItems = buildPieData({
+    splitStocks,
+    includeLocked,
+    holdings,
+    pensionAccountIds,
+    toPreferred,
+    byAssetClass: portfolio.by_asset_class,
+  })
 
-  const STOCK_COLORS = [
-    "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
-    "#06b6d4", "#eab308", "#6366f1", "#14b8a6", "#ef4444",
-  ]
+  // Assign each name a stable color from its position in the full ungrouped list
+  const pieColorMap = new Map<string, string>()
+  allPieItems.forEach((d, i) => {
+    const color = splitStocks
+      ? STOCK_COLORS[i % STOCK_COLORS.length]
+      : (ASSET_CLASS_COLORS[d.name] ?? "#78716c")
+    pieColorMap.set(d.name, color)
+  })
+  pieColorMap.set("Others", "#78716c")
+
+  const pieData = hideSmall ? groupSmall(allPieItems) : allPieItems
+
+  const pieTotal = pieData.reduce((s, d) => s + d.value, 0)
 
   return (
     <div className="space-y-4">
@@ -266,7 +308,7 @@ function PortfolioOverviewInternal({
         </Card>
       </div>
 
-      {/* Income/Outgoing + Stocks breakdown */}
+      {/* Income/Outgoing + Portfolio pie */}
       <div className="grid gap-4 md:grid-cols-2">
         {/* Income, Spending & Investments card */}
         <Card>
@@ -315,7 +357,6 @@ function PortfolioOverviewInternal({
               </div>
             </div>
 
-            {/* Investment metrics - parsed from decimal strings in the API response */}
             {investmentMetrics && (() => {
               const startValue = parseFloat(investmentMetrics.start_value)
               if (startValue <= 0) return null
@@ -356,32 +397,118 @@ function PortfolioOverviewInternal({
           </CardContent>
         </Card>
 
-        {/* Stocks breakdown card */}
-        {stocksData.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Holdings by Stock
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <InteractivePie
-                data={stocksData}
-                colors={STOCK_COLORS}
-                height={220}
-                innerRadius={50}
-                outerRadius={85}
-                label={formatCurrency(stocksData.reduce((s, d) => s + d.value, 0).toFixed(2), preferredCurrency)}
-              />
-            </CardContent>
+        {/* Portfolio breakdown pie */}
+        {pieData.length > 0 && (
+          <Card className="overflow-hidden py-0 gap-0 h-[300px]" ref={pieCardRef}>
+            <div className="flex h-full">
+              {/* Main pie area */}
+              <div className="flex-1 min-w-0 flex flex-col">
+                <div className="flex items-center justify-between pt-5 pl-5 pr-5 pb-2">
+                  <p className="text-sm font-medium text-muted-foreground">Portfolio Overview</p>
+                  {/* Cog shown here only when settings panel is closed */}
+                  {!settingsOpen && (
+                    <button
+                      onClick={() => setSettingsOpen(true)}
+                      className="rounded-md p-1 transition-colors hover:bg-muted"
+                      aria-label="Chart settings"
+                    >
+                      <Settings2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="px-5 pb-5 flex-1 min-h-0">
+                  <InteractivePie
+                    data={pieData}
+                    colorMap={pieColorMap}
+                    height={240}
+                    innerRadius={50}
+                    outerRadius={90}
+                    label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
+                    legendPosition="left"
+                    boundaryRef={pieCardRef}
+                  />
+                </div>
+              </div>
+
+              {/* Settings panel — slides in from right, full card height */}
+              <div
+                className={cn(
+                  "flex flex-col overflow-hidden transition-all duration-300 border-l bg-neutral-100 dark:bg-neutral-800",
+                  settingsOpen ? "w-56 opacity-100" : "w-0 opacity-0 border-transparent"
+                )}
+              >
+                <div className="flex flex-col gap-5 px-5 py-5 min-w-56 h-full">
+                  {/* Cog mirrors the position of the one in the card header */}
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap">Chart Settings</p>
+                    <button
+                      onClick={() => setSettingsOpen(false)}
+                      className="rounded-md p-1 transition-colors hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400"
+                      aria-label="Close chart settings"
+                    >
+                      <Settings2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <label htmlFor="split-stocks" className="text-xs leading-tight cursor-pointer text-neutral-700 dark:text-neutral-200 whitespace-nowrap">
+                      Split stocks
+                    </label>
+                    <Switch
+                      id="split-stocks"
+                      size="sm"
+                      checked={splitStocks}
+                      onCheckedChange={(v) => setFilter({ split_stocks: v ? undefined : "0" })}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-xs leading-tight text-neutral-700 dark:text-neutral-200 whitespace-nowrap">
+                      Include{" "}
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger className="underline decoration-dotted underline-offset-2 cursor-default">
+                            locked assets
+                          </TooltipTrigger>
+                          <RichTooltipContent side="left">
+                            <div className="flex items-center gap-2">
+                              <Lock className="h-4 w-4 text-orange-400 shrink-0" />
+                              <span className="font-semibold text-sm text-white">Locked wealth</span>
+                            </div>
+                            <p className="text-xs text-white/70 leading-relaxed">Wealth tied up in illiquid or long-term assets.</p>
+                            <ul className="space-y-1 text-xs text-white/60">
+                              <li className="flex items-center gap-1.5"><Home className="h-3 w-3 shrink-0" /> Property equity</li>
+                              <li className="flex items-center gap-1.5"><Shield className="h-3 w-3 shrink-0" /> Pension &amp; retirement pots</li>
+                              <li className="flex items-center gap-1.5"><Landmark className="h-3 w-3 shrink-0 text-red-400" /> Mortgage &amp; secured debt</li>
+                            </ul>
+                          </RichTooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </span>
+                    <Switch
+                      id="include-locked"
+                      size="sm"
+                      checked={includeLocked}
+                      onCheckedChange={(v) => setFilter({ include_locked: v ? undefined : "0" })}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <label htmlFor="group-small" className="text-xs leading-tight cursor-pointer text-neutral-700 dark:text-neutral-200 whitespace-nowrap">
+                      Group &lt;1% as Others
+                    </label>
+                    <Switch
+                      id="group-small"
+                      size="sm"
+                      checked={hideSmall}
+                      onCheckedChange={(v) => setFilter({ hide_small: v ? undefined : "0" })}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
           </Card>
         )}
       </div>
 
-      {/* Breakdown cards - each card hides itself when its underlying
-          breakdown array is empty so the page collapses cleanly for
-          accounts with limited data. The wrapping row also drops out
-          entirely when all three are empty. */}
+      {/* Breakdown cards */}
       {(portfolio.by_type.length > 0 ||
         portfolio.by_institution.length > 0 ||
         portfolio.by_asset_class.length > 0) && (
@@ -409,6 +536,88 @@ function PortfolioOverviewInternal({
       )}
     </div>
   )
+}
+
+function groupSmall(items: PieDataItem[]): PieDataItem[] {
+  const total = items.reduce((s, d) => s + d.value, 0)
+  if (total === 0) return items
+  const main = items.filter(d => (d.value / total) * 100 >= 1)
+  const small = items.filter(d => (d.value / total) * 100 < 1)
+  if (small.length === 0) return main
+  const othersValue = parseFloat(small.reduce((s, d) => s + d.value, 0).toFixed(2))
+  return [
+    ...main,
+    {
+      name: "Others",
+      value: othersValue,
+      otherItems: small.map(d => ({ name: d.fullName ?? d.name, value: d.value })),
+    },
+  ]
+}
+
+function buildPieData({
+  splitStocks,
+  includeLocked,
+  holdings,
+  pensionAccountIds,
+  toPreferred,
+  byAssetClass,
+}: {
+  splitStocks: boolean
+  includeLocked: boolean
+  holdings: Holding[]
+  pensionAccountIds: Set<string>
+  toPreferred: (value: number, currency: string) => number
+  byAssetClass: BreakdownItem[]
+}): PieDataItem[] {
+  let items: PieDataItem[]
+
+  if (splitStocks) {
+    const holdingsByName = new Map<string, { value: number; fullName: string }>()
+    for (const h of holdings.filter(h => !pensionAccountIds.has(h.account_id))) {
+      const key = h.short_name ?? h.symbol
+      const converted = toPreferred(parseFloat(h.value), h.currency)
+      const existing = holdingsByName.get(key)
+      if (existing) {
+        existing.value += converted
+      } else {
+        holdingsByName.set(key, { value: converted, fullName: h.name })
+      }
+    }
+    const stockSlices: PieDataItem[] = Array.from(holdingsByName.entries())
+      .map(([shortName, { value, fullName }]) => ({
+        name: shortName,
+        fullName,
+        value: parseFloat(value.toFixed(2)),
+      }))
+      .filter(d => d.value > 0)
+
+    if (!includeLocked) {
+      items = stockSlices
+    } else {
+      const lockedSlices: PieDataItem[] = byAssetClass
+        .filter(item => LOCKED_ASSET_CLASSES.has(item.label))
+        .map(item => ({
+          name: item.label,
+          value: parseFloat(parseFloat(item.value).toFixed(2)),
+        }))
+        .filter(d => d.value > 0)
+      items = [...stockSlices, ...lockedSlices]
+    }
+  } else {
+    const src = includeLocked
+      ? byAssetClass
+      : byAssetClass.filter(item => !LOCKED_ASSET_CLASSES.has(item.label))
+    items = src
+      .map(item => ({
+        name: item.label,
+        value: parseFloat(parseFloat(item.value).toFixed(2)),
+      }))
+      .filter(d => d.value > 0)
+  }
+
+  // Sort descending by value so order is stable regardless of grouping
+  return items.sort((a, b) => b.value - a.value)
 }
 
 const BREAKDOWN_COLORS = [

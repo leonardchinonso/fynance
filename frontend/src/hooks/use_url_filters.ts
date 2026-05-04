@@ -73,6 +73,11 @@ export function useUrlFilters() {
     : []
   const search = searchParams.get("search") || ""
 
+  // Portfolio pie settings — default true (omitted from URL = true)
+  const splitStocks = searchParams.get("split_stocks") !== "0"
+  const includeLocked = searchParams.get("include_locked") !== "0"
+  const hideSmall = searchParams.get("hide_small") !== "0"
+
   const setFilter = useCallback(
     (updates: Record<string, string | undefined>) => {
       setSearchParams((prev) => {
@@ -153,6 +158,9 @@ export function useUrlFilters() {
     accounts,
     categories,
     search,
+    splitStocks,
+    includeLocked,
+    hideSmall,
     setFilter,
     setPreset,
     setSearch,

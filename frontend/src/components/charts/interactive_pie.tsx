@@ -1,4 +1,5 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
+import type React from "react"
 import {
   PieChart,
   Pie,
@@ -10,7 +11,8 @@ import {
 import type { PieSectorDataItem } from "recharts/types/polar/Pie"
 import { PieTooltip } from "./chart_tooltip"
 import { ChartLegend } from "@/components/chart_legend"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, cn } from "@/lib/utils"
+import { ChevronDown, ChevronUp } from "lucide-react"
 
 const DEFAULT_COLORS = [
   "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
@@ -18,105 +20,254 @@ const DEFAULT_COLORS = [
   "#f59e0b", "#10b981",
 ]
 
+export interface PieDataItem {
+  name: string
+  value: number
+  fullName?: string
+  /** Sub-items grouped into this slice (used for "Others") */
+  otherItems?: { name: string; value: number }[]
+}
+
 interface InteractivePieProps {
-  data: { name: string; value: number; fullName?: string }[]
+  data: PieDataItem[]
   colors?: string[]
+  /** Stable color map keyed by item name — takes precedence over positional `colors` */
+  colorMap?: Map<string, string>
   label?: string
   height?: number
   className?: string
   innerRadius?: number
   outerRadius?: number
+  /** Where to render the legend. Defaults to "bottom" (horizontal wrap). "left" renders a vertical list. */
+  legendPosition?: "bottom" | "left"
 }
 
 export function InteractivePie({
   data,
   colors = DEFAULT_COLORS,
+  colorMap,
   label,
   height = 280,
   className,
   innerRadius = 60,
   outerRadius = 100,
+  legendPosition = "bottom",
 }: InteractivePieProps) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const chartAreaRef = useRef<HTMLDivElement>(null)
+  const legendRef = useRef<HTMLDivElement>(null)
+  const [canScrollUp, setCanScrollUp] = useState(false)
+  const [canScrollDown, setCanScrollDown] = useState(false)
 
   const total = data.reduce((sum, d) => sum + d.value, 0)
 
+  const getColor = (name: string, i: number) =>
+    colorMap?.get(name) ?? colors[i % colors.length]
+
   const legendItems = data.map((d, i) => ({
     name: `${d.name} (${total > 0 ? ((d.value / total) * 100).toFixed(0) : 0}%)`,
-    color: colors[i % colors.length],
+    color: getColor(d.name, i),
   }))
 
-  const pieTooltip = (props: Parameters<typeof PieTooltip>[0]) =>
-    PieTooltip({ ...props, total })
-
+  // Mouse position relative to the chart area only (not the legend column)
   function handleMouseMove(e: React.MouseEvent) {
-    if (!containerRef.current) return
-    const rect = containerRef.current.getBoundingClientRect()
+    const ref = legendPosition === "left" ? chartAreaRef.current : containerRef.current
+    if (!ref) return
+    const rect = ref.getBoundingClientRect()
     setMousePos({
       x: e.clientX - rect.left + 15,
       y: e.clientY - rect.top + 15,
     })
   }
 
+  const clearHover = useCallback(() => {
+    setActiveIndex(undefined)
+    setMousePos(null)
+  }, [])
+
+  // Legend scroll indicators
+  function updateScrollIndicators() {
+    const el = legendRef.current
+    if (!el) return
+    setCanScrollUp(el.scrollTop > 0)
+    setCanScrollDown(el.scrollTop + el.clientHeight < el.scrollHeight - 1)
+  }
+
+  useEffect(() => {
+    updateScrollIndicators()
+    const el = legendRef.current
+    if (!el) return
+    el.addEventListener("scroll", updateScrollIndicators)
+    const ro = new ResizeObserver(updateScrollIndicators)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener("scroll", updateScrollIndicators)
+      ro.disconnect()
+    }
+  }, [data])
+
+  const pieTooltip = (props: Parameters<typeof PieTooltip>[0]) =>
+    PieTooltip({ ...props, total, data })
+
+  const chart = (
+    <ResponsiveContainer width="100%" height={height}>
+      <PieChart>
+        <Pie
+          data={data}
+          cx="50%"
+          cy="50%"
+          innerRadius={innerRadius}
+          outerRadius={outerRadius}
+          dataKey="value"
+          nameKey="name"
+          activeIndex={activeIndex}
+          activeShape={renderActiveShape}
+          onMouseEnter={(_, index) => setActiveIndex(index)}
+          onMouseLeave={clearHover}
+          onClick={undefined}
+          onMouseDown={(e) => e.preventDefault()}
+          animationBegin={0}
+          animationDuration={400}
+          animationEasing="ease-out"
+        >
+          {data.map((d, i) => (
+            <Cell
+              key={d.name}
+              fill={getColor(d.name, i)}
+              stroke="transparent"
+              style={{
+                outline: "none",
+                cursor: "pointer",
+                filter: activeIndex !== undefined && activeIndex !== i ? "brightness(0.85)" : "none",
+                transition: "filter 150ms ease-out",
+              }}
+            />
+          ))}
+        </Pie>
+        <Tooltip
+          content={pieTooltip}
+          position={mousePos ?? undefined}
+          wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
+          isAnimationActive={false}
+        />
+        {label && activeIndex === undefined && (
+          <text
+            x="50%"
+            y="50%"
+            textAnchor="middle"
+            dominantBaseline="central"
+            className="fill-foreground text-sm font-semibold"
+          >
+            {label}
+          </text>
+        )}
+      </PieChart>
+    </ResponsiveContainer>
+  )
+
+  if (legendPosition === "left") {
+    return (
+      <div className={cn("flex h-full", className)} ref={containerRef} onMouseMove={handleMouseMove}>
+        {/* Legend column */}
+        <div className="shrink-0 flex flex-col min-w-0">
+          {/* Up arrow — hover to scroll up continuously */}
+          <div className="h-6 flex items-center justify-center shrink-0">
+            {canScrollUp && (
+              <ScrollArrow
+                direction="up"
+                legendRef={legendRef}
+              />
+            )}
+          </div>
+          {/* Scrollable list with fade masks */}
+          <div className="relative flex-1 min-h-0">
+            {/* Top fade mask */}
+            {canScrollUp && (
+              <div className="absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-card to-transparent pointer-events-none z-10" />
+            )}
+            <div
+              ref={legendRef}
+              className="overflow-y-auto h-full px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              onScroll={updateScrollIndicators}
+            >
+              <ChartLegend items={legendItems} className="flex-col items-start gap-y-2.5" />
+            </div>
+            {/* Bottom fade mask */}
+            {canScrollDown && (
+              <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-card to-transparent pointer-events-none z-10" />
+            )}
+          </div>
+          {/* Down arrow — hover to scroll down continuously */}
+          <div className="h-6 flex items-center justify-center shrink-0">
+            {canScrollDown && (
+              <ScrollArrow
+                direction="down"
+                legendRef={legendRef}
+              />
+            )}
+          </div>
+        </div>
+        {/* Chart area — mouse position computed relative to this */}
+        <div className="flex-1 min-w-0 flex items-center" ref={chartAreaRef}>
+          {chart}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={className} ref={containerRef} onMouseMove={handleMouseMove}>
-      <ResponsiveContainer width="100%" height={height}>
-        <PieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            innerRadius={innerRadius}
-            outerRadius={outerRadius}
-            dataKey="value"
-            nameKey="name"
-            activeIndex={activeIndex}
-            activeShape={renderActiveShape}
-            onMouseEnter={(_, index) => setActiveIndex(index)}
-            onMouseLeave={() => { setActiveIndex(undefined); setMousePos(null); }}
-            onClick={undefined}
-            onMouseDown={(e) => e.preventDefault()}
-            animationBegin={0}
-            animationDuration={400}
-            animationEasing="ease-out"
-          >
-            {data.map((_, i) => (
-              <Cell
-                key={i}
-                fill={colors[i % colors.length]}
-                stroke="transparent"
-                style={{
-                  outline: "none",
-                  cursor: "pointer",
-                  filter: activeIndex !== undefined && activeIndex !== i ? "brightness(0.85)" : "none",
-                  transition: "filter 150ms ease-out",
-                }}
-              />
-            ))}
-          </Pie>
-          <Tooltip
-            content={pieTooltip}
-            position={mousePos ?? undefined}
-            wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
-            isAnimationActive={false}
-          />
-          {/* Center label - hidden when a segment is hovered */}
-          {label && activeIndex === undefined && (
-            <text
-              x="50%"
-              y="50%"
-              textAnchor="middle"
-              dominantBaseline="central"
-              className="fill-foreground text-sm font-semibold"
-            >
-              {label}
-            </text>
-          )}
-        </PieChart>
-      </ResponsiveContainer>
+      {chart}
       <ChartLegend items={legendItems} className="mt-2 justify-center" />
+    </div>
+  )
+}
+
+function ScrollArrow({
+  direction,
+  legendRef,
+}: {
+  direction: "up" | "down"
+  legendRef: React.RefObject<HTMLDivElement | null>
+}) {
+  const rafRef = useRef<number | null>(null)
+
+  const startScrolling = useCallback(() => {
+    let accumulator = 0
+    const step = () => {
+      const el = legendRef.current
+      if (!el) return
+      accumulator += direction === "down" ? 0.25 : -0.25
+      const wholePx = Math.trunc(accumulator)
+      if (wholePx !== 0) {
+        el.scrollTop += wholePx
+        accumulator -= wholePx
+      }
+      rafRef.current = requestAnimationFrame(step)
+    }
+    rafRef.current = requestAnimationFrame(step)
+  }, [direction, legendRef])
+
+  const stopScrolling = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  }, [])
+
+  useEffect(() => () => stopScrolling(), [stopScrolling])
+
+  const Icon = direction === "up" ? ChevronUp : ChevronDown
+
+  return (
+    <div
+      onMouseEnter={startScrolling}
+      onMouseLeave={stopScrolling}
+      className="flex items-center justify-center w-full cursor-default text-muted-foreground hover:text-foreground transition-colors"
+    >
+      <Icon className="h-4 w-4" strokeWidth={2.5} />
     </div>
   )
 }
