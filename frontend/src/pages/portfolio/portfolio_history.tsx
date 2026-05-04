@@ -10,8 +10,9 @@ import { EmptyState } from "@/components/empty_state"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import { formatCurrency, formatMonth, getQuarter, getYear } from "@/lib/utils"
+import { formatCurrency, formatMonth, formatMonetary, getQuarter, getYear } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import { usePreferredCurrency } from "@/context/preferred_currency_context"
 
 export function PortfolioHistory({ data, granularity }: { data: RemoteData<PortfolioHistoryRow[]>; granularity: Granularity }) {
   return visitRemoteData(data, {
@@ -66,13 +67,17 @@ function aggregateHistory(
     return {
       month: key,
       available_wealth: g.available.toFixed(2),
+      available_wealth_display: null,
       unavailable_wealth: g.unavailable.toFixed(2),
+      unavailable_wealth_display: null,
       total_wealth: (g.available + g.unavailable).toFixed(2),
+      total_wealth_display: null,
     }
   })
 }
 
 function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProps) {
+  const preferredCurrency = usePreferredCurrency()
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
   const filtered = history.filter((row) => parseFloat(row.total_wealth) > 0)
@@ -148,13 +153,13 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
                     {formatPeriodLabel(row.month, granularity)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatCurrency(row.available_wealth)}
+                    {formatMonetary(row.available_wealth, preferredCurrency, row.available_wealth_display)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatCurrency(row.unavailable_wealth)}
+                    {formatMonetary(row.unavailable_wealth, preferredCurrency, row.unavailable_wealth_display)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums font-medium">
-                    {formatCurrency(row.total_wealth)}
+                    {formatMonetary(row.total_wealth, preferredCurrency, row.total_wealth_display)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {change !== null ? (
@@ -165,7 +170,7 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
                         )}
                       >
                         {change >= 0 ? "+" : ""}
-                        {formatCurrency(change.toFixed(2))}
+                        {formatCurrency(change.toFixed(2), preferredCurrency)}
                       </span>
                     ) : (
                       <span className="text-muted-foreground">-</span>

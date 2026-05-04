@@ -19,7 +19,7 @@ import {
   ArrowUpRight, ArrowDownRight, BarChart3,
 } from "lucide-react"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, formatMonetary } from "@/lib/utils"
 
 export function PortfolioOverview({ data, dateLabel }: { data: RemoteData<PortfolioSummaryData>; dateLabel?: string }) {
   return visitRemoteData(data, {
@@ -64,6 +64,7 @@ function PortfolioOverviewInternal({
   holdings = [],
   investmentMetrics,
 }: PortfolioOverviewProps) {
+  const preferredCurrency = portfolio.preferred_currency
   const startNw = startNetWorth ? parseFloat(startNetWorth) : null
   const endNw = endNetWorth ? parseFloat(endNetWorth) : null
   const delta = startNw !== null && endNw !== null ? endNw - startNw : null
@@ -120,7 +121,7 @@ function PortfolioOverviewInternal({
           <CardContent>
             <div className="flex items-baseline gap-3">
               <span className="text-4xl font-bold tabular-nums">
-                <Currency amount={portfolio.net_worth} colorize={false} />
+                <Currency amount={portfolio.net_worth} currency={preferredCurrency} colorize={false} />
               </span>
               {delta !== null && (
                 <div className="flex flex-col">
@@ -130,7 +131,7 @@ function PortfolioOverviewInternal({
                     }`}
                   >
                     {delta >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                    <Currency amount={delta.toFixed(2)} />
+                    <Currency amount={delta.toFixed(2)} currency={preferredCurrency} />
                     {deltaPercent && <span className="text-xs opacity-75">({deltaPercent}%)</span>}
                   </span>
                   <span className="text-xs text-muted-foreground ml-5">over selected period</span>
@@ -142,12 +143,12 @@ function PortfolioOverviewInternal({
                 <span className="flex items-center gap-1.5">
                   <PiggyBank className="h-3.5 w-3.5 text-blue-500" />
                   Available
-                  <span className="font-medium"><Currency amount={portfolio.available_wealth} colorize={false} /></span>
+                  <span className="font-medium"><Currency amount={portfolio.available_wealth} currency={preferredCurrency} colorize={false} /></span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <Shield className="h-3.5 w-3.5 text-orange-500" />
                   Unavailable
-                  <span className="font-medium"><Currency amount={portfolio.unavailable_wealth} colorize={false} /></span>
+                  <span className="font-medium"><Currency amount={portfolio.unavailable_wealth} currency={preferredCurrency} colorize={false} /></span>
                 </span>
               </div>
               <div className="h-3 rounded-full bg-orange-500/20 overflow-hidden">
@@ -172,19 +173,19 @@ function PortfolioOverviewInternal({
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Assets</span>
               <span className="text-lg font-semibold text-green-500 tabular-nums">
-                <Currency amount={portfolio.total_assets} colorize={false} />
+                <Currency amount={portfolio.total_assets} currency={preferredCurrency} colorize={false} />
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Liabilities</span>
               <span className="text-lg font-semibold text-red-500 tabular-nums">
-                <Currency amount={portfolio.total_liabilities} colorize={false} />
+                <Currency amount={portfolio.total_liabilities} currency={preferredCurrency} colorize={false} />
               </span>
             </div>
             <div className="border-t pt-2 flex justify-between items-center">
               <span className="text-sm font-medium">Net</span>
               <span className="text-lg font-bold tabular-nums">
-                <Currency amount={portfolio.net_worth} colorize={false} />
+                <Currency amount={portfolio.net_worth} currency={preferredCurrency} colorize={false} />
               </span>
             </div>
           </CardContent>
@@ -209,10 +210,10 @@ function PortfolioOverviewInternal({
                   Total Income
                 </div>
                 <p className="text-xl font-semibold text-green-500 tabular-nums">
-                  {formatCurrency(totalIncome.toFixed(2))}
+                  {formatCurrency(totalIncome.toFixed(2), preferredCurrency)}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  ~{formatCurrency(avgIncome.toFixed(2))}/mo
+                  ~{formatCurrency(avgIncome.toFixed(2), preferredCurrency)}/mo
                 </p>
               </div>
               <div className="space-y-1">
@@ -221,10 +222,10 @@ function PortfolioOverviewInternal({
                   Total Spending
                 </div>
                 <p className="text-xl font-semibold text-red-500 tabular-nums">
-                  {formatCurrency(totalSpending.toFixed(2))}
+                  {formatCurrency(totalSpending.toFixed(2), preferredCurrency)}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  ~{formatCurrency(avgSpending.toFixed(2))}/mo
+                  ~{formatCurrency(avgSpending.toFixed(2), preferredCurrency)}/mo
                 </p>
               </div>
               <div className="space-y-1">
@@ -232,10 +233,10 @@ function PortfolioOverviewInternal({
                   Net Savings
                 </div>
                 <p className={`text-xl font-semibold tabular-nums ${totalIncome - totalSpending >= 0 ? "text-green-500" : "text-red-500"}`}>
-                  {formatCurrency((totalIncome - totalSpending).toFixed(2))}
+                  {formatCurrency((totalIncome - totalSpending).toFixed(2), preferredCurrency)}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  ~{formatCurrency(((totalIncome - totalSpending) / monthCount).toFixed(2))}/mo
+                  ~{formatCurrency(((totalIncome - totalSpending) / monthCount).toFixed(2), preferredCurrency)}/mo
                 </p>
               </div>
             </div>
@@ -254,21 +255,21 @@ function PortfolioOverviewInternal({
                     <div className="space-y-0.5">
                       <p className="text-xs text-muted-foreground">New Cash Invested</p>
                       <p className="text-base font-semibold tabular-nums">
-                        {formatCurrency(newCashInvested.toFixed(2))}
+                        {formatCurrency(newCashInvested.toFixed(2), preferredCurrency)}
                       </p>
                     </div>
                     <div className="space-y-0.5">
                       <p className="text-xs text-muted-foreground">Total Growth</p>
                       <p className={`text-base font-semibold tabular-nums ${totalGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
                         {totalGrowth >= 0 ? "+" : ""}
-                        {formatCurrency(totalGrowth.toFixed(2))}
+                        {formatCurrency(totalGrowth.toFixed(2), preferredCurrency)}
                       </p>
                     </div>
                     <div className="space-y-0.5">
                       <p className="text-xs text-muted-foreground">Market Performance</p>
                       <p className={`text-base font-semibold tabular-nums ${marketGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
                         {marketGrowth >= 0 ? "+" : ""}
-                        {formatCurrency(marketGrowth.toFixed(2))}
+                        {formatCurrency(marketGrowth.toFixed(2), preferredCurrency)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {((marketGrowth / startValue) * 100).toFixed(1)}% return
@@ -296,7 +297,7 @@ function PortfolioOverviewInternal({
                 height={220}
                 innerRadius={50}
                 outerRadius={85}
-                label={formatCurrency(stocksData.reduce((s, d) => s + d.value, 0).toFixed(2))}
+                label={formatCurrency(stocksData.reduce((s, d) => s + d.value, 0).toFixed(2), preferredCurrency)}
               />
             </CardContent>
           </Card>
@@ -315,6 +316,7 @@ function PortfolioOverviewInternal({
             <BreakdownCard
               title="By Asset Type"
               items={portfolio.by_type}
+              preferredCurrency={preferredCurrency}
               colorFn={(label) =>
                 ACCOUNT_TYPE_COLORS[label as keyof typeof ACCOUNT_TYPE_COLORS] ?? "#78716c"
               }
@@ -324,10 +326,10 @@ function PortfolioOverviewInternal({
             />
           )}
           {portfolio.by_institution.length > 0 && (
-            <BreakdownCard title="By Institution" items={portfolio.by_institution} />
+            <BreakdownCard title="By Institution" items={portfolio.by_institution} preferredCurrency={preferredCurrency} />
           )}
           {portfolio.by_asset_class.length > 0 && (
-            <BreakdownCard title="By Asset Class" items={portfolio.by_asset_class} />
+            <BreakdownCard title="By Asset Class" items={portfolio.by_asset_class} preferredCurrency={preferredCurrency} />
           )}
         </div>
       )}
@@ -343,11 +345,13 @@ const BREAKDOWN_COLORS = [
 function BreakdownCard({
   title,
   items,
+  preferredCurrency,
   colorFn,
   labelFn,
 }: {
   title: string
   items: BreakdownItem[]
+  preferredCurrency: string
   colorFn?: (label: string) => string
   labelFn?: (label: string) => string
 }) {
@@ -373,7 +377,7 @@ function BreakdownCard({
                   <span className="capitalize">{displayLabel}</span>
                 </span>
                 <div className="flex items-center gap-2 tabular-nums">
-                  <Currency amount={item.value} colorize={false} />
+                  <span>{formatMonetary(item.value, preferredCurrency, item.display_currency)}</span>
                   <span className="text-xs text-muted-foreground w-10 text-right">
                     {item.percentage.toFixed(1)}%
                   </span>

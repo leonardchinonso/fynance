@@ -1,17 +1,19 @@
 import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { useProfiles } from "@/context/profile_context"
-import { useAccounts } from "@/hooks/data"
+import { useAccounts, useCurrencies } from "@/hooks/data"
 import { ProfilesSection } from "./profiles_section"
 import { AccountsSection } from "./accounts_section"
 import { CategoriesSection } from "./categories_section"
+import { CurrenciesSection } from "./currencies_section"
 import { AppearanceSection } from "./appearance_section"
 import { DataSourceSection } from "./data_source_section"
 import { AuthSection } from "./auth_section"
-import { User, Building2, Tag, Palette, Database, KeyRound } from "lucide-react"
+import { User, Building2, Tag, Palette, Database, KeyRound, Coins } from "lucide-react"
 
 const SECTIONS = [
   { id: "profiles",    label: "Profiles",    icon: User },
+  { id: "currencies",  label: "Currencies",  icon: Coins },
   { id: "accounts",    label: "Accounts",    icon: Building2 },
   { id: "categories",  label: "Categories",  icon: Tag },
   { id: "appearance",  label: "Appearance",  icon: Palette },
@@ -24,10 +26,12 @@ export function SettingsPage() {
 
   const { profilesData, refreshProfiles } = useProfiles()
   const [accountsData, refreshAccounts] = useAccounts()
+  const [currenciesData, refreshCurrencies] = useCurrencies()
 
   function refresh() {
     refreshProfiles()
     refreshAccounts()
+    refreshCurrencies()
   }
 
   function scrollTo(id: string, updateHash = true) {
@@ -95,6 +99,7 @@ export function SettingsPage() {
         </div>
 
         <ProfilesSection data={profilesData} onRefresh={refresh} />
+        <CurrenciesSection data={currenciesData} onRefresh={refresh} />
         <AccountsSection data={accountsData} profilesData={profilesData} onRefresh={refresh} />
         <CategoriesSection />
         <AppearanceSection />

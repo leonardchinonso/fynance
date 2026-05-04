@@ -5,8 +5,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import {
-  cn, formatCurrency, categoryLeaf, groupMonthsByGranularity, getMonthsForPeriod, formatPeriodKey,
+  cn, formatCurrency, formatMonetary, categoryLeaf, groupMonthsByGranularity, getMonthsForPeriod, formatPeriodKey,
 } from "@/lib/utils"
+import { usePreferredCurrency } from "@/context/preferred_currency_context"
 import { SpreadsheetSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -48,6 +49,7 @@ function cellColor(value: string, budget: string | null): string {
 function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }: {
   rows: SpendingGridRow[]; months: string[]; granularity: Granularity; onBudgetSaved?: () => void
 }) {
+  const preferredCurrency = usePreferredCurrency()
   if (rows.length === 0) return <EmptyState />
 
   const periods = groupMonthsByGranularity(months, granularity)
@@ -106,6 +108,7 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
                 granularity={granularity}
                 getPeriodValue={getPeriodValue}
                 getPeriodBudget={getPeriodBudget}
+                preferredCurrency={preferredCurrency}
                 onBudgetSaved={onBudgetSaved}
               />
             )
@@ -117,7 +120,7 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
 }
 
 function SectionBlock({
-  section, rows, periods, getPeriodValue, getPeriodBudget, onBudgetSaved,
+  section, rows, periods, getPeriodValue, getPeriodBudget, preferredCurrency, onBudgetSaved,
 }: {
   section: string
   rows: SpendingGridRow[]
@@ -126,6 +129,7 @@ function SectionBlock({
   granularity: Granularity
   getPeriodValue: (row: SpendingGridRow, periodKey: string) => string | null
   getPeriodBudget: (budget: string | null, periodKey: string) => string | null
+  preferredCurrency: string
   onBudgetSaved?: () => void
 }) {
   const totals: Record<string, number | null> = {}
@@ -168,12 +172,12 @@ function SectionBlock({
               const periodBudget = getPeriodBudget(row.budget, p)
               return (
                 <TableCell key={p} className={cn("text-right text-sm tabular-nums", row.section !== "Income" && cellColor(val, periodBudget))}>
-                  {formatCurrency(Math.abs(parseFloat(val)).toFixed(2))}
+                  {formatMonetary(Math.abs(parseFloat(val)).toFixed(2), preferredCurrency, row.periods_display[p])}
                 </TableCell>
               )
             })}
             <TableCell className="text-right text-sm tabular-nums font-medium">
-              {rowAvg !== null ? formatCurrency(rowAvg.toFixed(2)) : "-"}
+              {rowAvg !== null ? formatMonetary(rowAvg.toFixed(2), preferredCurrency, row.average_display) : "-"}
             </TableCell>
             <TableCell className="text-right text-sm tabular-nums">
               <BudgetEditPopover
@@ -192,11 +196,11 @@ function SectionBlock({
         </TableCell>
         {periods.map((p) => (
           <TableCell key={p} className="text-right text-sm tabular-nums font-medium">
-            {totals[p] !== null ? formatCurrency(totals[p]!.toFixed(2)) : <span className="text-muted-foreground/30">-</span>}
+            {totals[p] !== null ? formatCurrency(totals[p]!.toFixed(2), preferredCurrency) : <span className="text-muted-foreground/30">-</span>}
           </TableCell>
         ))}
         <TableCell className="text-right text-sm tabular-nums font-medium">
-          {formatCurrency(totalAvg.toFixed(2))}
+          {formatCurrency(totalAvg.toFixed(2), preferredCurrency)}
         </TableCell>
         <TableCell />
       </TableRow>
