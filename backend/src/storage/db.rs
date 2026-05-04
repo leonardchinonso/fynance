@@ -851,7 +851,7 @@ impl Db {
             let total = Decimal::try_from(total_f64).unwrap_or_default();
             categories_map
                 .entry(category)
-                .or_insert_with(Default::default)
+                .or_default()
                 .add(total, &currency, fx);
         }
 
@@ -1267,8 +1267,16 @@ impl Db {
             ORDER BY category_display
         ";
 
+        type RawBudgetRow = (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
         let mut stmt = self.conn.prepare(sql)?;
-        let raw: Vec<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> = stmt
+        let raw: Vec<RawBudgetRow> = stmt
             .query_map(params![month, month, month], |row| {
                 Ok((
                     row.get(0)?,
@@ -1484,7 +1492,7 @@ impl Db {
             entry
                 .2
                 .entry(period)
-                .or_insert_with(Default::default)
+                .or_default()
                 .add(total_dec, &currency, fx);
         }
 
