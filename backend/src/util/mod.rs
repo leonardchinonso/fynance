@@ -1,5 +1,7 @@
 //! Small pure helpers shared by the importer, storage, and CLI layers.
 
+pub mod fx;
+
 use anyhow::{Context, Result, anyhow};
 use chrono::{NaiveDate, NaiveDateTime};
 use once_cell::sync::Lazy;

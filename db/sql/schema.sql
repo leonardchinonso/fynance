@@ -195,3 +195,14 @@ CREATE TABLE IF NOT EXISTS budget_overrides (
     UNIQUE(month, category_id),
     FOREIGN KEY (category_id) REFERENCES categories(id)
 );
+
+-- ── currencies ────────────────────────────────────────────────────────────
+-- App-level list of supported currencies. Code is the PK (ISO 4217).
+-- Exactly one row has is_preferred=1 at all times.
+-- Constraints enforced at application layer.
+CREATE TABLE IF NOT EXISTS currencies (
+    code            TEXT PRIMARY KEY,                -- ISO 4217, e.g. 'GBP', 'NGN'
+    is_preferred    INTEGER NOT NULL DEFAULT 0,      -- 1 for preferred, 0 for others
+    fx_rate         TEXT NOT NULL,                   -- Decimal string. '1' for preferred.
+    updated_at      TEXT                             -- nullable: NULL for preferred row
+);

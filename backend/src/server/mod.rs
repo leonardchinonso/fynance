@@ -121,6 +121,11 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/ingestion/checklist/:month/:account_id",
             post(routes::ingestion::mark_complete),
         )
+        // ── Currencies ────────────────────────────────────────────────────────
+        .route("/currencies", get(routes::currencies::list_currencies))
+        .route("/currencies", post(routes::currencies::create_currency))
+        .route("/currencies/:code", patch(routes::currencies::update_currency))
+        .route("/currencies/:code", delete(routes::currencies::delete_currency))
         .with_state(state.clone());
 
     Router::new()

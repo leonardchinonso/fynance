@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::model::{Account, AccountType};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
-use crate::server::validation::parse_naive_datetime;
+use crate::server::validation::{parse_naive_datetime, validate_currency};
 
 // ── GET /api/accounts ─────────────────────────────────────────────────────────
 
@@ -95,12 +95,14 @@ pub async fn create_account(
         body.profile_ids.clone()
     };
 
+    let currency = body.currency.as_deref().unwrap_or("GBP");
+
     let account = Account {
         id: body.id.clone(),
         name: body.name,
         institution: body.institution,
         account_type,
-        currency: body.currency.unwrap_or_else(|| "GBP".to_string()),
+        currency: currency.to_string(),
         balance,
         balance_date,
         is_active: true,
@@ -117,6 +119,7 @@ pub async fn create_account(
                 "account_exists",
             ));
         }
+        validate_currency(&db, currency)?;
         db.create_account(&account)?;
     }
 

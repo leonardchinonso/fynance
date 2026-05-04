@@ -239,15 +239,22 @@ pub struct SpendingGridRow {
     /// negative = expense, positive = income/credit.
     #[ts(type = "Record<string, string | null>")]
     pub periods: HashMap<String, Option<String>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[ts(type = "Record<string, DisplayCurrency>")]
+    pub periods_display: HashMap<String, DisplayCurrency>,
     /// Average spend per period that had any transactions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub average: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_display: Option<DisplayCurrency>,
     /// Standing budget amount for this category (decimal string).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget: Option<String>,
     /// Sum across all periods.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_display: Option<DisplayCurrency>,
 }
 
 /// One row in the `GET /api/budget/:month` response.
@@ -263,6 +270,8 @@ pub struct BudgetRow {
     pub budgeted: Option<String>,
     /// Actual spend this month (absolute value of negative transactions).
     pub actual: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_display: Option<DisplayCurrency>,
     /// `actual / budgeted * 100`. Null when `budgeted` is null or zero.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub percent: Option<f64>,
@@ -277,6 +286,50 @@ pub struct CategoryTotal {
     /// (negative = net spend). When `direction` is `outflow` or `income`
     /// the total is the sum of absolute values of matching transactions.
     pub total: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_currency: Option<DisplayCurrency>,
+}
+
+/// A currency in use in the app. Returned by GET /api/currencies.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct Currency {
+    pub code: String,
+    pub is_preferred: bool,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub fx_rate: Decimal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// Attached to aggregated monetary values when all source amounts share the
+/// same non-preferred currency. Lets the frontend show the original-currency
+/// value alongside the converted preferred-currency value.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct DisplayCurrency {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub value: Decimal,
+    pub currency: String,
+}
+
+/// Request body for POST /api/currencies.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateCurrencyPayload {
+    pub code: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub fx_rate: Decimal,
+}
+
+/// Request body for PATCH /api/currencies/:code.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PatchCurrencyPayload {
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    pub fx_rate: Option<Decimal>,
+    #[serde(default)]
+    pub is_preferred: Option<bool>,
 }
 
 /// Cash-flow direction filter for aggregation endpoints.
@@ -592,7 +645,7 @@ pub struct HoldingsSummaryResponse {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub net_worth: Decimal,
-    pub currency: String,
+    pub preferred_currency: String,
     /// ISO 8601 date the response was computed for (the `as_of` parameter or today).
     pub as_of: String,
     #[serde(with = "rust_decimal::serde::str")]
@@ -626,6 +679,8 @@ pub struct BreakdownItem {
     #[ts(type = "string")]
     pub value: Decimal,
     pub percentage: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_currency: Option<DisplayCurrency>,
 }
 
 /// One row in the `GET /api/holdings/history` response.
@@ -637,12 +692,18 @@ pub struct HoldingsHistoryRow {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub available_wealth: Decimal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_wealth_display: Option<DisplayCurrency>,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub unavailable_wealth: Decimal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_wealth_display: Option<DisplayCurrency>,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub total_wealth: Decimal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_wealth_display: Option<DisplayCurrency>,
 }
 
 /// One row in the `GET /api/holdings/cash-flow` response.
@@ -654,9 +715,13 @@ pub struct HoldingsCashFlowMonth {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub income: Decimal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub income_display: Option<DisplayCurrency>,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub spending: Decimal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spending_display: Option<DisplayCurrency>,
 }
 
 /// Start/end balance delta for one account. Used by `GET /api/portfolio/balances?summary=true`.

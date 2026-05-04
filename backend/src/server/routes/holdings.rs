@@ -24,9 +24,10 @@ use crate::server::auth::AuthContext;
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 use crate::server::validation::{
-    parse_date, parse_granularity, split_csv_param, validate_date_range,
+    parse_date, parse_granularity, split_csv_param, validate_date_range, validate_currency,
 };
 use crate::storage::db::{account_type_to_asset_class, is_available_account};
+use crate::util::fx::{FxRateMap, CurrencyAggregator};
 
 // ── Auth helper ─────────────────────────────────────────────────────────────
 
@@ -114,11 +115,13 @@ pub async fn get_holdings_summary(
         .checked_sub_months(chrono::Months::new(12))
         .unwrap_or(as_of);
 
-    let (accounts, investment_metrics) = {
+    let (accounts, investment_metrics, fx) = {
         let db = state.db.lock().expect("db mutex poisoned");
         let accounts = db.get_portfolio_as_of(as_of, profile_id)?;
         let metrics = db.compute_investment_metrics(metrics_start, as_of, profile_id)?;
-        (accounts, metrics)
+        let currencies = db.get_currencies()?;
+        let fx = FxRateMap::new(currencies)?;
+        (accounts, metrics, fx)
     };
 
     let mut total_assets = Decimal::ZERO;
@@ -126,44 +129,49 @@ pub async fn get_holdings_summary(
     let mut available_wealth = Decimal::ZERO;
     let mut unavailable_wealth = Decimal::ZERO;
 
-    let mut by_type_map: HashMap<String, Decimal> = HashMap::new();
-    let mut by_institution_map: HashMap<String, Decimal> = HashMap::new();
-    let mut by_asset_class_map: HashMap<String, Decimal> = HashMap::new();
+    let mut by_type_map: HashMap<String, CurrencyAggregator> = HashMap::new();
+    let mut by_institution_map: HashMap<String, CurrencyAggregator> = HashMap::new();
+    let mut by_asset_class_map: HashMap<String, CurrencyAggregator> = HashMap::new();
 
     for account in &accounts {
         let balance = account.balance.unwrap_or(Decimal::ZERO);
+        let converted = fx.convert(balance, &account.currency);
 
-        if balance >= Decimal::ZERO {
-            total_assets += balance;
+        if converted >= Decimal::ZERO {
+            total_assets += converted;
         } else {
-            total_liabilities += balance;
+            total_liabilities += converted;
         }
 
         if is_available_account(&account.account_type) {
-            available_wealth += balance;
+            available_wealth += converted;
         } else {
-            unavailable_wealth += balance;
+            unavailable_wealth += converted;
         }
 
         let abs_balance = balance.abs();
-        *by_type_map
+        by_type_map
             .entry(account.account_type.as_str().to_string())
-            .or_default() += abs_balance;
-        *by_institution_map
+            .or_default()
+            .add(abs_balance, &account.currency, &fx);
+        by_institution_map
             .entry(account.institution.clone())
-            .or_default() += abs_balance;
-        *by_asset_class_map
+            .or_default()
+            .add(abs_balance, &account.currency, &fx);
+        by_asset_class_map
             .entry(account_type_to_asset_class(&account.account_type).to_string())
-            .or_default() += abs_balance;
+            .or_default()
+            .add(abs_balance, &account.currency, &fx);
     }
 
     let net_worth = total_assets + total_liabilities;
 
     let total_abs = total_assets.abs() + total_liabilities.abs();
-    let to_breakdown = |map: HashMap<String, Decimal>| -> Vec<BreakdownItem> {
+    let to_breakdown = |map: HashMap<String, CurrencyAggregator>| -> Vec<BreakdownItem> {
         let mut items: Vec<BreakdownItem> = map
             .into_iter()
-            .map(|(label, value)| {
+            .map(|(label, agg)| {
+                let value = agg.converted_sum();
                 let percentage = if total_abs.is_zero() {
                     0.0
                 } else {
@@ -175,6 +183,7 @@ pub async fn get_holdings_summary(
                     label,
                     value,
                     percentage,
+                    display_currency: agg.display_currency(fx.preferred()),
                 }
             })
             .collect();
@@ -190,14 +199,11 @@ pub async fn get_holdings_summary(
     let by_institution = to_breakdown(by_institution_map);
     let by_asset_class = to_breakdown(by_asset_class_map);
 
-    let currency = accounts
-        .first()
-        .map(|a| a.currency.clone())
-        .unwrap_or_else(|| "GBP".to_string());
+    let preferred_currency = fx.preferred().to_string();
 
     Ok(Json(HoldingsSummaryResponse {
         net_worth,
-        currency,
+        preferred_currency,
         as_of: as_of.format("%Y-%m-%d").to_string(),
         total_assets,
         total_liabilities,
@@ -224,7 +230,7 @@ pub struct HoldingsHistoryQuery {
 pub async fn get_holdings_history(
     State(state): State<AppState>,
     Query(q): Query<HoldingsHistoryQuery>,
-) -> Result<Json<Vec<HoldingsHistoryRow>>, AppError> {
+) -> Result<Json<serde_json::Value>, AppError> {
     let start = q
         .start
         .as_deref()
@@ -245,12 +251,19 @@ pub async fn get_holdings_history(
 
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
 
-    let rows = {
+    let (rows, preferred_currency) = {
         let db = state.db.lock().expect("db mutex poisoned");
-        db.get_monthly_net_worth(start, end, &granularity, profile_id)?
+        let currencies = db.get_currencies()?;
+        let fx = FxRateMap::new(currencies)?;
+        let rows = db.get_monthly_net_worth(start, end, &granularity, profile_id, &fx)?;
+        let preferred = fx.preferred().to_string();
+        (rows, preferred)
     };
 
-    Ok(Json(rows))
+    Ok(Json(serde_json::json!({
+        "preferred_currency": preferred_currency,
+        "rows": rows
+    })))
 }
 
 // ── GET /api/holdings/balances ────────────────────────────────────────────────
@@ -310,7 +323,7 @@ pub struct HoldingsCashFlowQuery {
 pub async fn get_holdings_cash_flow(
     State(state): State<AppState>,
     Query(q): Query<HoldingsCashFlowQuery>,
-) -> Result<Json<Vec<HoldingsCashFlowMonth>>, AppError> {
+) -> Result<Json<serde_json::Value>, AppError> {
     let start = q
         .start
         .as_deref()
@@ -331,12 +344,19 @@ pub async fn get_holdings_cash_flow(
 
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
 
-    let rows = {
+    let (rows, preferred_currency) = {
         let db = state.db.lock().expect("db mutex poisoned");
-        db.get_cash_flow(start, end, profile_id, &granularity)?
+        let currencies = db.get_currencies()?;
+        let fx = FxRateMap::new(currencies)?;
+        let rows = db.get_cash_flow(start, end, profile_id, &granularity, &fx)?;
+        let preferred = fx.preferred().to_string();
+        (rows, preferred)
     };
 
-    Ok(Json(rows))
+    Ok(Json(serde_json::json!({
+        "preferred_currency": preferred_currency,
+        "rows": rows
+    })))
 }
 
 // ── POST /api/holdings/import ────────────────────────────────────────────────
@@ -360,6 +380,11 @@ pub async fn import_holdings(
             format!("account {} not found", payload.account_id),
             "account_not_found",
         ));
+    }
+
+    // Validate currencies for all holdings.
+    for holding in &payload.holdings {
+        validate_currency(&db, &holding.currency)?;
     }
 
     if q.dry_run.unwrap_or(false) {
@@ -395,6 +420,12 @@ pub async fn post_holdings(
                 "account {account_id} not found"
             )));
         }
+
+        // Validate currencies for all holdings.
+        for holding in &body {
+            validate_currency(&db, &holding.currency)?;
+        }
+
         db.replace_holdings(&account_id, &body)?
     };
 
