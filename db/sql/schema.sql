@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     institution     TEXT NOT NULL,
-    type            TEXT NOT NULL,
+    type            TEXT NOT NULL,   -- 'checking' | 'savings' | 'investment' | 'investment_isa' | 'credit' | 'cash' | 'pension'
     currency        TEXT NOT NULL DEFAULT 'GBP',
     balance         TEXT,
     balance_date    TEXT,
@@ -124,6 +124,34 @@ CREATE INDEX IF NOT EXISTS idx_holdings_account   ON holdings(account_id);
 CREATE INDEX IF NOT EXISTS idx_holdings_as_of     ON holdings(as_of);
 CREATE INDEX IF NOT EXISTS idx_holdings_symbol    ON holdings(symbol);
 CREATE INDEX IF NOT EXISTS idx_holdings_is_closed ON holdings(is_closed);
+
+-- ── investments ───────────────────────────────────────────────────────────
+-- Immutable ledger of share acquisition and disposal events. One row per
+-- event (vest, buy, sell, withhold, transfer, split). Never updated or deleted.
+-- ISA accounts (type = 'investment_isa') are excluded from CGT calculations
+-- but events are still stored here for record-keeping. S104 pool state and
+-- CGT disposals are computed on the fly from this table — no separate cache tables.
+-- GBP conversion for HMRC is computed at query time using historic FX rates:
+-- proceeds use the disposal-date rate, costs use the acquisition-date rate.
+CREATE TABLE IF NOT EXISTS investments (
+    id               TEXT PRIMARY KEY,       -- UUID v4
+    account_id       TEXT NOT NULL,
+    event_type       TEXT NOT NULL,    -- 'vest' | 'buy' | 'sell' | 'transfer' | 'withhold' | 'split'
+    symbol           TEXT NOT NULL,    -- ticker or ISIN (e.g. 'AAPL', 'VWRL'); name derived from holdings at query time
+    date             TEXT NOT NULL,    -- ISO 8601 datetime (YYYY-MM-DDTHH:MM:SS); date-only imports use T00:00:00
+    quantity         TEXT NOT NULL,    -- Decimal as TEXT (shares/units)
+    price_per_share  TEXT NOT NULL,    -- Decimal as TEXT, in native currency
+    fee              TEXT,             -- Decimal as TEXT; broker commission + stamp duty; assumed same currency as the instrument; NULL for splits/transfers
+    currency         TEXT NOT NULL,    -- native currency of price and fee (e.g. 'USD', 'GBP')
+    notes            TEXT,
+    fingerprint      TEXT NOT NULL UNIQUE,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_investments_account ON investments(account_id);
+CREATE INDEX IF NOT EXISTS idx_investments_symbol  ON investments(symbol);
+CREATE INDEX IF NOT EXISTS idx_investments_date    ON investments(date);
 
 -- ── ingestion_checklist ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ingestion_checklist (
