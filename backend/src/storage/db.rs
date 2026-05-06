@@ -14,7 +14,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use rust_decimal::Decimal;
 
 use crate::model::{
-    Account, AccountSnapshot, AccountType, BalanceDelta, BudgetRow, Category, CategoryNode,
+    Account, AccountSnapshot, AccountType, AssetClass, BalanceDelta, BudgetRow, Category, CategoryNode,
     CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
     CreateInvestmentEventBody, Currency, Granularity, Holding, HoldingPreview, HoldingSummaryRow,
     HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
@@ -2920,14 +2920,13 @@ pub fn is_available_account(t: &AccountType) -> bool {
     )
 }
 
-/// Map an account type to a broad asset class label for `by_asset_class`.
-pub fn account_type_to_asset_class(t: &AccountType) -> &'static str {
+/// Map an account type to a broad asset class for `by_asset_class`.
+pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
     match t {
-        AccountType::Investment | AccountType::InvestmentIsa => "Stocks",
-        AccountType::Pension => "Pension",
-        AccountType::Checking | AccountType::Savings | AccountType::Cash => "Cash",
-        AccountType::Credit => "Credit",
-        AccountType::Property => "Property",
+        AccountType::Investment | AccountType::InvestmentIsa => AssetClass::Investments,
+        AccountType::Pension => AssetClass::Pension,
+        AccountType::Checking | AccountType::Savings | AccountType::Cash | AccountType::Credit => AssetClass::Cash,
+        AccountType::Property => AssetClass::Property,
     }
 }
 

@@ -161,7 +161,7 @@ pub async fn get_holdings_summary(
             .or_default()
             .add(h.value, &h.currency, &fx);
         by_asset_class_map
-            .entry(account_type_to_asset_class(&row.account_type).to_string())
+            .entry(account_type_to_asset_class(&row.account_type).as_str().to_string())
             .or_default()
             .add(h.value, &h.currency, &fx);
     }

@@ -683,6 +683,28 @@ pub struct HoldingsSummaryResponse {
     pub investment_metrics: InvestmentMetrics,
 }
 
+/// Broad asset class used for portfolio grouping.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "PascalCase")]
+pub enum AssetClass {
+    Investments,
+    Pension,
+    Property,
+    Cash,
+}
+
+impl AssetClass {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Investments => "Investments",
+            Self::Pension => "Pension",
+            Self::Property => "Property",
+            Self::Cash => "Cash",
+        }
+    }
+}
+
 /// One slice of a portfolio breakdown (by type, institution, or asset class).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]

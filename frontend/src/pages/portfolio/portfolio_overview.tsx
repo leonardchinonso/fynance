@@ -29,16 +29,15 @@ import {
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import type { AssetClass } from "@/bindings/AssetClass"
 
-// Asset class labels from backend account_type_to_asset_class()
-const LOCKED_ASSET_CLASSES = new Set(["Pension", "Property"])
+const LOCKED_ASSET_CLASSES = new Set<AssetClass>(["Pension", "Property"])
 
-const ASSET_CLASS_COLORS: Record<string, string> = {
-  Stocks:   "#a855f7",
-  Pension:  "#6366f1",
-  Cash:     "#22c55e",
-  Credit:   "#ef4444",
-  Property: "#14b8a6",
+const ASSET_CLASS_COLORS: Record<AssetClass, string> = {
+  Investments: "#a855f7",
+  Pension:     "#6366f1",
+  Cash:        "#22c55e",
+  Property:    "#14b8a6",
 }
 
 const STOCK_COLORS = [
@@ -178,7 +177,7 @@ function PortfolioOverviewInternal({
   allPieItems.forEach((d, i) => {
     const color = splitStocks
       ? STOCK_COLORS[i % STOCK_COLORS.length]
-      : (ASSET_CLASS_COLORS[d.name] ?? "#78716c")
+      : (ASSET_CLASS_COLORS[d.name as AssetClass] ?? "#78716c")
     pieColorMap.set(d.name, color)
   })
   pieColorMap.set("Others", "#78716c")
@@ -594,7 +593,7 @@ function buildPieData({
       items = stockSlices
     } else {
       const lockedSlices: PieDataItem[] = byAssetClass
-        .filter(item => LOCKED_ASSET_CLASSES.has(item.label))
+        .filter(item => LOCKED_ASSET_CLASSES.has(item.label as AssetClass))
         .map(item => ({
           name: item.label,
           value: parseFloat(parseFloat(item.value).toFixed(2)),
@@ -605,7 +604,7 @@ function buildPieData({
   } else {
     const src = includeLocked
       ? byAssetClass
-      : byAssetClass.filter(item => !LOCKED_ASSET_CLASSES.has(item.label))
+      : byAssetClass.filter(item => !LOCKED_ASSET_CLASSES.has(item.label as AssetClass))
     items = src
       .map(item => ({
         name: item.label,
