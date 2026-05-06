@@ -12,11 +12,6 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 - [ ] **Per-holding custom metadata fields:** A flexible `JSONB`-style (or separate key-value table) `metadata` field on holdings for user-defined annotations. Examples: purchase price / cost basis for CGT tracking, vesting date for RSUs, sector tag, broker reference. API: `PATCH /api/holdings/:account_id/:symbol` extended to accept `metadata: Record<string, string>`. UI: an expandable "Details" row in the holdings sheet showing key-value pairs, editable inline. This is also the natural foundation for the ISA and mortgage features above.
 - [ ] **Login page + credential management:** Dedicated `/login` page where users enter their bearer token. Auto-redirect to login on 401 if no token is set in localStorage. V2: multi-user session model with per-user credentials and a server-side revocation UI.
 
-### Type System Cleanup
-
-- [ ] **Remove `AccountType::Mortgage`:** Mortgage is conceptually a liability against a Property account, not a first-class account type. Remove the `Mortgage` variant from the `AccountType` enum in `model.rs`, remove its arms from `as_str()`, `parse()`, and `account_type_to_asset_class()` in `db.rs`. Add a SQL migration to convert existing `account_type = 'mortgage'` rows to `account_type = 'property'` and insert a corresponding `holding_type = 'loan'` holding with a negative value for the outstanding debt.
-- [ ] **Add `is_available: bool` to the `Account` response struct:** The backend already has `is_available_account()` in `db.rs`. Surface it as a field on the Account struct (exported via `ts-rs`) so the frontend can replace the hardcoded `a.type === "pension"` string check (used to build `pensionAccountIds` / `lockedAccountIds` for pie chart exclusion) with `!a.is_available`.
-
 ### CI/CD and Release Pipeline
 
 - [ ] `ci.yml`: fmt, clippy, test, frontend build + typecheck (from `12_frontend_backend_consolidation.md` Phase 6.5)
