@@ -110,7 +110,8 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         )
         .route(
             "/holdings/:account_id/:symbol",
-            patch(routes::holdings::patch_holding),
+            patch(routes::holdings::patch_holding)
+                .delete(routes::holdings::delete_holding_handler),
         )
         // ── Ingestion checklist ────────────────────────────────────────────
         .route(
@@ -126,6 +127,11 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route("/currencies", post(routes::currencies::create_currency))
         .route("/currencies/:code", patch(routes::currencies::update_currency))
         .route("/currencies/:code", delete(routes::currencies::delete_currency))
+        // ── Investments ───────────────────────────────────────────────────────
+        .route("/investments", get(routes::investments::list_investments))
+        .route("/investments", post(routes::investments::create_investment))
+        .route("/investments/:id", patch(routes::investments::update_investment))
+        .route("/investments/:id", delete(routes::investments::delete_investment))
         .with_state(state.clone());
 
     Router::new()

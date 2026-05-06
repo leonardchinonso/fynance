@@ -8,20 +8,32 @@ import { ColoredBarChart } from "@/components/charts"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { categoryParent } from "@/lib/utils"
 
-export function TransactionBarChart({ data }: { data: RemoteData<CategoryTotal[]> }) {
+export function TransactionBarChart({
+  data,
+  categoryColors = {},
+}: {
+  data: RemoteData<CategoryTotal[]>
+  categoryColors?: Record<string, string>
+}) {
   return visitRemoteData(data, {
     notLoaded: () => <ChartSkeleton height={320} />,
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: (totals) => (
       <div className="relative">
-        <TransactionBarChartInternal totals={totals} />
+        <TransactionBarChartInternal totals={totals} categoryColors={categoryColors} />
         <ReloadingOverlay active={data.status === "reloading"} />
       </div>
     ),
   })
 }
 
-function TransactionBarChartInternal({ totals }: { totals: CategoryTotal[] }) {
+function TransactionBarChartInternal({
+  totals,
+  categoryColors,
+}: {
+  totals: CategoryTotal[]
+  categoryColors: Record<string, string>
+}) {
   const byParent = new Map<string, number>()
   for (const row of totals) {
     const parent = categoryParent(row.category)
@@ -32,7 +44,7 @@ function TransactionBarChartInternal({ totals }: { totals: CategoryTotal[] }) {
     .sort(([, a], [, b]) => b - a)
     .map(([category, amount]) => ({ category, Spending: parseFloat(amount.toFixed(2)) }))
 
-  const colors = chartData.map((d) => CATEGORY_COLORS[d.category] ?? "#78716c")
+  const colors = chartData.map((d) => categoryColors[d.category] ?? CATEGORY_COLORS[d.category] ?? "#78716c")
 
   return (
     <div className="rounded-lg border p-4">

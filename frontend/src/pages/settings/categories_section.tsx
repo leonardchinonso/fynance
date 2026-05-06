@@ -1,8 +1,10 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { api } from "@/api/client"
 import type { CategoryNode } from "@/bindings/CategoryNode"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useCategories } from "@/hooks/data"
+import { useCategoryColorsContext } from "@/context/category_colors_context"
+import { COLOR_PALETTE } from "@/lib/colors"
 import { SettingsListSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { Button } from "@/components/ui/button"
@@ -10,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Trash2, Pencil, Plus, Tag } from "lucide-react"
 
 export function CategoriesSection() {
@@ -21,6 +24,13 @@ export function CategoriesSection() {
 
   const tree = categoriesData.status === "succeeded" || categoriesData.status === "reloading"
     ? categoriesData.value : []
+
+  const parentNames = tree.map(n => n.name)
+  const { categoryColors, syncParents, setColor } = useCategoryColorsContext()
+
+  useEffect(() => {
+    if (parentNames.length > 0) syncParents(parentNames)
+  }, [parentNames.join(",")])
 
   async function handleSave() {
     if (!form.name.trim()) return
@@ -75,7 +85,15 @@ export function CategoriesSection() {
         {visitRemoteData(categoriesData, {
           notLoaded: () => <SettingsListSkeleton rows={6} />,
           failed: (error) => <AuthAwareError error={error} onRetry={refresh} />,
-          hasValue: (nodes) => <CategoryTree nodes={nodes} onEdit={openEdit} onDelete={handleDelete} />,
+          hasValue: (nodes) => (
+            <CategoryTree
+              nodes={nodes}
+              onEdit={openEdit}
+              onDelete={handleDelete}
+              categoryColors={categoryColors}
+              onColorChange={setColor}
+            />
+          ),
         })}
       </CardContent>
 
@@ -113,10 +131,95 @@ export function CategoriesSection() {
   )
 }
 
-function CategoryTree({ nodes, onEdit, onDelete }: {
+function CategoryColorPicker({
+  name,
+  color,
+  onChange,
+}: {
+  name: string
+  color: string
+  onChange: (name: string, color: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [hexInput, setHexInput] = useState(color)
+  const nativeRef = useRef<HTMLInputElement>(null)
+
+  function applyHex(raw: string) {
+    const hex = raw.startsWith("#") ? raw : "#" + raw
+    if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+      onChange(name, hex)
+    }
+  }
+
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setHexInput(color) }}>
+      <PopoverTrigger
+        render={
+          <div
+            role="button"
+            tabIndex={0}
+            className="h-5 w-5 rounded-full border-2 border-white/20 shadow-sm ring-1 ring-black/10 shrink-0 transition-transform hover:scale-110 cursor-pointer"
+            style={{ backgroundColor: color }}
+            title={`Color for ${name}`}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen(true) }}
+          />
+        }
+      />
+      <PopoverContent className="w-[220px] p-3" align="start">
+        <p className="text-xs font-medium text-muted-foreground mb-2">{name} color</p>
+
+        {/* Palette swatches */}
+        <div className="grid grid-cols-8 gap-1 mb-3">
+          {COLOR_PALETTE.map((c) => (
+            <button
+              key={c}
+              className="h-6 w-6 rounded-full border-2 transition-transform hover:scale-110"
+              style={{
+                backgroundColor: c,
+                borderColor: c === color ? "white" : "transparent",
+                boxShadow: c === color ? `0 0 0 1px ${c}` : undefined,
+              }}
+              onClick={() => { onChange(name, c); setHexInput(c); setOpen(false) }}
+            />
+          ))}
+        </div>
+
+        {/* Native color picker */}
+        <div className="flex items-center gap-2">
+          <button
+            className="h-8 w-8 rounded border shrink-0 overflow-hidden p-0"
+            style={{ backgroundColor: color }}
+            onClick={() => nativeRef.current?.click()}
+            title="Open color wheel"
+          >
+            <input
+              ref={nativeRef}
+              type="color"
+              className="opacity-0 w-full h-full cursor-pointer"
+              value={color}
+              onChange={(e) => { onChange(name, e.target.value); setHexInput(e.target.value) }}
+            />
+          </button>
+          <Input
+            className="h-8 font-mono text-xs"
+            value={hexInput}
+            maxLength={7}
+            onChange={(e) => setHexInput(e.target.value)}
+            onBlur={(e) => applyHex(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") applyHex(hexInput) }}
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }: {
   nodes: CategoryNode[]
   onEdit: (node: CategoryNode, parentId: string | null) => void
   onDelete: (id: string) => void
+  categoryColors: Record<string, string>
+  onColorChange: (name: string, color: string) => void
 }) {
   if (nodes.length === 0) return (
     <p className="text-sm text-muted-foreground py-4 text-center">No categories yet.</p>
@@ -127,6 +230,11 @@ function CategoryTree({ nodes, onEdit, onDelete }: {
         <div key={parent.id}>
           <div className="flex items-center gap-3 rounded-lg border p-2.5 group bg-muted/30">
             <Tag className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <CategoryColorPicker
+              name={parent.name}
+              color={categoryColors[parent.name] ?? "#78716c"}
+              onChange={onColorChange}
+            />
             <p className="flex-1 text-sm font-semibold">{parent.name}</p>
             <Badge variant="outline" className="text-[10px]">parent</Badge>
             <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onEdit(parent, null)}>

@@ -12,4 +12,9 @@ profile_ids: Array<string>,
  * balance is stale (snapshot > 45 days before the query date).
  * Absent (`None`) in non-portfolio contexts.
  */
-is_stale: boolean | null, };
+is_stale: boolean | null, 
+/**
+ * True for account types that count toward available (liquid) wealth.
+ * Derived from account_type at query time; never stored in the DB.
+ */
+is_available: boolean, };

@@ -6,6 +6,7 @@ import {
   formatPeriodKey,
 } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
+import { useCategoryColorsContext } from "@/context/category_colors_context"
 
 interface BudgetLineChartProps {
   rows: SpendingGridRow[]
@@ -14,6 +15,7 @@ interface BudgetLineChartProps {
 }
 
 export function BudgetLineChart({ rows, months, granularity }: BudgetLineChartProps) {
+  const { categoryColors } = useCategoryColorsContext()
   const spendingRows = rows.filter(
     (r) => r.section === "Spending" || r.section === "Bills"
   )
@@ -53,7 +55,7 @@ export function BudgetLineChart({ rows, months, granularity }: BudgetLineChartPr
     return entry
   })
 
-  const colors = categories.map((c) => CATEGORY_COLORS[c] ?? "#78716c")
+  const colors = categories.map((c) => categoryColors[c] ?? CATEGORY_COLORS[c] ?? "#78716c")
 
   return (
     <div className="rounded-lg border p-4">

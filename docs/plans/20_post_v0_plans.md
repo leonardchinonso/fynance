@@ -62,6 +62,8 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ## V2
 
+![alternative history networth visualization](alternative_history_networth_visualization.png)
+
 ### Multi-Currency: Automatic Rate Fetching
 
 V0 is purely user-defined rates with a staleness timestamp. V2 adds auto-refresh: on each holdings summary request, if a stored rate is older than the staleness threshold (default: 1 day), the backend fetches a fresh rate from the provider and updates the stored value. Full spec in [docs/plans/22_multi_currency.md](22_multi_currency.md) (V2 section).
@@ -74,6 +76,11 @@ Summary:
 - `DELETE /api/fx-rates/cache` to force re-fetch
 - `GET /api/fx-rates/resolved` to see active rates with source and `updated_at`
 - Include `stale_rates: true` in response if provider unavailable and falling back to cached
+
+
+### Backups
+
+Frequent automatic snapshots and backups of db so user can't loose months of work at a time
 
 ---
 

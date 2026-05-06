@@ -2,12 +2,14 @@ import type { SpendingGridRow } from "@/types"
 import { InteractivePie } from "@/components/charts"
 import { formatCurrency } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
+import { useCategoryColorsContext } from "@/context/category_colors_context"
 
 interface BudgetPieChartProps {
   rows: SpendingGridRow[]
 }
 
 export function BudgetPieChart({ rows }: BudgetPieChartProps) {
+  const { categoryColors } = useCategoryColorsContext()
   const spendingRows = rows.filter(
     (r) => r.section === "Spending" || r.section === "Bills"
   )
@@ -27,7 +29,7 @@ export function BudgetPieChart({ rows }: BudgetPieChartProps) {
     }))
 
   const totalSpending = data.reduce((s, d) => s + d.value, 0)
-  const colors = data.map((d) => CATEGORY_COLORS[d.name] ?? "#78716c")
+  const colors = data.map((d) => categoryColors[d.name] ?? CATEGORY_COLORS[d.name] ?? "#78716c")
 
   return (
     <div className="rounded-lg border p-4">
