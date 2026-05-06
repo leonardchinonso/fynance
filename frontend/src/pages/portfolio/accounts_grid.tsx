@@ -1,5 +1,6 @@
 import { useState } from "react"
 import type { Account, AccountSnapshot, Currency, Profile } from "@/types"
+import type { AccountType } from "@/bindings/AccountType"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioAccountsData } from "@/hooks/data"
@@ -17,6 +18,10 @@ import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
+
+// Account types that carry individual holdings and should open the full HoldingsDetail sheet.
+// Compile-time error if a new AccountType variant is added without updating this list.
+const HOLDINGS_ACCOUNT_TYPES = new Set<AccountType>(["investment", "investment_isa", "pension"])
 
 export function AccountsGrid({
   data, profilesData, onAccountClick,
@@ -132,7 +137,7 @@ function AccountsGridInternal({
                     preferredCurrency={preferredCurrency}
                     toPreferred={toPreferred}
                     onClick={() => {
-                      if (account.type === "investment" || account.type === "pension") {
+                      if (HOLDINGS_ACCOUNT_TYPES.has(account.type)) {
                         onAccountClick(account.id)
                       } else {
                         setSelectedNonInvestment(account)

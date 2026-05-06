@@ -80,8 +80,8 @@ export function PortfolioOverview({
     notLoaded: () => <PortfolioOverviewSkeleton />,
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: ({ portfolio, history, cashFlow, allHoldings, currencies }) => {
-      const pensionAccountIds = new Set(
-        portfolio.accounts.filter(a => a.type === "pension").map(a => a.id)
+      const lockedAccountIds = new Set(
+        portfolio.accounts.filter(a => !a.is_available).map(a => a.id)
       )
       const startNetWorth = history.length >= 1 ? history[0].total_wealth : undefined
       const endNetWorth = history.length >= 1 ? history[history.length - 1].total_wealth : undefined
@@ -94,7 +94,7 @@ export function PortfolioOverview({
             dateLabel={dateLabel}
             cashFlow={cashFlow}
             holdings={allHoldings}
-            pensionAccountIds={pensionAccountIds}
+            lockedAccountIds={lockedAccountIds}
             currencies={currencies}
             investmentMetrics={portfolio.investment_metrics}
             splitStocks={splitStocks}
@@ -115,7 +115,7 @@ interface PortfolioOverviewProps {
   dateLabel?: string
   cashFlow?: CashFlowMonth[]
   holdings?: Holding[]
-  pensionAccountIds?: Set<string>
+  lockedAccountIds?: Set<string>
   currencies?: Currency[]
   investmentMetrics?: InvestmentMetrics
   splitStocks: boolean
@@ -129,7 +129,7 @@ function PortfolioOverviewInternal({
   endNetWorth,
   cashFlow = [],
   holdings = [],
-  pensionAccountIds = new Set(),
+  lockedAccountIds = new Set(),
   currencies = [] as Currency[],
   investmentMetrics,
   splitStocks,
@@ -169,7 +169,7 @@ function PortfolioOverviewInternal({
     splitStocks,
     includeLocked,
     holdings,
-    pensionAccountIds,
+    lockedAccountIds,
     toPreferred,
     byAssetClass: portfolio.by_asset_class,
   })
@@ -558,14 +558,14 @@ function buildPieData({
   splitStocks,
   includeLocked,
   holdings,
-  pensionAccountIds,
+  lockedAccountIds,
   toPreferred,
   byAssetClass,
 }: {
   splitStocks: boolean
   includeLocked: boolean
   holdings: Holding[]
-  pensionAccountIds: Set<string>
+  lockedAccountIds: Set<string>
   toPreferred: (value: number, currency: string) => number
   byAssetClass: BreakdownItem[]
 }): PieDataItem[] {
@@ -573,7 +573,7 @@ function buildPieData({
 
   if (splitStocks) {
     const holdingsByName = new Map<string, { value: number; fullName: string }>()
-    for (const h of holdings.filter(h => !pensionAccountIds.has(h.account_id))) {
+    for (const h of holdings.filter(h => !lockedAccountIds.has(h.account_id))) {
       const key = h.short_name ?? h.symbol
       const converted = toPreferred(parseFloat(h.value), h.currency)
       const existing = holdingsByName.get(key)

@@ -9,7 +9,7 @@ export interface PortfolioSummaryData {
   /** Used in Overview for start/end net worth delta over the selected period. */
   history: PortfolioHistoryRow[]
   cashFlow: CashFlowMonth[]
-  /** Holdings for all investment + pension accounts. */
+  /** Holdings for all accounts (empty array for accounts with no positions). */
   allHoldings: Holding[]
   /** FX rates keyed by currency code, for converting holding values. */
   currencies: Currency[]
@@ -37,12 +37,10 @@ export function usePortfolioSummary(
         api.getCurrencies(),
       ])
 
-      const investmentAccountIds = portfolio.accounts
-        .filter(a => a.type === "investment" || a.type === "pension")
-        .map(a => a.id)
+      const allAccountIds = portfolio.accounts.map(a => a.id)
 
       const holdingsPerAccount = await Promise.all(
-        investmentAccountIds.map(id => api.getHoldings(id))
+        allAccountIds.map(id => api.getHoldings(id))
       )
       const allHoldings = holdingsPerAccount.flat()
 
