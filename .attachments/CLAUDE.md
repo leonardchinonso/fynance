@@ -1,5 +1,11 @@
 # Attachments — Agent Context
 
+## CRITICAL RULES
+
+- **Never use `POST /api/import/csv` or the bulk CSV upload endpoints.** Always import transactions via `POST /api/import` with structured JSON. Write transactions to a Python script and execute it — do not attempt inline curl heredocs (quoting breaks on merchant names with apostrophes or special characters).
+
+---
+
 This folder contains financial statements for importing historical investment data into fynance.
 
 ## Folder structure
