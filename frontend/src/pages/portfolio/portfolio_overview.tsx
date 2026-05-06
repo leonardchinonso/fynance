@@ -31,7 +31,7 @@ import { formatCurrency } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 
 // Asset class labels from backend account_type_to_asset_class()
-const LOCKED_ASSET_CLASSES = new Set(["Pension", "Property", "Debt"])
+const LOCKED_ASSET_CLASSES = new Set(["Pension", "Property"])
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
   Stocks:   "#a855f7",
@@ -39,7 +39,6 @@ const ASSET_CLASS_COLORS: Record<string, string> = {
   Cash:     "#22c55e",
   Credit:   "#ef4444",
   Property: "#14b8a6",
-  Debt:     "#f87171",
 }
 
 const STOCK_COLORS = [
