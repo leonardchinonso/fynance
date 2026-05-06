@@ -17,7 +17,7 @@ import { Trash2, Pencil, Plus, Building2, Eye, EyeOff } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 const ACCOUNT_TYPES: AccountType[] = [
-  "checking", "savings", "investment", "credit", "cash", "pension", "property", "mortgage",
+  "checking", "savings", "investment", "investment_isa", "credit", "cash", "pension", "property",
 ]
 
 interface Props {

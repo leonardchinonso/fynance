@@ -350,7 +350,7 @@ export class MockApiService implements ApiService {
 
     for (const a of accounts) {
       const bal = parseFloat(a.balance ?? "0")
-      if ((a.type === "credit" || a.type === "mortgage") && bal > 0) {
+      if (a.type === "credit" && bal > 0) {
         totalLiabilities += bal
       } else {
         totalAssets += Math.abs(bal)
@@ -385,10 +385,9 @@ export class MockApiService implements ApiService {
     for (const a of accounts) {
       const bal = parseFloat(a.balance ?? "0")
       let cls: string
-      if (a.type === "investment") cls = "Stocks"
+      if (a.type === "investment" || a.type === "investment_isa") cls = "Stocks"
       else if (a.type === "pension") cls = "Pension"
       else if (a.type === "property") cls = "Property"
-      else if (a.type === "mortgage") cls = "Debt"
       else if (a.type === "credit") cls = "Credit"
       else cls = "Cash"
       // Breakdowns use absolute values (matches backend logic) so liabilities
@@ -569,6 +568,7 @@ export class MockApiService implements ApiService {
       notes: body.notes ?? null,
       profile_ids: body.profile_ids ?? ["default"],
       is_stale: null,
+      is_available: true,
     }
     MOCK_ACCOUNTS.push(account)
     return account

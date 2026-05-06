@@ -12,7 +12,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-15",
     is_active: true,
     notes: null,
-    profile_ids: ["alex"], is_stale: null,
+    profile_ids: ["alex"], is_stale: null, is_available: true,
   },
   {
     id: "revolut-current",
@@ -24,7 +24,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-10",
     is_active: true,
     notes: null,
-    profile_ids: ["alex"], is_stale: null,
+    profile_ids: ["alex"], is_stale: null, is_available: true,
   },
   {
     id: "lloyds-savings",
@@ -36,7 +36,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-01",
     is_active: true,
     notes: null,
-    profile_ids: ["alex"], is_stale: null,
+    profile_ids: ["alex"], is_stale: null, is_available: true,
   },
   {
     id: "t212-isa-alex",
@@ -48,7 +48,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-20",
     is_active: true,
     notes: null,
-    profile_ids: ["alex"], is_stale: null,
+    profile_ids: ["alex"], is_stale: null, is_available: true,
   },
   {
     id: "premium-bonds",
@@ -60,7 +60,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-01",
     is_active: true,
     notes: null,
-    profile_ids: ["alex"], is_stale: null,
+    profile_ids: ["alex"], is_stale: null, is_available: true,
   },
   {
     id: "pension-alex",
@@ -72,7 +72,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-01",
     is_active: true,
     notes: null,
-    profile_ids: ["alex"], is_stale: null,
+    profile_ids: ["alex"], is_stale: null, is_available: true,
   },
   // Sam's accounts
   {
@@ -85,7 +85,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-15",
     is_active: true,
     notes: null,
-    profile_ids: ["sam"], is_stale: null,
+    profile_ids: ["sam"], is_stale: null, is_available: true,
   },
   {
     id: "t212-isa-sam",
@@ -97,7 +97,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-20",
     is_active: true,
     notes: null,
-    profile_ids: ["sam"], is_stale: null,
+    profile_ids: ["sam"], is_stale: null, is_available: true,
   },
   {
     id: "pension-sam",
@@ -109,7 +109,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-01",
     is_active: true,
     notes: null,
-    profile_ids: ["sam"], is_stale: null,
+    profile_ids: ["sam"], is_stale: null, is_available: true,
   },
   // Property (home value as an asset)
   {
@@ -122,20 +122,20 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-01-01",
     is_active: true,
     notes: "Estimated home value",
-    profile_ids: ["alex"], is_stale: null,
+    profile_ids: ["alex"], is_stale: null, is_available: true,
   },
   // Mortgage (liability)
   {
     id: "mortgage-alex",
     name: "Mortgage",
     institution: "Nationwide",
-    type: "mortgage",
+    type: "property",
     currency: "GBP",
     balance: "234800.00",
     balance_date: "2026-03-01",
     is_active: true,
     notes: "Remaining mortgage balance",
-    profile_ids: ["alex"], is_stale: null,
+    profile_ids: ["alex"], is_stale: null, is_available: true,
   },
   // Joint accounts
   {
@@ -148,7 +148,7 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-10",
     is_active: true,
     notes: "Shared emergency fund",
-    profile_ids: ["alex", "sam"], is_stale: null,
+    profile_ids: ["alex", "sam"], is_stale: null, is_available: true,
   },
   {
     id: "joint-current",
@@ -160,6 +160,6 @@ export const MOCK_ACCOUNTS: Account[] = [
     balance_date: "2026-03-15",
     is_active: true,
     notes: "Household bills",
-    profile_ids: ["alex", "sam"], is_stale: null,
+    profile_ids: ["alex", "sam"], is_stale: null, is_available: true,
   },
 ]

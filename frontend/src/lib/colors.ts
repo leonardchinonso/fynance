@@ -1,25 +1,25 @@
 import type { AccountType } from "@/types"
 
 export const ACCOUNT_TYPE_COLORS: Record<AccountType, string> = {
-  checking: "#3b82f6", // blue-500
-  savings: "#22c55e", // green-500
-  investment: "#a855f7", // purple-500
-  credit: "#ef4444", // red-500
-  cash: "#eab308", // yellow-500
-  pension: "#6366f1", // indigo-500
-  property: "#14b8a6", // teal-500
-  mortgage: "#f87171", // red-400
+  checking: "#3b82f6",     // blue-500
+  savings: "#22c55e",      // green-500
+  investment: "#a855f7",   // purple-500
+  investment_isa: "#c084fc", // purple-400
+  credit: "#ef4444",       // red-500
+  cash: "#eab308",         // yellow-500
+  pension: "#6366f1",      // indigo-500
+  property: "#14b8a6",     // teal-500
 }
 
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   checking: "Checking",
   savings: "Savings",
   investment: "Investment",
+  investment_isa: "Investment ISA",
   credit: "Credit",
   cash: "Cash",
   pension: "Pension",
   property: "Property",
-  mortgage: "Mortgage",
 }
 
 // Approved palette — used for auto-assigning colors to new parent categories
