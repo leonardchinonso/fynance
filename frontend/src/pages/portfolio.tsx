@@ -6,7 +6,7 @@ import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
 import { PortfolioOverview } from "./portfolio/portfolio_overview"
 import { AccountsGrid } from "./portfolio/accounts_grid"
-import { HoldingsDetail } from "./portfolio/holdings_detail"
+import { InvestmentsDetail } from "./portfolio/investments_detail"
 import { PortfolioCharts } from "./portfolio/portfolio_charts"
 import { PortfolioHistory } from "./portfolio/portfolio_history"
 import { LayoutDashboard, Grid3X3, PieChart, LineChart } from "lucide-react"
@@ -59,7 +59,7 @@ export function PortfolioPage() {
         <PortfolioHistory data={historyData} granularity={granularity} />
       )}
 
-      <HoldingsDetail
+      <InvestmentsDetail
         accountId={selectedAccountId}
         accountName={selectedAccountName}
         onClose={() => setSelectedAccountId(null)}

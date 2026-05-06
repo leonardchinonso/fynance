@@ -48,16 +48,16 @@ const PIE_COLORS = [
   "#f59e0b", "#10b981",
 ]
 
-// Investment-like types that warrant a pie chart
-const CHART_TYPES: HoldingType[] = ["stock", "etf", "fund", "bond", "crypto"]
+// Holding types that are investments (shown in the allocation pie)
+const INVESTMENT_HOLDING_TYPES: HoldingType[] = ["stock", "etf", "fund", "bond", "crypto"]
 
-interface HoldingsDetailProps {
+interface InvestmentsDetailProps {
   accountId: string | null
   accountName: string
   onClose: () => void
 }
 
-export function HoldingsDetail({ accountId, accountName, onClose }: HoldingsDetailProps) {
+export function InvestmentsDetail({ accountId, accountName, onClose }: InvestmentsDetailProps) {
   const holdingsData = useHoldings(accountId)
   const [currenciesData] = useCurrencies()
   const preferredCurrency = usePreferredCurrency()
@@ -119,12 +119,12 @@ function HoldingsContent({
     .format(0).replace(/[\d.,\s]/g, "").trim()
 
   // Build pie data from investment-type holdings only
-  const investmentHoldings = sorted.filter(
-    (h) => CHART_TYPES.includes(h.holding_type as HoldingType) && toPreferred(parseFloat(h.value), h.currency) > 0
+  const investmentPositions = sorted.filter(
+    (h) => INVESTMENT_HOLDING_TYPES.includes(h.holding_type as HoldingType) && toPreferred(parseFloat(h.value), h.currency) > 0
   )
-  const showPie = investmentHoldings.length > 1
+  const showPie = investmentPositions.length > 1
 
-  const pieData = investmentHoldings.map((h) => ({
+  const pieData = investmentPositions.map((h) => ({
     name: h.short_name ?? h.symbol,
     fullName: h.name,
     value: parseFloat(toPreferred(parseFloat(h.value), h.currency).toFixed(2)),

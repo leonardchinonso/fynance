@@ -19,9 +19,9 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
 
-// Account types that carry individual holdings and should open the full HoldingsDetail sheet.
+// Investment account types that open the full InvestmentsDetail sheet on click.
 // Compile-time error if a new AccountType variant is added without updating this list.
-const HOLDINGS_ACCOUNT_TYPES = new Set<AccountType>(["investment", "investment_isa", "pension"])
+const INVESTMENT_ACCOUNT_TYPES = new Set<AccountType>(["investment", "investment_isa", "pension"])
 
 export function AccountsGrid({
   data, profilesData, onAccountClick,
@@ -137,7 +137,7 @@ function AccountsGridInternal({
                     preferredCurrency={preferredCurrency}
                     toPreferred={toPreferred}
                     onClick={() => {
-                      if (HOLDINGS_ACCOUNT_TYPES.has(account.type)) {
+                      if (INVESTMENT_ACCOUNT_TYPES.has(account.type)) {
                         onAccountClick(account.id)
                       } else {
                         setSelectedNonInvestment(account)
