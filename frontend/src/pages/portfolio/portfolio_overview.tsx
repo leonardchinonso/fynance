@@ -443,12 +443,12 @@ function PortfolioOverviewInternal({
               <div
                 className={cn(
                   "flex flex-col overflow-hidden transition-all duration-300 border-l bg-neutral-100 dark:bg-neutral-800",
-                  settingsOpen ? "w-56 opacity-100" : "w-0 opacity-0 border-transparent"
+                  settingsOpen ? "w-64 opacity-100" : "w-0 opacity-0 border-transparent"
                 )}
               >
-                <div className="flex flex-col gap-5 px-5 py-5 min-w-56 h-full">
-                  {/* Cog mirrors the position of the one in the card header */}
-                  <div className="flex items-center justify-between">
+                <div className="flex flex-col min-w-64 h-full overflow-hidden">
+                  {/* Header — fixed, doesn't scroll */}
+                  <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
                     <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap">Chart Settings</p>
                     <button
                       onClick={() => setSettingsOpen(false)}
@@ -458,29 +458,31 @@ function PortfolioOverviewInternal({
                       <Settings2 className="h-4 w-4" />
                     </button>
                   </div>
-                  <SettingsRow
-                    id="group-small"
-                    label="Group <1% as Others"
-                    checked={hideSmall}
-                    onChange={v => setFilter({ hide_small: v ? undefined : "0" })}
-                  />
-                  {ASSET_CLASSES.map(cls => (
-                    <div key={cls} className="flex flex-col gap-2">
-                      <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">{cls}</p>
-                      <SettingsRow
-                        id={`show-${cls.toLowerCase()}`}
-                        label="Show"
-                        checked={assetClassSettings[cls].show}
-                        onChange={v => setFilter({ [`show_${cls.toLowerCase()}`]: v ? undefined : "0" })}
-                      />
-                      <SettingsRow
-                        id={`merge-${cls.toLowerCase()}`}
-                        label="Merge holdings"
-                        checked={assetClassSettings[cls].merge}
-                        onChange={v => setFilter({ [`merge_${cls.toLowerCase()}`]: v ? undefined : "0" })}
-                      />
-                    </div>
-                  ))}
+                  {/* Scrollable rows */}
+                  <div className="flex flex-col gap-3 px-5 pb-5 overflow-y-auto">
+                    <SettingsRow
+                      id="group-small"
+                      label="Group <1% as Others"
+                      checked={hideSmall}
+                      onChange={v => setFilter({ hide_small: v ? undefined : "0" })}
+                    />
+                    {ASSET_CLASSES.map(cls => (
+                      <div key={cls} className="flex flex-col gap-2">
+                        <SettingsRow
+                          id={`show-${cls.toLowerCase()}`}
+                          label={`Show '${cls}'`}
+                          checked={assetClassSettings[cls].show}
+                          onChange={v => setFilter({ [`show_${cls.toLowerCase()}`]: v ? undefined : "0" })}
+                        />
+                        <SettingsRow
+                          id={`merge-${cls.toLowerCase()}`}
+                          label={`Merge '${cls}' holdings`}
+                          checked={assetClassSettings[cls].merge}
+                          onChange={v => setFilter({ [`merge_${cls.toLowerCase()}`]: v ? undefined : "0" })}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>

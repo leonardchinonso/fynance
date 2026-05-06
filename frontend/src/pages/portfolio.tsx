@@ -7,16 +7,14 @@ import { ExportButton } from "@/components/export_button"
 import { PortfolioOverview } from "./portfolio/portfolio_overview"
 import { AccountsGrid } from "./portfolio/accounts_grid"
 import { InvestmentsDetail } from "./portfolio/investments_detail"
-import { PortfolioCharts } from "./portfolio/portfolio_charts"
 import { PortfolioHistory } from "./portfolio/portfolio_history"
-import { LayoutDashboard, Grid3X3, PieChart, LineChart } from "lucide-react"
+import { LayoutDashboard, Grid3X3, LineChart } from "lucide-react"
 import { usePortfolioSummary, usePortfolioAccounts, usePortfolioHistoryData } from "@/hooks/data"
 
 const VIEW_MODES = [
-  { value: "overview",  label: "Overview",  icon: <LayoutDashboard className="h-4 w-4" /> },
-  { value: "accounts",  label: "Accounts",  icon: <Grid3X3 className="h-4 w-4" /> },
-  { value: "charts",    label: "Charts",    icon: <PieChart className="h-4 w-4" /> },
-  { value: "history",   label: "History",   icon: <LineChart className="h-4 w-4" /> },
+  { value: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
+  { value: "accounts", label: "Accounts", icon: <Grid3X3 className="h-4 w-4" /> },
+  { value: "history",  label: "History",  icon: <LineChart className="h-4 w-4" /> },
 ]
 
 export function PortfolioPage() {
@@ -51,9 +49,6 @@ export function PortfolioPage() {
       )}
       {activeView === "accounts" && (
         <AccountsGrid data={accountsData} profilesData={profilesData} onAccountClick={setSelectedAccountId} />
-      )}
-      {activeView === "charts" && (
-        <PortfolioCharts data={summaryData} />
       )}
       {activeView === "history" && (
         <PortfolioHistory data={historyData} granularity={granularity} />
