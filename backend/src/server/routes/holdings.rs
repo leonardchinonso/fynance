@@ -24,7 +24,7 @@ use crate::server::auth::AuthContext;
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 use crate::server::validation::{
-    parse_date, parse_granularity, split_csv_param, validate_date_range, validate_currency,
+    parse_date, parse_granularity, parse_naive_datetime, split_csv_param, validate_date_range, validate_currency,
 };
 use crate::storage::db::{account_type_to_asset_class, is_available_account};
 use crate::util::fx::{FxRateMap, CurrencyAggregator};
@@ -435,6 +435,34 @@ pub async fn post_holdings(
         "ok": true,
         "holdings_updated": holdings_updated
     })))
+}
+
+// ── DELETE /api/holdings/:account_id/:symbol ─────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteHoldingQuery {
+    pub as_of: String,
+    pub sub_account: Option<String>,
+}
+
+pub async fn delete_holding_handler(
+    State(state): State<AppState>,
+    auth: Extension<AuthContext>,
+    Path((account_id, symbol)): Path<(String, String)>,
+    Query(q): Query<DeleteHoldingQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_token_if_remote(&state, &auth)?;
+    let as_of = parse_naive_datetime(&q.as_of)?
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+    let db = state.db.lock().expect("db mutex poisoned");
+    let rows = db.delete_holding(&account_id, &symbol, &as_of, q.sub_account.as_deref())?;
+    if rows == 0 {
+        return Err(AppError::NotFound(format!(
+            "no holding found for account={account_id} symbol={symbol} as_of={as_of}"
+        )));
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "rows_deleted": rows })))
 }
 
 // ── PATCH /api/holdings/:account_id/:symbol ──────────────────────────────────

@@ -75,7 +75,7 @@ pub async fn update_category(
     Path(id): Path<String>,
     Json(body): Json<PatchCategoryPayload>,
 ) -> Result<Json<Category>, AppError> {
-    if body.name.is_none() && body.parent_id.is_none() && body.display_order.is_none() {
+    if body.name.is_none() && body.parent_id.is_none() && body.display_order.is_none() && body.is_active.is_none() {
         return Err(AppError::bad_request(
             "at least one field must be provided",
             "empty_body",

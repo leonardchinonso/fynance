@@ -112,12 +112,14 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "wal_autocheckpoint", 100)?;
 
         conn.execute_batch(SCHEMA_SQL)
             .context("running schema.sql")?;
 
         migrate_schema(&conn)?;
         seed_defaults(&conn)?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 
         if path.exists() {
             set_file_mode_600(path)?;
@@ -1253,11 +1255,12 @@ impl Db {
         let name = payload.name.as_deref().unwrap_or(&existing.name);
         let parent_id = payload.parent_id.as_deref().or(existing.parent_id.as_deref());
         let display_order = payload.display_order.unwrap_or(existing.display_order);
+        let is_active = payload.is_active.map(|v| v as i32).unwrap_or(existing.is_active as i32);
 
         self.conn.execute(
-            "UPDATE categories SET name = ?1, parent_id = ?2, display_order = ?3, updated_at = ?4
-             WHERE id = ?5",
-            params![name, parent_id, display_order, now, id],
+            "UPDATE categories SET name = ?1, parent_id = ?2, display_order = ?3, is_active = ?4, updated_at = ?5
+             WHERE id = ?6",
+            params![name, parent_id, display_order, is_active, now, id],
         )?;
 
         self.get_category_by_id(id)?
@@ -2426,12 +2429,13 @@ impl Db {
                      h.as_of, h.short_name, h.sub_account, h.is_closed
               FROM holdings h
               WHERE h.account_id IN ({placeholders})
-                AND h.is_closed = 0
                 AND h.as_of = (
                     SELECT MAX(h2.as_of) FROM holdings h2
                     WHERE h2.account_id = h.account_id
-                      AND h2.is_closed = 0
+                      AND h2.symbol = h.symbol
+                      AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
                 )
+                AND h.is_closed = 0
               ORDER BY h.account_id, h.symbol"
         );
 
@@ -2630,6 +2634,27 @@ impl Db {
             ],
         )?;
         Ok(rows as u64)
+    }
+
+    pub fn delete_holding(
+        &self,
+        account_id: &str,
+        symbol: &str,
+        as_of: &str,
+        sub_account: Option<&str>,
+    ) -> Result<usize> {
+        let rows = if let Some(sub) = sub_account {
+            self.conn.execute(
+                "DELETE FROM holdings WHERE account_id = ?1 AND symbol = ?2 AND DATE(as_of) = ?3 AND sub_account = ?4",
+                params![account_id, symbol, as_of, sub],
+            )?
+        } else {
+            self.conn.execute(
+                "DELETE FROM holdings WHERE account_id = ?1 AND symbol = ?2 AND DATE(as_of) = ?3",
+                params![account_id, symbol, as_of],
+            )?
+        };
+        Ok(rows)
     }
 
     pub fn dry_run_holdings(

@@ -79,6 +79,7 @@ pub struct PatchCategoryPayload {
     pub name: Option<String>,
     pub parent_id: Option<String>,
     pub display_order: Option<i32>,
+    pub is_active: Option<bool>,
 }
 
 /// Where a transaction's category came from. Phase 1 only writes `Rule`
