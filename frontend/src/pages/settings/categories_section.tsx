@@ -153,16 +153,18 @@ function CategoryColorPicker({
 
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setHexInput(color) }}>
-      <PopoverTrigger asChild>
-        <div
-          role="button"
-          tabIndex={0}
-          className="h-5 w-5 rounded-full border-2 border-white/20 shadow-sm ring-1 ring-black/10 shrink-0 transition-transform hover:scale-110 cursor-pointer"
-          style={{ backgroundColor: color }}
-          title={`Color for ${name}`}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen(true) }}
-        />
-      </PopoverTrigger>
+      <PopoverTrigger
+        render={
+          <div
+            role="button"
+            tabIndex={0}
+            className="h-5 w-5 rounded-full border-2 border-white/20 shadow-sm ring-1 ring-black/10 shrink-0 transition-transform hover:scale-110 cursor-pointer"
+            style={{ backgroundColor: color }}
+            title={`Color for ${name}`}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen(true) }}
+          />
+        }
+      />
       <PopoverContent className="w-[220px] p-3" align="start">
         <p className="text-xs font-medium text-muted-foreground mb-2">{name} color</p>
 
