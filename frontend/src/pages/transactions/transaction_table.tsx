@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { Transaction } from "@/types"
 import { api } from "@/api/client"
 import type { RemoteData } from "@/lib/remote_data"
@@ -63,9 +63,9 @@ function getStoredColumns(): Set<string> {
   return new Set(ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.id))
 }
 
-function getCategoryColor(category: string): string {
+function getCategoryColor(category: string, colorMap: Record<string, string>): string {
   const parent = category.split(":")[0].trim()
-  return CATEGORY_COLORS[parent] ?? "#78716c"
+  return colorMap[parent] ?? CATEGORY_COLORS[parent] ?? "#78716c"
 }
 
 interface TransactionTableOuterProps {
@@ -75,11 +75,12 @@ interface TransactionTableOuterProps {
   onPageChange: (page: number) => void
   onPageSizeChange: (size: number) => void
   accountNames: Record<string, string>
+  categoryColors?: Record<string, string>
   onResetFilters?: () => void
 }
 
 export function TransactionTable({
-  data, page, pageSize, onPageChange, onPageSizeChange, accountNames, onResetFilters,
+  data, page, pageSize, onPageChange, onPageSizeChange, accountNames, categoryColors = {}, onResetFilters,
 }: TransactionTableOuterProps) {
   return visitRemoteData(data, {
     notLoaded: () => <TableSkeleton rows={25} cols={5} />,
@@ -97,6 +98,7 @@ export function TransactionTable({
             onPageChange={onPageChange}
             onLimitChange={onPageSizeChange}
             accountNames={accountNames}
+            categoryColors={categoryColors}
           />
         )}
         <ReloadingOverlay active={data.status === "reloading"} />
@@ -113,6 +115,7 @@ interface TransactionTableProps {
   onPageChange: (page: number) => void
   onLimitChange: (limit: number) => void
   accountNames?: Record<string, string>
+  categoryColors?: Record<string, string>
 }
 
 function TransactionTableInternal({
@@ -123,10 +126,15 @@ function TransactionTableInternal({
   onPageChange,
   onLimitChange,
   accountNames = {},
+  categoryColors = {},
 }: TransactionTableProps) {
   const totalPages = Math.ceil(total / limit)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
   const [transactions, setTransactions] = useState(initialTransactions)
+
+  useEffect(() => {
+    setTransactions(initialTransactions)
+  }, [initialTransactions])
 
   async function toggleExclude(id: string, current: boolean) {
     setTransactions(prev => prev.map(t => t.id === id ? { ...t, exclude_from_summary: !current } : t))
@@ -191,9 +199,9 @@ function TransactionTableInternal({
                       variant="secondary"
                       className="text-xs"
                       style={{
-                        backgroundColor: getCategoryColor(t.category) + "20",
-                        color: getCategoryColor(t.category),
-                        borderColor: getCategoryColor(t.category) + "40",
+                        backgroundColor: getCategoryColor(t.category, categoryColors) + "20",
+                        color: getCategoryColor(t.category, categoryColors),
+                        borderColor: getCategoryColor(t.category, categoryColors) + "40",
                       }}
                     >
                       {t.category}

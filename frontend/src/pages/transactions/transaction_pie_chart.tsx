@@ -9,20 +9,32 @@ import { formatCurrency, categoryParent } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
 
-export function TransactionPieChart({ data }: { data: RemoteData<CategoryTotal[]> }) {
+export function TransactionPieChart({
+  data,
+  categoryColors = {},
+}: {
+  data: RemoteData<CategoryTotal[]>
+  categoryColors?: Record<string, string>
+}) {
   return visitRemoteData(data, {
     notLoaded: () => <ChartSkeleton height={320} />,
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: (totals) => (
       <div className="relative">
-        <TransactionPieChartInternal totals={totals} />
+        <TransactionPieChartInternal totals={totals} categoryColors={categoryColors} />
         <ReloadingOverlay active={data.status === "reloading"} />
       </div>
     ),
   })
 }
 
-function TransactionPieChartInternal({ totals }: { totals: CategoryTotal[] }) {
+function TransactionPieChartInternal({
+  totals,
+  categoryColors,
+}: {
+  totals: CategoryTotal[]
+  categoryColors: Record<string, string>
+}) {
   const preferredCurrency = usePreferredCurrency()
   const byParent = new Map<string, number>()
   for (const row of totals) {
@@ -35,7 +47,7 @@ function TransactionPieChartInternal({ totals }: { totals: CategoryTotal[] }) {
     .sort(([, a], [, b]) => b - a)
     .map(([name, value]) => ({ name, value: parseFloat(value.toFixed(2)) }))
 
-  const colors = pieData.map((d) => CATEGORY_COLORS[d.name] ?? "#78716c")
+  const colors = pieData.map((d) => categoryColors[d.name] ?? CATEGORY_COLORS[d.name] ?? "#78716c")
 
   return (
     <div className="rounded-lg border p-4">

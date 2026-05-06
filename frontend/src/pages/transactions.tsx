@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
@@ -16,6 +16,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { useTransactions, useTransactionCharts, useFilterOptions } from "@/hooks/data"
+import { useCategoryColorsContext } from "@/context/category_colors_context"
 
 const VIEW_MODES = [
   { value: "table",  label: "Table",  icon: <Table2 className="h-4 w-4" /> },
@@ -98,6 +99,15 @@ export function TransactionsPage() {
       ? filterOptions.value.categories
       : []
 
+  const { categoryColors, syncParents } = useCategoryColorsContext()
+
+  const parentNames = useMemo(
+    () => availableCategories.map(c => c.split(":")[0].trim()).filter((v, i, a) => a.indexOf(v) === i),
+    [availableCategories],
+  )
+
+  useEffect(() => { syncParents(parentNames) }, [parentNames.join(",")])
+
   const resetFilters = () => setFilter({
     accounts: undefined, categories: undefined, search: undefined,
     preset: "last-12-months", start: undefined, end: undefined, page: "1",
@@ -139,12 +149,13 @@ export function TransactionsPage() {
           onPageChange={setPage}
           onPageSizeChange={(s) => { setPageSize(s); setPage(1) }}
           accountNames={accountNameMap}
+          categoryColors={categoryColors}
           onResetFilters={selectedAccounts.length > 0 || selectedCategories.length > 0 || search.length > 0 ? resetFilters : undefined}
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          <TransactionBarChart data={chartData} />
-          <TransactionPieChart data={chartData} />
+          <TransactionBarChart data={chartData} categoryColors={categoryColors} />
+          <TransactionPieChart data={chartData} categoryColors={categoryColors} />
         </div>
       )}
     </div>
