@@ -25,6 +25,7 @@ pub fn add(
         ),
         None => None,
     };
+    let is_available = crate::storage::db::is_available_account(&account_type);
     let account = Account {
         id: id.to_string(),
         name: name.to_string(),
@@ -37,6 +38,7 @@ pub fn add(
         notes: None,
         profile_ids: vec!["default".to_string()],
         is_stale: None,
+        is_available,
     };
     db.upsert_account(&account)?;
     println!("Added account {id}");

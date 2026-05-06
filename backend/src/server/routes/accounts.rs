@@ -97,6 +97,7 @@ pub async fn create_account(
 
     let currency = body.currency.as_deref().unwrap_or("GBP");
 
+    let is_available = crate::storage::db::is_available_account(&account_type);
     let account = Account {
         id: body.id.clone(),
         name: body.name,
@@ -109,6 +110,7 @@ pub async fn create_account(
         notes: body.notes,
         profile_ids,
         is_stale: None,
+        is_available,
     };
 
     {

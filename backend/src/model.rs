@@ -138,6 +138,10 @@ pub struct Account {
     /// Absent (`None`) in non-portfolio contexts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_stale: Option<bool>,
+    /// True for account types that count toward available (liquid) wealth.
+    /// Derived from account_type at query time; never stored in the DB.
+    #[serde(default)]
+    pub is_available: bool,
 }
 
 fn default_profile_ids() -> Vec<String> {
@@ -146,16 +150,16 @@ fn default_profile_ids() -> Vec<String> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum AccountType {
     Checking,
     Savings,
     Investment,
+    InvestmentIsa,
     Credit,
     Cash,
     Pension,
     Property,
-    Mortgage,
 }
 
 impl AccountType {
@@ -164,11 +168,11 @@ impl AccountType {
             Self::Checking => "checking",
             Self::Savings => "savings",
             Self::Investment => "investment",
+            Self::InvestmentIsa => "investment_isa",
             Self::Credit => "credit",
             Self::Cash => "cash",
             Self::Pension => "pension",
             Self::Property => "property",
-            Self::Mortgage => "mortgage",
         }
     }
 
@@ -177,11 +181,11 @@ impl AccountType {
             "checking" => Some(Self::Checking),
             "savings" => Some(Self::Savings),
             "investment" => Some(Self::Investment),
+            "investment_isa" => Some(Self::InvestmentIsa),
             "credit" => Some(Self::Credit),
             "cash" => Some(Self::Cash),
             "pension" => Some(Self::Pension),
             "property" => Some(Self::Property),
-            "mortgage" => Some(Self::Mortgage),
             _ => None,
         }
     }
@@ -771,6 +775,106 @@ pub struct InvestmentMetrics {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub market_growth: Decimal,
+}
+
+// ── Investments ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "lowercase")]
+pub enum InvestmentEventType {
+    Vest,
+    Buy,
+    Sell,
+    Transfer,
+    Withhold,
+    Split,
+}
+
+impl InvestmentEventType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Vest => "vest",
+            Self::Buy => "buy",
+            Self::Sell => "sell",
+            Self::Transfer => "transfer",
+            Self::Withhold => "withhold",
+            Self::Split => "split",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "vest" => Some(Self::Vest),
+            "buy" => Some(Self::Buy),
+            "sell" => Some(Self::Sell),
+            "transfer" => Some(Self::Transfer),
+            "withhold" => Some(Self::Withhold),
+            "split" => Some(Self::Split),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentEvent {
+    pub id: String,
+    pub account_id: String,
+    pub event_type: InvestmentEventType,
+    pub symbol: String,
+    #[serde(with = "serde_naive_datetime")]
+    #[ts(type = "string")]
+    pub date: NaiveDateTime,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub quantity: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub price_per_share: Decimal,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(type = "string | null")]
+    pub fee: Option<Decimal>,
+    pub currency: String,
+    pub notes: Option<String>,
+    pub fingerprint: String,
+    #[serde(with = "serde_naive_datetime")]
+    #[ts(type = "string")]
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct CreateInvestmentEventBody {
+    pub account_id: String,
+    pub event_type: String,
+    pub symbol: String,
+    pub date: String,
+    pub quantity: String,
+    pub price_per_share: String,
+    pub fee: Option<String>,
+    pub currency: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PatchInvestmentEventBody {
+    pub event_type: Option<String>,
+    pub symbol: Option<String>,
+    pub date: Option<String>,
+    pub quantity: Option<String>,
+    pub price_per_share: Option<String>,
+    pub fee: Option<String>,
+    pub currency: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListInvestmentEventsQuery {
+    pub account_id: Option<String>,
+    pub symbol: Option<String>,
+    pub event_type: Option<String>,
 }
 
 /// Result of a single `INSERT OR IGNORE`. Lets the CSV importer count new

@@ -191,6 +191,11 @@ CSV is supported. PDFs and images deferred to V1.
   - Would require frontend PaginatedResponse refactor (deferred)
 
 
+### Type System Cleanup
+
+- [x] ✅ **Remove `AccountType::Mortgage`:** Removed from enum, `as_str()`, `parse()`, and `account_type_to_asset_class()`. Migration 8 in `migrate_schema()` converts existing `account_type = 'mortgage'` rows to `property` on startup. `InvestmentIsa` added as a new variant in the same pass.
+- [x] ✅ **Add `is_available: bool` to the `Account` response struct:** Field added to `Account` struct, populated by `is_available_account()` in all three `Account` construction sites (`row_to_account`, `accounts.rs`, `account.rs`). ts-rs will regenerate the frontend binding automatically.
+
 ---
 
 ## Ope (Frontend / Import / Data Ingestion)

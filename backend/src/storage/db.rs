@@ -16,10 +16,12 @@ use rust_decimal::Decimal;
 use crate::model::{
     Account, AccountSnapshot, AccountType, BalanceDelta, BudgetRow, Category, CategoryNode,
     CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
-    Currency, Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType,
-    HoldingsCashFlowMonth, HoldingsHistoryRow,
-    ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentMetrics,
-    PatchCategoryPayload, Profile, SectionMapping, SpendingGridRow, StandingBudget, Transaction,
+    CreateInvestmentEventBody, Currency, Granularity, Holding, HoldingPreview, HoldingSummaryRow,
+    HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
+    ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentEvent,
+    InvestmentEventType, InvestmentMetrics,
+    PatchCategoryPayload, PatchInvestmentEventBody, Profile, SectionMapping, SpendingGridRow,
+    StandingBudget, Transaction,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -476,6 +478,202 @@ impl Db {
 
         tx.commit()?;
         Ok(())
+    }
+
+    // ── Investments ───────────────────────────────────────────────────────────
+
+    pub fn create_investment_event(
+        &self,
+        body: &CreateInvestmentEventBody,
+    ) -> Result<InvestmentEvent> {
+        let event_type = InvestmentEventType::parse(&body.event_type)
+            .ok_or_else(|| anyhow::anyhow!("invalid event_type: {}", body.event_type))?;
+        let quantity = body
+            .quantity
+            .parse::<Decimal>()
+            .map_err(|_| anyhow::anyhow!("invalid quantity"))?;
+        let price_per_share = body
+            .price_per_share
+            .parse::<Decimal>()
+            .map_err(|_| anyhow::anyhow!("invalid price_per_share"))?;
+        let fee = body
+            .fee
+            .as_deref()
+            .map(|s| s.parse::<Decimal>().map_err(|_| anyhow::anyhow!("invalid fee")))
+            .transpose()?;
+        let date = parse_transaction_datetime(&body.date)
+            .ok_or_else(|| anyhow::anyhow!("invalid date format"))?;
+        let date_str = date.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+        let fingerprint = sha256_hex(&format!(
+            "{}|{}|{}|{}|{}|{}",
+            body.account_id,
+            body.symbol,
+            date_str,
+            quantity,
+            price_per_share,
+            event_type.as_str()
+        ));
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        self.conn.execute(
+            "INSERT OR IGNORE INTO investments
+             (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                id,
+                body.account_id,
+                event_type.as_str(),
+                body.symbol,
+                date_str,
+                quantity.to_string(),
+                price_per_share.to_string(),
+                fee.map(|f| f.to_string()),
+                body.currency,
+                body.notes,
+                fingerprint,
+                now,
+            ],
+        )?;
+
+        let event = self.conn.query_row(
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at
+             FROM investments WHERE fingerprint = ?1",
+            params![fingerprint],
+            row_to_investment_event,
+        )?;
+        Ok(event)
+    }
+
+    pub fn list_investment_events(
+        &self,
+        account_id: Option<&str>,
+        symbol: Option<&str>,
+        event_type: Option<&str>,
+    ) -> Result<Vec<InvestmentEvent>> {
+        let mut conditions = vec!["1=1"];
+        let mut sql = String::from(
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at
+             FROM investments WHERE ",
+        );
+
+        // Build conditions dynamically — simpler than param_from_iter with optionals
+        let account_clause;
+        let symbol_clause;
+        let event_type_clause;
+
+        if let Some(a) = account_id {
+            account_clause = format!("account_id = '{}'", a.replace('\'', "''"));
+            conditions.push(&account_clause);
+        }
+        if let Some(s) = symbol {
+            symbol_clause = format!("symbol = '{}'", s.replace('\'', "''"));
+            conditions.push(&symbol_clause);
+        }
+        if let Some(e) = event_type {
+            event_type_clause = format!("event_type = '{}'", e.replace('\'', "''"));
+            conditions.push(&event_type_clause);
+        }
+
+        sql.push_str(&conditions.join(" AND "));
+        sql.push_str(" ORDER BY date ASC");
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], row_to_investment_event)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn update_investment_event(
+        &self,
+        id: &str,
+        body: &PatchInvestmentEventBody,
+    ) -> Result<Option<InvestmentEvent>> {
+        let exists: bool = self.conn.query_row(
+            "SELECT COUNT(*) > 0 FROM investments WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(None);
+        }
+
+        if let Some(ref et) = body.event_type {
+            InvestmentEventType::parse(et)
+                .ok_or_else(|| anyhow::anyhow!("invalid event_type: {}", et))?;
+            self.conn.execute(
+                "UPDATE investments SET event_type = ?1 WHERE id = ?2",
+                params![et, id],
+            )?;
+        }
+        if let Some(ref s) = body.symbol {
+            self.conn.execute(
+                "UPDATE investments SET symbol = ?1 WHERE id = ?2",
+                params![s, id],
+            )?;
+        }
+        if let Some(ref d) = body.date {
+            let dt = parse_transaction_datetime(d)
+                .ok_or_else(|| anyhow::anyhow!("invalid date format"))?;
+            self.conn.execute(
+                "UPDATE investments SET date = ?1 WHERE id = ?2",
+                params![dt.format("%Y-%m-%dT%H:%M:%S").to_string(), id],
+            )?;
+        }
+        if let Some(ref q) = body.quantity {
+            q.parse::<Decimal>().map_err(|_| anyhow::anyhow!("invalid quantity"))?;
+            self.conn.execute(
+                "UPDATE investments SET quantity = ?1 WHERE id = ?2",
+                params![q, id],
+            )?;
+        }
+        if let Some(ref p) = body.price_per_share {
+            p.parse::<Decimal>().map_err(|_| anyhow::anyhow!("invalid price_per_share"))?;
+            self.conn.execute(
+                "UPDATE investments SET price_per_share = ?1 WHERE id = ?2",
+                params![p, id],
+            )?;
+        }
+        if body.fee.is_some() {
+            let fee_str = body.fee.as_deref();
+            if let Some(f) = fee_str {
+                f.parse::<Decimal>().map_err(|_| anyhow::anyhow!("invalid fee"))?;
+            }
+            self.conn.execute(
+                "UPDATE investments SET fee = ?1 WHERE id = ?2",
+                params![fee_str, id],
+            )?;
+        }
+        if let Some(ref c) = body.currency {
+            self.conn.execute(
+                "UPDATE investments SET currency = ?1 WHERE id = ?2",
+                params![c, id],
+            )?;
+        }
+        if body.notes.is_some() {
+            self.conn.execute(
+                "UPDATE investments SET notes = ?1 WHERE id = ?2",
+                params![body.notes.as_deref(), id],
+            )?;
+        }
+
+        let event = self.conn.query_row(
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at
+             FROM investments WHERE id = ?1",
+            params![id],
+            row_to_investment_event,
+        )?;
+        Ok(Some(event))
+    }
+
+    pub fn delete_investment_event(&self, id: &str) -> Result<bool> {
+        let rows = self
+            .conn
+            .execute("DELETE FROM investments WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
     }
 
     // ── Transactions ──────────────────────────────────────────────────────────
@@ -1836,11 +2034,13 @@ impl Db {
                 .map(|d| (as_of - d.date()).num_days() > stale_days)
                 .unwrap_or(false);
 
+            let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
+            let is_available = is_available_account(&account_type);
             Ok(Account {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 institution: row.get(2)?,
-                account_type: AccountType::parse(&type_str).unwrap_or(AccountType::Checking),
+                account_type,
                 currency: row.get(4)?,
                 balance,
                 balance_date,
@@ -1848,6 +2048,7 @@ impl Db {
                 notes: row.get(6)?,
                 profile_ids,
                 is_stale: Some(is_stale),
+                is_available,
             })
         };
 
@@ -2637,11 +2838,13 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
     let profile_ids_str: String = row.get(9).unwrap_or_else(|_| "[]".to_string());
     let profile_ids: Vec<String> =
         serde_json::from_str(&profile_ids_str).unwrap_or_else(|_| vec!["default".to_string()]);
+    let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
+    let is_available = is_available_account(&account_type);
     Ok(Account {
         id: row.get(0)?,
         name: row.get(1)?,
         institution: row.get(2)?,
-        account_type: AccountType::parse(&type_str).unwrap_or(AccountType::Checking),
+        account_type,
         currency: row.get(4)?,
         balance: balance.and_then(|s| s.parse::<Decimal>().ok()),
         balance_date: balance_date.and_then(|s| parse_transaction_datetime(&s)),
@@ -2649,6 +2852,31 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         notes: row.get(8)?,
         profile_ids,
         is_stale: None,
+        is_available,
+    })
+}
+
+fn row_to_investment_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvestmentEvent> {
+    let event_type_str: String = row.get(2)?;
+    let date_str: String = row.get(4)?;
+    let created_at_str: String = row.get(11)?;
+    let fee: Option<String> = row.get(7)?;
+    Ok(InvestmentEvent {
+        id: row.get(0)?,
+        account_id: row.get(1)?,
+        event_type: InvestmentEventType::parse(&event_type_str)
+            .unwrap_or(InvestmentEventType::Buy),
+        symbol: row.get(3)?,
+        date: parse_transaction_datetime(&date_str)
+            .unwrap_or_else(|| chrono::Utc::now().naive_utc()),
+        quantity: row.get::<_, String>(5)?.parse().unwrap_or_default(),
+        price_per_share: row.get::<_, String>(6)?.parse().unwrap_or_default(),
+        fee: fee.and_then(|s| s.parse::<Decimal>().ok()),
+        currency: row.get(8)?,
+        notes: row.get(9)?,
+        fingerprint: row.get(10)?,
+        created_at: parse_transaction_datetime(&created_at_str)
+            .unwrap_or_else(|| chrono::Utc::now().naive_utc()),
     })
 }
 
@@ -2661,6 +2889,7 @@ pub fn is_available_account(t: &AccountType) -> bool {
         AccountType::Checking
             | AccountType::Savings
             | AccountType::Investment
+            | AccountType::InvestmentIsa
             | AccountType::Cash
             | AccountType::Credit
     )
@@ -2669,12 +2898,11 @@ pub fn is_available_account(t: &AccountType) -> bool {
 /// Map an account type to a broad asset class label for `by_asset_class`.
 pub fn account_type_to_asset_class(t: &AccountType) -> &'static str {
     match t {
-        AccountType::Investment => "Stocks",
+        AccountType::Investment | AccountType::InvestmentIsa => "Stocks",
         AccountType::Pension => "Pension",
         AccountType::Checking | AccountType::Savings | AccountType::Cash => "Cash",
         AccountType::Credit => "Credit",
         AccountType::Property => "Property",
-        AccountType::Mortgage => "Debt",
     }
 }
 
@@ -3085,6 +3313,18 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         )?;
     }
 
+    // ── 8. Convert mortgage account type to property ──
+    let mortgage_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE type = 'mortgage'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if mortgage_count > 0 {
+        conn.execute_batch("UPDATE accounts SET type = 'property' WHERE type = 'mortgage'")?;
+    }
+
     // ── 7. Make section_mappings.category nullable on old databases ──
     // SQLite can't ALTER COLUMN, so we recreate the table if category is still NOT NULL.
     let needs_nullable: bool = {
@@ -3143,6 +3383,7 @@ mod consolidation_tests {
     }
 
     fn make_account(id: &str, account_type: AccountType) -> Account {
+        let is_available = is_available_account(&account_type);
         Account {
             id: id.to_string(),
             name: id.to_string(),
@@ -3155,6 +3396,7 @@ mod consolidation_tests {
             notes: None,
             profile_ids: vec!["default".to_string()],
             is_stale: None,
+            is_available,
         }
     }
 

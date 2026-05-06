@@ -70,7 +70,9 @@ pub async fn list_holdings(
                 .filter(|a| {
                     matches!(
                         a.account_type,
-                        crate::model::AccountType::Investment | crate::model::AccountType::Pension
+                        crate::model::AccountType::Investment
+                            | crate::model::AccountType::InvestmentIsa
+                            | crate::model::AccountType::Pension
                     )
                 })
                 .map(|a| a.id)
