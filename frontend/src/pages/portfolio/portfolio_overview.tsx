@@ -424,7 +424,7 @@ function PortfolioOverviewInternal({
                     </button>
                   )}
                 </div>
-                <div className="px-5 pb-5 flex-1 min-h-0 flex items-center justify-center">
+                <div className="px-5 pb-5 flex-1 min-h-0 flex">
                   {pieData.length > 0 ? (
                     <InteractivePie
                       data={pieData}
@@ -434,9 +434,12 @@ function PortfolioOverviewInternal({
                       outerRadius={90}
                       label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
                       legendPosition="left"
+                      className="w-full h-full"
                     />
                   ) : (
-                    <p className="text-sm text-muted-foreground">No asset classes selected</p>
+                    <div className="flex-1 flex items-center justify-center">
+                      <p className="text-sm text-muted-foreground">No asset classes selected</p>
+                    </div>
                   )}
                 </div>
               </div>

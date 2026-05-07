@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import type { Account, AccountSnapshot, Currency, Profile } from "@/types"
 import type { AccountType } from "@/bindings/AccountType"
 import type { RemoteData } from "@/lib/remote_data"
@@ -68,7 +68,16 @@ function AccountsGridInternal({
   balances,
   currencies = [],
 }: AccountsGridProps) {
-  const [selectedNonInvestment, setSelectedNonInvestment] = useState<Account | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedAccountId = searchParams.get("account")
+  const selectedNonInvestment = accounts.find(a => a.id === selectedAccountId) ?? null
+
+  function openAccount(id: string) {
+    setSearchParams(p => { p.set("account", id); return p })
+  }
+  function closeAccount() {
+    setSearchParams(p => { p.delete("account"); return p })
+  }
 
   // Group by profile, with joint accounts in their own section
   const byProfile = new Map<string, Account[]>()
@@ -140,7 +149,7 @@ function AccountsGridInternal({
                       if (INVESTMENT_ACCOUNT_TYPES.has(account.type)) {
                         onAccountClick(account.id)
                       } else {
-                        setSelectedNonInvestment(account)
+                        openAccount(account.id)
                       }
                     }}
                   />
@@ -154,7 +163,7 @@ function AccountsGridInternal({
       {/* Non-investment account detail sheet */}
       <AccountDetailSheet
         account={selectedNonInvestment}
-        onClose={() => setSelectedNonInvestment(null)}
+        onClose={() => closeAccount()}
       />
     </>
   )

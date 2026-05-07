@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { useProfiles } from "@/context/profile_context"
 import { DateRangeSelector } from "@/components/date_range_selector"
@@ -25,7 +25,8 @@ export function PortfolioPage() {
   const accountsData = usePortfolioAccounts(start, end, profileId)
   const historyData  = usePortfolioHistoryData(start, end, granularity, profileId)
 
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedAccountId = searchParams.get("account")
 
   // Derive selected account name when accounts data is available
   const selectedAccountName =
@@ -48,7 +49,7 @@ export function PortfolioPage() {
         <PortfolioOverview data={summaryData} dateLabel={`${start} to ${end}`} assetClassSettings={assetClassSettings} hideSmall={hideSmall} />
       )}
       {activeView === "accounts" && (
-        <AccountsGrid data={accountsData} profilesData={profilesData} onAccountClick={setSelectedAccountId} />
+        <AccountsGrid data={accountsData} profilesData={profilesData} onAccountClick={id => setSearchParams(p => { p.set("account", id); return p })} />
       )}
       {activeView === "history" && (
         <PortfolioHistory data={historyData} granularity={granularity} />
@@ -57,7 +58,7 @@ export function PortfolioPage() {
       <InvestmentsDetail
         accountId={selectedAccountId}
         accountName={selectedAccountName}
-        onClose={() => setSelectedAccountId(null)}
+        onClose={() => setSearchParams(p => { p.delete("account"); return p })}
       />
     </div>
   )
