@@ -159,11 +159,21 @@ GET    /api/budget/:month
 POST   /api/budget
 GET    /api/income/:month                    # derived from Income-category transactions
 
-GET    /api/portfolio
-GET    /api/portfolio/history
-GET    /api/portfolio/balances               # per-account balances derived from holdings SUM
+GET    /api/holdings                         # list holdings for an account (?account_id=)
+GET    /api/holdings/summary                 # portfolio summary: net worth, by_asset_class, by_type, by_institution
+GET    /api/holdings/history                 # net worth history over time
+GET    /api/holdings/balances               # per-account balances derived from holdings SUM
+GET    /api/holdings/cash-flow              # income/spending cash flow
+POST   /api/holdings                        # upsert holdings for an account
+PATCH  /api/holdings/:id                    # update a single holding
+POST   /api/holdings/import                 # bulk import holdings
 POST   /api/accounts
 PATCH  /api/accounts/:id/balance
+
+GET    /api/investments                      # list investment events (?account_id=&symbol=&event_type=)
+POST   /api/investments                      # create one investment event
+PATCH  /api/investments/:id                 # update an investment event
+DELETE /api/investments/:id                 # delete an investment event
 
 GET    /api/reports/:month
 GET    /api/export?year=&format=             # csv or md (Obsidian-compatible)

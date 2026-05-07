@@ -2381,6 +2381,8 @@ impl Db {
                 AND h.as_of = (
                     SELECT MAX(h2.as_of) FROM holdings h2
                     WHERE h2.account_id = h.account_id
+                      AND h2.symbol = h.symbol
+                      AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
                       AND h2.is_closed = 0
                       AND h2.as_of <= ?1
                 )

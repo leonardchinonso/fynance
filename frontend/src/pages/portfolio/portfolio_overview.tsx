@@ -195,7 +195,6 @@ function PortfolioOverviewInternal({
   pieColorMap.set("Others", "#78716c")
 
   const pieData = hideSmall ? groupSmall(allPieItems) : allPieItems
-
   const pieTotal = pieData.reduce((s, d) => s + d.value, 0)
 
   return (
@@ -408,8 +407,7 @@ function PortfolioOverviewInternal({
         </Card>
 
         {/* Portfolio breakdown pie */}
-        {pieData.length > 0 && (
-          <Card className="overflow-hidden py-0 gap-0 h-[300px]">
+        <Card className="overflow-hidden py-0 gap-0 h-[300px]">
             <div className="flex h-full">
               {/* Main pie area */}
               <div className="flex-1 min-w-0 flex flex-col">
@@ -426,16 +424,20 @@ function PortfolioOverviewInternal({
                     </button>
                   )}
                 </div>
-                <div className="px-5 pb-5 flex-1 min-h-0">
-                  <InteractivePie
-                    data={pieData}
-                    colorMap={pieColorMap}
-                    height={240}
-                    innerRadius={50}
-                    outerRadius={90}
-                    label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
-                    legendPosition="left"
-                  />
+                <div className="px-5 pb-5 flex-1 min-h-0 flex items-center justify-center">
+                  {pieData.length > 0 ? (
+                    <InteractivePie
+                      data={pieData}
+                      colorMap={pieColorMap}
+                      height={240}
+                      innerRadius={50}
+                      outerRadius={90}
+                      label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
+                      legendPosition="left"
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No asset classes selected</p>
+                  )}
                 </div>
               </div>
 
@@ -487,7 +489,6 @@ function PortfolioOverviewInternal({
               </div>
             </div>
           </Card>
-        )}
       </div>
 
       {/* Breakdown cards */}
@@ -563,17 +564,25 @@ function buildPieData({
         if (value > 0) items.push({ name: cls, value })
       }
     } else {
-      // Split into individual holdings for this asset class
       const byName = new Map<string, { value: number; fullName: string }>()
+      let negativesSum = 0
       for (const h of holdings.filter(h => accountAssetClass.get(h.account_id) === cls)) {
-        const key = h.short_name ?? h.symbol
         const converted = toPreferred(parseFloat(h.value), h.currency)
+        if (converted < 0) {
+          negativesSum += converted
+          continue
+        }
+        const key = h.short_name ?? h.symbol
         const existing = byName.get(key)
         if (existing) existing.value += converted
         else byName.set(key, { value: converted, fullName: h.name })
       }
+      const positiveTotal = Array.from(byName.values()).reduce((s, e) => s + e.value, 0)
+      const scale = positiveTotal > 0 && negativesSum < 0
+        ? (positiveTotal + negativesSum) / positiveTotal
+        : 1
       for (const [name, { value, fullName }] of byName) {
-        const v = parseFloat(value.toFixed(2))
+        const v = parseFloat((value * scale).toFixed(2))
         if (v > 0) items.push({ name, fullName, value: v })
       }
     }
