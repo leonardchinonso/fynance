@@ -29,17 +29,16 @@ import {
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import type { AssetClass } from "@/bindings/AssetClass"
+import { ASSET_CLASSES, type AssetClassSettings } from "@/hooks/use_url_filters"
+import { accountTypeToAssetClass } from "@/lib/account_type_utils"
 
-// Asset class labels from backend account_type_to_asset_class()
-const LOCKED_ASSET_CLASSES = new Set(["Pension", "Property", "Debt"])
 
-const ASSET_CLASS_COLORS: Record<string, string> = {
-  Stocks:   "#a855f7",
-  Pension:  "#6366f1",
-  Cash:     "#22c55e",
-  Credit:   "#ef4444",
-  Property: "#14b8a6",
-  Debt:     "#f87171",
+const ASSET_CLASS_COLORS: Record<AssetClass, string> = {
+  Investments: "#a855f7",
+  Pension:     "#6366f1",
+  Cash:        "#22c55e",
+  Property:    "#14b8a6",
 }
 
 const STOCK_COLORS = [
@@ -63,26 +62,37 @@ function RichTooltipContent({
   )
 }
 
+function SettingsRow({ id, label, checked, onChange }: {
+  id: string
+  label: string
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <label htmlFor={id} className="text-xs leading-tight cursor-pointer text-neutral-700 dark:text-neutral-200 whitespace-nowrap">
+        {label}
+      </label>
+      <Switch id={id} size="sm" checked={checked} onCheckedChange={onChange} />
+    </div>
+  )
+}
+
 export function PortfolioOverview({
   data,
   dateLabel,
-  splitStocks,
-  includeLocked,
+  assetClassSettings,
   hideSmall,
 }: {
   data: RemoteData<PortfolioSummaryData>
   dateLabel?: string
-  splitStocks: boolean
-  includeLocked: boolean
+  assetClassSettings: AssetClassSettings
   hideSmall: boolean
 }) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioOverviewSkeleton />,
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: ({ portfolio, history, cashFlow, allHoldings, currencies }) => {
-      const pensionAccountIds = new Set(
-        portfolio.accounts.filter(a => a.type === "pension").map(a => a.id)
-      )
       const startNetWorth = history.length >= 1 ? history[0].total_wealth : undefined
       const endNetWorth = history.length >= 1 ? history[history.length - 1].total_wealth : undefined
       return (
@@ -94,11 +104,9 @@ export function PortfolioOverview({
             dateLabel={dateLabel}
             cashFlow={cashFlow}
             holdings={allHoldings}
-            pensionAccountIds={pensionAccountIds}
             currencies={currencies}
             investmentMetrics={portfolio.investment_metrics}
-            splitStocks={splitStocks}
-            includeLocked={includeLocked}
+            assetClassSettings={assetClassSettings}
             hideSmall={hideSmall}
           />
           <ReloadingOverlay active={data.status === "reloading"} />
@@ -115,11 +123,9 @@ interface PortfolioOverviewProps {
   dateLabel?: string
   cashFlow?: CashFlowMonth[]
   holdings?: Holding[]
-  pensionAccountIds?: Set<string>
   currencies?: Currency[]
   investmentMetrics?: InvestmentMetrics
-  splitStocks: boolean
-  includeLocked: boolean
+  assetClassSettings: AssetClassSettings
   hideSmall: boolean
 }
 
@@ -129,11 +135,9 @@ function PortfolioOverviewInternal({
   endNetWorth,
   cashFlow = [],
   holdings = [],
-  pensionAccountIds = new Set(),
   currencies = [] as Currency[],
   investmentMetrics,
-  splitStocks,
-  includeLocked,
+  assetClassSettings,
   hideSmall,
 }: PortfolioOverviewProps) {
   const { setFilter } = useUrlFilters()
@@ -164,28 +168,33 @@ function PortfolioOverviewInternal({
   const toPreferred = (value: number, currency: string) =>
     value * (fxRates.get(currency) ?? 1)
 
+  // Build account → asset class lookup
+  const accountAssetClass = new Map<string, AssetClass>(
+    portfolio.accounts.map(a => [a.id, accountTypeToAssetClass(a.type)])
+  )
+
   // Build full ungrouped data first to assign stable colors, then apply grouping
   const allPieItems = buildPieData({
-    splitStocks,
-    includeLocked,
+    assetClassSettings,
     holdings,
-    pensionAccountIds,
+    accountAssetClass,
     toPreferred,
     byAssetClass: portfolio.by_asset_class,
   })
 
-  // Assign each name a stable color from its position in the full ungrouped list
+  // Assign stable colors: merged classes use ASSET_CLASS_COLORS, split holdings cycle a palette
   const pieColorMap = new Map<string, string>()
-  allPieItems.forEach((d, i) => {
-    const color = splitStocks
-      ? STOCK_COLORS[i % STOCK_COLORS.length]
-      : (ASSET_CLASS_COLORS[d.name] ?? "#78716c")
+  let splitColorIdx = 0
+  allPieItems.forEach(d => {
+    const isMergedClass = ASSET_CLASSES.includes(d.name as AssetClass)
+    const color = isMergedClass
+      ? (ASSET_CLASS_COLORS[d.name as AssetClass] ?? "#78716c")
+      : STOCK_COLORS[splitColorIdx++ % STOCK_COLORS.length]
     pieColorMap.set(d.name, color)
   })
   pieColorMap.set("Others", "#78716c")
 
   const pieData = hideSmall ? groupSmall(allPieItems) : allPieItems
-
   const pieTotal = pieData.reduce((s, d) => s + d.value, 0)
 
   return (
@@ -398,8 +407,7 @@ function PortfolioOverviewInternal({
         </Card>
 
         {/* Portfolio breakdown pie */}
-        {pieData.length > 0 && (
-          <Card className="overflow-hidden py-0 gap-0 h-[300px]">
+        <Card className="overflow-hidden py-0 gap-0 h-[300px]">
             <div className="flex h-full">
               {/* Main pie area */}
               <div className="flex-1 min-w-0 flex flex-col">
@@ -416,16 +424,23 @@ function PortfolioOverviewInternal({
                     </button>
                   )}
                 </div>
-                <div className="px-5 pb-5 flex-1 min-h-0">
-                  <InteractivePie
-                    data={pieData}
-                    colorMap={pieColorMap}
-                    height={240}
-                    innerRadius={50}
-                    outerRadius={90}
-                    label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
-                    legendPosition="left"
-                  />
+                <div className="px-5 pb-5 flex-1 min-h-0 flex">
+                  {pieData.length > 0 ? (
+                    <InteractivePie
+                      data={pieData}
+                      colorMap={pieColorMap}
+                      height={240}
+                      innerRadius={50}
+                      outerRadius={90}
+                      label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
+                      legendPosition="left"
+                      className="w-full h-full"
+                    />
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center">
+                      <p className="text-sm text-muted-foreground">No asset classes selected</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -433,12 +448,12 @@ function PortfolioOverviewInternal({
               <div
                 className={cn(
                   "flex flex-col overflow-hidden transition-all duration-300 border-l bg-neutral-100 dark:bg-neutral-800",
-                  settingsOpen ? "w-56 opacity-100" : "w-0 opacity-0 border-transparent"
+                  settingsOpen ? "w-64 opacity-100" : "w-0 opacity-0 border-transparent"
                 )}
               >
-                <div className="flex flex-col gap-5 px-5 py-5 min-w-56 h-full">
-                  {/* Cog mirrors the position of the one in the card header */}
-                  <div className="flex items-center justify-between">
+                <div className="flex flex-col min-w-64 h-full overflow-hidden">
+                  {/* Header — fixed, doesn't scroll */}
+                  <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
                     <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap">Chart Settings</p>
                     <button
                       onClick={() => setSettingsOpen(false)}
@@ -448,63 +463,35 @@ function PortfolioOverviewInternal({
                       <Settings2 className="h-4 w-4" />
                     </button>
                   </div>
-                  <div className="flex items-center justify-between gap-4">
-                    <label htmlFor="split-stocks" className="text-xs leading-tight cursor-pointer text-neutral-700 dark:text-neutral-200 whitespace-nowrap">
-                      Split stocks
-                    </label>
-                    <Switch
-                      id="split-stocks"
-                      size="sm"
-                      checked={splitStocks}
-                      onCheckedChange={(v) => setFilter({ split_stocks: v ? undefined : "0" })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-4">
-                    <span className="text-xs leading-tight text-neutral-700 dark:text-neutral-200 whitespace-nowrap">
-                      Include{" "}
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger className="underline decoration-dotted underline-offset-2 cursor-default">
-                            locked assets
-                          </TooltipTrigger>
-                          <RichTooltipContent side="left">
-                            <div className="flex items-center gap-2">
-                              <Lock className="h-4 w-4 text-orange-400 shrink-0" />
-                              <span className="font-semibold text-sm text-white">Locked wealth</span>
-                            </div>
-                            <p className="text-xs text-white/70 leading-relaxed">Wealth tied up in illiquid or long-term assets.</p>
-                            <ul className="space-y-1 text-xs text-white/60">
-                              <li className="flex items-center gap-1.5"><Home className="h-3 w-3 shrink-0" /> Property equity</li>
-                              <li className="flex items-center gap-1.5"><Shield className="h-3 w-3 shrink-0" /> Pension &amp; retirement pots</li>
-                              <li className="flex items-center gap-1.5"><Landmark className="h-3 w-3 shrink-0 text-red-400" /> Mortgage &amp; secured debt</li>
-                            </ul>
-                          </RichTooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </span>
-                    <Switch
-                      id="include-locked"
-                      size="sm"
-                      checked={includeLocked}
-                      onCheckedChange={(v) => setFilter({ include_locked: v ? undefined : "0" })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-4">
-                    <label htmlFor="group-small" className="text-xs leading-tight cursor-pointer text-neutral-700 dark:text-neutral-200 whitespace-nowrap">
-                      Group &lt;1% as Others
-                    </label>
-                    <Switch
+                  {/* Scrollable rows */}
+                  <div className="flex flex-col gap-3 px-5 pb-5 overflow-y-auto">
+                    <SettingsRow
                       id="group-small"
-                      size="sm"
+                      label="Group <1% as Others"
                       checked={hideSmall}
-                      onCheckedChange={(v) => setFilter({ hide_small: v ? undefined : "0" })}
+                      onChange={v => setFilter({ hide_small: v ? undefined : "0" })}
                     />
+                    {ASSET_CLASSES.map(cls => (
+                      <div key={cls} className="flex flex-col gap-2">
+                        <SettingsRow
+                          id={`show-${cls.toLowerCase()}`}
+                          label={`Show '${cls}'`}
+                          checked={assetClassSettings[cls].show}
+                          onChange={v => setFilter({ [`show_${cls.toLowerCase()}`]: v ? undefined : "0" })}
+                        />
+                        <SettingsRow
+                          id={`merge-${cls.toLowerCase()}`}
+                          label={`Merge '${cls}' holdings`}
+                          checked={assetClassSettings[cls].merge}
+                          onChange={v => setFilter({ [`merge_${cls.toLowerCase()}`]: v ? undefined : "0" })}
+                        />
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
             </div>
           </Card>
-        )}
       </div>
 
       {/* Breakdown cards */}
@@ -555,67 +542,55 @@ function groupSmall(items: PieDataItem[]): PieDataItem[] {
 }
 
 function buildPieData({
-  splitStocks,
-  includeLocked,
+  assetClassSettings,
   holdings,
-  pensionAccountIds,
+  accountAssetClass,
   toPreferred,
   byAssetClass,
 }: {
-  splitStocks: boolean
-  includeLocked: boolean
+  assetClassSettings: AssetClassSettings
   holdings: Holding[]
-  pensionAccountIds: Set<string>
+  accountAssetClass: Map<string, AssetClass>
   toPreferred: (value: number, currency: string) => number
   byAssetClass: BreakdownItem[]
 }): PieDataItem[] {
-  let items: PieDataItem[]
+  const items: PieDataItem[] = []
 
-  if (splitStocks) {
-    const holdingsByName = new Map<string, { value: number; fullName: string }>()
-    for (const h of holdings.filter(h => !pensionAccountIds.has(h.account_id))) {
-      const key = h.short_name ?? h.symbol
-      const converted = toPreferred(parseFloat(h.value), h.currency)
-      const existing = holdingsByName.get(key)
-      if (existing) {
-        existing.value += converted
-      } else {
-        holdingsByName.set(key, { value: converted, fullName: h.name })
+  for (const cls of ASSET_CLASSES) {
+    const { show, merge } = assetClassSettings[cls]
+    if (!show) continue
+
+    if (merge) {
+      const item = byAssetClass.find(b => b.label === cls)
+      if (item) {
+        const value = parseFloat(parseFloat(item.value).toFixed(2))
+        if (value > 0) items.push({ name: cls, value })
+      }
+    } else {
+      const byName = new Map<string, { value: number; fullName: string }>()
+      let negativesSum = 0
+      for (const h of holdings.filter(h => accountAssetClass.get(h.account_id) === cls)) {
+        const converted = toPreferred(parseFloat(h.value), h.currency)
+        if (converted < 0) {
+          negativesSum += converted
+          continue
+        }
+        const key = h.short_name ?? h.symbol
+        const existing = byName.get(key)
+        if (existing) existing.value += converted
+        else byName.set(key, { value: converted, fullName: h.name })
+      }
+      const positiveTotal = Array.from(byName.values()).reduce((s, e) => s + e.value, 0)
+      const scale = positiveTotal > 0 && negativesSum < 0
+        ? (positiveTotal + negativesSum) / positiveTotal
+        : 1
+      for (const [name, { value, fullName }] of byName) {
+        const v = parseFloat((value * scale).toFixed(2))
+        if (v > 0) items.push({ name, fullName, value: v })
       }
     }
-    const stockSlices: PieDataItem[] = Array.from(holdingsByName.entries())
-      .map(([shortName, { value, fullName }]) => ({
-        name: shortName,
-        fullName,
-        value: parseFloat(value.toFixed(2)),
-      }))
-      .filter(d => d.value > 0)
-
-    if (!includeLocked) {
-      items = stockSlices
-    } else {
-      const lockedSlices: PieDataItem[] = byAssetClass
-        .filter(item => LOCKED_ASSET_CLASSES.has(item.label))
-        .map(item => ({
-          name: item.label,
-          value: parseFloat(parseFloat(item.value).toFixed(2)),
-        }))
-        .filter(d => d.value > 0)
-      items = [...stockSlices, ...lockedSlices]
-    }
-  } else {
-    const src = includeLocked
-      ? byAssetClass
-      : byAssetClass.filter(item => !LOCKED_ASSET_CLASSES.has(item.label))
-    items = src
-      .map(item => ({
-        name: item.label,
-        value: parseFloat(parseFloat(item.value).toFixed(2)),
-      }))
-      .filter(d => d.value > 0)
   }
 
-  // Sort descending by value so order is stable regardless of grouping
   return items.sort((a, b) => b.value - a.value)
 }
 

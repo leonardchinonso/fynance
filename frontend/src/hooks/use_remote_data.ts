@@ -25,11 +25,11 @@ export function useRemoteData<T>(
 ): [RemoteData<T>, () => void] {
   const [state, setState] = useState<RemoteData<T>>(RemoteData.idle<T>())
 
-  // Tracks whether the soft effect should skip (first render is handled by the hard effect)
-  const isFirstRender = useRef(true)
+  // Snapshot of hard dep values from the previous effect run, used to detect
+  // whether a hard or soft change triggered the current run.
+  const prevHard = useRef<DependencyList | null>(null)
 
-  // Incrementing counter for imperative refresh — adding it to soft deps triggers
-  // a reloading transition without touching any URL param or filter value.
+  // Incrementing counter for imperative refresh.
   const refreshCounter = useRef(0)
   const [refreshTick, setRefreshTick] = useState(0)
 
@@ -38,37 +38,23 @@ export function useRemoteData<T>(
     setRefreshTick(refreshCounter.current)
   }
 
-  // ── Effect 1: hard deps ────────────────────────────────────────────────────
-  // Transitions to `loading` (wipes value). Runs on mount and whenever any hard dep changes.
   useEffect(() => {
-    isFirstRender.current = false
-    setState(RemoteData.loading<T>())
-    let cancelled = false
-    fetcher()
-      .then(v => { if (!cancelled) setState(RemoteData.succeeded(v)) })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : "Failed to load"
-          setState(RemoteData.failed<T>(msg))
-        }
-      })
-    return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps.hard])
+    const isHard = prevHard.current === null ||
+      deps.hard.some((d, i) => !Object.is(d, prevHard.current![i]))
+    prevHard.current = deps.hard.slice()
 
-  // ── Effect 2: soft deps ────────────────────────────────────────────────────
-  // Transitions to `reloading` (keeps value). Skips on first render since Effect 1
-  // already handles that. If a hard dep just changed, state is already `loading` so
-  // the guard below prevents a redundant `reloading` transition — hard wins.
-  useEffect(() => {
-    if (isFirstRender.current) return
-    setState(prev => {
-      if (prev.status === "succeeded" || prev.status === "reloading")
-        return RemoteData.reloading(prev.value)
-      if (prev.status === "failed")
-        return RemoteData.loading<T>() // retry from failed shows skeleton
-      return prev // already loading — no change
-    })
+    if (isHard) {
+      setState(RemoteData.loading<T>())
+    } else {
+      setState(prev => {
+        if (prev.status === "succeeded" || prev.status === "reloading")
+          return RemoteData.reloading(prev.value)
+        if (prev.status === "failed")
+          return RemoteData.loading<T>()
+        return prev
+      })
+    }
+
     let cancelled = false
     fetcher()
       .then(v => { if (!cancelled) setState(RemoteData.succeeded(v)) })

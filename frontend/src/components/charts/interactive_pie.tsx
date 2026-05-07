@@ -169,7 +169,7 @@ export function InteractivePie({
 
   if (legendPosition === "left") {
     return (
-      <div className={cn("flex h-full", className)} ref={containerRef} onMouseMove={handleMouseMove}>
+      <div className={cn("flex w-full", className)} ref={containerRef} onMouseMove={handleMouseMove}>
         {/* Legend column */}
         <div className="shrink-0 flex flex-col min-w-0">
           {/* Up arrow — hover to scroll up continuously */}

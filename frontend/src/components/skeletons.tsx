@@ -82,21 +82,6 @@ export function AccountsGridSkeleton() {
   )
 }
 
-/** Portfolio Charts: 2x2 grid of donut charts */
-export function PortfolioChartsSkeleton() {
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {[1, 2, 3, 4].map((i) => (
-        <div key={i} className="rounded-lg border p-4 space-y-3">
-          <Bone className="h-3 w-28" />
-          <div className="flex justify-center py-6"><Bone className="h-48 w-48 rounded-full" /></div>
-          <div className="flex justify-center gap-3 flex-wrap">{[1, 2, 3, 4].map((j) => <Bone key={j} className="h-3 w-16" />)}</div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 /** Portfolio History: line chart with brush + table */
 export function PortfolioHistorySkeleton() {
   return (

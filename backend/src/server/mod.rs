@@ -110,7 +110,8 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         )
         .route(
             "/holdings/:account_id/:symbol",
-            patch(routes::holdings::patch_holding)
+            get(routes::holdings::get_holding_history)
+                .patch(routes::holdings::patch_holding)
                 .delete(routes::holdings::delete_holding_handler),
         )
         // ── Ingestion checklist ────────────────────────────────────────────

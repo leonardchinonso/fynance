@@ -134,20 +134,21 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
             </TableRow>
           </TableHeader>
           <TableBody>
-            {aggregated.map((row, i) => {
-              const prevRow = i > 0 ? aggregated[i - 1] : null
+            {[...aggregated].reverse().map((row, i, reversed) => {
+              const prevRow = i < reversed.length - 1 ? reversed[i + 1] : null
               const change = prevRow
                 ? parseFloat(row.total_wealth) - parseFloat(prevRow.total_wealth)
                 : null
+              const chartIndex = aggregated.length - 1 - i
 
               return (
                 <TableRow
                   key={row.month}
                   className={cn(
                     "cursor-pointer transition-colors",
-                    hoveredIndex === i && "bg-muted/50"
+                    hoveredIndex === chartIndex && "bg-muted/50"
                   )}
-                  onMouseEnter={() => setHoveredIndex(i)}
+                  onMouseEnter={() => setHoveredIndex(chartIndex)}
                   onMouseLeave={() => setHoveredIndex(null)}
                 >
                   <TableCell className="font-medium">

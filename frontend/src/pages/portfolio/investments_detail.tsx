@@ -1,7 +1,7 @@
-import type { Currency, Holding } from "@/types"
+import type { Holding } from "@/types"
 import type { HoldingType } from "@/bindings/HoldingType"
 import { visitRemoteData } from "@/lib/remote_data"
-import { useHoldings, useCurrencies } from "@/hooks/data"
+import { useHoldings } from "@/hooks/data"
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
@@ -14,7 +14,7 @@ import { InteractivePie } from "@/components/charts"
 import { EmptyState } from "@/components/empty_state"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { LoadingSpinner } from "@/components/loading_spinner"
-import { usePreferredCurrency } from "@/context/preferred_currency_context"
+import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { formatCurrency } from "@/lib/utils"
 
 // Colors and labels per holding type
@@ -48,23 +48,19 @@ const PIE_COLORS = [
   "#f59e0b", "#10b981",
 ]
 
-// Investment-like types that warrant a pie chart
-const CHART_TYPES: HoldingType[] = ["stock", "etf", "fund", "bond", "crypto"]
+// Holding types that are investments (shown in the allocation pie)
+const INVESTMENT_HOLDING_TYPES: HoldingType[] = ["stock", "etf", "fund", "bond", "crypto"]
 
-interface HoldingsDetailProps {
+interface InvestmentsDetailProps {
   accountId: string | null
   accountName: string
   onClose: () => void
 }
 
-export function HoldingsDetail({ accountId, accountName, onClose }: HoldingsDetailProps) {
+export function InvestmentsDetail({ accountId, accountName, onClose }: InvestmentsDetailProps) {
   const holdingsData = useHoldings(accountId)
-  const [currenciesData] = useCurrencies()
+  const currencies = useCurrenciesFromContext()
   const preferredCurrency = usePreferredCurrency()
-
-  const currencies: Currency[] =
-    currenciesData.status === "succeeded" || currenciesData.status === "reloading"
-      ? currenciesData.value : []
 
   const fxRates = new Map<string, number>()
   for (const c of currencies) fxRates.set(c.code, parseFloat(c.fx_rate))
@@ -119,12 +115,12 @@ function HoldingsContent({
     .format(0).replace(/[\d.,\s]/g, "").trim()
 
   // Build pie data from investment-type holdings only
-  const investmentHoldings = sorted.filter(
-    (h) => CHART_TYPES.includes(h.holding_type as HoldingType) && toPreferred(parseFloat(h.value), h.currency) > 0
+  const investmentPositions = sorted.filter(
+    (h) => INVESTMENT_HOLDING_TYPES.includes(h.holding_type as HoldingType) && toPreferred(parseFloat(h.value), h.currency) > 0
   )
-  const showPie = investmentHoldings.length > 1
+  const showPie = investmentPositions.length > 1
 
-  const pieData = investmentHoldings.map((h) => ({
+  const pieData = investmentPositions.map((h) => ({
     name: h.short_name ?? h.symbol,
     fullName: h.name,
     value: parseFloat(toPreferred(parseFloat(h.value), h.currency).toFixed(2)),

@@ -237,6 +237,10 @@ export class RealApiService implements ApiService {
     return get<Holding[]>(`${BASE}/holdings`, { account_id: accountId })
   }
 
+  async getHoldingsBatch(accountIds: string[]): Promise<Holding[]> {
+    return get<Holding[]>(`${BASE}/holdings`, { account_ids: accountIds.join(",") })
+  }
+
   async getCashFlow(
     start: string,
     end: string,
