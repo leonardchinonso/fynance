@@ -155,15 +155,27 @@ POST   /api/import                           # typed JSON API for structured tra
 POST   /api/import/csv                       # upload CSV (single file)
 POST   /api/import/bulk                      # upload multiple CSVs
 
-GET    /api/budget/:month
-POST   /api/budget
+GET    /api/budget/spending-grid?start=&end=&granularity=&profile_id=   # multi-month spending vs budget grid; returns { preferred_currency, rows: SpendingGridRow[] }
+GET    /api/budget/:month                    # per-month budget view (effective budget + actual spend per category)
+POST   /api/budget                           # set standing monthly budget: { category_id, amount } — applies every month unless overridden
+POST   /api/budget/override                  # set per-month override: { month (YYYY-MM), category_id, amount }
 GET    /api/income/:month                    # derived from Income-category transactions
 
-GET    /api/portfolio
-GET    /api/portfolio/history
-GET    /api/portfolio/balances               # per-account balances derived from holdings SUM
+GET    /api/holdings                         # list holdings for an account (?account_id=)
+GET    /api/holdings/summary                 # portfolio summary: net worth, by_asset_class, by_type, by_institution
+GET    /api/holdings/history                 # net worth history over time
+GET    /api/holdings/balances               # per-account balances derived from holdings SUM
+GET    /api/holdings/cash-flow              # income/spending cash flow
+POST   /api/holdings                        # upsert holdings for an account
+PATCH  /api/holdings/:id                    # update a single holding
+POST   /api/holdings/import                 # bulk import holdings
 POST   /api/accounts
 PATCH  /api/accounts/:id/balance
+
+GET    /api/investments                      # list investment events (?account_id=&symbol=&event_type=)
+POST   /api/investments                      # create one investment event
+PATCH  /api/investments/:id                 # update an investment event
+DELETE /api/investments/:id                 # delete an investment event
 
 GET    /api/reports/:month
 GET    /api/export?year=&format=             # csv or md (Obsidian-compatible)

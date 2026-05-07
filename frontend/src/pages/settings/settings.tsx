@@ -2,6 +2,7 @@ import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { useProfiles } from "@/context/profile_context"
 import { useAccounts, useCurrencies } from "@/hooks/data"
+import { useRefreshPreferredCurrency } from "@/context/preferred_currency_context"
 import { ProfilesSection } from "./profiles_section"
 import { AccountsSection } from "./accounts_section"
 import { CategoriesSection } from "./categories_section"
@@ -27,11 +28,13 @@ export function SettingsPage() {
   const { profilesData, refreshProfiles } = useProfiles()
   const [accountsData, refreshAccounts] = useAccounts()
   const [currenciesData, refreshCurrencies] = useCurrencies()
+  const refreshContextCurrencies = useRefreshPreferredCurrency()
 
   function refresh() {
     refreshProfiles()
     refreshAccounts()
     refreshCurrencies()
+    refreshContextCurrencies()
   }
 
   function scrollTo(id: string, updateHash = true) {

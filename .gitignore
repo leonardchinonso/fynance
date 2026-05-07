@@ -19,4 +19,5 @@ frontend/.vite/
 #/target
 .playwright-mcp/
 .vercel
-.attachments/
+.attachments/*
+!.attachments/CLAUDE.md

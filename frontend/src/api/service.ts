@@ -87,6 +87,7 @@ export interface ApiService {
     profileId?: string
   ): Promise<PortfolioHistoryRow[]>
   getHoldings(accountId: string): Promise<Holding[]>
+  getHoldingsBatch(accountIds: string[]): Promise<Holding[]>
   getCashFlow(
     start: string,
     end: string,

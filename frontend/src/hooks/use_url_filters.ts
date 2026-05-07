@@ -1,6 +1,11 @@
 import { useSearchParams } from "react-router-dom"
 import { useCallback } from "react"
 import type { Granularity } from "@/types"
+import type { AssetClass } from "@/bindings/AssetClass"
+
+export const ASSET_CLASSES: AssetClass[] = ["Investments", "Cash", "Pension", "Property"]
+
+export type AssetClassSettings = Record<AssetClass, { show: boolean; merge: boolean }>
 import { format, subMonths, subYears, startOfMonth, startOfYear } from "date-fns"
 
 export type Preset =
@@ -74,9 +79,16 @@ export function useUrlFilters() {
   const search = searchParams.get("search") || ""
 
   // Portfolio pie settings — default true (omitted from URL = true)
-  const splitStocks = searchParams.get("split_stocks") !== "0"
-  const includeLocked = searchParams.get("include_locked") !== "0"
   const hideSmall = searchParams.get("hide_small") !== "0"
+  const assetClassSettings: AssetClassSettings = Object.fromEntries(
+    ASSET_CLASSES.map(cls => {
+      const key = cls.toLowerCase()
+      return [cls, {
+        show:  searchParams.get(`show_${key}`) !== "0",
+        merge: searchParams.get(`merge_${key}`) !== "0",
+      }]
+    })
+  ) as AssetClassSettings
 
   const setFilter = useCallback(
     (updates: Record<string, string | undefined>) => {
@@ -158,9 +170,8 @@ export function useUrlFilters() {
     accounts,
     categories,
     search,
-    splitStocks,
-    includeLocked,
     hideSmall,
+    assetClassSettings,
     setFilter,
     setPreset,
     setSearch,

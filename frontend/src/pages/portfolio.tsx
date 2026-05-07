@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { useProfiles } from "@/context/profile_context"
 import { DateRangeSelector } from "@/components/date_range_selector"
@@ -6,28 +6,27 @@ import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
 import { PortfolioOverview } from "./portfolio/portfolio_overview"
 import { AccountsGrid } from "./portfolio/accounts_grid"
-import { HoldingsDetail } from "./portfolio/holdings_detail"
-import { PortfolioCharts } from "./portfolio/portfolio_charts"
+import { InvestmentsDetail } from "./portfolio/investments_detail"
 import { PortfolioHistory } from "./portfolio/portfolio_history"
-import { LayoutDashboard, Grid3X3, PieChart, LineChart } from "lucide-react"
+import { LayoutDashboard, Grid3X3, LineChart } from "lucide-react"
 import { usePortfolioSummary, usePortfolioAccounts, usePortfolioHistoryData } from "@/hooks/data"
 
 const VIEW_MODES = [
-  { value: "overview",  label: "Overview",  icon: <LayoutDashboard className="h-4 w-4" /> },
-  { value: "accounts",  label: "Accounts",  icon: <Grid3X3 className="h-4 w-4" /> },
-  { value: "charts",    label: "Charts",    icon: <PieChart className="h-4 w-4" /> },
-  { value: "history",   label: "History",   icon: <LineChart className="h-4 w-4" /> },
+  { value: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
+  { value: "accounts", label: "Accounts", icon: <Grid3X3 className="h-4 w-4" /> },
+  { value: "history",  label: "History",  icon: <LineChart className="h-4 w-4" /> },
 ]
 
 export function PortfolioPage() {
-  const { view, setView, profileId, start, end, granularity, splitStocks, includeLocked, hideSmall } = useUrlFilters()
+  const { view, setView, profileId, start, end, granularity, hideSmall, assetClassSettings } = useUrlFilters()
   const { profilesData } = useProfiles()
 
   const summaryData  = usePortfolioSummary(start, end, granularity, profileId)
   const accountsData = usePortfolioAccounts(start, end, profileId)
   const historyData  = usePortfolioHistoryData(start, end, granularity, profileId)
 
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedAccountId = searchParams.get("account")
 
   // Derive selected account name when accounts data is available
   const selectedAccountName =
@@ -47,22 +46,19 @@ export function PortfolioPage() {
       </div>
 
       {activeView === "overview" && (
-        <PortfolioOverview data={summaryData} dateLabel={`${start} to ${end}`} splitStocks={splitStocks} includeLocked={includeLocked} hideSmall={hideSmall} />
+        <PortfolioOverview data={summaryData} dateLabel={`${start} to ${end}`} assetClassSettings={assetClassSettings} hideSmall={hideSmall} />
       )}
       {activeView === "accounts" && (
-        <AccountsGrid data={accountsData} profilesData={profilesData} onAccountClick={setSelectedAccountId} />
-      )}
-      {activeView === "charts" && (
-        <PortfolioCharts data={summaryData} />
+        <AccountsGrid data={accountsData} profilesData={profilesData} onAccountClick={id => setSearchParams(p => { p.set("account", id); return p })} />
       )}
       {activeView === "history" && (
         <PortfolioHistory data={historyData} granularity={granularity} />
       )}
 
-      <HoldingsDetail
+      <InvestmentsDetail
         accountId={selectedAccountId}
         accountName={selectedAccountName}
-        onClose={() => setSelectedAccountId(null)}
+        onClose={() => setSearchParams(p => { p.delete("account"); return p })}
       />
     </div>
   )

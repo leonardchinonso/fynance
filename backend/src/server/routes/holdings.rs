@@ -47,6 +47,7 @@ pub struct HoldingsQuery {
     pub account_id: Option<String>,
     pub account_ids: Option<String>,
     pub profile_id: Option<String>,
+    pub include_closed: Option<bool>,
 }
 
 pub async fn list_holdings(
@@ -54,6 +55,7 @@ pub async fn list_holdings(
     Query(q): Query<HoldingsQuery>,
 ) -> Result<Json<Vec<Holding>>, AppError> {
     let db = state.db.lock().expect("db mutex poisoned");
+    let include_closed = q.include_closed.unwrap_or(false);
 
     let account_ids: Vec<String> = if let Some(ref id) = q.account_id {
         if !id.is_empty() {
@@ -91,7 +93,7 @@ pub async fn list_holdings(
         return Ok(Json(vec![]));
     }
 
-    let holdings = db.get_holdings_batch(&account_ids)?;
+    let holdings = db.get_holdings_batch(&account_ids, include_closed)?;
     Ok(Json(holdings))
 }
 
@@ -161,7 +163,7 @@ pub async fn get_holdings_summary(
             .or_default()
             .add(h.value, &h.currency, &fx);
         by_asset_class_map
-            .entry(account_type_to_asset_class(&row.account_type).to_string())
+            .entry(account_type_to_asset_class(&row.account_type).as_str().to_string())
             .or_default()
             .add(h.value, &h.currency, &fx);
     }
@@ -437,6 +439,17 @@ pub async fn post_holdings(
     })))
 }
 
+// ── GET /api/holdings/:account_id/:symbol ────────────────────────────────────
+
+pub async fn get_holding_history(
+    State(state): State<AppState>,
+    Path((account_id, symbol)): Path<(String, String)>,
+) -> Result<Json<Vec<Holding>>, AppError> {
+    let db = state.db.lock().expect("db mutex poisoned");
+    let snapshots = db.get_holding_snapshots(&account_id, &symbol)?;
+    Ok(Json(snapshots))
+}
+
 // ── DELETE /api/holdings/:account_id/:symbol ─────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -480,9 +493,7 @@ pub async fn patch_holding(
     Json(body): Json<PatchHoldingRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db = state.db.lock().expect("db mutex poisoned");
-    let as_of = parse_date(&body.as_of)?
-        .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| AppError::bad_request("invalid date", "bad_date"))?;
+    let as_of = parse_naive_datetime(&body.as_of)?;
 
     if let Some(close) = body.is_closed {
         let rows = if close {
