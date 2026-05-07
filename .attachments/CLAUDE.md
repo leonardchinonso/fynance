@@ -348,7 +348,7 @@ Expected: only open pots appear, each at their latest snapshot. Closed pots are 
 
 - `get_holdings_batch` originally used `MAX(as_of)` scoped to the whole account rather than per symbol — meant symbols with older snapshots than the newest symbol were dropped. Fixed by correlating the subquery on `symbol` and `sub_account`.
 - `get_holdings_batch` originally filtered `AND h.is_closed = 0` before the `as_of` subquery — meant a closed pot's last snapshot was excluded and the previous open snapshot showed instead. Fixed by moving the `is_closed = 0` filter to apply after the latest-snapshot join, so closed pots are excluded entirely rather than showing stale open data.
-- `delete_holding` matched `as_of` as an exact string — but handler passed `YYYY-MM-DD` while DB stores `YYYY-MM-DDTHH:MM:SS`. Fixed by using `DATE(as_of) = ?` in the SQL.
+- `delete_holding` matched `as_of` as an exact string — but handler passed `YYYY-MM-DD` while DB stores `YYYY-MM-DDTHH:MM:SS`. Fixed by using `DATE(as_of) = DATE(?)` in the SQL (both sides need wrapping since the param is a full datetime string after handler formatting).
 
 ---
 
@@ -365,11 +365,9 @@ The `statement.pdf` is a comprehensive account statement downloaded from Sharewo
 
 ## Accounts in scope
 
-| fynance account_id | Description |
-|--------------------|-------------|
-| `ope-shareworks`   | Palantir RSU/P-RSU/SAR account (Shareworks) |
-
-This account must be created before importing: `fynance account add --id ope-shareworks --name "Palantir Shareworks" --institution "Morgan Stanley" --type investment`
+| fynance account_id      | Description |
+|-------------------------|-------------|
+| `ope-pltr-shareworks`   | Palantir RSU/P-RSU/SAR account (Shareworks / Morgan Stanley) |
 
 ## What the statement contains
 

@@ -489,6 +489,12 @@ export class MockApiService implements ApiService {
     return MOCK_HOLDINGS.filter((h) => h.account_id === accountId)
   }
 
+  async getHoldingsBatch(accountIds: string[]): Promise<Holding[]> {
+    await delay(DELAY_MS)
+    const set = new Set(accountIds)
+    return MOCK_HOLDINGS.filter((h) => set.has(h.account_id))
+  }
+
   async getCashFlow(
     start: string,
     end: string,

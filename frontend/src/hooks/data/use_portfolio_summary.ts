@@ -38,11 +38,9 @@ export function usePortfolioSummary(
       ])
 
       const allAccountIds = portfolio.accounts.map(a => a.id)
-
-      const holdingsPerAccount = await Promise.all(
-        allAccountIds.map(id => api.getHoldings(id))
-      )
-      const allHoldings = holdingsPerAccount.flat()
+      const allHoldings = allAccountIds.length > 0
+        ? await api.getHoldingsBatch(allAccountIds)
+        : []
 
       return { portfolio, history, cashFlow, allHoldings, currencies }
     },

@@ -1,7 +1,7 @@
-import type { Currency, Holding } from "@/types"
+import type { Holding } from "@/types"
 import type { HoldingType } from "@/bindings/HoldingType"
 import { visitRemoteData } from "@/lib/remote_data"
-import { useHoldings, useCurrencies } from "@/hooks/data"
+import { useHoldings } from "@/hooks/data"
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
@@ -14,7 +14,7 @@ import { InteractivePie } from "@/components/charts"
 import { EmptyState } from "@/components/empty_state"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { LoadingSpinner } from "@/components/loading_spinner"
-import { usePreferredCurrency } from "@/context/preferred_currency_context"
+import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { formatCurrency } from "@/lib/utils"
 
 // Colors and labels per holding type
@@ -59,12 +59,8 @@ interface InvestmentsDetailProps {
 
 export function InvestmentsDetail({ accountId, accountName, onClose }: InvestmentsDetailProps) {
   const holdingsData = useHoldings(accountId)
-  const [currenciesData] = useCurrencies()
+  const currencies = useCurrenciesFromContext()
   const preferredCurrency = usePreferredCurrency()
-
-  const currencies: Currency[] =
-    currenciesData.status === "succeeded" || currenciesData.status === "reloading"
-      ? currenciesData.value : []
 
   const fxRates = new Map<string, number>()
   for (const c of currencies) fxRates.set(c.code, parseFloat(c.fx_rate))

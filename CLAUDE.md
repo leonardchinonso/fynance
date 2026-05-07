@@ -155,8 +155,10 @@ POST   /api/import                           # typed JSON API for structured tra
 POST   /api/import/csv                       # upload CSV (single file)
 POST   /api/import/bulk                      # upload multiple CSVs
 
-GET    /api/budget/:month
-POST   /api/budget
+GET    /api/budget/spending-grid?start=&end=&granularity=&profile_id=   # multi-month spending vs budget grid; returns { preferred_currency, rows: SpendingGridRow[] }
+GET    /api/budget/:month                    # per-month budget view (effective budget + actual spend per category)
+POST   /api/budget                           # set standing monthly budget: { category_id, amount } — applies every month unless overridden
+POST   /api/budget/override                  # set per-month override: { month (YYYY-MM), category_id, amount }
 GET    /api/income/:month                    # derived from Income-category transactions
 
 GET    /api/holdings                         # list holdings for an account (?account_id=)

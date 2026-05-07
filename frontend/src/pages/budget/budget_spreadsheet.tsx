@@ -67,7 +67,7 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
     let hasData = false
     for (const m of periodMonths) {
       const val = row.periods[m]
-      if (val !== null) { total += parseFloat(val); hasData = true }
+      if (val != null) { total += parseFloat(val); hasData = true }
     }
     return hasData ? total.toFixed(2) : null
   }
@@ -121,7 +121,7 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
 }
 
 function SectionBlock({
-  section, rows, periods, getPeriodValue, getPeriodBudget, preferredCurrency, onBudgetSaved,
+  section, rows, periods, months, granularity, getPeriodValue, getPeriodBudget, preferredCurrency, onBudgetSaved,
 }: {
   section: string
   rows: SpendingGridRow[]
@@ -171,9 +171,14 @@ function SectionBlock({
                 <TableCell key={p} className="text-right text-sm text-muted-foreground/30">-</TableCell>
               )
               const periodBudget = getPeriodBudget(row.budget, p)
+              // periods_display is keyed by month; for aggregated periods find the first constituent month with a display entry
+              const display = row.periods_display ?? {}
+              const periodDisplay = display[p]
+                ?? getMonthsForPeriod(months, p, granularity).map(m => display[m]).find(d => d != null)
+                ?? null
               return (
                 <TableCell key={p} className={cn("text-right text-sm", row.section !== "Income" && cellColor(val, periodBudget))}>
-                  <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={row.periods_display[p]} secondaryFirst />
+                  <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={periodDisplay} secondaryFirst />
                 </TableCell>
               )
             })}

@@ -1620,14 +1620,15 @@ impl Db {
                   t.category
                 ) AS category_display,
                 t.category_id,
-                COALESCE(sm.section, 'Spending') AS section,
+                COALESCE(sm_child.section, sm_parent.section, 'Spending') AS section,
                 {period_expr} AS period,
                 t.currency,
                 SUM(CAST(t.amount AS REAL)) AS period_total
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
               LEFT JOIN categories pc ON pc.id = c.parent_id
-              LEFT JOIN section_mappings sm ON sm.category_id = COALESCE(c.parent_id, c.id)
+              LEFT JOIN section_mappings sm_child  ON sm_child.category_id  = c.id
+              LEFT JOIN section_mappings sm_parent ON sm_parent.category_id = COALESCE(c.parent_id, c.id)
               {join}
               WHERE {where_clause}
               GROUP BY category_display, period, t.currency
@@ -1790,9 +1791,10 @@ impl Db {
             if exists {
                 tx.execute(
                     "UPDATE holdings SET name = ?1, holding_type = ?2, quantity = ?3,
-                     price_per_unit = ?4, value = ?5, currency = ?6, short_name = ?7
-                     WHERE account_id = ?8 AND symbol = ?9
-                     AND COALESCE(sub_account, '') = ?10 AND as_of = ?11",
+                     price_per_unit = ?4, value = ?5, currency = ?6, short_name = ?7,
+                     is_closed = ?8
+                     WHERE account_id = ?9 AND symbol = ?10
+                     AND COALESCE(sub_account, '') = ?11 AND as_of = ?12",
                     params![
                         h.name,
                         h.holding_type.as_str(),
@@ -1801,6 +1803,7 @@ impl Db {
                         h.value.to_string(),
                         h.currency,
                         h.short_name,
+                        h.is_closed as i64,
                         account_id,
                         h.symbol,
                         sub,
@@ -1811,7 +1814,7 @@ impl Db {
                 tx.execute(
                     "INSERT INTO holdings (account_id, symbol, name, holding_type, quantity,
                      price_per_unit, value, currency, as_of, short_name, sub_account, is_closed)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         account_id,
                         h.symbol,
@@ -1823,7 +1826,8 @@ impl Db {
                         h.currency,
                         as_of_str,
                         h.short_name,
-                        h.sub_account
+                        h.sub_account,
+                        h.is_closed as i64
                     ],
                 )?;
             }
@@ -2383,7 +2387,6 @@ impl Db {
                     WHERE h2.account_id = h.account_id
                       AND h2.symbol = h.symbol
                       AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
-                      AND h2.is_closed = 0
                       AND h2.as_of <= ?1
                 )
               ORDER BY h.account_id, h.symbol"
@@ -2414,7 +2417,7 @@ impl Db {
     }
 
     /// Returns the latest holdings (carry-forward) for all specified accounts.
-    pub fn get_holdings_batch(&self, account_ids: &[String]) -> Result<Vec<Holding>> {
+    pub fn get_holdings_batch(&self, account_ids: &[String], include_closed: bool) -> Result<Vec<Holding>> {
         if account_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -2425,6 +2428,7 @@ impl Db {
             .collect::<Vec<_>>()
             .join(",");
 
+        let closed_filter = if include_closed { "" } else { "AND h.is_closed = 0" };
         let sql = format!(
             r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
                      h.quantity, h.price_per_unit, h.value, h.currency,
@@ -2437,7 +2441,7 @@ impl Db {
                       AND h2.symbol = h.symbol
                       AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
                 )
-                AND h.is_closed = 0
+                {closed_filter}
               ORDER BY h.account_id, h.symbol"
         );
 
@@ -2638,6 +2642,20 @@ impl Db {
         Ok(rows as u64)
     }
 
+    pub fn get_holding_snapshots(&self, account_id: &str, symbol: &str) -> Result<Vec<Holding>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT account_id, symbol, name, holding_type, quantity, price_per_unit,
+                    value, currency, as_of, short_name, sub_account, is_closed
+             FROM holdings
+             WHERE account_id = ?1 AND symbol = ?2
+             ORDER BY as_of ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![account_id, symbol], row_to_holding)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     pub fn delete_holding(
         &self,
         account_id: &str,
@@ -2647,12 +2665,12 @@ impl Db {
     ) -> Result<usize> {
         let rows = if let Some(sub) = sub_account {
             self.conn.execute(
-                "DELETE FROM holdings WHERE account_id = ?1 AND symbol = ?2 AND DATE(as_of) = ?3 AND sub_account = ?4",
+                "DELETE FROM holdings WHERE account_id = ?1 AND symbol = ?2 AND as_of = ?3 AND sub_account = ?4",
                 params![account_id, symbol, as_of, sub],
             )?
         } else {
             self.conn.execute(
-                "DELETE FROM holdings WHERE account_id = ?1 AND symbol = ?2 AND DATE(as_of) = ?3",
+                "DELETE FROM holdings WHERE account_id = ?1 AND symbol = ?2 AND as_of = ?3",
                 params![account_id, symbol, as_of],
             )?
         };
@@ -3493,7 +3511,7 @@ mod consolidation_tests {
         db.set_account_balance("monzo", dec!(1500), naive_dt(2025, 1, 15))
             .unwrap();
 
-        let holdings = db.get_holdings_batch(&["monzo".to_string()]).unwrap();
+        let holdings = db.get_holdings_batch(&["monzo".to_string()], false).unwrap();
         assert_eq!(holdings.len(), 1);
         assert_eq!(holdings[0].symbol, "_CASH");
         assert_eq!(holdings[0].holding_type, HoldingType::Cash);
@@ -3510,7 +3528,7 @@ mod consolidation_tests {
         db.set_account_balance("monzo", dec!(1000), dt).unwrap();
         db.set_account_balance("monzo", dec!(1200), dt).unwrap();
 
-        let holdings = db.get_holdings_batch(&["monzo".to_string()]).unwrap();
+        let holdings = db.get_holdings_batch(&["monzo".to_string()], false).unwrap();
         assert_eq!(holdings.len(), 1, "should not duplicate on same date");
         assert_eq!(holdings[0].value, dec!(1200));
     }
@@ -3684,7 +3702,7 @@ mod consolidation_tests {
         )
         .unwrap();
 
-        let holdings = db.get_holdings_batch(&["t212".to_string()]).unwrap();
+        let holdings = db.get_holdings_batch(&["t212".to_string()], false).unwrap();
         assert_eq!(holdings.len(), 1);
         assert_eq!(holdings[0].symbol, "VOO");
         assert_eq!(holdings[0].value, dec!(4000));
@@ -3761,7 +3779,7 @@ mod consolidation_tests {
         )
         .unwrap();
 
-        let holdings = db.get_holdings_batch(&["monzo".to_string()]).unwrap();
+        let holdings = db.get_holdings_batch(&["monzo".to_string()], false).unwrap();
         assert_eq!(
             holdings.len(),
             3,
@@ -3969,11 +3987,11 @@ mod consolidation_tests {
         )
         .unwrap();
 
-        let holdings = db.get_holdings_batch(&["t212".to_string()]).unwrap();
+        let holdings = db.get_holdings_batch(&["t212".to_string()], false).unwrap();
         assert_eq!(holdings.len(), 1);
 
         db.close_holding("t212", "AAPL", None, dt).unwrap();
-        let holdings = db.get_holdings_batch(&["t212".to_string()]).unwrap();
+        let holdings = db.get_holdings_batch(&["t212".to_string()], false).unwrap();
         assert_eq!(
             holdings.len(),
             0,
@@ -3981,7 +3999,7 @@ mod consolidation_tests {
         );
 
         db.reopen_holding("t212", "AAPL", None, dt).unwrap();
-        let holdings = db.get_holdings_batch(&["t212".to_string()]).unwrap();
+        let holdings = db.get_holdings_batch(&["t212".to_string()], false).unwrap();
         assert_eq!(holdings.len(), 1, "reopened holding should reappear");
     }
 
