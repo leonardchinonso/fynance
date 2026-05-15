@@ -25,7 +25,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Star, Pin, X, Bookmark, Menu, Upload, Settings as SettingsIcon } from "lucide-react"
+import { Star, Pin, X, Bookmark, Menu, Upload, Settings as SettingsIcon, Eye, EyeOff } from "lucide-react"
+import { useRedacted } from "@/context/redacted_context"
 import { DraggableList, DragHandle } from "@/components/draggable_list"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -54,6 +55,7 @@ export function Navbar() {
   const [showPinDialog, setShowPinDialog] = useState(false)
   const [pinLabel, setPinLabel] = useState("")
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const { redacted, toggleRedacted } = useRedacted()
 
   const nameExists = pinnedViews.some((v) => v.label.toLowerCase() === pinLabel.trim().toLowerCase())
 
@@ -184,6 +186,17 @@ export function Navbar() {
             </Select>
           </div>
 
+          {/* Desktop: Redacted (privacy) toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 hidden md:flex"
+            onClick={toggleRedacted}
+            title={redacted ? "Show amounts" : "Hide amounts"}
+          >
+            {redacted ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </Button>
+
           {/* Desktop: Settings gear */}
           <NavLink to="/settings" className="hidden md:block">
             <Button variant="ghost" size="icon" className="h-8 w-8" title="Settings">
@@ -259,8 +272,13 @@ export function Navbar() {
                 ))}
               </div>
             )}
-            {/* Settings (mobile, pinned to bottom) */}
-            <div className="mt-auto pt-4 border-t">
+            {/* Settings + privacy (mobile, pinned to bottom) */}
+            <div className="mt-auto pt-4 border-t space-y-1">
+              <button onClick={toggleRedacted}
+                className="w-full flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted transition-colors">
+                {redacted ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {redacted ? "Show amounts" : "Hide amounts"}
+              </button>
               <NavLink to="/settings" onClick={() => setMobileMenuOpen(false)}
                 className="flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted transition-colors">
                 <SettingsIcon className="h-4 w-4" /> Settings

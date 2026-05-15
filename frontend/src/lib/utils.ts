@@ -22,6 +22,41 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   EUR: "\u20ac",
 }
 
+/**
+ * Redacted ("privacy") mode. When on, every digit in a formatted money
+ * string is replaced with `*` while the currency symbol, sign, thousands
+ * separators and decimal point are kept, so the shape of the value stays
+ * visible but the amount does not (\u00a357,943.39 -> \u00a3\u2022\u2022,\u2022\u2022\u2022.\u2022\u2022). The bullet
+ * glyph is used (not `*`) because it reads as a masked value and stays
+ * visually distinct from the `.`/`,` separators we keep.
+ *
+ * formatCurrency is a pure module function called from many components that
+ * do not consume React context, so the flag lives at module scope (mirrored
+ * to localStorage for persistence). RedactedProvider owns the React state and
+ * forces a re-render of money-displaying components when this is toggled.
+ */
+const REDACTED_KEY = "fynance:redacted"
+let _redacted = (() => {
+  try {
+    return localStorage.getItem(REDACTED_KEY) === "1"
+  } catch {
+    return false
+  }
+})()
+
+export function isRedactedInitial(): boolean {
+  return _redacted
+}
+
+export function setRedacted(value: boolean): void {
+  _redacted = value
+  try {
+    localStorage.setItem(REDACTED_KEY, value ? "1" : "0")
+  } catch {
+    /* ignore: redaction still works in-memory for this session */
+  }
+}
+
 export function formatCurrency(amount: string, currency: string = "GBP"): string {
   const num = parseFloat(amount)
   if (!amount || isNaN(num)) return "-"
@@ -33,7 +68,8 @@ export function formatCurrency(amount: string, currency: string = "GBP"): string
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })
-  return num < 0 ? `-${formatted}` : formatted
+  const result = num < 0 ? `-${formatted}` : formatted
+  return _redacted ? result.replace(/\d/g, "•") : result
 }
 
 export function categoryLeaf(category: string): string {
