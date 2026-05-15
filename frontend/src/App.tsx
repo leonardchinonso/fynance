@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { ProfileProvider } from "@/context/profile_context"
 import { PreferredCurrencyProvider } from "@/context/preferred_currency_context"
 import { CategoryColorsProvider } from "@/context/category_colors_context"
+import { RedactedProvider } from "@/context/redacted_context"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Navbar } from "@/components/navbar"
 import { TransactionsPage } from "@/pages/transactions"
@@ -49,9 +50,11 @@ export default function App() {
       <ProfileProvider>
         <PreferredCurrencyProvider>
           <CategoryColorsProvider>
-            <TooltipProvider>
-              <Layout />
-            </TooltipProvider>
+            <RedactedProvider>
+              <TooltipProvider>
+                <Layout />
+              </TooltipProvider>
+            </RedactedProvider>
           </CategoryColorsProvider>
         </PreferredCurrencyProvider>
       </ProfileProvider>

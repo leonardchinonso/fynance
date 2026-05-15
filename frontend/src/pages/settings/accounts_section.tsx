@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Trash2, Pencil, Plus, Building2, Eye, EyeOff } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { formatCurrency } from "@/lib/utils"
 
 const ACCOUNT_TYPES: AccountType[] = [
   "checking", "savings", "investment", "investment_isa", "credit", "cash", "pension", "property",
@@ -98,7 +99,7 @@ function AccountsList({ accounts }: { accounts: Account[] }) {
             </div>
             {a.balance && (
               <p className="text-sm font-medium tabular-nums shrink-0">
-                {a.currency === "GBP" ? "£" : a.currency} {parseFloat(a.balance).toLocaleString("en-GB", { minimumFractionDigits: 2 })}
+                {formatCurrency(a.balance, a.currency)}
               </p>
             )}
             <Tooltip>

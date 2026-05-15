@@ -1,7 +1,7 @@
 import type { BudgetRow } from "@/types"
 import { Progress } from "@/components/ui/progress"
 import { MoneyDisplay, DualAmount } from "@/components/currency"
-import { cn } from "@/lib/utils"
+import { cn, formatCurrency } from "@/lib/utils"
 import { getBudgetProgressClass, getBudgetStatusClass } from "@/lib/colors"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
 
@@ -39,8 +39,8 @@ export function BudgetProgress({ rows }: BudgetProgressProps) {
               </span>
               <span>
                 {parseFloat(budgeted) - parseFloat(row.actual) > 0
-                  ? `${(parseFloat(budgeted) - parseFloat(row.actual)).toFixed(2)} remaining`
-                  : `${(parseFloat(row.actual) - parseFloat(budgeted)).toFixed(2)} over budget`}
+                  ? `${formatCurrency((parseFloat(budgeted) - parseFloat(row.actual)).toFixed(2), preferredCurrency)} remaining`
+                  : `${formatCurrency((parseFloat(row.actual) - parseFloat(budgeted)).toFixed(2), preferredCurrency)} over budget`}
               </span>
             </div>
           </div>
