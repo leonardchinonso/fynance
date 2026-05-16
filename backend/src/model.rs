@@ -392,7 +392,7 @@ pub struct BudgetOverride {
 }
 
 /// Input record for `POST /api/import` (structured JSON from external agents).
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct ImportTransaction {
     #[serde(with = "serde_naive_datetime")]
@@ -919,4 +919,53 @@ pub struct ImportLog {
     pub source: String,
     pub detected_bank: BankFormat,
     pub detection_confidence: f32,
+}
+
+/// Status of a single row in a dryrun preview.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "lowercase")]
+pub enum TransactionPreviewStatus {
+    New,
+    Duplicate,
+    Error,
+}
+
+/// A single row in a transaction dryrun preview.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TransactionPreviewRow {
+    pub index: usize,
+    #[serde(with = "serde_naive_datetime")]
+    #[ts(type = "string")]
+    pub date: NaiveDateTime,
+    pub description: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    pub currency: String,
+    pub status: TransactionPreviewStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_reason: Option<String>,
+}
+
+/// Full response from a transaction import dryrun.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TransactionImportPreview {
+    pub account_id: String,
+    pub filename: String,
+    pub detected_bank: BankFormat,
+    pub detection_confidence: f32,
+    pub rows: Vec<TransactionPreviewRow>,
+    pub rows_total: u64,
+    pub rows_new: u64,
+    pub rows_duplicate: u64,
+    pub rows_error: u64,
+    /// Parsed payload ready for confirmation via `POST /api/import`.
+    pub payload: ImportPayload,
 }

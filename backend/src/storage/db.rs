@@ -21,7 +21,7 @@ use crate::model::{
     ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentEvent,
     InvestmentEventType, InvestmentMetrics,
     PatchCategoryPayload, PatchInvestmentEventBody, Profile, SectionMapping, SpendingGridRow,
-    StandingBudget, Transaction,
+    StandingBudget, Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -805,6 +805,121 @@ impl Db {
             }
         }
         Ok(result)
+    }
+
+    /// Preview a batch of `ImportTransaction`s without writing anything.
+    /// Computes fingerprints and checks for existing matches.
+    pub fn dry_run_transactions(
+        &self,
+        account_id: &str,
+        transactions: &[ImportTransaction],
+    ) -> Result<Vec<TransactionPreviewRow>> {
+        let mut previews = Vec::with_capacity(transactions.len());
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, description FROM transactions WHERE fingerprint = ?1")?;
+
+        for (i, t) in transactions.iter().enumerate() {
+            let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let amount_str = t.amount.to_string();
+            let currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
+            let fp = crate::util::fingerprint(&date_iso, &amount_str, account_id);
+
+            let existing: Option<(String, String)> = stmt
+                .query_row(rusqlite::params![fp], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .ok();
+
+            let (status, existing_id, existing_description) = match existing {
+                Some((id, desc)) => (TransactionPreviewStatus::Duplicate, Some(id), Some(desc)),
+                None => (TransactionPreviewStatus::New, None, None),
+            };
+
+            previews.push(TransactionPreviewRow {
+                index: i,
+                date: t.date,
+                description: t.description.clone(),
+                amount: t.amount,
+                currency,
+                status,
+                existing_id,
+                existing_description,
+                error_reason: None,
+            });
+        }
+
+        Ok(previews)
+    }
+
+    /// Preview parsed CSV rows (from LLM) without writing anything.
+    /// Low-confidence rows are marked as errors rather than silently dropped.
+    pub fn dry_run_transactions_from_parsed(
+        &self,
+        account_id: &str,
+        rows: &[crate::importers::unified::UnifiedStatementRow],
+        min_row_confidence: f32,
+    ) -> Result<Vec<TransactionPreviewRow>> {
+        let mut previews = Vec::with_capacity(rows.len());
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, description FROM transactions WHERE fingerprint = ?1")?;
+
+        for (i, row) in rows.iter().enumerate() {
+            if row.row_confidence < min_row_confidence {
+                previews.push(TransactionPreviewRow {
+                    index: i,
+                    date: row.date,
+                    description: row.description.clone(),
+                    amount: row.amount,
+                    currency: row.currency.clone(),
+                    status: TransactionPreviewStatus::Error,
+                    existing_id: None,
+                    existing_description: None,
+                    error_reason: Some(format!(
+                        "row confidence {:.2} below threshold {:.2}",
+                        row.row_confidence, min_row_confidence
+                    )),
+                });
+                continue;
+            }
+
+            let date_iso = row.date.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let amount_str = row.amount.to_string();
+            let fp = crate::util::fingerprint(&date_iso, &amount_str, account_id);
+
+            let existing: Option<(String, String)> = stmt
+                .query_row(rusqlite::params![fp], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .ok();
+
+            let (status, existing_id, existing_description) = match existing {
+                Some((id, desc)) => (TransactionPreviewStatus::Duplicate, Some(id), Some(desc)),
+                None => (TransactionPreviewStatus::New, None, None),
+            };
+
+            previews.push(TransactionPreviewRow {
+                index: i,
+                date: row.date,
+                description: row
+                    .merchant
+                    .as_deref()
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or(&row.description)
+                    .to_string(),
+                amount: row.amount,
+                currency: row.currency.clone(),
+                status,
+                existing_id,
+                existing_description,
+                error_reason: None,
+            });
+        }
+
+        Ok(previews)
     }
 
     /// List transactions with filtering, search, and pagination.
@@ -4049,5 +4164,117 @@ mod consolidation_tests {
             |row| row.get(0),
         ).unwrap();
         assert_eq!(value, "750", "value should be updated");
+    }
+}
+
+#[cfg(test)]
+mod transaction_dryrun_tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use rust_decimal::Decimal;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn setup_test_account(db: &Db, id: &str) {
+        db.create_account(&Account {
+            id: id.to_string(),
+            name: id.to_string(),
+            institution: "TestBank".to_string(),
+            account_type: AccountType::Checking,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+    }
+
+    fn make_txn(date: (i32, u32, u32), desc: &str, amount: i64, scale: u32) -> ImportTransaction {
+        ImportTransaction {
+            date: NaiveDate::from_ymd_opt(date.0, date.1, date.2)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            description: desc.to_string(),
+            amount: Decimal::new(amount, scale),
+            currency: Some("GBP".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_dry_run_transactions_new() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let txns = vec![make_txn((2025, 1, 15), "Coffee Shop", -350, 2)];
+
+        let previews = db.dry_run_transactions("acc1", &txns).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::New);
+        assert!(previews[0].existing_id.is_none());
+    }
+
+    #[test]
+    fn test_dry_run_transactions_duplicate() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let txns = vec![make_txn((2025, 1, 15), "Coffee Shop", -350, 2)];
+
+        db.insert_transactions_bulk("acc1", &txns).unwrap();
+
+        let previews = db.dry_run_transactions("acc1", &txns).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
+        assert!(previews[0].existing_id.is_some());
+        assert_eq!(
+            previews[0].existing_description.as_deref(),
+            Some("Coffee Shop")
+        );
+    }
+
+    #[test]
+    fn test_dry_run_transactions_no_writes() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let txns = vec![make_txn((2025, 1, 15), "Coffee Shop", -350, 2)];
+
+        db.dry_run_transactions("acc1", &txns).unwrap();
+
+        let (rows, count) = db
+            .get_transactions(&TransactionFilters::default())
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn test_dry_run_transactions_mixed() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let existing = vec![make_txn((2025, 1, 15), "Coffee", -350, 2)];
+        db.insert_transactions_bulk("acc1", &existing).unwrap();
+
+        let txns = vec![
+            make_txn((2025, 1, 15), "Coffee", -350, 2),
+            make_txn((2025, 1, 16), "Groceries", -2500, 2),
+        ];
+
+        let previews = db.dry_run_transactions("acc1", &txns).unwrap();
+        assert_eq!(previews.len(), 2);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
+        assert_eq!(previews[1].status, TransactionPreviewStatus::New);
     }
 }
