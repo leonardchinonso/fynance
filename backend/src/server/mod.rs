@@ -42,10 +42,19 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         // ── Categories ─────────────────────────────────────────────────────
         .route("/categories", post(routes::categories::create_category))
         .route("/categories", get(routes::categories::list_categories))
-        .route("/categories/resolve", get(routes::categories::resolve_category))
+        .route(
+            "/categories/resolve",
+            get(routes::categories::resolve_category),
+        )
         .route("/categories/:id", get(routes::categories::get_category))
-        .route("/categories/:id", patch(routes::categories::update_category))
-        .route("/categories/:id", delete(routes::categories::delete_category))
+        .route(
+            "/categories/:id",
+            patch(routes::categories::update_category),
+        )
+        .route(
+            "/categories/:id",
+            delete(routes::categories::delete_category),
+        )
         // ── Section mappings ───────────────────────────────────────────────
         .route("/sections", get(routes::sections::list_sections))
         .route("/sections", put(routes::sections::replace_sections))
@@ -128,14 +137,29 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         // ── Currencies ────────────────────────────────────────────────────────
         .route("/currencies", get(routes::currencies::list_currencies))
         .route("/currencies", post(routes::currencies::create_currency))
-        .route("/currencies/:code", patch(routes::currencies::update_currency))
-        .route("/currencies/:code", delete(routes::currencies::delete_currency))
+        .route(
+            "/currencies/:code",
+            patch(routes::currencies::update_currency),
+        )
+        .route(
+            "/currencies/:code",
+            delete(routes::currencies::delete_currency),
+        )
         // ── Investments ───────────────────────────────────────────────────────
         .route("/investments", get(routes::investments::list_investments))
         .route("/investments", post(routes::investments::create_investment))
-        .route("/investments/import", post(routes::investments::import_investments))
-        .route("/investments/:id", patch(routes::investments::update_investment))
-        .route("/investments/:id", delete(routes::investments::delete_investment))
+        .route(
+            "/investments/import",
+            post(routes::investments::import_investments),
+        )
+        .route(
+            "/investments/:id",
+            patch(routes::investments::update_investment),
+        )
+        .route(
+            "/investments/:id",
+            delete(routes::investments::delete_investment),
+        )
         .with_state(state.clone());
 
     Router::new()

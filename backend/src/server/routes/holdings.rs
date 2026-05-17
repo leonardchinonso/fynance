@@ -24,10 +24,11 @@ use crate::server::auth::AuthContext;
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 use crate::server::validation::{
-    parse_date, parse_granularity, parse_naive_datetime, split_csv_param, validate_date_range, validate_currency,
+    parse_date, parse_granularity, parse_naive_datetime, split_csv_param, validate_currency,
+    validate_date_range,
 };
 use crate::storage::db::{account_type_to_asset_class, is_available_account};
-use crate::util::fx::{FxRateMap, CurrencyAggregator};
+use crate::util::fx::{CurrencyAggregator, FxRateMap};
 
 // ── Auth helper ─────────────────────────────────────────────────────────────
 
@@ -163,7 +164,11 @@ pub async fn get_holdings_summary(
             .or_default()
             .add(h.value, &h.currency, &fx);
         by_asset_class_map
-            .entry(account_type_to_asset_class(&row.account_type).as_str().to_string())
+            .entry(
+                account_type_to_asset_class(&row.account_type)
+                    .as_str()
+                    .to_string(),
+            )
             .or_default()
             .add(h.value, &h.currency, &fx);
     }
@@ -475,7 +480,9 @@ pub async fn delete_holding_handler(
             "no holding found for account={account_id} symbol={symbol} as_of={as_of}"
         )));
     }
-    Ok(Json(serde_json::json!({ "ok": true, "rows_deleted": rows })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "rows_deleted": rows }),
+    ))
 }
 
 // ── PATCH /api/holdings/:account_id/:symbol ──────────────────────────────────

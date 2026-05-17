@@ -14,7 +14,6 @@ use crate::server::validation::{
 use crate::storage::TransactionFilters;
 use crate::util::fx::FxRateMap;
 
-
 // ── GET /api/transactions ─────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -200,11 +199,12 @@ pub async fn patch_transaction(
     if let Some(ref cat_id) = body.category_id {
         db.update_transaction_category(&id, cat_id, CategorySource::Manual)?;
     } else if let Some(ref cat_name) = body.category {
-        let cat = db.resolve_category_by_name(cat_name)?
-            .ok_or_else(|| AppError::bad_request(
+        let cat = db.resolve_category_by_name(cat_name)?.ok_or_else(|| {
+            AppError::bad_request(
                 format!("category '{}' not found", cat_name),
                 "invalid_category",
-            ))?;
+            )
+        })?;
         if cat.parent_id.is_none() {
             return Err(AppError::bad_request(
                 "cannot assign a parent category; use a leaf category",

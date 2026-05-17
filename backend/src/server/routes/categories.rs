@@ -16,7 +16,10 @@ pub async fn create_category(
     Json(body): Json<CreateCategoryPayload>,
 ) -> Result<Json<Category>, AppError> {
     if body.name.is_empty() {
-        return Err(AppError::bad_request("name must not be empty", "invalid_name"));
+        return Err(AppError::bad_request(
+            "name must not be empty",
+            "invalid_name",
+        ));
     }
 
     let category = {
@@ -29,9 +32,7 @@ pub async fn create_category(
 
 // ── GET /api/categories ──────────────────────────────────────────────────────
 
-pub async fn list_categories(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, AppError> {
+pub async fn list_categories(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
     let tree = {
         let db = state.db.lock().expect("db mutex poisoned");
         db.get_categories_tree()?
@@ -51,7 +52,8 @@ pub async fn resolve_category(
     Query(q): Query<ResolveQuery>,
 ) -> Result<Json<Category>, AppError> {
     let db = state.db.lock().expect("db mutex poisoned");
-    let category = db.resolve_category_by_name(&q.name)?
+    let category = db
+        .resolve_category_by_name(&q.name)?
         .ok_or_else(|| AppError::NotFound(format!("category '{}' not found", q.name)))?;
     Ok(Json(category))
 }
@@ -63,7 +65,8 @@ pub async fn get_category(
     Path(id): Path<String>,
 ) -> Result<Json<Category>, AppError> {
     let db = state.db.lock().expect("db mutex poisoned");
-    let category = db.get_category_by_id(&id)?
+    let category = db
+        .get_category_by_id(&id)?
         .ok_or_else(|| AppError::NotFound(format!("category {id} not found")))?;
     Ok(Json(category))
 }
@@ -75,7 +78,11 @@ pub async fn update_category(
     Path(id): Path<String>,
     Json(body): Json<PatchCategoryPayload>,
 ) -> Result<Json<Category>, AppError> {
-    if body.name.is_none() && body.parent_id.is_none() && body.display_order.is_none() && body.is_active.is_none() {
+    if body.name.is_none()
+        && body.parent_id.is_none()
+        && body.display_order.is_none()
+        && body.is_active.is_none()
+    {
         return Err(AppError::bad_request(
             "at least one field must be provided",
             "empty_body",
@@ -83,7 +90,10 @@ pub async fn update_category(
     }
     if let Some(ref name) = body.name {
         if name.is_empty() {
-            return Err(AppError::bad_request("name must not be empty", "invalid_name"));
+            return Err(AppError::bad_request(
+                "name must not be empty",
+                "invalid_name",
+            ));
         }
     }
 
