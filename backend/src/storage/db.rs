@@ -1775,6 +1775,18 @@ impl Db {
     // ── Portfolio ─────────────────────────────────────────────────────────────
 
     pub fn upsert_holdings(&self, account_id: &str, holdings: &[Holding]) -> Result<()> {
+        // Invariant: a closed holding must be zeroed out (see `close_holding`).
+        // Reject the whole batch before writing anything if violated.
+        for h in holdings {
+            if h.is_closed && !h.value.is_zero() {
+                anyhow::bail!(
+                    "cannot upsert closed holding {} in account {account_id} with non-zero value {}; closed holdings must be zeroed",
+                    h.symbol,
+                    h.value
+                );
+            }
+        }
+
         let tx = self.conn.unchecked_transaction()?;
         for h in holdings {
             let sub = h.sub_account.as_deref().unwrap_or("");
@@ -1971,108 +1983,13 @@ impl Db {
 
     // ── Portfolio queries ─────────────────────────────────────────────────────
 
-    /// Returns all accounts with their carry-forward balance as of `as_of`.
-    /// Each returned `Account` has:
-    /// - `balance`: SUM(holdings.value) for the most recent `as_of` date <= `as_of`, or `None`
-    /// - `balance_date`: the holdings date that was carried forward
-    /// - `is_stale`: `Some(true)` if that date is > 45 days before `as_of`
-    pub fn get_portfolio_as_of(
-        &self,
-        as_of: NaiveDate,
-        profile_id: Option<&str>,
-    ) -> Result<Vec<Account>> {
-        // Use T23:59:59 so that any holding recorded during the as_of day is included.
-        let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
-        let stale_days = 45i64;
-
-        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
-        {
-            let pattern = format!("%\"{pid}\"%");
-            ("AND a.profile_ids LIKE ?2".to_string(), Some(pattern))
-        } else {
-            (String::new(), None)
-        };
-
-        // For each account, find the most recent holdings snapshot date <= as_of,
-        // then sum all holdings values on that date.
-        let sql = format!(
-            r"SELECT
-                a.id, a.name, a.institution, a.type, a.currency,
-                a.is_active, a.notes, a.profile_ids,
-                hb.total_value AS snap_balance,
-                hb.max_as_of   AS snapshot_date
-              FROM accounts a
-              LEFT JOIN (
-                  SELECT
-                      h.account_id,
-                      SUM(CAST(h.value AS REAL)) AS total_value,
-                      h.as_of AS max_as_of
-                  FROM holdings h
-                  WHERE h.is_closed = 0
-                    AND h.as_of = (
-                      SELECT MAX(h2.as_of)
-                      FROM holdings h2
-                      WHERE h2.account_id = h.account_id
-                        AND h2.is_closed = 0
-                        AND h2.as_of <= ?1
-                  )
-                  GROUP BY h.account_id
-              ) hb ON hb.account_id = a.id
-              WHERE a.is_active = 1
-              {profile_filter}
-              ORDER BY a.institution, a.name"
-        );
-
-        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<Account> {
-            let type_str: String = row.get(3)?;
-            let profile_ids_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
-            let profile_ids: Vec<String> = serde_json::from_str(&profile_ids_str)
-                .unwrap_or_else(|_| vec!["default".to_string()]);
-
-            let snap_balance: Option<f64> = row.get(8)?;
-            let snap_date_str: Option<String> = row.get(9)?;
-
-            let balance = snap_balance.and_then(|f| Decimal::try_from(f).ok());
-            let balance_date: Option<NaiveDateTime> = snap_date_str
-                .as_deref()
-                .and_then(parse_transaction_datetime);
-
-            let is_stale = balance_date
-                .map(|d| (as_of - d.date()).num_days() > stale_days)
-                .unwrap_or(false);
-
-            let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
-            let is_available = is_available_account(&account_type);
-            Ok(Account {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                institution: row.get(2)?,
-                account_type,
-                currency: row.get(4)?,
-                balance,
-                balance_date,
-                is_active: row.get::<_, i64>(5)? != 0,
-                notes: row.get(6)?,
-                profile_ids,
-                is_stale: Some(is_stale),
-                is_available,
-            })
-        };
-
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows: Vec<Account> = if let Some(ref pat) = profile_arg {
-            stmt.query_map(rusqlite::params![as_of_str, pat], map_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        } else {
-            stmt.query_map(rusqlite::params![as_of_str], map_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
-
-        Ok(rows)
-    }
-
     /// Returns one `HoldingsHistoryRow` per period between `from` and `to`.
-    /// Uses carry-forward semantics: point-in-time balance at period end.
+    ///
+    /// Each period is reduced from the exact same point-in-time holdings the
+    /// portfolio summary uses (`get_holdings_for_summary`): per-(account,
+    /// symbol, sub_account) carry-forward, per-holding FX conversion. This
+    /// guarantees the last history point reconciles with the Net Worth card /
+    /// Balance Sheet for the same `as_of` (`total_wealth == net_worth`).
     pub fn get_monthly_net_worth(
         &self,
         from: NaiveDate,
@@ -2087,17 +2004,16 @@ impl Db {
         let mut rows = Vec::new();
 
         for (label, period_end) in periods {
-            let accounts = self.get_portfolio_as_of(period_end, profile_id)?;
+            let holdings = self.get_holdings_for_summary(period_end, profile_id)?;
             let mut available_agg: CurrencyAggregator = Default::default();
             let mut unavailable_agg: CurrencyAggregator = Default::default();
 
-            for account in accounts {
-                if let Some(balance) = account.balance {
-                    if is_available_account(&account.account_type) {
-                        available_agg.add(balance, &account.currency, fx);
-                    } else {
-                        unavailable_agg.add(balance, &account.currency, fx);
-                    }
+            for row in holdings {
+                let h = &row.holding;
+                if is_available_account(&row.account_type) {
+                    available_agg.add(h.value, &h.currency, fx);
+                } else {
+                    unavailable_agg.add(h.value, &h.currency, fx);
                 }
             }
 
@@ -2358,6 +2274,15 @@ impl Db {
     /// breakdowns. Used by the summary handler so that negative holdings
     /// (loans, mortgages) count as liabilities separately from positive
     /// holdings in the same account.
+    ///
+    /// This is the single source of truth for point-in-time holdings: the
+    /// portfolio summary, `accounts_as_of`, and `get_monthly_net_worth` all
+    /// reduce its output, so they reconcile by construction. It deliberately
+    /// does *not* filter `is_closed`: closed holdings are guaranteed to be
+    /// zeroed (enforced by `close_holding` / `upsert_holdings` /
+    /// `replace_holdings`), so carrying a closed snapshot forward contributes
+    /// 0 and needs no special-casing. Filtering here was the source of the
+    /// summary/history divergence.
     pub fn get_holdings_for_summary(
         &self,
         as_of: NaiveDate,
@@ -2381,7 +2306,6 @@ impl Db {
               JOIN accounts a ON a.id = h.account_id
               WHERE a.is_active = 1
                 {profile_filter}
-                AND h.is_closed = 0
                 AND h.as_of = (
                     SELECT MAX(h2.as_of) FROM holdings h2
                     WHERE h2.account_id = h.account_id
@@ -2410,6 +2334,102 @@ impl Db {
                 .collect::<rusqlite::Result<Vec<_>>>()?
         } else {
             stmt.query_map(rusqlite::params![as_of_str], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        Ok(rows)
+    }
+
+    /// Per-account point-in-time view derived from the *same* carry-forward
+    /// holdings as the portfolio summary and net-worth history
+    /// (`get_holdings_for_summary`), so account balances reconcile with net
+    /// worth instead of using a divergent single-latest-snapshot-date sum.
+    ///
+    /// `balance` is the sum of the account's carried holdings in the account
+    /// currency; `balance_date` is the most recent snapshot among them.
+    /// Active accounts with no holdings as of `as_of` are returned with a
+    /// `None` balance (mirroring the previous `LEFT JOIN` behaviour).
+    pub fn accounts_as_of(
+        &self,
+        as_of: NaiveDate,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<Account>> {
+        use std::collections::HashMap;
+        let stale_days = 45i64;
+
+        let holdings = self.get_holdings_for_summary(as_of, profile_id)?;
+        // account_id -> (summed value, most recent snapshot date)
+        let mut agg: HashMap<String, (Decimal, NaiveDateTime)> = HashMap::new();
+        for row in &holdings {
+            let h = &row.holding;
+            let entry = agg
+                .entry(h.account_id.clone())
+                .or_insert((Decimal::ZERO, h.as_of));
+            entry.0 += h.value;
+            if h.as_of > entry.1 {
+                entry.1 = h.as_of;
+            }
+        }
+
+        let (profile_filter, profile_arg): (String, Option<String>) =
+            if let Some(pid) = profile_id {
+                let pattern = format!("%\"{pid}\"%");
+                ("AND a.profile_ids LIKE ?1".to_string(), Some(pattern))
+            } else {
+                (String::new(), None)
+            };
+
+        let sql = format!(
+            r"SELECT a.id, a.name, a.institution, a.type, a.currency,
+                     a.is_active, a.notes, a.profile_ids
+              FROM accounts a
+              WHERE a.is_active = 1
+              {profile_filter}
+              ORDER BY a.institution, a.name"
+        );
+
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<Account> {
+            let id: String = row.get(0)?;
+            let type_str: String = row.get(3)?;
+            let profile_ids_str: String =
+                row.get(7).unwrap_or_else(|_| "[]".to_string());
+            let profile_ids: Vec<String> = serde_json::from_str(&profile_ids_str)
+                .unwrap_or_else(|_| vec!["default".to_string()]);
+
+            let account_type =
+                AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
+            let is_available = is_available_account(&account_type);
+
+            let (balance, balance_date) = match agg.get(&id) {
+                Some((sum, max_as_of)) => (Some(*sum), Some(*max_as_of)),
+                None => (None, None),
+            };
+            let is_stale = balance_date
+                .map(|d| (as_of - d.date()).num_days() > stale_days)
+                .unwrap_or(false);
+
+            Ok(Account {
+                id,
+                name: row.get(1)?,
+                institution: row.get(2)?,
+                account_type,
+                currency: row.get(4)?,
+                balance,
+                balance_date,
+                is_active: row.get::<_, i64>(5)? != 0,
+                notes: row.get(6)?,
+                profile_ids,
+                is_stale: Some(is_stale),
+                is_available,
+            })
+        };
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows: Vec<Account> = if let Some(ref pat) = profile_arg {
+            stmt.query_map(rusqlite::params![pat], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map([], map_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
 
@@ -2461,6 +2481,17 @@ impl Db {
     pub fn replace_holdings(&self, account_id: &str, holdings: &[Holding]) -> Result<u32> {
         if holdings.is_empty() {
             return Ok(0);
+        }
+
+        // Invariant: a closed holding must be zeroed out (see `close_holding`).
+        for h in holdings {
+            if h.is_closed && !h.value.is_zero() {
+                anyhow::bail!(
+                    "cannot replace with closed holding {} in account {account_id} with non-zero value {}; closed holdings must be zeroed",
+                    h.symbol,
+                    h.value
+                );
+            }
         }
 
         let tx = self.conn.unchecked_transaction()?;
@@ -2604,17 +2635,31 @@ impl Db {
         as_of: NaiveDateTime,
     ) -> Result<u64> {
         let sub = sub_account.unwrap_or("");
+        let as_of_str = as_of.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+        // Invariant: only zeroed-out positions may be closed. This keeps closed
+        // holdings out of net-worth math by value (they contribute 0) rather
+        // than by a fragile is_closed filter. Reject closing a non-zero row.
+        let nonzero_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM holdings
+             WHERE account_id = ?1 AND symbol = ?2
+               AND COALESCE(sub_account, '') = ?3 AND as_of = ?4
+               AND CAST(value AS REAL) != 0",
+            params![account_id, symbol, sub, as_of_str],
+            |row| row.get(0),
+        )?;
+        if nonzero_count > 0 {
+            anyhow::bail!(
+                "cannot close holding {symbol} in account {account_id}: value is non-zero; record a zeroed snapshot before closing"
+            );
+        }
+
         let rows = self.conn.execute(
             "UPDATE holdings SET is_closed = 1
              WHERE account_id = ?1 AND symbol = ?2
              AND COALESCE(sub_account, '') = ?3
              AND as_of = ?4",
-            params![
-                account_id,
-                symbol,
-                sub,
-                as_of.format("%Y-%m-%dT%H:%M:%S").to_string()
-            ],
+            params![account_id, symbol, sub, as_of_str],
         )?;
         Ok(rows as u64)
     }
@@ -3534,7 +3579,7 @@ mod consolidation_tests {
     }
 
     #[test]
-    fn portfolio_as_of_sums_all_holdings() {
+    fn accounts_as_of_sums_all_holdings() {
         let (db, _file) = test_db();
         db.create_account(&make_account("t212", AccountType::Investment))
             .unwrap();
@@ -3550,21 +3595,14 @@ mod consolidation_tests {
         )
         .unwrap();
 
-        let accounts = db
-            .get_portfolio_as_of(naive_date(2025, 2, 1), None)
-            .unwrap();
+        let accounts = db.accounts_as_of(naive_date(2025, 2, 1), None).unwrap();
         let t212 = accounts.iter().find(|a| a.id == "t212").unwrap();
-        // Allow small f64 rounding tolerance (sum goes through CAST AS REAL).
-        let balance = t212.balance.unwrap();
-        let diff = (balance - dec!(10000)).abs();
-        assert!(
-            diff < Decimal::from_str("0.01").unwrap(),
-            "expected ~10000, got {balance}"
-        );
+        // accounts_as_of sums Decimal values exactly (no CAST AS REAL).
+        assert_eq!(t212.balance.unwrap(), dec!(10000));
     }
 
     #[test]
-    fn portfolio_as_of_carry_forward() {
+    fn accounts_as_of_carry_forward() {
         let (db, _file) = test_db();
         db.create_account(&make_account("monzo", AccountType::Checking))
             .unwrap();
@@ -3575,24 +3613,18 @@ mod consolidation_tests {
             .unwrap();
 
         // Query for Feb: should carry forward Jan value.
-        let accounts = db
-            .get_portfolio_as_of(naive_date(2025, 2, 15), None)
-            .unwrap();
+        let accounts = db.accounts_as_of(naive_date(2025, 2, 15), None).unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
-        let diff = (monzo.balance.unwrap() - dec!(1000)).abs();
-        assert!(diff < Decimal::from_str("0.01").unwrap());
+        assert_eq!(monzo.balance.unwrap(), dec!(1000));
 
         // Query for April: should use March value.
-        let accounts = db
-            .get_portfolio_as_of(naive_date(2025, 4, 15), None)
-            .unwrap();
+        let accounts = db.accounts_as_of(naive_date(2025, 4, 15), None).unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
-        let diff = (monzo.balance.unwrap() - dec!(1500)).abs();
-        assert!(diff < Decimal::from_str("0.01").unwrap());
+        assert_eq!(monzo.balance.unwrap(), dec!(1500));
     }
 
     #[test]
-    fn portfolio_as_of_stale_flag() {
+    fn accounts_as_of_stale_flag() {
         let (db, _file) = test_db();
         db.create_account(&make_account("monzo", AccountType::Checking))
             .unwrap();
@@ -3600,18 +3632,14 @@ mod consolidation_tests {
         // Record balance on Jan 1. Query 60 days later: should be stale.
         db.set_account_balance("monzo", dec!(500), naive_dt(2025, 1, 1))
             .unwrap();
-        let accounts = db
-            .get_portfolio_as_of(naive_date(2025, 3, 2), None)
-            .unwrap();
+        let accounts = db.accounts_as_of(naive_date(2025, 3, 2), None).unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
         assert_eq!(monzo.is_stale, Some(true));
 
         // Record balance on Feb 28. Query March 2: within 45 days, not stale.
         db.set_account_balance("monzo", dec!(600), naive_dt(2025, 2, 28))
             .unwrap();
-        let accounts = db
-            .get_portfolio_as_of(naive_date(2025, 3, 2), None)
-            .unwrap();
+        let accounts = db.accounts_as_of(naive_date(2025, 3, 2), None).unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
         assert_eq!(monzo.is_stale, Some(false));
     }
@@ -3709,7 +3737,7 @@ mod consolidation_tests {
     }
 
     #[test]
-    fn test_closed_holdings_excluded_from_summary() {
+    fn closed_holding_contributes_zero_to_summary() {
         let (db, _file) = test_db();
         db.create_account(&make_account("t212", AccountType::Investment))
             .unwrap();
@@ -3724,19 +3752,23 @@ mod consolidation_tests {
         )
         .unwrap();
 
-        db.close_holding("t212", "AAPL", None, dt).unwrap();
+        // Invariant: a position can only be closed once it is zeroed out.
+        // Record the zeroed closing snapshot, then close it.
+        let dt2 = naive_dt(2025, 1, 20);
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt2)],
+        )
+        .unwrap();
+        db.close_holding("t212", "AAPL", None, dt2).unwrap();
 
-        let accounts = db
-            .get_portfolio_as_of(naive_date(2025, 2, 1), None)
-            .unwrap();
+        // Carry-forward picks AAPL's latest snapshot (the closed £0 one), so it
+        // contributes nothing; only the £2000 cash remains.
+        let accounts = db.accounts_as_of(naive_date(2025, 2, 1), None).unwrap();
         let t212 = accounts.iter().find(|a| a.id == "t212").unwrap();
-        let balance = t212.balance.unwrap();
-        let tol = Decimal::from_str("0.01").unwrap();
-        assert!(
-            (balance - dec!(2000)).abs() < tol,
-            "expected ~2000 (only cash), got {balance}"
-        );
+        assert_eq!(t212.balance.unwrap(), dec!(2000));
 
+        // Closing must not delete the row; it stays for history/audit.
         let raw_count: i64 = db
             .conn
             .query_row(
@@ -3745,7 +3777,7 @@ mod consolidation_tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(raw_count, 2, "closed holding row should still exist");
+        assert_eq!(raw_count, 3, "closed holding row should still exist");
     }
 
     #[test]
@@ -3786,9 +3818,7 @@ mod consolidation_tests {
             "all three sub-account holdings should be stored"
         );
 
-        let accounts = db
-            .get_portfolio_as_of(naive_date(2026, 4, 30), None)
-            .unwrap();
+        let accounts = db.accounts_as_of(naive_date(2026, 4, 30), None).unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
         let balance = monzo.balance.unwrap();
         let tol = Decimal::from_str("0.01").unwrap();
@@ -3990,6 +4020,18 @@ mod consolidation_tests {
         let holdings = db.get_holdings_batch(&["t212".to_string()], false).unwrap();
         assert_eq!(holdings.len(), 1);
 
+        // Invariant: a non-zero holding cannot be closed.
+        assert!(
+            db.close_holding("t212", "AAPL", None, dt).is_err(),
+            "closing a non-zero holding must be rejected"
+        );
+
+        // Zero it out first, then closing is allowed.
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt)],
+        )
+        .unwrap();
         db.close_holding("t212", "AAPL", None, dt).unwrap();
         let holdings = db.get_holdings_batch(&["t212".to_string()], false).unwrap();
         assert_eq!(
@@ -4049,5 +4091,172 @@ mod consolidation_tests {
             |row| row.get(0),
         ).unwrap();
         assert_eq!(value, "750", "value should be updated");
+    }
+
+    /// Single GBP-preferred FX map for reconciliation tests (no conversion).
+    fn gbp_fx() -> crate::util::fx::FxRateMap {
+        crate::util::fx::FxRateMap::new(vec![crate::model::Currency {
+            code: "GBP".to_string(),
+            is_preferred: true,
+            fx_rate: dec!(1),
+            updated_at: None,
+        }])
+        .unwrap()
+    }
+
+    /// Net worth the portfolio summary handler would compute for `as_of`:
+    /// sum of every carried holding converted to the preferred currency.
+    fn summary_net_worth(db: &Db, as_of: NaiveDate, fx: &crate::util::fx::FxRateMap) -> Decimal {
+        db.get_holdings_for_summary(as_of, None)
+            .unwrap()
+            .iter()
+            .map(|r| fx.convert(r.holding.value, &r.holding.currency))
+            .sum()
+    }
+
+    // The bug this whole change fixes: the last history point must equal the
+    // Net Worth card / Balance Sheet for the same as_of. Uses per-symbol
+    // multi-date snapshots, the exact shape that made the old two paths diverge.
+    #[test]
+    fn history_last_reconciles_with_summary_net_worth() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+        db.create_account(&make_account("pension", AccountType::Pension))
+            .unwrap();
+
+        // AAPL re-snapshotted twice; MSFT only once (must carry forward);
+        // pension once. Different dates per symbol.
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "MSFT", HoldingType::Stock, dec!(50), naive_dt(2025, 2, 5))],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(120), naive_dt(2025, 3, 10))],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "pension",
+            &[make_holding("pension", "PEN", HoldingType::Fund, dec!(1000), naive_dt(2025, 1, 31))],
+        )
+        .unwrap();
+
+        let fx = gbp_fx();
+        let as_of = naive_date(2025, 4, 30);
+        let net_worth = summary_net_worth(&db, as_of, &fx);
+        assert_eq!(net_worth, dec!(1170)); // 120 + 50 + 1000
+
+        let history = db
+            .get_monthly_net_worth(
+                naive_date(2025, 1, 1),
+                as_of,
+                &Granularity::Monthly,
+                None,
+                &fx,
+            )
+            .unwrap();
+        let last = history.last().expect("at least one period");
+        assert_eq!(
+            last.total_wealth, net_worth,
+            "history last total must equal summary net worth"
+        );
+        assert_eq!(last.available_wealth, dec!(170)); // t212
+        assert_eq!(last.unavailable_wealth, dec!(1000)); // pension
+
+        // Per-account list must also sum to net worth.
+        let accounts = db.accounts_as_of(as_of, None).unwrap();
+        let sum: Decimal = accounts.iter().filter_map(|a| a.balance).sum();
+        assert_eq!(sum, net_worth);
+        let t212 = accounts.iter().find(|a| a.id == "t212").unwrap();
+        assert_eq!(t212.balance.unwrap(), dec!(170));
+    }
+
+    // A position closed (zeroed) later must still be counted at its open value
+    // in earlier periods, and contribute 0 from the close onward.
+    #[test]
+    fn time_aware_closed_holding() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
+        )
+        .unwrap();
+        // Zeroed closing snapshot in April.
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), naive_dt(2025, 4, 10))],
+        )
+        .unwrap();
+        db.close_holding("t212", "AAPL", None, naive_dt(2025, 4, 10))
+            .unwrap();
+
+        // February: position still active at its open value.
+        let feb = db.accounts_as_of(naive_date(2025, 2, 15), None).unwrap();
+        assert_eq!(
+            feb.iter().find(|a| a.id == "t212").unwrap().balance.unwrap(),
+            dec!(100)
+        );
+
+        // May: latest snapshot is the closed £0 one -> contributes nothing.
+        let may = db.accounts_as_of(naive_date(2025, 5, 1), None).unwrap();
+        assert_eq!(
+            may.iter().find(|a| a.id == "t212").unwrap().balance.unwrap(),
+            dec!(0)
+        );
+    }
+
+    #[test]
+    fn close_holding_rejects_nonzero_value() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+        let dt = naive_dt(2025, 1, 15);
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(5000), dt)],
+        )
+        .unwrap();
+        assert!(
+            db.close_holding("t212", "AAPL", None, dt).is_err(),
+            "closing a non-zero holding must be rejected"
+        );
+    }
+
+    #[test]
+    fn upsert_and_replace_reject_closed_nonzero_holding() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+        let dt = naive_dt(2025, 1, 15);
+        let mut closed_nonzero =
+            make_holding("t212", "AAPL", HoldingType::Stock, dec!(5000), dt);
+        closed_nonzero.is_closed = true;
+
+        assert!(
+            db.upsert_holdings("t212", std::slice::from_ref(&closed_nonzero))
+                .is_err(),
+            "upsert of a closed non-zero holding must be rejected"
+        );
+        assert!(
+            db.replace_holdings("t212", std::slice::from_ref(&closed_nonzero))
+                .is_err(),
+            "replace with a closed non-zero holding must be rejected"
+        );
+
+        // A closed zeroed holding is allowed.
+        let mut closed_zero =
+            make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt);
+        closed_zero.is_closed = true;
+        assert!(db.upsert_holdings("t212", &[closed_zero]).is_ok());
     }
 }
