@@ -31,6 +31,7 @@ pub struct ParsedHoldingRow {
     pub value: String,
     pub currency: String,
     pub sub_account: Option<String>,
+    pub as_of: Option<String>,
     pub row_confidence: f32,
 }
 
@@ -38,7 +39,12 @@ pub struct ParsedHoldingRow {
 
 #[async_trait]
 pub trait HoldingsExtractor: Send + Sync {
-    async fn extract_holdings(&self, raw: &str, filename: &str) -> Result<ParsedHoldings>;
+    async fn extract_holdings(
+        &self,
+        raw: &str,
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedHoldings>;
 }
 
 // ── LLM implementation ──────────────────────────────────────────────────────
@@ -80,7 +86,12 @@ impl LlmHoldingsParser {
 
 #[async_trait]
 impl HoldingsExtractor for LlmHoldingsParser {
-    async fn extract_holdings(&self, raw: &str, filename: &str) -> Result<ParsedHoldings> {
+    async fn extract_holdings(
+        &self,
+        raw: &str,
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedHoldings> {
         let content = if raw.len() > MAX_CSV_BYTES {
             tracing::warn!(
                 filename,
@@ -95,6 +106,11 @@ impl HoldingsExtractor for LlmHoldingsParser {
 
         let tool_schema = build_holdings_tool_schema();
 
+        let mut user_msg = format!("filename: {filename}\n\n{content}");
+        if let Some(hint) = user_hint {
+            user_msg = format!("User instructions: {hint}\n\n{user_msg}");
+        }
+
         let request_body = json!({
             "model": self.model,
             "max_tokens": 8192,
@@ -107,7 +123,7 @@ impl HoldingsExtractor for LlmHoldingsParser {
             "tool_choice": { "type": "tool", "name": "parse_holdings" },
             "messages": [{
                 "role": "user",
-                "content": format!("filename: {filename}\n\n{content}")
+                "content": user_msg
             }]
         });
 
@@ -277,7 +293,12 @@ pub struct MockHoldingsParser {
 #[cfg(test)]
 #[async_trait]
 impl HoldingsExtractor for MockHoldingsParser {
-    async fn extract_holdings(&self, _raw: &str, _filename: &str) -> Result<ParsedHoldings> {
+    async fn extract_holdings(
+        &self,
+        _raw: &str,
+        _filename: &str,
+        _user_hint: Option<&str>,
+    ) -> Result<ParsedHoldings> {
         Ok(self.result.clone())
     }
 }
@@ -301,6 +322,7 @@ mod tests {
                 value: "3816.00".to_string(),
                 currency: "GBP".to_string(),
                 sub_account: None,
+                as_of: None,
                 row_confidence: 0.97,
             }],
         };
@@ -308,7 +330,10 @@ mod tests {
         let mock = MockHoldingsParser {
             result: parsed.clone(),
         };
-        let result = mock.extract_holdings("anything", "test.csv").await.unwrap();
+        let result = mock
+            .extract_holdings("anything", "test.csv", None)
+            .await
+            .unwrap();
         assert_eq!(result.rows.len(), 1);
         assert_eq!(result.rows[0].symbol, "VUSA");
         assert_eq!(result.detection_confidence, 0.95);

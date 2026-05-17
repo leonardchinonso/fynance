@@ -155,7 +155,7 @@ pub async fn import_csv(
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
 
-    let parsed = parser.parse(&raw_csv, &filename).await?;
+    let parsed = parser.parse(&raw_csv, &filename, None).await?;
 
     if parsed.detection_confidence < min_detection_confidence {
         return Err(AppError::bad_request(
@@ -338,7 +338,7 @@ pub async fn import_bulk(
             continue;
         }
 
-        let parse_result = parser.parse(&raw_csv, &filename).await;
+        let parse_result = parser.parse(&raw_csv, &filename, None).await;
 
         match parse_result {
             Err(e) => {

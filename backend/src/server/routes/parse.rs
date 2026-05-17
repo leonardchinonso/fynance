@@ -1,7 +1,6 @@
 //! Stage 1 parse endpoint: POST /api/parse.
 //! Accepts uploaded documents (1-5 CSV files), invokes the LLM pipeline to
-//! classify and extract data, runs dedup checks, and returns a structured
-//! IngestionPreview.
+//! extract data, runs dedup checks, and returns a structured IngestionPreview.
 
 use axum::Json;
 use axum::extract::{Multipart, State};
@@ -26,7 +25,7 @@ pub async fn parse_documents(
 ) -> Result<Json<IngestionPreview>, AppError> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut account_id: Option<String> = None;
-    let mut hints = ParseHints::default();
+    let mut hints: Option<ParseHints> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -83,12 +82,12 @@ pub async fn parse_documents(
                     AppError::bad_request("hints is not valid UTF-8", "field_error")
                 })?;
                 if !val.is_empty() {
-                    hints = serde_json::from_str(&val).map_err(|e| {
+                    hints = Some(serde_json::from_str(&val).map_err(|e| {
                         AppError::bad_request(
                             format!("hints is not valid JSON: {e}"),
                             "invalid_hints",
                         )
-                    })?;
+                    })?);
                 }
             }
             _ => {
@@ -120,6 +119,25 @@ pub async fn parse_documents(
         )
     })?;
 
+    // Require hints
+    let hints = hints.ok_or_else(|| {
+        AppError::bad_request("hints is required for the parse endpoint", "missing_hints")
+    })?;
+
+    // Validate return_type
+    if !hints.return_type.is_valid() {
+        return Err(AppError::bad_request(
+            "return_type must have at least one extraction type enabled (transactions, holdings.enabled, or investments)",
+            "invalid_return_type",
+        ));
+    }
+    if hints.return_type.holdings.period.is_some() && !hints.return_type.transactions {
+        return Err(AppError::bad_request(
+            "holdings.period requires transactions to be enabled (periodic snapshots are derived from transaction data)",
+            "invalid_return_type",
+        ));
+    }
+
     // Build DocumentInputs (Phase 2: still CSV only)
     let mut documents: Vec<DocumentInput> = Vec::new();
     for (filename, raw_bytes) in &files {
@@ -140,20 +158,20 @@ pub async fn parse_documents(
         });
     }
 
-    // Validate account exists
-    {
+    // Look up account (need institution for pipeline)
+    let account = {
         let db = state.db.lock().expect("db mutex poisoned");
-        if !db.account_exists(&account_id)? {
-            return Err(AppError::bad_request(
+        db.get_account_by_id(&account_id)?.ok_or_else(|| {
+            AppError::bad_request(
                 format!("account {} not found", account_id),
                 "account_not_found",
-            ));
-        }
-    }
+            )
+        })?
+    };
 
     // Run the multi-file LLM pipeline
     let start = std::time::Instant::now();
-    let pipeline_result = run_multi_file_pipeline(&documents, &hints)
+    let pipeline_result = run_multi_file_pipeline(&documents, &hints, &account.institution)
         .await
         .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
     let elapsed = start.elapsed().as_millis() as u64;
@@ -180,6 +198,7 @@ pub async fn parse_documents(
             &multi_classification,
             merged_extraction,
             &account_id,
+            &account.institution,
             &db,
             elapsed,
         )

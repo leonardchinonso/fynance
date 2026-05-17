@@ -40,7 +40,12 @@ pub struct ParsedStatement {
 
 #[async_trait]
 pub trait StatementParser: Send + Sync {
-    async fn parse(&self, raw: &str, filename: &str) -> Result<ParsedStatement>;
+    async fn parse(
+        &self,
+        raw: &str,
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedStatement>;
 }
 
 // ── LLM implementation ────────────────────────────────────────────────────────
@@ -96,7 +101,12 @@ impl LlmStatementParser {
 
 #[async_trait]
 impl StatementParser for LlmStatementParser {
-    async fn parse(&self, raw: &str, filename: &str) -> Result<ParsedStatement> {
+    async fn parse(
+        &self,
+        raw: &str,
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedStatement> {
         // Truncate very large files. The open-question chunking path in
         // docs/plans/10_llm_csv_import.md §11 will handle >200 KB properly.
         let content = if raw.len() > MAX_CSV_BYTES {
@@ -113,6 +123,11 @@ impl StatementParser for LlmStatementParser {
 
         let tool_schema = build_tool_schema();
 
+        let mut user_msg = format!("filename: {filename}\n\n{content}");
+        if let Some(hint) = user_hint {
+            user_msg = format!("User instructions: {hint}\n\n{user_msg}");
+        }
+
         let request_body = json!({
             "model": self.model,
             "max_tokens": 8192,
@@ -125,7 +140,7 @@ impl StatementParser for LlmStatementParser {
             "tool_choice": { "type": "tool", "name": "parse_bank_statement" },
             "messages": [{
                 "role": "user",
-                "content": format!("filename: {filename}\n\n{content}")
+                "content": user_msg
             }]
         });
 
@@ -333,7 +348,12 @@ impl MockStatementParser {
 
 #[async_trait]
 impl StatementParser for MockStatementParser {
-    async fn parse(&self, _raw: &str, _filename: &str) -> Result<ParsedStatement> {
+    async fn parse(
+        &self,
+        _raw: &str,
+        _filename: &str,
+        _user_hint: Option<&str>,
+    ) -> Result<ParsedStatement> {
         Ok(self.result.clone())
     }
 }
@@ -410,7 +430,7 @@ mod tests {
             rows: vec![make_row("2026-03-10", "Test", "-1.00", 0.9)],
         };
         let mock = MockStatementParser { result: stmt };
-        let parsed = mock.parse("anything", "test.csv").await.unwrap();
+        let parsed = mock.parse("anything", "test.csv", None).await.unwrap();
         assert_eq!(parsed.detected_bank, BankFormat::Unknown);
         assert_eq!(parsed.rows.len(), 1);
     }
