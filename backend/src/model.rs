@@ -552,7 +552,8 @@ pub struct HoldingPreview {
     pub existing_value: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct HoldingsImportPayload {
     pub account_id: String,
     pub holdings: Vec<Holding>,
@@ -866,7 +867,7 @@ pub struct InvestmentEvent {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct CreateInvestmentEventBody {
     pub account_id: String,
@@ -968,4 +969,118 @@ pub struct TransactionImportPreview {
     pub rows_error: u64,
     /// Parsed payload ready for confirmation via `POST /api/import`.
     pub payload: ImportPayload,
+}
+
+// ── Ingestion (2-stage import redesign) ──────────────────────────────────────
+
+/// Top-level response from `POST /api/parse` (Stage 1).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IngestionPreview {
+    pub status: IngestionStatus,
+    pub metadata: IngestionMetadata,
+    pub transactions: TransactionIngestionResult,
+    pub holdings: HoldingsIngestionResult,
+    pub investments: InvestmentIngestionResult,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clarifications_needed: Vec<ClarificationRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum IngestionStatus {
+    Success,
+    NeedsClarification,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IngestionMetadata {
+    pub files_processed: usize,
+    pub institution_detected: Option<String>,
+    pub detection_confidence: f32,
+    pub processing_time_ms: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relationships_found: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TransactionIngestionResult {
+    pub count: usize,
+    pub new: usize,
+    pub duplicate: usize,
+    pub errors: usize,
+    pub rows: Vec<TransactionPreviewRow>,
+    pub payload: Option<ImportPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct HoldingsIngestionResult {
+    pub count: usize,
+    pub new: usize,
+    pub modify: usize,
+    pub rows: Vec<HoldingPreview>,
+    pub payload: Option<HoldingsImportPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentIngestionResult {
+    pub count: usize,
+    pub new: usize,
+    pub duplicate: usize,
+    pub rows: Vec<InvestmentPreviewRow>,
+    pub payload: Option<InvestmentsImportPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentPreviewRow {
+    pub index: usize,
+    pub event_type: String,
+    pub symbol: String,
+    pub date: String,
+    pub quantity: String,
+    pub price_per_share: String,
+    pub currency: String,
+    pub status: TransactionPreviewStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentsImportPayload {
+    pub account_id: String,
+    pub events: Vec<CreateInvestmentEventBody>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentImportResult {
+    pub total: usize,
+    pub inserted: usize,
+    pub duplicates: usize,
+    pub errors: Vec<InvestmentImportError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentImportError {
+    pub index: usize,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ClarificationRequest {
+    pub file: String,
+    pub question: String,
+    pub suggestions: Vec<String>,
 }

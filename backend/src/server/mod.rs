@@ -70,10 +70,12 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/transactions/:id",
             patch(routes::transactions::patch_transaction),
         )
-        // ── Import ─────────────────────────────────────────────────────────
+        // ── Import ────��─────────────────────────────���──────────────────────
         .route("/import", post(routes::import_api::import_json))
         .route("/import/csv", post(routes::import_api::import_csv))
         .route("/import/bulk", post(routes::import_api::import_bulk))
+        // ── Parse (Stage 1) ───────────────────────────────────────────────
+        .route("/parse", post(routes::parse::parse_documents))
         // ── Budget ─────────────────────────────────────────────────────────
         .route(
             "/budget/spending-grid",
@@ -131,6 +133,7 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         // ── Investments ───────────────────────────────────────────────────────
         .route("/investments", get(routes::investments::list_investments))
         .route("/investments", post(routes::investments::create_investment))
+        .route("/investments/import", post(routes::investments::import_investments))
         .route("/investments/:id", patch(routes::investments::update_investment))
         .route("/investments/:id", delete(routes::investments::delete_investment))
         .with_state(state.clone());
