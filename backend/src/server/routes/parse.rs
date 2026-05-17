@@ -6,9 +6,9 @@ use axum::Json;
 use axum::extract::{Multipart, State};
 
 use crate::importers::document_parser::{
-    DocumentInput, FileFormat, ParseHints, PipelineOutcome, build_multi_preview,
-    run_multi_file_pipeline,
+    DocumentInput, ParseHints, PipelineOutcome, build_multi_preview, run_multi_file_pipeline,
 };
+use crate::importers::provider::create_provider;
 use crate::model::IngestionPreview;
 use crate::server::error::AppError;
 use crate::server::state::AppState;
@@ -138,24 +138,17 @@ pub async fn parse_documents(
         ));
     }
 
-    // Build DocumentInputs (Phase 2: still CSV only)
+    // Build DocumentInputs (detect format, preprocess Excel/PDF)
     let mut documents: Vec<DocumentInput> = Vec::new();
-    for (filename, raw_bytes) in &files {
-        let text_content = String::from_utf8(raw_bytes.clone()).map_err(|_| {
-            AppError::bad_request(
-                format!(
-                    "file '{}' is not valid UTF-8 (only CSV supported)",
-                    filename
-                ),
-                "invalid_format",
-            )
-        })?;
-        documents.push(DocumentInput {
-            original_size: raw_bytes.len(),
-            filename: filename.clone(),
-            format: FileFormat::Csv,
-            text_content,
-        });
+    for (filename, raw_bytes) in files {
+        let doc = crate::importers::format_detection::preprocess_file(&filename, raw_bytes)
+            .map_err(|e| {
+                AppError::bad_request(
+                    format!("failed to process '{}': {}", filename, e),
+                    "preprocessing_error",
+                )
+            })?;
+        documents.push(doc);
     }
 
     // Look up account (need institution for pipeline)
@@ -169,11 +162,15 @@ pub async fn parse_documents(
         })?
     };
 
+    // Create the LLM provider (reads FYNANCE_PARSE_PROVIDER from env)
+    let provider = create_provider().map_err(AppError::Internal)?;
+
     // Run the multi-file LLM pipeline
     let start = std::time::Instant::now();
-    let pipeline_result = run_multi_file_pipeline(&documents, &hints, &account.institution)
-        .await
-        .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
+    let pipeline_result =
+        run_multi_file_pipeline(&documents, &hints, &account.institution, provider)
+            .await
+            .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
     let elapsed = start.elapsed().as_millis() as u64;
 
     // If clarification needed, return early

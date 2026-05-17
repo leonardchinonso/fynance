@@ -43,3 +43,6 @@ Important:
   Do not extrapolate beyond the date range of the transactions.
 - If the requested period is "monthly" but the data only spans 2 weeks, emit 0 or 1
   snapshot (only if a month boundary falls within that range).
+- If the input is a PDF document (sent as a document/image), extract balance information
+  from any tables or summary sections. Look for closing balances, period-end values, or
+  balance summaries. Financial statements often show these at the top or bottom of pages.

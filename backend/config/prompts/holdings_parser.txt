@@ -22,3 +22,7 @@ Rules:
     some fields are inferred; below 0.70 when the row cannot be reliably parsed.
 13. For detection_confidence: 0.95+ for clearly structured holdings data;
     0.80-0.95 for plausible but ambiguous; below 0.80 if not holdings data.
+14. If the input is a PDF document (sent as a document/image), extract holdings data from
+    any tables showing positions, funds, or asset summaries. Look for columns like Symbol/Name,
+    Quantity/Units, Price, Value/Market Value. Ignore marketing content, contact information,
+    and performance charts.

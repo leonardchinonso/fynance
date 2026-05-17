@@ -20,3 +20,7 @@ Rules:
 9. Set detected_bank to "monzo", "revolut", or "lloyds" for those banks; "unknown" for all others.
 10. For the description field use the primary merchant or payee name. If the bank provides a
     separate merchant name column, put it in the merchant field and still populate description.
+11. If the input is a PDF document (sent as a document/image), extract transaction data from
+    any tables visible in the pages. Look for columns like Date, Description, Amount, Balance.
+    Ignore headers, logos, account holder information, and summary sections. Focus only on the
+    transaction line items.

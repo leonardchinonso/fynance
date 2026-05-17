@@ -12,6 +12,7 @@ use axum::extract::{Multipart, Query, State};
 use serde::Deserialize;
 
 use crate::importers::llm_parser::StatementParser;
+use crate::importers::provider::create_provider;
 use crate::model::{
     BankFormat, ImportLog, ImportPayload, ImportResult, ImportTransaction,
     TransactionImportPreview, TransactionPreviewStatus,
@@ -151,7 +152,7 @@ pub async fn import_csv(
 
     let (filename, raw_csv) = extract_csv_from_multipart(&mut multipart).await?;
 
-    let parser = crate::importers::llm_parser::LlmStatementParser::from_env()?;
+    let parser = crate::importers::llm_parser::LlmStatementParser::new(create_provider()?);
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
 
@@ -181,7 +182,7 @@ pub async fn import_csv(
                 description: r
                     .merchant
                     .as_deref()
-                    .filter(|m| !m.is_empty())
+                    .filter(|m: &&str| !m.is_empty())
                     .unwrap_or(&r.description)
                     .to_string(),
                 amount: r.amount,
@@ -301,7 +302,7 @@ pub async fn import_bulk(
         return Err(AppError::bad_request("no files provided", "missing_file"));
     }
 
-    let parser = crate::importers::llm_parser::LlmStatementParser::from_env()?;
+    let parser = crate::importers::llm_parser::LlmStatementParser::new(create_provider()?);
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
     let parser: Arc<dyn StatementParser> = Arc::new(parser);

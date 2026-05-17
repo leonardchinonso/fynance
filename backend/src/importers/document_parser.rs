@@ -3,6 +3,8 @@
 //!
 //! Phase 2: Multi-file CSV support with cross-document relationship detection.
 
+use std::sync::Arc;
+
 use anyhow::{Result, anyhow};
 use chrono::Local;
 use rust_decimal::Decimal;
@@ -11,6 +13,10 @@ use tokio::task::JoinSet;
 use ts_rs::TS;
 
 use crate::importers::llm_parser::StatementParser;
+use crate::importers::pdf_parser::{
+    PdfHoldingsParser, PdfPeriodicHoldingsParser, PdfStatementParser,
+};
+use crate::importers::provider::LlmProvider;
 use crate::importers::unified::UnifiedStatementRow;
 use crate::model::{
     BankFormat, CategorySource, Holding, HoldingType, HoldingsImportPayload,
@@ -28,6 +34,8 @@ use super::periodic_holdings_parser::LlmPeriodicHoldingsParser;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileFormat {
     Csv,
+    Pdf,
+    Excel,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +43,7 @@ pub struct DocumentInput {
     pub filename: String,
     pub format: FileFormat,
     pub text_content: String,
+    pub raw_bytes: Vec<u8>,
     pub original_size: usize,
 }
 
@@ -148,6 +157,7 @@ pub async fn run_multi_file_pipeline(
     documents: &[DocumentInput],
     hints: &ParseHints,
     account_institution: &str,
+    provider: Arc<dyn LlmProvider>,
 ) -> Result<PipelineOutcome> {
     let content_type = hints.return_type.to_content_type();
     let multi_classification = MultiClassificationResult {
@@ -163,7 +173,8 @@ pub async fn run_multi_file_pipeline(
         relationships: vec![],
     };
 
-    let extraction = extract_all_parallel(documents, &multi_classification, hints).await?;
+    let extraction =
+        extract_all_parallel(documents, &multi_classification, hints, provider).await?;
 
     Ok(PipelineOutcome::Success {
         classification: multi_classification,
@@ -348,6 +359,7 @@ async fn extract_all_parallel(
     documents: &[DocumentInput],
     classification: &MultiClassificationResult,
     hints: &ParseHints,
+    provider: Arc<dyn LlmProvider>,
 ) -> Result<ExtractionResult> {
     let mut join_set: JoinSet<Result<ExtractionResult>> = JoinSet::new();
 
@@ -359,19 +371,19 @@ async fn extract_all_parallel(
             continue;
         }
 
-        let text = doc.text_content.clone();
-        let filename = doc.filename.clone();
+        let doc_clone = doc.clone();
         let content_type = file_class.content_type.clone();
         let hint_clone = user_hint.clone();
         let period_clone = period.clone();
+        let provider_clone = provider.clone();
 
         join_set.spawn(async move {
             extract_single_file(
-                &text,
-                &filename,
+                &doc_clone,
                 &content_type,
                 hint_clone.as_deref(),
                 period_clone.as_ref(),
+                provider_clone,
             )
             .await
         });
@@ -405,87 +417,179 @@ async fn extract_all_parallel(
 }
 
 async fn extract_single_file(
-    text: &str,
-    filename: &str,
+    doc: &DocumentInput,
     content_type: &ContentType,
     user_hint: Option<&str>,
     period: Option<&SnapshotPeriod>,
+    provider: Arc<dyn LlmProvider>,
 ) -> Result<ExtractionResult> {
     match content_type {
-        ContentType::Transactions => {
-            let parser = crate::importers::llm_parser::LlmStatementParser::from_env()?;
-            let parsed = parser.parse(text, filename, user_hint).await?;
-            Ok(ExtractionResult {
-                transactions: parsed.rows,
-                holdings: vec![],
-                detected_bank: parsed.detected_bank,
-                detection_confidence: parsed.detection_confidence,
-            })
-        }
-        ContentType::Holdings => match period {
-            Some(p) => {
-                let parser = LlmPeriodicHoldingsParser::from_env()?;
+        ContentType::Transactions => match doc.format {
+            FileFormat::Pdf => {
+                let parser = PdfStatementParser::new(provider);
                 let parsed = parser
-                    .extract_periodic_holdings(text, filename, p, user_hint)
+                    .parse(&doc.raw_bytes, &doc.filename, user_hint)
                     .await?;
-                let holdings = convert_parsed_holdings(&parsed)?;
                 Ok(ExtractionResult {
-                    transactions: vec![],
-                    holdings,
-                    detected_bank: BankFormat::Unknown,
+                    transactions: parsed.rows,
+                    holdings: vec![],
+                    detected_bank: parsed.detected_bank,
                     detection_confidence: parsed.detection_confidence,
                 })
             }
-            None => {
-                let parser = LlmHoldingsParser::from_env()?;
-                let parsed = parser.extract_holdings(text, filename, user_hint).await?;
-                let holdings = convert_parsed_holdings(&parsed)?;
+            FileFormat::Csv | FileFormat::Excel => {
+                let parser = crate::importers::llm_parser::LlmStatementParser::new(provider);
+                let parsed = parser
+                    .parse(&doc.text_content, &doc.filename, user_hint)
+                    .await?;
                 Ok(ExtractionResult {
-                    transactions: vec![],
-                    holdings,
-                    detected_bank: BankFormat::Unknown,
+                    transactions: parsed.rows,
+                    holdings: vec![],
+                    detected_bank: parsed.detected_bank,
                     detection_confidence: parsed.detection_confidence,
                 })
             }
         },
-        ContentType::Both => {
-            let tx_parser = crate::importers::llm_parser::LlmStatementParser::from_env()?;
-
-            match period {
+        ContentType::Holdings => match doc.format {
+            FileFormat::Pdf => match period {
                 Some(p) => {
-                    let h_parser = LlmPeriodicHoldingsParser::from_env()?;
-                    let (tx_result, h_result) = tokio::join!(
-                        tx_parser.parse(text, filename, user_hint),
-                        h_parser.extract_periodic_holdings(text, filename, p, user_hint)
-                    );
-                    let tx_parsed = tx_result?;
-                    let h_parsed = h_result?;
-                    let holdings = convert_parsed_holdings(&h_parsed)?;
+                    let parser = PdfPeriodicHoldingsParser::new(provider);
+                    let parsed = parser
+                        .extract(&doc.raw_bytes, &doc.filename, p, user_hint)
+                        .await?;
+                    let holdings = convert_parsed_holdings(&parsed)?;
                     Ok(ExtractionResult {
-                        transactions: tx_parsed.rows,
+                        transactions: vec![],
                         holdings,
-                        detected_bank: tx_parsed.detected_bank,
-                        detection_confidence: tx_parsed.detection_confidence,
+                        detected_bank: BankFormat::Unknown,
+                        detection_confidence: parsed.detection_confidence,
                     })
                 }
                 None => {
-                    let h_parser = LlmHoldingsParser::from_env()?;
-                    let (tx_result, h_result) = tokio::join!(
-                        tx_parser.parse(text, filename, user_hint),
-                        h_parser.extract_holdings(text, filename, user_hint)
-                    );
-                    let tx_parsed = tx_result?;
-                    let h_parsed = h_result?;
-                    let holdings = convert_parsed_holdings(&h_parsed)?;
+                    let parser = PdfHoldingsParser::new(provider);
+                    let parsed = parser
+                        .extract(&doc.raw_bytes, &doc.filename, user_hint)
+                        .await?;
+                    let holdings = convert_parsed_holdings(&parsed)?;
                     Ok(ExtractionResult {
-                        transactions: tx_parsed.rows,
+                        transactions: vec![],
                         holdings,
-                        detected_bank: tx_parsed.detected_bank,
-                        detection_confidence: tx_parsed.detection_confidence,
+                        detected_bank: BankFormat::Unknown,
+                        detection_confidence: parsed.detection_confidence,
                     })
                 }
+            },
+            FileFormat::Csv | FileFormat::Excel => match period {
+                Some(p) => {
+                    let parser = LlmPeriodicHoldingsParser::new(provider);
+                    let parsed = parser
+                        .extract_periodic_holdings(&doc.text_content, &doc.filename, p, user_hint)
+                        .await?;
+                    let holdings = convert_parsed_holdings(&parsed)?;
+                    Ok(ExtractionResult {
+                        transactions: vec![],
+                        holdings,
+                        detected_bank: BankFormat::Unknown,
+                        detection_confidence: parsed.detection_confidence,
+                    })
+                }
+                None => {
+                    let parser = LlmHoldingsParser::new(provider);
+                    let parsed = parser
+                        .extract_holdings(&doc.text_content, &doc.filename, user_hint)
+                        .await?;
+                    let holdings = convert_parsed_holdings(&parsed)?;
+                    Ok(ExtractionResult {
+                        transactions: vec![],
+                        holdings,
+                        detected_bank: BankFormat::Unknown,
+                        detection_confidence: parsed.detection_confidence,
+                    })
+                }
+            },
+        },
+        ContentType::Both => match doc.format {
+            FileFormat::Pdf => {
+                let tx_parser = PdfStatementParser::new(provider.clone());
+                match period {
+                    Some(p) => {
+                        let h_parser = PdfPeriodicHoldingsParser::new(provider);
+                        let (tx_result, h_result) = tokio::join!(
+                            tx_parser.parse(&doc.raw_bytes, &doc.filename, user_hint),
+                            h_parser.extract(&doc.raw_bytes, &doc.filename, p, user_hint)
+                        );
+                        let tx_parsed = tx_result?;
+                        let h_parsed = h_result?;
+                        let holdings = convert_parsed_holdings(&h_parsed)?;
+                        Ok(ExtractionResult {
+                            transactions: tx_parsed.rows,
+                            holdings,
+                            detected_bank: tx_parsed.detected_bank,
+                            detection_confidence: tx_parsed.detection_confidence,
+                        })
+                    }
+                    None => {
+                        let h_parser = PdfHoldingsParser::new(provider);
+                        let (tx_result, h_result) = tokio::join!(
+                            tx_parser.parse(&doc.raw_bytes, &doc.filename, user_hint),
+                            h_parser.extract(&doc.raw_bytes, &doc.filename, user_hint)
+                        );
+                        let tx_parsed = tx_result?;
+                        let h_parsed = h_result?;
+                        let holdings = convert_parsed_holdings(&h_parsed)?;
+                        Ok(ExtractionResult {
+                            transactions: tx_parsed.rows,
+                            holdings,
+                            detected_bank: tx_parsed.detected_bank,
+                            detection_confidence: tx_parsed.detection_confidence,
+                        })
+                    }
+                }
             }
-        }
+            FileFormat::Csv | FileFormat::Excel => {
+                let tx_parser =
+                    crate::importers::llm_parser::LlmStatementParser::new(provider.clone());
+                match period {
+                    Some(p) => {
+                        let h_parser = LlmPeriodicHoldingsParser::new(provider);
+                        let (tx_result, h_result) = tokio::join!(
+                            tx_parser.parse(&doc.text_content, &doc.filename, user_hint),
+                            h_parser.extract_periodic_holdings(
+                                &doc.text_content,
+                                &doc.filename,
+                                p,
+                                user_hint
+                            )
+                        );
+                        let tx_parsed = tx_result?;
+                        let h_parsed = h_result?;
+                        let holdings = convert_parsed_holdings(&h_parsed)?;
+                        Ok(ExtractionResult {
+                            transactions: tx_parsed.rows,
+                            holdings,
+                            detected_bank: tx_parsed.detected_bank,
+                            detection_confidence: tx_parsed.detection_confidence,
+                        })
+                    }
+                    None => {
+                        let h_parser = LlmHoldingsParser::new(provider);
+                        let (tx_result, h_result) = tokio::join!(
+                            tx_parser.parse(&doc.text_content, &doc.filename, user_hint),
+                            h_parser.extract_holdings(&doc.text_content, &doc.filename, user_hint)
+                        );
+                        let tx_parsed = tx_result?;
+                        let h_parsed = h_result?;
+                        let holdings = convert_parsed_holdings(&h_parsed)?;
+                        Ok(ExtractionResult {
+                            transactions: tx_parsed.rows,
+                            holdings,
+                            detected_bank: tx_parsed.detected_bank,
+                            detection_confidence: tx_parsed.detection_confidence,
+                        })
+                    }
+                }
+            }
+        },
         ContentType::Unknown => Err(anyhow!("cannot extract from Unknown content type")),
     }
 }
