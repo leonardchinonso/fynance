@@ -1,18 +1,22 @@
 //! Stage 1 parse endpoint: POST /api/parse.
-//! Accepts uploaded documents, invokes the LLM pipeline to classify and
-//! extract data, runs dedup checks, and returns a structured IngestionPreview.
+//! Accepts uploaded documents (1-5 CSV files), invokes the LLM pipeline to
+//! classify and extract data, runs dedup checks, and returns a structured
+//! IngestionPreview.
 
 use axum::Json;
 use axum::extract::{Multipart, State};
 
 use crate::importers::document_parser::{
-    DocumentInput, FileFormat, ParseHints, build_preview, run_llm_pipeline,
+    DocumentInput, FileFormat, ParseHints, PipelineOutcome, build_multi_preview,
+    run_multi_file_pipeline,
 };
 use crate::model::IngestionPreview;
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 
-const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10 MB per file
+const MAX_TOTAL_SIZE: usize = 50 * 1024 * 1024; // 50 MB total
+const MAX_FILES: usize = 5;
 
 // ── POST /api/parse ─────────────────────────────────────────────────────────
 
@@ -20,19 +24,21 @@ pub async fn parse_documents(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<Json<IngestionPreview>, AppError> {
-    let mut file_data: Option<(String, Vec<u8>)> = None;
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut account_id: Option<String> = None;
     let mut hints = ParseHints::default();
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        AppError::bad_request(format!("multipart error: {e}"), "invalid_multipart")
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::bad_request(format!("multipart error: {e}"), "invalid_multipart"))?
+    {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "files[]" | "file" => {
-                if file_data.is_some() {
+                if files.len() >= MAX_FILES {
                     return Err(AppError::bad_request(
-                        "Phase 1 supports single-file only. Upload one file at a time.",
+                        format!("maximum {MAX_FILES} files per request"),
                         "too_many_files",
                     ));
                 }
@@ -42,17 +48,21 @@ pub async fn parse_documents(
                 })?;
                 if bytes.is_empty() {
                     return Err(AppError::bad_request(
-                        "uploaded file is empty",
+                        format!("file '{}' is empty", filename),
                         "empty_file",
                     ));
                 }
                 if bytes.len() > MAX_FILE_SIZE {
                     return Err(AppError::bad_request(
-                        format!("file exceeds 10 MB limit ({} bytes)", bytes.len()),
+                        format!(
+                            "file '{}' exceeds 10 MB limit ({} bytes)",
+                            filename,
+                            bytes.len()
+                        ),
                         "file_too_large",
                     ));
                 }
-                file_data = Some((filename, bytes.to_vec()));
+                files.push((filename, bytes.to_vec()));
             }
             "account_id" => {
                 let bytes = field.bytes().await.map_err(|e| {
@@ -87,9 +97,21 @@ pub async fn parse_documents(
         }
     }
 
-    let (filename, raw_bytes) = file_data.ok_or_else(|| {
-        AppError::bad_request("at least one file is required", "no_files")
-    })?;
+    if files.is_empty() {
+        return Err(AppError::bad_request(
+            "at least one file is required",
+            "no_files",
+        ));
+    }
+
+    // Validate total size
+    let total_size: usize = files.iter().map(|(_, b)| b.len()).sum();
+    if total_size > MAX_TOTAL_SIZE {
+        return Err(AppError::bad_request(
+            format!("total upload size exceeds 50 MB limit ({total_size} bytes)"),
+            "total_too_large",
+        ));
+    }
 
     let account_id = account_id.ok_or_else(|| {
         AppError::bad_request(
@@ -98,20 +120,25 @@ pub async fn parse_documents(
         )
     })?;
 
-    // Phase 1: CSV only
-    let text_content = String::from_utf8(raw_bytes.clone()).map_err(|_| {
-        AppError::bad_request(
-            "file is not valid UTF-8 (only CSV files are supported in this version)",
-            "invalid_format",
-        )
-    })?;
-
-    let document = DocumentInput {
-        original_size: raw_bytes.len(),
-        filename,
-        format: FileFormat::Csv,
-        text_content,
-    };
+    // Build DocumentInputs (Phase 2: still CSV only)
+    let mut documents: Vec<DocumentInput> = Vec::new();
+    for (filename, raw_bytes) in &files {
+        let text_content = String::from_utf8(raw_bytes.clone()).map_err(|_| {
+            AppError::bad_request(
+                format!(
+                    "file '{}' is not valid UTF-8 (only CSV supported)",
+                    filename
+                ),
+                "invalid_format",
+            )
+        })?;
+        documents.push(DocumentInput {
+            original_size: raw_bytes.len(),
+            filename: filename.clone(),
+            format: FileFormat::Csv,
+            text_content,
+        });
+    }
 
     // Validate account exists
     {
@@ -124,17 +151,38 @@ pub async fn parse_documents(
         }
     }
 
-    // Run the LLM pipeline (no DB needed, safe to await)
+    // Run the multi-file LLM pipeline
     let start = std::time::Instant::now();
-    let (classification, extraction) = run_llm_pipeline(&document, &hints)
+    let pipeline_result = run_multi_file_pipeline(&documents, &hints)
         .await
         .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
     let elapsed = start.elapsed().as_millis() as u64;
 
+    // If clarification needed, return early
+    if let PipelineOutcome::NeedsClarification(mut preview) = pipeline_result {
+        preview.metadata.processing_time_ms = elapsed;
+        return Ok(Json(*preview));
+    }
+
+    // Extract successful result
+    let (multi_classification, merged_extraction) = match pipeline_result {
+        PipelineOutcome::Success {
+            classification,
+            extraction,
+        } => (classification, extraction),
+        PipelineOutcome::NeedsClarification(_) => unreachable!(),
+    };
+
     // Run deduplication (needs DB, synchronous)
     let preview = {
         let db = state.db.lock().expect("db mutex poisoned");
-        build_preview(&classification, extraction, &account_id, &db, elapsed)
+        build_multi_preview(
+            &multi_classification,
+            merged_extraction,
+            &account_id,
+            &db,
+            elapsed,
+        )
     }
     .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
 
