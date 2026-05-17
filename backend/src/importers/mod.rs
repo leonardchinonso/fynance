@@ -5,6 +5,8 @@
 //! without touching the `import` command.
 
 pub mod csv_importer;
+pub mod document_parser;
+pub mod holdings_parser;
 pub mod llm_parser;
 pub mod unified;
 
