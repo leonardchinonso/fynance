@@ -12,8 +12,10 @@ Rules:
 5. quantity: number of units/shares as a decimal string. For cash balances, this equals the value.
 6. price_per_unit: price per share/unit as a decimal string. Null if not available.
    For cash, this is "1.0000".
-7. value: total market value as a decimal string. This is quantity * price_per_unit.
-   If only value is available (no quantity/price), set quantity = value and price_per_unit = "1.0000".
+7. value: total market value as a decimal string. Only provide this if it is EXPLICITLY present
+   in the source data. Do NOT compute it yourself. If the document shows quantity and price but
+   no total value column, omit value (null). If only value is available (no quantity/price),
+   set quantity = value and price_per_unit = "1.0000".
 8. currency: ISO 4217 code for the value column.
 9. All amounts must be plain decimal strings with no currency symbols or thousands separators.
 10. Do not invent holdings. Only emit rows explicitly present in the data.

@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow};
 
 use super::document_parser::SnapshotPeriod;
 use super::holdings_parser::ParsedHoldings;
+use super::investments_parser::{ParsedInvestments, build_investments_tool_schema};
 use super::llm_parser::ParsedStatement;
 use super::provider::LlmProvider;
 
@@ -11,6 +12,7 @@ const STATEMENT_PROMPT: &str = include_str!("../../config/prompts/statement_pars
 const HOLDINGS_PROMPT: &str = include_str!("../../config/prompts/holdings_parser.txt");
 const PERIODIC_HOLDINGS_PROMPT: &str =
     include_str!("../../config/prompts/periodic_holdings_parser.txt");
+const INVESTMENTS_PROMPT: &str = include_str!("../../config/prompts/investments_parser.txt");
 
 // ── PDF Transaction Parser ─────────────────────────────────────────────────
 
@@ -165,6 +167,63 @@ impl PdfPeriodicHoldingsParser {
 
         let parsed: ParsedHoldings = serde_json::from_value(tool_input)
             .context("deserializing ParsedHoldings from PDF periodic holdings")?;
+
+        Ok(parsed)
+    }
+}
+
+// ── PDF Investments Parser ────────────────────────────────────────────────────
+
+pub struct PdfInvestmentsParser {
+    provider: Arc<dyn LlmProvider>,
+}
+
+impl PdfInvestmentsParser {
+    pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
+        Self { provider }
+    }
+
+    pub async fn extract(
+        &self,
+        pdf_bytes: &[u8],
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedInvestments> {
+        let tool_schema = build_investments_tool_schema();
+
+        let mut text_supplement = format!("filename: {filename}");
+        if let Some(hint) = user_hint {
+            text_supplement = format!("User instructions: {hint}\n\n{text_supplement}");
+        }
+
+        tracing::debug!(
+            provider = self.provider.name(),
+            filename,
+            pdf_size = pdf_bytes.len(),
+            "sending PDF for investment event extraction"
+        );
+
+        let tool_input = self
+            .provider
+            .chat_with_pdf_and_tools(
+                INVESTMENTS_PROMPT,
+                pdf_bytes,
+                &text_supplement,
+                "parse_investments",
+                tool_schema,
+            )
+            .await?;
+
+        let parsed: ParsedInvestments = serde_json::from_value(tool_input)
+            .context("deserializing ParsedInvestments from PDF tool_use")?;
+
+        if parsed.rows.is_empty() {
+            return Err(anyhow!(
+                "No investment events could be extracted from PDF '{}'. \
+                 This may be a scanned document or the format is not recognized.",
+                filename
+            ));
+        }
 
         Ok(parsed)
     }

@@ -180,11 +180,8 @@ pub async fn parse_documents(
     }
 
     // Extract successful result
-    let (multi_classification, merged_extraction) = match pipeline_result {
-        PipelineOutcome::Success {
-            classification,
-            extraction,
-        } => (classification, extraction),
+    let merged_extraction = match pipeline_result {
+        PipelineOutcome::Success { extraction } => extraction,
         PipelineOutcome::NeedsClarification(_) => unreachable!(),
     };
 
@@ -192,10 +189,10 @@ pub async fn parse_documents(
     let preview = {
         let db = state.db.lock().expect("db mutex poisoned");
         build_multi_preview(
-            &multi_classification,
             merged_extraction,
             &account_id,
             &account.institution,
+            documents.len(),
             &db,
             elapsed,
         )

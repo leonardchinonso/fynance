@@ -8,6 +8,7 @@ pub mod csv_importer;
 pub mod document_parser;
 pub mod format_detection;
 pub mod holdings_parser;
+pub mod investments_parser;
 pub mod llm_parser;
 pub mod pdf_parser;
 pub mod periodic_holdings_parser;

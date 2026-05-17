@@ -14,19 +14,21 @@ use ts_rs::TS;
 
 use crate::importers::llm_parser::StatementParser;
 use crate::importers::pdf_parser::{
-    PdfHoldingsParser, PdfPeriodicHoldingsParser, PdfStatementParser,
+    PdfHoldingsParser, PdfInvestmentsParser, PdfPeriodicHoldingsParser, PdfStatementParser,
 };
 use crate::importers::provider::LlmProvider;
 use crate::importers::unified::UnifiedStatementRow;
 use crate::model::{
-    BankFormat, CategorySource, Holding, HoldingType, HoldingsImportPayload,
-    HoldingsIngestionResult, ImportPayload, ImportTransaction, IngestionMetadata, IngestionPreview,
-    IngestionStatus, InvestmentIngestionResult, TransactionIngestionResult,
+    BankFormat, CategorySource, CreateInvestmentEventBody, Holding, HoldingType,
+    HoldingsImportPayload, HoldingsIngestionResult, ImportPayload, ImportTransaction,
+    IngestionMetadata, IngestionPreview, IngestionStatus, InvestmentIngestionResult,
+    InvestmentsImportPayload, TransactionIngestionResult,
     TransactionPreviewStatus,
 };
 use crate::storage::Db;
 
 use super::holdings_parser::{HoldingsExtractor, LlmHoldingsParser, ParsedHoldings};
+use super::investments_parser::{LlmInvestmentsParser, ParsedInvestmentRow};
 use super::periodic_holdings_parser::LlmPeriodicHoldingsParser;
 
 // ── Public types ────────────────────────────────────────────────────────────
@@ -52,29 +54,8 @@ pub struct DocumentInput {
 pub enum ContentType {
     Transactions,
     Holdings,
-    Both,
+    Investments,
     Unknown,
-}
-
-#[derive(Debug, Clone)]
-pub struct ClassificationResult {
-    pub institution: Option<String>,
-    pub institution_confidence: f32,
-    pub content_type: ContentType,
-}
-
-#[derive(Debug, Clone)]
-pub struct MultiClassificationResult {
-    pub files: Vec<FileClassification>,
-    pub relationships: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FileClassification {
-    pub filename: String,
-    pub institution: Option<String>,
-    pub institution_confidence: f32,
-    pub content_type: ContentType,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
@@ -101,15 +82,21 @@ impl ReturnType {
         self.transactions || self.holdings.enabled || self.investments
     }
 
-    pub fn to_content_type(&self) -> ContentType {
-        let has_tx = self.transactions || self.investments;
-        let has_h = self.holdings.enabled;
-        match (has_tx, has_h) {
-            (true, true) => ContentType::Both,
-            (true, false) => ContentType::Transactions,
-            (false, true) => ContentType::Holdings,
-            (false, false) => ContentType::Unknown,
+    pub fn to_content_types(&self) -> Vec<ContentType> {
+        let mut types = Vec::new();
+        if self.transactions {
+            types.push(ContentType::Transactions);
         }
+        if self.holdings.enabled {
+            types.push(ContentType::Holdings);
+        }
+        if self.investments {
+            types.push(ContentType::Investments);
+        }
+        if types.is_empty() {
+            types.push(ContentType::Unknown);
+        }
+        types
     }
 }
 
@@ -135,16 +122,14 @@ pub enum SnapshotPeriod {
 pub struct ExtractionResult {
     pub transactions: Vec<UnifiedStatementRow>,
     pub holdings: Vec<Holding>,
+    pub investments: Vec<ParsedInvestmentRow>,
     pub detected_bank: BankFormat,
     pub detection_confidence: f32,
 }
 
 #[derive(Debug)]
 pub enum PipelineOutcome {
-    Success {
-        classification: MultiClassificationResult,
-        extraction: ExtractionResult,
-    },
+    Success { extraction: ExtractionResult },
     NeedsClarification(Box<IngestionPreview>),
 }
 
@@ -156,39 +141,21 @@ pub enum PipelineOutcome {
 pub async fn run_multi_file_pipeline(
     documents: &[DocumentInput],
     hints: &ParseHints,
-    account_institution: &str,
+    _account_institution: &str,
     provider: Arc<dyn LlmProvider>,
 ) -> Result<PipelineOutcome> {
-    let content_type = hints.return_type.to_content_type();
-    let multi_classification = MultiClassificationResult {
-        files: documents
-            .iter()
-            .map(|doc| FileClassification {
-                filename: doc.filename.clone(),
-                institution: Some(account_institution.to_string()),
-                institution_confidence: 1.0,
-                content_type: content_type.clone(),
-            })
-            .collect(),
-        relationships: vec![],
-    };
-
-    let extraction =
-        extract_all_parallel(documents, &multi_classification, hints, provider).await?;
-
-    Ok(PipelineOutcome::Success {
-        classification: multi_classification,
-        extraction,
-    })
+    let content_types = hints.return_type.to_content_types();
+    let extraction = extract_all_parallel(documents, &content_types, hints, provider).await?;
+    Ok(PipelineOutcome::Success { extraction })
 }
 
 /// Run deduplication checks and assemble the final IngestionPreview.
 /// Requires DB access. Called synchronously after the LLM pipeline completes.
 pub fn build_multi_preview(
-    classification: &MultiClassificationResult,
     extraction: ExtractionResult,
     account_id: &str,
     account_institution: &str,
+    num_files: usize,
     db: &Db,
     processing_time_ms: u64,
 ) -> Result<IngestionPreview> {
@@ -197,32 +164,9 @@ pub fn build_multi_preview(
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.70);
 
-    // Determine primary institution (highest confidence across files)
-    let primary = classification
-        .files
-        .iter()
-        .max_by(|a, b| {
-            a.institution_confidence
-                .partial_cmp(&b.institution_confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|f| (f.institution.clone(), f.institution_confidence));
-
-    let (institution_detected, detection_confidence) = primary.unwrap_or((None, 0.0));
-
-    // ── Institution mismatch warning ────────────────────────────────────────
-    let mut notes = vec![];
-    if let Some(ref detected) = institution_detected {
-        let detected_lower = detected.to_lowercase();
-        let account_lower = account_institution.to_lowercase();
-        if detected_lower != account_lower && detected_lower != "unknown" {
-            notes.push(format!(
-                "Detected institution ({}) does not match account institution ({}). \
-                 Verify you selected the correct account.",
-                detected, account_institution
-            ));
-        }
-    }
+    let institution_detected = Some(account_institution.to_string());
+    let detection_confidence = extraction.detection_confidence;
+    let notes: Vec<String> = vec![];
 
     // ── Transaction deduplication ────────────────────────────────────────────
 
@@ -328,27 +272,73 @@ pub fn build_multi_preview(
         }
     };
 
-    // ── Assemble ────────────────────────────────────────────────────────────
+    // ── Investment deduplication ─────────────────────────────────────────────
 
-    Ok(IngestionPreview {
-        status: IngestionStatus::Success,
-        metadata: IngestionMetadata {
-            files_processed: classification.files.len(),
-            institution_detected,
-            detection_confidence,
-            processing_time_ms,
-            notes,
-            relationships_found: classification.relationships.clone(),
-        },
-        transactions: tx_result,
-        holdings: holdings_result,
-        investments: InvestmentIngestionResult {
+    let investments_result = if !extraction.investments.is_empty() {
+        let preview_rows =
+            db.dry_run_investments(account_id, &extraction.investments, min_row_confidence)?;
+
+        let rows_new = preview_rows
+            .iter()
+            .filter(|r| r.status == TransactionPreviewStatus::New)
+            .count();
+        let rows_dup = preview_rows
+            .iter()
+            .filter(|r| r.status == TransactionPreviewStatus::Duplicate)
+            .count();
+
+        let payload_events: Vec<CreateInvestmentEventBody> = extraction
+            .investments
+            .iter()
+            .filter(|r| r.row_confidence >= min_row_confidence)
+            .map(|r| CreateInvestmentEventBody {
+                account_id: account_id.to_string(),
+                event_type: r.event_type.clone(),
+                symbol: r.symbol.clone(),
+                date: r.date.clone(),
+                quantity: r.quantity.clone(),
+                price_per_share: r.price_per_share.clone(),
+                fee: Some(r.fee.clone()),
+                currency: r.currency.clone(),
+                notes: r.notes.clone(),
+            })
+            .collect();
+
+        InvestmentIngestionResult {
+            count: preview_rows.len(),
+            new: rows_new,
+            duplicate: rows_dup,
+            rows: preview_rows,
+            payload: Some(InvestmentsImportPayload {
+                account_id: account_id.to_string(),
+                events: payload_events,
+            }),
+        }
+    } else {
+        InvestmentIngestionResult {
             count: 0,
             new: 0,
             duplicate: 0,
             rows: vec![],
             payload: None,
+        }
+    };
+
+    // ── Assemble ────────────────────────────────────────────────────────────
+
+    Ok(IngestionPreview {
+        status: IngestionStatus::Success,
+        metadata: IngestionMetadata {
+            files_processed: num_files,
+            institution_detected,
+            detection_confidence,
+            processing_time_ms,
+            notes,
+            relationships_found: vec![],
         },
+        transactions: tx_result,
+        holdings: holdings_result,
+        investments: investments_result,
         clarifications_needed: vec![],
     })
 }
@@ -357,7 +347,7 @@ pub fn build_multi_preview(
 
 async fn extract_all_parallel(
     documents: &[DocumentInput],
-    classification: &MultiClassificationResult,
+    content_types: &[ContentType],
     hints: &ParseHints,
     provider: Arc<dyn LlmProvider>,
 ) -> Result<ExtractionResult> {
@@ -366,32 +356,35 @@ async fn extract_all_parallel(
     let user_hint = hints.hint.clone();
     let period = hints.return_type.holdings.period.clone();
 
-    for (doc, file_class) in documents.iter().zip(classification.files.iter()) {
-        if file_class.content_type == ContentType::Unknown {
-            continue;
+    for doc in documents {
+        for ct in content_types {
+            if *ct == ContentType::Unknown {
+                continue;
+            }
+
+            let doc_clone = doc.clone();
+            let ct_clone = ct.clone();
+            let hint_clone = user_hint.clone();
+            let period_clone = period.clone();
+            let provider_clone = provider.clone();
+
+            join_set.spawn(async move {
+                extract_single_file(
+                    &doc_clone,
+                    &ct_clone,
+                    hint_clone.as_deref(),
+                    period_clone.as_ref(),
+                    provider_clone,
+                )
+                .await
+            });
         }
-
-        let doc_clone = doc.clone();
-        let content_type = file_class.content_type.clone();
-        let hint_clone = user_hint.clone();
-        let period_clone = period.clone();
-        let provider_clone = provider.clone();
-
-        join_set.spawn(async move {
-            extract_single_file(
-                &doc_clone,
-                &content_type,
-                hint_clone.as_deref(),
-                period_clone.as_ref(),
-                provider_clone,
-            )
-            .await
-        });
     }
 
     let mut merged = ExtractionResult {
         transactions: vec![],
         holdings: vec![],
+        investments: vec![],
         detected_bank: BankFormat::Unknown,
         detection_confidence: 0.0,
     };
@@ -405,6 +398,7 @@ async fn extract_all_parallel(
 
         merged.transactions.extend(extraction.transactions);
         merged.holdings.extend(extraction.holdings);
+        merged.investments.extend(extraction.investments);
 
         if extraction.detection_confidence > max_confidence {
             max_confidence = extraction.detection_confidence;
@@ -433,6 +427,7 @@ async fn extract_single_file(
                 Ok(ExtractionResult {
                     transactions: parsed.rows,
                     holdings: vec![],
+                    investments: vec![],
                     detected_bank: parsed.detected_bank,
                     detection_confidence: parsed.detection_confidence,
                 })
@@ -445,6 +440,7 @@ async fn extract_single_file(
                 Ok(ExtractionResult {
                     transactions: parsed.rows,
                     holdings: vec![],
+                    investments: vec![],
                     detected_bank: parsed.detected_bank,
                     detection_confidence: parsed.detection_confidence,
                 })
@@ -461,6 +457,7 @@ async fn extract_single_file(
                     Ok(ExtractionResult {
                         transactions: vec![],
                         holdings,
+                        investments: vec![],
                         detected_bank: BankFormat::Unknown,
                         detection_confidence: parsed.detection_confidence,
                     })
@@ -474,6 +471,7 @@ async fn extract_single_file(
                     Ok(ExtractionResult {
                         transactions: vec![],
                         holdings,
+                        investments: vec![],
                         detected_bank: BankFormat::Unknown,
                         detection_confidence: parsed.detection_confidence,
                     })
@@ -489,6 +487,7 @@ async fn extract_single_file(
                     Ok(ExtractionResult {
                         transactions: vec![],
                         holdings,
+                        investments: vec![],
                         detected_bank: BankFormat::Unknown,
                         detection_confidence: parsed.detection_confidence,
                     })
@@ -502,92 +501,37 @@ async fn extract_single_file(
                     Ok(ExtractionResult {
                         transactions: vec![],
                         holdings,
+                        investments: vec![],
                         detected_bank: BankFormat::Unknown,
                         detection_confidence: parsed.detection_confidence,
                     })
                 }
             },
         },
-        ContentType::Both => match doc.format {
+        ContentType::Investments => match doc.format {
             FileFormat::Pdf => {
-                let tx_parser = PdfStatementParser::new(provider.clone());
-                match period {
-                    Some(p) => {
-                        let h_parser = PdfPeriodicHoldingsParser::new(provider);
-                        let (tx_result, h_result) = tokio::join!(
-                            tx_parser.parse(&doc.raw_bytes, &doc.filename, user_hint),
-                            h_parser.extract(&doc.raw_bytes, &doc.filename, p, user_hint)
-                        );
-                        let tx_parsed = tx_result?;
-                        let h_parsed = h_result?;
-                        let holdings = convert_parsed_holdings(&h_parsed)?;
-                        Ok(ExtractionResult {
-                            transactions: tx_parsed.rows,
-                            holdings,
-                            detected_bank: tx_parsed.detected_bank,
-                            detection_confidence: tx_parsed.detection_confidence,
-                        })
-                    }
-                    None => {
-                        let h_parser = PdfHoldingsParser::new(provider);
-                        let (tx_result, h_result) = tokio::join!(
-                            tx_parser.parse(&doc.raw_bytes, &doc.filename, user_hint),
-                            h_parser.extract(&doc.raw_bytes, &doc.filename, user_hint)
-                        );
-                        let tx_parsed = tx_result?;
-                        let h_parsed = h_result?;
-                        let holdings = convert_parsed_holdings(&h_parsed)?;
-                        Ok(ExtractionResult {
-                            transactions: tx_parsed.rows,
-                            holdings,
-                            detected_bank: tx_parsed.detected_bank,
-                            detection_confidence: tx_parsed.detection_confidence,
-                        })
-                    }
-                }
+                let parser = PdfInvestmentsParser::new(provider);
+                let parsed = parser.extract(&doc.raw_bytes, &doc.filename, user_hint).await?;
+                Ok(ExtractionResult {
+                    transactions: vec![],
+                    holdings: vec![],
+                    investments: parsed.rows,
+                    detected_bank: BankFormat::Unknown,
+                    detection_confidence: parsed.detection_confidence,
+                })
             }
             FileFormat::Csv | FileFormat::Excel => {
-                let tx_parser =
-                    crate::importers::llm_parser::LlmStatementParser::new(provider.clone());
-                match period {
-                    Some(p) => {
-                        let h_parser = LlmPeriodicHoldingsParser::new(provider);
-                        let (tx_result, h_result) = tokio::join!(
-                            tx_parser.parse(&doc.text_content, &doc.filename, user_hint),
-                            h_parser.extract_periodic_holdings(
-                                &doc.text_content,
-                                &doc.filename,
-                                p,
-                                user_hint
-                            )
-                        );
-                        let tx_parsed = tx_result?;
-                        let h_parsed = h_result?;
-                        let holdings = convert_parsed_holdings(&h_parsed)?;
-                        Ok(ExtractionResult {
-                            transactions: tx_parsed.rows,
-                            holdings,
-                            detected_bank: tx_parsed.detected_bank,
-                            detection_confidence: tx_parsed.detection_confidence,
-                        })
-                    }
-                    None => {
-                        let h_parser = LlmHoldingsParser::new(provider);
-                        let (tx_result, h_result) = tokio::join!(
-                            tx_parser.parse(&doc.text_content, &doc.filename, user_hint),
-                            h_parser.extract_holdings(&doc.text_content, &doc.filename, user_hint)
-                        );
-                        let tx_parsed = tx_result?;
-                        let h_parsed = h_result?;
-                        let holdings = convert_parsed_holdings(&h_parsed)?;
-                        Ok(ExtractionResult {
-                            transactions: tx_parsed.rows,
-                            holdings,
-                            detected_bank: tx_parsed.detected_bank,
-                            detection_confidence: tx_parsed.detection_confidence,
-                        })
-                    }
-                }
+                let parser = LlmInvestmentsParser::new(provider);
+                let parsed = parser
+                    .extract_investments(&doc.text_content, &doc.filename, user_hint)
+                    .await?;
+                Ok(ExtractionResult {
+                    transactions: vec![],
+                    holdings: vec![],
+                    investments: parsed.rows,
+                    detected_bank: BankFormat::Unknown,
+                    detection_confidence: parsed.detection_confidence,
+                })
             }
         },
         ContentType::Unknown => Err(anyhow!("cannot extract from Unknown content type")),
@@ -610,19 +554,25 @@ fn convert_parsed_holdings(parsed: &ParsedHoldings) -> Result<Vec<Holding>> {
             .quantity
             .parse()
             .map_err(|_| anyhow!("invalid quantity '{}' for {}", row.quantity, row.symbol))?;
-        let value: Decimal = row
-            .value
-            .parse()
-            .map_err(|_| anyhow!("invalid value '{}' for {}", row.value, row.symbol))?;
         let price_per_unit: Option<Decimal> = row
             .price_per_unit
             .as_deref()
             .filter(|s| !s.is_empty())
             .map(|s| {
-                s.parse()
+                s.parse::<Decimal>()
                     .map_err(|_| anyhow!("invalid price_per_unit '{}' for {}", s, row.symbol))
             })
             .transpose()?;
+        let value: Decimal = match (&row.value, &price_per_unit) {
+            (Some(v), _) => v
+                .parse::<Decimal>()
+                .map_err(|_| anyhow!("invalid value '{}' for {}", v, row.symbol))?,
+            (None, Some(ppu)) => quantity * ppu,
+            (None, None) => {
+                tracing::warn!(symbol = %row.symbol, "skipping holding: no value and no price_per_unit");
+                continue;
+            }
+        };
 
         let as_of = row
             .as_of
@@ -675,6 +625,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_extract_result_has_investments_field() {
+        let result = ExtractionResult {
+            transactions: vec![],
+            holdings: vec![],
+            investments: vec![],
+            detected_bank: BankFormat::Unknown,
+            detection_confidence: 0.0,
+        };
+        assert!(result.investments.is_empty());
+    }
+
+    #[test]
+    fn test_to_content_types_includes_investments() {
+        let rt = ReturnType {
+            transactions: false,
+            holdings: HoldingsReturnConfig::default(),
+            investments: true,
+        };
+        assert_eq!(rt.to_content_types(), vec![ContentType::Investments]);
+    }
+
+    #[test]
     fn test_parse_holding_type_fuzzy() {
         assert_eq!(parse_holding_type_fuzzy("stock"), HoldingType::Stock);
         assert_eq!(parse_holding_type_fuzzy("ETF"), HoldingType::Etf);
@@ -722,13 +694,13 @@ mod tests {
     }
 
     #[test]
-    fn test_return_type_to_content_type() {
+    fn test_return_type_to_content_types() {
         let rt = ReturnType {
             transactions: true,
             holdings: HoldingsReturnConfig::default(),
             investments: false,
         };
-        assert_eq!(rt.to_content_type(), ContentType::Transactions);
+        assert_eq!(rt.to_content_types(), vec![ContentType::Transactions]);
 
         let rt = ReturnType {
             transactions: false,
@@ -738,7 +710,7 @@ mod tests {
             },
             investments: false,
         };
-        assert_eq!(rt.to_content_type(), ContentType::Holdings);
+        assert_eq!(rt.to_content_types(), vec![ContentType::Holdings]);
 
         let rt = ReturnType {
             transactions: true,
@@ -748,14 +720,41 @@ mod tests {
             },
             investments: false,
         };
-        assert_eq!(rt.to_content_type(), ContentType::Both);
+        assert_eq!(
+            rt.to_content_types(),
+            vec![ContentType::Transactions, ContentType::Holdings]
+        );
 
         let rt = ReturnType {
             transactions: false,
             holdings: HoldingsReturnConfig::default(),
             investments: true,
         };
-        assert_eq!(rt.to_content_type(), ContentType::Transactions);
+        assert_eq!(rt.to_content_types(), vec![ContentType::Investments]);
+
+        let rt = ReturnType {
+            transactions: true,
+            holdings: HoldingsReturnConfig {
+                enabled: true,
+                period: None,
+            },
+            investments: true,
+        };
+        assert_eq!(
+            rt.to_content_types(),
+            vec![
+                ContentType::Transactions,
+                ContentType::Holdings,
+                ContentType::Investments
+            ]
+        );
+
+        let rt = ReturnType {
+            transactions: false,
+            holdings: HoldingsReturnConfig::default(),
+            investments: false,
+        };
+        assert_eq!(rt.to_content_types(), vec![ContentType::Unknown]);
     }
 
     #[test]
@@ -795,66 +794,6 @@ mod tests {
     }
 
     #[test]
-    fn test_institution_mismatch_warning() {
-        let classification = MultiClassificationResult {
-            files: vec![FileClassification {
-                filename: "test.csv".to_string(),
-                institution: Some("Monzo".to_string()),
-                institution_confidence: 1.0,
-                content_type: ContentType::Transactions,
-            }],
-            relationships: vec![],
-        };
-        let extraction = ExtractionResult {
-            transactions: vec![],
-            holdings: vec![],
-            detected_bank: crate::model::BankFormat::Monzo,
-            detection_confidence: 0.95,
-        };
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let db = crate::storage::Db::open(tmp.path()).unwrap();
-        let preview =
-            build_multi_preview(&classification, extraction, "acc1", "Revolut", &db, 10).unwrap();
-        assert!(
-            preview
-                .metadata
-                .notes
-                .iter()
-                .any(|n| n.contains("does not match")),
-            "expected mismatch note, got: {:?}",
-            preview.metadata.notes
-        );
-    }
-
-    #[test]
-    fn test_no_mismatch_when_unknown() {
-        let classification = MultiClassificationResult {
-            files: vec![FileClassification {
-                filename: "test.csv".to_string(),
-                institution: Some("unknown".to_string()),
-                institution_confidence: 0.5,
-                content_type: ContentType::Transactions,
-            }],
-            relationships: vec![],
-        };
-        let extraction = ExtractionResult {
-            transactions: vec![],
-            holdings: vec![],
-            detected_bank: crate::model::BankFormat::Unknown,
-            detection_confidence: 0.5,
-        };
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let db = crate::storage::Db::open(tmp.path()).unwrap();
-        let preview =
-            build_multi_preview(&classification, extraction, "acc1", "Monzo", &db, 10).unwrap();
-        assert!(
-            preview.metadata.notes.is_empty(),
-            "expected no notes for unknown institution, got: {:?}",
-            preview.metadata.notes
-        );
-    }
-
-    #[test]
     fn test_convert_parsed_holdings_skips_low_confidence() {
         let parsed = ParsedHoldings {
             detection_confidence: 0.95,
@@ -865,7 +804,7 @@ mod tests {
                     holding_type: "etf".to_string(),
                     quantity: "50".to_string(),
                     price_per_unit: Some("76.32".to_string()),
-                    value: "3816.00".to_string(),
+                    value: Some("3816.00".to_string()),
                     currency: "GBP".to_string(),
                     sub_account: None,
                     as_of: None,
@@ -877,7 +816,7 @@ mod tests {
                     holding_type: "stock".to_string(),
                     quantity: "1".to_string(),
                     price_per_unit: None,
-                    value: "1.00".to_string(),
+                    value: Some("1.00".to_string()),
                     currency: "GBP".to_string(),
                     sub_account: None,
                     as_of: None,
@@ -889,5 +828,55 @@ mod tests {
         let result = convert_parsed_holdings(&parsed).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].symbol, "VUSA");
+    }
+
+    #[test]
+    fn test_convert_parsed_holdings_value_computed_from_price() {
+        let parsed = ParsedHoldings {
+            detection_confidence: 0.95,
+            rows: vec![super::super::holdings_parser::ParsedHoldingRow {
+                symbol: "AAPL".to_string(),
+                name: "Apple Inc".to_string(),
+                holding_type: "stock".to_string(),
+                quantity: "10".to_string(),
+                price_per_unit: Some("150.00".to_string()),
+                value: None,
+                currency: "USD".to_string(),
+                sub_account: None,
+                as_of: None,
+                row_confidence: 0.90,
+            }],
+        };
+
+        let result = convert_parsed_holdings(&parsed).unwrap();
+        assert_eq!(result.len(), 1);
+        let expected: Decimal = "1500.00".parse().unwrap();
+        assert_eq!(result[0].value, expected);
+    }
+
+    #[test]
+    fn test_convert_parsed_holdings_skips_when_no_value_and_no_price() {
+        let parsed = ParsedHoldings {
+            detection_confidence: 0.95,
+            rows: vec![super::super::holdings_parser::ParsedHoldingRow {
+                symbol: "MYSTERY".to_string(),
+                name: "Unknown Asset".to_string(),
+                holding_type: "stock".to_string(),
+                quantity: "5".to_string(),
+                price_per_unit: None,
+                value: None,
+                currency: "GBP".to_string(),
+                sub_account: None,
+                as_of: None,
+                row_confidence: 0.85,
+            }],
+        };
+
+        let result = convert_parsed_holdings(&parsed).unwrap();
+        assert_eq!(
+            result.len(),
+            0,
+            "row with no value and no price should be skipped"
+        );
     }
 }

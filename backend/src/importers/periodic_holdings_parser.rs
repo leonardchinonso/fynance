@@ -130,7 +130,7 @@ pub(crate) fn build_periodic_holdings_tool_schema() -> Value {
                         },
                         "value": {
                             "type": "string",
-                            "description": "Same as price_per_unit (for cash, value = balance)."
+                            "description": "The balance amount as a decimal string (same as price_per_unit for cash)."
                         },
                         "currency": {
                             "type": "string",

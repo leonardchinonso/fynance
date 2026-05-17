@@ -31,7 +31,7 @@ pub struct ParsedHoldingRow {
     pub holding_type: String,
     pub quantity: String,
     pub price_per_unit: Option<String>,
-    pub value: String,
+    pub value: Option<String>,
     pub currency: String,
     pub sub_account: Option<String>,
     pub as_of: Option<String>,
@@ -147,7 +147,7 @@ pub(crate) fn build_holdings_tool_schema() -> Value {
                 "description": "One element per holding row.",
                 "items": {
                     "type": "object",
-                    "required": ["symbol", "name", "holding_type", "quantity", "value", "currency", "row_confidence"],
+                    "required": ["symbol", "name", "holding_type", "quantity", "currency", "row_confidence"],
                     "properties": {
                         "symbol": {
                             "type": "string",
@@ -171,8 +171,8 @@ pub(crate) fn build_holdings_tool_schema() -> Value {
                             "description": "Price per unit as decimal string, or null if unavailable."
                         },
                         "value": {
-                            "type": "string",
-                            "description": "Total market value as decimal string."
+                            "type": ["string", "null"],
+                            "description": "Total market value as decimal string. Provide ONLY if explicitly present in the source data. Do NOT compute it. Null if absent."
                         },
                         "currency": {
                             "type": "string",
@@ -231,7 +231,7 @@ mod tests {
                 holding_type: "etf".to_string(),
                 quantity: "50.0000".to_string(),
                 price_per_unit: Some("76.32".to_string()),
-                value: "3816.00".to_string(),
+                value: Some("3816.00".to_string()),
                 currency: "GBP".to_string(),
                 sub_account: None,
                 as_of: None,

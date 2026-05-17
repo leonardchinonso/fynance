@@ -2906,6 +2906,135 @@ impl Db {
         Ok(previews)
     }
 
+    /// Preview parsed investment rows without writing anything.
+    /// Computes fingerprints matching `create_investment_event` and checks the `investments` table.
+    pub fn dry_run_investments(
+        &self,
+        account_id: &str,
+        rows: &[crate::importers::investments_parser::ParsedInvestmentRow],
+        min_row_confidence: f32,
+    ) -> anyhow::Result<Vec<crate::model::InvestmentPreviewRow>> {
+        use crate::model::TransactionPreviewStatus;
+
+        let mut previews = Vec::with_capacity(rows.len());
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM investments WHERE fingerprint = ?1")?;
+
+        for (i, row) in rows.iter().enumerate() {
+            if row.row_confidence < min_row_confidence {
+                previews.push(crate::model::InvestmentPreviewRow {
+                    index: i,
+                    event_type: row.event_type.clone(),
+                    symbol: row.symbol.clone(),
+                    date: row.date.clone(),
+                    quantity: row.quantity.clone(),
+                    price_per_share: row.price_per_share.clone(),
+                    currency: row.currency.clone(),
+                    status: TransactionPreviewStatus::Error,
+                    existing_id: None,
+                });
+                continue;
+            }
+
+            let date_str = match parse_transaction_datetime(&row.date) {
+                Some(dt) => dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                None => {
+                    tracing::warn!(
+                        symbol = %row.symbol,
+                        date = %row.date,
+                        "invalid date in investment row; marking as error"
+                    );
+                    previews.push(crate::model::InvestmentPreviewRow {
+                        index: i,
+                        event_type: row.event_type.clone(),
+                        symbol: row.symbol.clone(),
+                        date: row.date.clone(),
+                        quantity: row.quantity.clone(),
+                        price_per_share: row.price_per_share.clone(),
+                        currency: row.currency.clone(),
+                        status: TransactionPreviewStatus::Error,
+                        existing_id: None,
+                    });
+                    continue;
+                }
+            };
+
+            let quantity = match row.quantity.parse::<rust_decimal::Decimal>() {
+                Ok(d) => d.to_string(),
+                Err(_) => {
+                    tracing::warn!(symbol = %row.symbol, "invalid quantity in investment row; marking as error");
+                    previews.push(crate::model::InvestmentPreviewRow {
+                        index: i,
+                        event_type: row.event_type.clone(),
+                        symbol: row.symbol.clone(),
+                        date: row.date.clone(),
+                        quantity: row.quantity.clone(),
+                        price_per_share: row.price_per_share.clone(),
+                        currency: row.currency.clone(),
+                        status: TransactionPreviewStatus::Error,
+                        existing_id: None,
+                    });
+                    continue;
+                }
+            };
+
+            let price_per_share = match row.price_per_share.parse::<rust_decimal::Decimal>() {
+                Ok(d) => d.to_string(),
+                Err(_) => {
+                    tracing::warn!(symbol = %row.symbol, "invalid price_per_share in investment row; marking as error");
+                    previews.push(crate::model::InvestmentPreviewRow {
+                        index: i,
+                        event_type: row.event_type.clone(),
+                        symbol: row.symbol.clone(),
+                        date: row.date.clone(),
+                        quantity: row.quantity.clone(),
+                        price_per_share: row.price_per_share.clone(),
+                        currency: row.currency.clone(),
+                        status: TransactionPreviewStatus::Error,
+                        existing_id: None,
+                    });
+                    continue;
+                }
+            };
+
+            let fingerprint = sha256_hex(&format!(
+                "{}|{}|{}|{}|{}|{}",
+                account_id,
+                row.symbol,
+                date_str,
+                quantity,
+                price_per_share,
+                row.event_type,
+            ));
+
+            let existing_id: Option<String> = stmt
+                .query_row(rusqlite::params![fingerprint], |row| row.get::<_, String>(0))
+                .ok();
+
+            let status = if existing_id.is_some() {
+                TransactionPreviewStatus::Duplicate
+            } else {
+                TransactionPreviewStatus::New
+            };
+
+            previews.push(crate::model::InvestmentPreviewRow {
+                index: i,
+                event_type: row.event_type.clone(),
+                symbol: row.symbol.clone(),
+                date: row.date.clone(),
+                quantity: row.quantity.clone(),
+                price_per_share: row.price_per_share.clone(),
+                currency: row.currency.clone(),
+                status,
+                existing_id,
+            });
+        }
+
+        Ok(previews)
+    }
+
     // ── Stats ─────────────────────────────────────────────────────────────────
 
     pub fn stats(&self) -> Result<Stats> {
@@ -4389,5 +4518,102 @@ mod transaction_dryrun_tests {
         assert_eq!(previews.len(), 2);
         assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
         assert_eq!(previews[1].status, TransactionPreviewStatus::New);
+    }
+}
+
+#[cfg(test)]
+mod investment_dedup_tests {
+    use super::*;
+    use crate::importers::investments_parser::ParsedInvestmentRow;
+    use crate::model::TransactionPreviewStatus;
+    use tempfile::NamedTempFile;
+
+    fn make_inv_row(event_type: &str, symbol: &str) -> ParsedInvestmentRow {
+        ParsedInvestmentRow {
+            event_type: event_type.to_string(),
+            symbol: symbol.to_string(),
+            date: "2026-03-15T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            total_value: None,
+            fee: "0".to_string(),
+            currency: "GBP".to_string(),
+            notes: None,
+            row_confidence: 0.95,
+        }
+    }
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    #[test]
+    fn dry_run_investments_marks_new_row() {
+        let (db, _file) = test_db();
+        let rows = vec![make_inv_row("buy", "VUSA")];
+        let previews = db.dry_run_investments("acct-1", &rows, 0.70).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::New);
+        assert!(previews[0].existing_id.is_none());
+    }
+
+    #[test]
+    fn dry_run_investments_marks_duplicate_after_insert() {
+        let (db, _file) = test_db();
+
+        db.create_account(&crate::model::Account {
+            id: "acct-1".to_string(),
+            name: "Test".to_string(),
+            institution: "Test Bank".to_string(),
+            account_type: crate::model::AccountType::Checking,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+
+        let body = crate::model::CreateInvestmentEventBody {
+            account_id: "acct-1".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "VUSA".to_string(),
+            date: "2026-03-15T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            fee: Some("0".to_string()),
+            currency: "GBP".to_string(),
+            notes: None,
+        };
+        db.create_investment_event(&body).unwrap();
+
+        let rows = vec![make_inv_row("buy", "VUSA")];
+        let previews = db.dry_run_investments("acct-1", &rows, 0.70).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
+        assert!(previews[0].existing_id.is_some());
+    }
+
+    #[test]
+    fn dry_run_investments_marks_error_for_low_confidence() {
+        let (db, _file) = test_db();
+        let mut row = make_inv_row("buy", "VUSA");
+        row.row_confidence = 0.50;
+        let previews = db.dry_run_investments("acct-1", &[row], 0.70).unwrap();
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Error);
+    }
+
+    #[test]
+    fn dry_run_investments_marks_error_for_invalid_date() {
+        let (db, _file) = test_db();
+        let mut row = make_inv_row("buy", "VUSA");
+        row.date = "not-a-date".to_string();
+        let previews = db.dry_run_investments("acct-1", &[row], 0.70).unwrap();
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Error);
     }
 }
