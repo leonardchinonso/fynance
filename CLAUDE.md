@@ -216,6 +216,16 @@ The `VERCEL_TOKEN` secret in the GitHub repo expires **2027-05-03**. To renew:
 - Always create a new branch before making any changes. Never commit directly to master.
 - Open a PR to merge the branch. No exceptions.
 
+### Validate before you commit / push
+
+The PR is blocked from merging unless CI passes. The authoritative list of gating checks is `.github/workflows/ci.yml` (currently: frontend `tsc --noEmit` + `npm run build`; backend `cargo clippy --all-targets -- -D warnings` + `cargo test`; plus actionlint / docker-dry-run when those files change). Local equivalents are in the Commands section above. Read the workflow rather than assuming the commands here are current.
+
+Unless the user explicitly says otherwise, before committing or pushing run the checks relevant to what changed (backend changes → clippy + tests; frontend changes → tsc + build) and confirm they pass.
+
+- If they pass, commit and push.
+- If something fails: fix it inline when the fix is obvious and in scope; otherwise stop, report the failure, and propose the fix for the user to confirm before committing.
+- These runs are slow, so they may be backgrounded: trigger them, then commit and push so you and the user stay unblocked. When the results land, report them: green → say so, nothing to do; red → flag it, and if you have already fixed and staged it, ask before committing/pushing the follow-up. Never silently leave a pushed branch with failing checks.
+
 ## Cutting a Release
 
 Releases are manual. There is no auto-release on merge to master.
