@@ -123,9 +123,9 @@ pub async fn get_holdings_summary(
         let db = state.db.lock().expect("db mutex poisoned");
         let accounts = db.accounts_as_of(as_of, profile_id)?;
         let holding_rows = db.get_holdings_for_summary(as_of, profile_id)?;
-        let metrics = db.compute_investment_metrics(metrics_start, as_of, profile_id)?;
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
+        let metrics = db.compute_investment_metrics(metrics_start, as_of, profile_id, &fx)?;
         (accounts, holding_rows, metrics, fx)
     };
 

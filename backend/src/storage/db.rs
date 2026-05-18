@@ -2548,75 +2548,60 @@ impl Db {
 
     /// Compute investment performance metrics for `[start, end]`.
     ///
-    /// Uses carry-forward for start and end values on investment accounts.
+    /// Start and end values use the same per-`(account, symbol, sub_account)`
+    /// carry-forward as the portfolio summary / net-worth history
+    /// (`get_holdings_for_summary`), restricted to `Investment` accounts, so
+    /// these figures stay consistent with net worth. The previous
+    /// implementation summed only the holdings on each account's single
+    /// most-recent snapshot date, silently dropping any symbol/sub-account
+    /// last recorded before that date (same class of bug as the deleted
+    /// `get_portfolio_as_of`).
+    ///
+    /// All monetary figures are converted to the preferred currency via `fx`,
+    /// per holding / per transaction currency, exactly like the net-worth
+    /// path. Summing raw `value` (the previous behaviour) produced nonsense
+    /// for multi-currency portfolios (e.g. an NGN position counted at its
+    /// face value as GBP).
+    ///
     /// `new_cash_invested` = signed sum of `Finance: Investment Transfer` transactions.
     pub fn compute_investment_metrics(
         &self,
         start: NaiveDate,
         end: NaiveDate,
         profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
     ) -> Result<InvestmentMetrics> {
-        // Fetch investment accounts only.
-        let all_accounts = self.get_accounts(profile_id)?;
-        let investment_ids: Vec<String> = all_accounts
-            .into_iter()
-            .filter(|a| matches!(a.account_type, AccountType::Investment))
-            .map(|a| a.id)
-            .collect();
-
         let sum_carry_forward = |date: NaiveDate| -> Result<Decimal> {
-            let date_str = date.format("%Y-%m-%dT23:59:59").to_string();
-            let mut total = Decimal::ZERO;
-            for id in &investment_ids {
-                let max_date: Option<String> = self
-                    .conn
-                    .query_row(
-                        r"SELECT MAX(as_of) FROM holdings
-                          WHERE account_id = ?1 AND as_of <= ?2",
-                        rusqlite::params![id, date_str],
-                        |row| row.get(0),
-                    )
-                    .ok()
-                    .flatten();
-
-                if let Some(ref d) = max_date {
-                    let balance: Option<f64> = self
-                        .conn
-                        .query_row(
-                            r"SELECT SUM(CAST(value AS REAL)) FROM holdings
-                              WHERE account_id = ?1 AND as_of = ?2",
-                            rusqlite::params![id, d],
-                            |row| row.get(0),
-                        )
-                        .ok()
-                        .flatten();
-                    if let Some(b) = balance {
-                        total += Decimal::try_from(b).unwrap_or_default();
-                    }
-                }
-            }
-            Ok(total)
+            Ok(self
+                .get_holdings_for_summary(date, profile_id)?
+                .iter()
+                .filter(|r| matches!(r.account_type, AccountType::Investment))
+                .map(|r| fx.convert(r.holding.value, &r.holding.currency))
+                .sum())
         };
 
         let start_value = sum_carry_forward(start)?;
         let end_value = sum_carry_forward(end)?;
 
-        // Net cash moved into investment accounts.
+        // Net cash moved into investment accounts, converted per-currency.
         let new_cash_invested: Decimal = {
             let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
             let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
-            let raw: Option<f64> = self
-                .conn
-                .query_row(
-                    r"SELECT SUM(CAST(amount AS REAL)) FROM transactions
-                      WHERE category = 'Finance: Investment Transfer'
-                        AND date >= ?1 AND date <= ?2",
-                    rusqlite::params![start_str, end_str],
-                    |row| row.get(0),
-                )
-                .ok()
-                .flatten();
-            Decimal::try_from(raw.unwrap_or(0.0)).unwrap_or_default()
+            let mut stmt = self.conn.prepare(
+                r"SELECT amount, currency FROM transactions
+                  WHERE category = 'Finance: Investment Transfer'
+                    AND date >= ?1 AND date <= ?2",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![start_str, end_str], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows.into_iter()
+                .map(|(amount, currency)| {
+                    fx.convert(amount.parse::<Decimal>().unwrap_or_default(), &currency)
+                })
+                .sum()
         };
 
         let total_growth = end_value - start_value;
@@ -4264,5 +4249,123 @@ mod consolidation_tests {
             make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt);
         closed_zero.is_closed = true;
         assert!(db.upsert_holdings("t212", &[closed_zero]).is_ok());
+    }
+
+    // Investment metrics must use per-symbol carry-forward, like net worth.
+    // The old single-snapshot-date sum would drop MSFT here (it was last
+    // recorded on a different date than AAPL's latest snapshot) -> end_value
+    // would wrongly be 120 instead of 170.
+    #[test]
+    fn investment_metrics_use_per_symbol_carry_forward() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "MSFT", HoldingType::Stock, dec!(50), naive_dt(2025, 2, 5))],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(120), naive_dt(2025, 3, 10))],
+        )
+        .unwrap();
+
+        let m = db
+            .compute_investment_metrics(naive_date(2025, 1, 1), naive_date(2025, 4, 30), None, &gbp_fx())
+            .unwrap();
+        // Jan 1: no snapshots yet.
+        assert_eq!(m.start_value, dec!(0));
+        // Apr 30: AAPL carried from Mar 10 (120) + MSFT carried from Feb 5 (50).
+        assert_eq!(m.end_value, dec!(170));
+        assert_eq!(m.total_growth, dec!(170));
+        assert_eq!(m.new_cash_invested, dec!(0));
+        assert_eq!(m.market_growth, dec!(170));
+    }
+
+    // Closed (zeroed) investment holdings contribute 0; non-investment
+    // accounts are excluded entirely.
+    #[test]
+    fn investment_metrics_exclude_closed_and_non_investment() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+        db.create_account(&make_account("monzo", AccountType::Checking))
+            .unwrap();
+
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
+        )
+        .unwrap();
+        // A checking account holding must not count toward investment metrics.
+        db.upsert_holdings(
+            "monzo",
+            &[make_holding("monzo", "_CASH", HoldingType::Cash, dec!(9999), naive_dt(2025, 1, 15))],
+        )
+        .unwrap();
+        // Zero out + close AAPL in March.
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), naive_dt(2025, 3, 1))],
+        )
+        .unwrap();
+        db.close_holding("t212", "AAPL", None, naive_dt(2025, 3, 1))
+            .unwrap();
+
+        // February: AAPL still open at 100; checking ignored.
+        let feb = db
+            .compute_investment_metrics(naive_date(2025, 1, 1), naive_date(2025, 2, 15), None, &gbp_fx())
+            .unwrap();
+        assert_eq!(feb.end_value, dec!(100));
+
+        // April: AAPL latest snapshot is the closed £0 one -> 0.
+        let apr = db
+            .compute_investment_metrics(naive_date(2025, 1, 1), naive_date(2025, 4, 30), None, &gbp_fx())
+            .unwrap();
+        assert_eq!(apr.end_value, dec!(0));
+    }
+
+    // Multi-currency: values must be FX-converted to the preferred currency,
+    // not summed raw. This is the real-data bug (an NGN position was counted
+    // at face value as GBP, inflating metrics ~3700x for that holding).
+    #[test]
+    fn investment_metrics_convert_currency() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+
+        let fx = crate::util::fx::FxRateMap::new(vec![
+            crate::model::Currency {
+                code: "GBP".to_string(),
+                is_preferred: true,
+                fx_rate: dec!(1),
+                updated_at: None,
+            },
+            crate::model::Currency {
+                code: "USD".to_string(),
+                is_preferred: false,
+                fx_rate: dec!(0.5),
+                updated_at: None,
+            },
+        ])
+        .unwrap();
+
+        let mut usd = make_holding("t212", "AAPL", HoldingType::Stock, dec!(1000), naive_dt(2025, 1, 15));
+        usd.currency = "USD".to_string();
+        let gbp = make_holding("t212", "VWRP", HoldingType::Stock, dec!(200), naive_dt(2025, 1, 15));
+        db.upsert_holdings("t212", &[usd, gbp]).unwrap();
+
+        let m = db
+            .compute_investment_metrics(naive_date(2025, 1, 1), naive_date(2025, 2, 1), None, &fx)
+            .unwrap();
+        // 1000 USD * 0.5 = 500 GBP, + 200 GBP = 700 GBP (raw sum would be 1200).
+        assert_eq!(m.end_value, dec!(700));
     }
 }
