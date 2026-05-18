@@ -2044,10 +2044,11 @@ impl Db {
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
-        // Get all account IDs that have at least one active holding in range.
+        // Get all account IDs that have at least one holding in range.
+        // (Closed holdings are zeroed, so they need no special-casing here.)
         let account_ids: Vec<String> = {
             let mut stmt = self.conn.prepare(
-                "SELECT DISTINCT account_id FROM holdings WHERE is_closed = 0 AND as_of >= ?1 AND as_of <= ?2",
+                "SELECT DISTINCT account_id FROM holdings WHERE as_of >= ?1 AND as_of <= ?2",
             )?;
             stmt.query_map(rusqlite::params![start_str, end_str], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
@@ -2059,7 +2060,7 @@ impl Db {
                 .conn
                 .query_row(
                     r"SELECT MIN(as_of) FROM holdings
-                      WHERE account_id = ?1 AND is_closed = 0 AND as_of >= ?2",
+                      WHERE account_id = ?1 AND as_of >= ?2",
                     rusqlite::params![account_id, start_str],
                     |row| row.get(0),
                 )
@@ -2070,7 +2071,7 @@ impl Db {
                 .conn
                 .query_row(
                     r"SELECT MAX(as_of) FROM holdings
-                      WHERE account_id = ?1 AND is_closed = 0 AND as_of <= ?2",
+                      WHERE account_id = ?1 AND as_of <= ?2",
                     rusqlite::params![account_id, end_str],
                     |row| row.get(0),
                 )
@@ -2081,7 +2082,7 @@ impl Db {
                 self.conn
                     .query_row(
                         r"SELECT SUM(CAST(value AS REAL)) FROM holdings
-                          WHERE account_id = ?1 AND is_closed = 0 AND as_of = ?2",
+                          WHERE account_id = ?1 AND as_of = ?2",
                         rusqlite::params![account_id, d],
                         |row| row.get::<_, Option<f64>>(0),
                     )
@@ -2094,7 +2095,7 @@ impl Db {
                 self.conn
                     .query_row(
                         r"SELECT SUM(CAST(value AS REAL)) FROM holdings
-                          WHERE account_id = ?1 AND is_closed = 0 AND as_of = ?2",
+                          WHERE account_id = ?1 AND as_of = ?2",
                         rusqlite::params![account_id, d],
                         |row| row.get::<_, Option<f64>>(0),
                     )
@@ -2130,7 +2131,7 @@ impl Db {
                 SUM(CAST(h.value AS REAL)) AS total_balance,
                 MIN(h.currency) AS currency
               FROM holdings h
-              WHERE h.is_closed = 0 AND h.as_of >= ?1 AND h.as_of <= ?2
+              WHERE h.as_of >= ?1 AND h.as_of <= ?2
               GROUP BY h.account_id, h.as_of
               ORDER BY h.as_of, h.account_id",
         )?;
@@ -2448,6 +2449,11 @@ impl Db {
             .collect::<Vec<_>>()
             .join(",");
 
+        // This is the one place is_closed is still filtered: it is a
+        // user-facing holdings list, not net-worth math, and the
+        // `include_closed` flag is an explicit API contract for hiding
+        // sold/closed positions from display. Balance/net-worth queries no
+        // longer filter is_closed (closed holdings are guaranteed zeroed).
         let closed_filter = if include_closed { "" } else { "AND h.is_closed = 0" };
         let sql = format!(
             r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
@@ -2566,7 +2572,7 @@ impl Db {
                     .conn
                     .query_row(
                         r"SELECT MAX(as_of) FROM holdings
-                          WHERE account_id = ?1 AND is_closed = 0 AND as_of <= ?2",
+                          WHERE account_id = ?1 AND as_of <= ?2",
                         rusqlite::params![id, date_str],
                         |row| row.get(0),
                     )
@@ -2578,7 +2584,7 @@ impl Db {
                         .conn
                         .query_row(
                             r"SELECT SUM(CAST(value AS REAL)) FROM holdings
-                              WHERE account_id = ?1 AND is_closed = 0 AND as_of = ?2",
+                              WHERE account_id = ?1 AND as_of = ?2",
                             rusqlite::params![id, d],
                             |row| row.get(0),
                         )
