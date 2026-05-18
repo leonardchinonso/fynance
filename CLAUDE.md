@@ -243,3 +243,13 @@ The workflow will: tag the commit, build the Linux binary, push the Docker image
 - Frontend fetches through `src/api/client.ts`, never direct `fetch()` in components
 - All API response types are auto-generated from Rust via `ts-rs` into `frontend/src/bindings/`. Never manually edit files in that directory.
 - Playwright screenshots and traces always go inside the `.playwright-mcp/` folder. Never write screenshots to the repo root or anywhere else.
+
+### Code comments
+
+Default to writing code that reads on its own (clear names, small functions, obvious control flow). A reader should rarely need a comment to understand *what* the code does.
+
+- Do not add comments that restate what the code already says. No play-by-play narration, no "// loop over accounts", no describing the obvious.
+- Never write comments about what you are *not* doing or *don't* need to worry about. Comment the code that exists, not the roads not taken.
+- A function may have a short doc comment as a contract: one or two lines on what it does, and only if non-obvious, its inputs/outputs/errors. If the signature already makes that clear (e.g. `get_account_id`), omit it.
+- Comments earn their place when they say something the code cannot: a non-local invariant the code relies on (and where it is enforced), the reason behind a surprising or non-obvious choice, a pointer to a related file/issue/spec. Prefer linking over re-explaining.
+- Keep them terse. If a comment is drifting into multiple sentences explaining mechanism, the code probably needs restructuring instead.

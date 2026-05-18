@@ -50,11 +50,8 @@ const AVAILABLE_TYPES = new Set(["checking", "savings", "investment", "cash", "c
 const UNAVAILABLE_LIABILITY_TYPES = new Set(["mortgage"])
 
 /**
- * Single source of truth for splitting an account balance into available /
- * unavailable wealth. Used by BOTH the portfolio summary and the portfolio
- * history so they cannot diverge (the mock-side analogue of the backend
- * summary/history reconciliation bug). A `credit` balance reduces available
- * wealth; a mortgage reduces unavailable wealth; everything else adds.
+ * Splits an account balance into available / unavailable wealth. Shared by
+ * the portfolio summary and history so they cannot diverge.
  */
 function classifyBalance(
   accountType: string,

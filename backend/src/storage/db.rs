@@ -1775,8 +1775,7 @@ impl Db {
     // ── Portfolio ─────────────────────────────────────────────────────────────
 
     pub fn upsert_holdings(&self, account_id: &str, holdings: &[Holding]) -> Result<()> {
-        // Invariant: a closed holding must be zeroed out (see `close_holding`).
-        // Reject the whole batch before writing anything if violated.
+        // Invariant: a closed holding must be zeroed (see `close_holding`).
         for h in holdings {
             if h.is_closed && !h.value.is_zero() {
                 anyhow::bail!(
@@ -1983,13 +1982,9 @@ impl Db {
 
     // ── Portfolio queries ─────────────────────────────────────────────────────
 
-    /// Returns one `HoldingsHistoryRow` per period between `from` and `to`.
-    ///
-    /// Each period is reduced from the exact same point-in-time holdings the
-    /// portfolio summary uses (`get_holdings_for_summary`): per-(account,
-    /// symbol, sub_account) carry-forward, per-holding FX conversion. This
-    /// guarantees the last history point reconciles with the Net Worth card /
-    /// Balance Sheet for the same `as_of` (`total_wealth == net_worth`).
+    /// One `HoldingsHistoryRow` per period in `[from, to]`. The last point
+    /// reconciles with the portfolio summary's net worth for the same
+    /// `as_of` (both reduce `get_holdings_for_summary`).
     pub fn get_monthly_net_worth(
         &self,
         from: NaiveDate,
@@ -2044,8 +2039,6 @@ impl Db {
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
-        // Get all account IDs that have at least one holding in range.
-        // (Closed holdings are zeroed, so they need no special-casing here.)
         let account_ids: Vec<String> = {
             let mut stmt = self.conn.prepare(
                 "SELECT DISTINCT account_id FROM holdings WHERE as_of >= ?1 AND as_of <= ?2",
@@ -2270,20 +2263,15 @@ impl Db {
         Ok(result)
     }
 
-    /// Returns individual holdings for all accounts of a profile, point-in-time
-    /// (carry-forward to `as_of`), along with account metadata needed for
-    /// breakdowns. Used by the summary handler so that negative holdings
-    /// (loans, mortgages) count as liabilities separately from positive
-    /// holdings in the same account.
+    /// Point-in-time holdings (per-(account, symbol, sub_account) carry-forward
+    /// to `as_of`) with account metadata, for the given profile.
     ///
-    /// This is the single source of truth for point-in-time holdings: the
-    /// portfolio summary, `accounts_as_of`, and `get_monthly_net_worth` all
-    /// reduce its output, so they reconcile by construction. It deliberately
-    /// does *not* filter `is_closed`: closed holdings are guaranteed to be
-    /// zeroed (enforced by `close_holding` / `upsert_holdings` /
-    /// `replace_holdings`), so carrying a closed snapshot forward contributes
-    /// 0 and needs no special-casing. Filtering here was the source of the
-    /// summary/history divergence.
+    /// Single source of truth: the summary handler, `accounts_as_of`, and
+    /// `get_monthly_net_worth` all reduce this, so they reconcile.
+    ///
+    /// Does not filter `is_closed`; closed holdings are invariant-zeroed
+    /// (`close_holding` / `upsert_holdings` / `replace_holdings`), so a
+    /// carried closed snapshot contributes 0.
     pub fn get_holdings_for_summary(
         &self,
         as_of: NaiveDate,
@@ -2341,15 +2329,12 @@ impl Db {
         Ok(rows)
     }
 
-    /// Per-account point-in-time view derived from the *same* carry-forward
-    /// holdings as the portfolio summary and net-worth history
-    /// (`get_holdings_for_summary`), so account balances reconcile with net
-    /// worth instead of using a divergent single-latest-snapshot-date sum.
+    /// Per-account balances reduced from `get_holdings_for_summary`, so they
+    /// reconcile with net worth.
     ///
-    /// `balance` is the sum of the account's carried holdings in the account
-    /// currency; `balance_date` is the most recent snapshot among them.
-    /// Active accounts with no holdings as of `as_of` are returned with a
-    /// `None` balance (mirroring the previous `LEFT JOIN` behaviour).
+    /// `balance` = sum of the account's carried holdings (account currency);
+    /// `balance_date` = most recent snapshot among them. Active accounts with
+    /// no holdings as of `as_of` get a `None` balance.
     pub fn accounts_as_of(
         &self,
         as_of: NaiveDate,
@@ -2359,7 +2344,6 @@ impl Db {
         let stale_days = 45i64;
 
         let holdings = self.get_holdings_for_summary(as_of, profile_id)?;
-        // account_id -> (summed value, most recent snapshot date)
         let mut agg: HashMap<String, (Decimal, NaiveDateTime)> = HashMap::new();
         for row in &holdings {
             let h = &row.holding;
@@ -2449,11 +2433,8 @@ impl Db {
             .collect::<Vec<_>>()
             .join(",");
 
-        // This is the one place is_closed is still filtered: it is a
-        // user-facing holdings list, not net-worth math, and the
-        // `include_closed` flag is an explicit API contract for hiding
-        // sold/closed positions from display. Balance/net-worth queries no
-        // longer filter is_closed (closed holdings are guaranteed zeroed).
+        // Only place is_closed is filtered: a user-facing list with an
+        // explicit `include_closed` API flag, not net-worth math.
         let closed_filter = if include_closed { "" } else { "AND h.is_closed = 0" };
         let sql = format!(
             r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
@@ -2489,7 +2470,7 @@ impl Db {
             return Ok(0);
         }
 
-        // Invariant: a closed holding must be zeroed out (see `close_holding`).
+        // Invariant: a closed holding must be zeroed (see `close_holding`).
         for h in holdings {
             if h.is_closed && !h.value.is_zero() {
                 anyhow::bail!(
@@ -2546,24 +2527,11 @@ impl Db {
         Ok(inserted)
     }
 
-    /// Compute investment performance metrics for `[start, end]`.
-    ///
-    /// Start and end values use the same per-`(account, symbol, sub_account)`
-    /// carry-forward as the portfolio summary / net-worth history
-    /// (`get_holdings_for_summary`), restricted to `Investment` accounts, so
-    /// these figures stay consistent with net worth. The previous
-    /// implementation summed only the holdings on each account's single
-    /// most-recent snapshot date, silently dropping any symbol/sub-account
-    /// last recorded before that date (same class of bug as the deleted
-    /// `get_portfolio_as_of`).
-    ///
-    /// All monetary figures are converted to the preferred currency via `fx`,
-    /// per holding / per transaction currency, exactly like the net-worth
-    /// path. Summing raw `value` (the previous behaviour) produced nonsense
-    /// for multi-currency portfolios (e.g. an NGN position counted at its
-    /// face value as GBP).
-    ///
-    /// `new_cash_invested` = signed sum of `Finance: Investment Transfer` transactions.
+    /// Investment performance for `[start, end]`. Start/end values reduce
+    /// `get_holdings_for_summary` (Investment accounts only), FX-converted via
+    /// `fx` per holding/transaction currency, so they stay consistent with
+    /// net worth. `new_cash_invested` = signed sum of
+    /// `Finance: Investment Transfer` transactions.
     pub fn compute_investment_metrics(
         &self,
         start: NaiveDate,
@@ -2583,7 +2551,6 @@ impl Db {
         let start_value = sum_carry_forward(start)?;
         let end_value = sum_carry_forward(end)?;
 
-        // Net cash moved into investment accounts, converted per-currency.
         let new_cash_invested: Decimal = {
             let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
             let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
@@ -2628,9 +2595,8 @@ impl Db {
         let sub = sub_account.unwrap_or("");
         let as_of_str = as_of.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-        // Invariant: only zeroed-out positions may be closed. This keeps closed
-        // holdings out of net-worth math by value (they contribute 0) rather
-        // than by a fragile is_closed filter. Reject closing a non-zero row.
+        // Invariant: only zeroed positions may be closed, so closed holdings
+        // drop out of net-worth math by value, not by an is_closed filter.
         let nonzero_count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM holdings
              WHERE account_id = ?1 AND symbol = ?2
@@ -3744,7 +3710,6 @@ mod consolidation_tests {
         .unwrap();
 
         // Invariant: a position can only be closed once it is zeroed out.
-        // Record the zeroed closing snapshot, then close it.
         let dt2 = naive_dt(2025, 1, 20);
         db.upsert_holdings(
             "t212",
@@ -4017,7 +3982,6 @@ mod consolidation_tests {
             "closing a non-zero holding must be rejected"
         );
 
-        // Zero it out first, then closing is allowed.
         db.upsert_holdings(
             "t212",
             &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt)],
@@ -4105,9 +4069,8 @@ mod consolidation_tests {
             .sum()
     }
 
-    // The bug this whole change fixes: the last history point must equal the
-    // Net Worth card / Balance Sheet for the same as_of. Uses per-symbol
-    // multi-date snapshots, the exact shape that made the old two paths diverge.
+    // Regression: history's last point must equal the summary's net worth
+    // for the same as_of. Fixture uses per-symbol multi-date snapshots.
     #[test]
     fn history_last_reconciles_with_summary_net_worth() {
         let (db, _file) = test_db();
@@ -4158,8 +4121,8 @@ mod consolidation_tests {
             last.total_wealth, net_worth,
             "history last total must equal summary net worth"
         );
-        assert_eq!(last.available_wealth, dec!(170)); // t212
-        assert_eq!(last.unavailable_wealth, dec!(1000)); // pension
+        assert_eq!(last.available_wealth, dec!(170));
+        assert_eq!(last.unavailable_wealth, dec!(1000));
 
         // Per-account list must also sum to net worth.
         let accounts = db.accounts_as_of(as_of, None).unwrap();
@@ -4182,7 +4145,6 @@ mod consolidation_tests {
             &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
         )
         .unwrap();
-        // Zeroed closing snapshot in April.
         db.upsert_holdings(
             "t212",
             &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), naive_dt(2025, 4, 10))],
