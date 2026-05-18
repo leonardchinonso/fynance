@@ -1,0 +1,4 @@
+# Auto-generated TypeScript bindings (ts-rs) are always written with LF.
+# Without this, Windows core.autocrlf=true makes every backend build
+# re-dirty them (LF working tree vs CRLF index), polluting diffs.
+frontend/src/bindings/** text eol=lf
