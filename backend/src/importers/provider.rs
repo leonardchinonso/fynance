@@ -591,9 +591,19 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate process-global env vars
+    /// (`FYNANCE_PARSE_PROVIDER`, `FYNANCE_*_API_KEY`). Cargo runs tests in
+    /// parallel within one process, so without this one test's `set_var`
+    /// clobbers another's between its `set_var` and `create_provider()` read.
+    /// `.unwrap_or_else(into_inner)` keeps the lock usable if a guarded test
+    /// panics, so the real failure surfaces instead of a poison cascade.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_create_provider_unknown_name() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("FYNANCE_PARSE_PROVIDER", "invalid_provider") };
         let result = create_provider();
         unsafe { std::env::remove_var("FYNANCE_PARSE_PROVIDER") };
@@ -604,6 +614,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_gemini_is_stub() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("FYNANCE_PARSE_PROVIDER", "gemini") };
         let result = create_provider();
         unsafe { std::env::remove_var("FYNANCE_PARSE_PROVIDER") };
@@ -613,6 +624,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_openai_requires_key() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "openai");
             std::env::remove_var("FYNANCE_OPENAI_API_KEY");
@@ -626,6 +638,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_anthropic_requires_key() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
             std::env::remove_var("FYNANCE_ANTHROPIC_API_KEY");
@@ -659,6 +672,7 @@ mod tests {
 
     #[test]
     fn test_openai_pdf_returns_error() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("FYNANCE_OPENAI_API_KEY", "test-key") };
         let provider = OpenAIProvider::from_env().unwrap();
         unsafe { std::env::remove_var("FYNANCE_OPENAI_API_KEY") };
