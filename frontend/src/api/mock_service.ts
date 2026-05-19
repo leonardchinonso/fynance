@@ -49,6 +49,23 @@ const AVAILABLE_TYPES = new Set(["checking", "savings", "investment", "cash", "c
 // Liability types that subtract from unavailable wealth (e.g. mortgage offsets property value)
 const UNAVAILABLE_LIABILITY_TYPES = new Set(["mortgage"])
 
+/**
+ * Splits an account balance into available / unavailable wealth. Shared by
+ * the portfolio summary and history so they cannot diverge.
+ */
+function classifyBalance(
+  accountType: string,
+  bal: number
+): { available: number; unavailable: number } {
+  if (AVAILABLE_TYPES.has(accountType)) {
+    return { available: accountType === "credit" ? -bal : bal, unavailable: 0 }
+  }
+  if (UNAVAILABLE_LIABILITY_TYPES.has(accountType)) {
+    return { available: 0, unavailable: -bal }
+  }
+  return { available: 0, unavailable: bal }
+}
+
 export class MockApiService implements ApiService {
   async getProfiles(): Promise<Profile[]> {
     await delay(DELAY_MS)
@@ -355,13 +372,9 @@ export class MockApiService implements ApiService {
       } else {
         totalAssets += Math.abs(bal)
       }
-      if (AVAILABLE_TYPES.has(a.type)) {
-        availableWealth += a.type === "credit" ? -bal : bal
-      } else if (UNAVAILABLE_LIABILITY_TYPES.has(a.type)) {
-        unavailableWealth -= bal // Mortgage subtracts from unavailable (offsets property)
-      } else {
-        unavailableWealth += bal
-      }
+      const split = classifyBalance(a.type, bal)
+      availableWealth += split.available
+      unavailableWealth += split.unavailable
     }
 
     const netWorth = totalAssets - totalLiabilities
@@ -462,13 +475,9 @@ export class MockApiService implements ApiService {
       const entry = months.get(month)!
       const bal = parseFloat(snap.balance)
 
-      if (AVAILABLE_TYPES.has(account.type)) {
-        entry.available += bal
-      } else if (UNAVAILABLE_LIABILITY_TYPES.has(account.type)) {
-        entry.unavailable -= bal // Mortgage subtracts from unavailable
-      } else {
-        entry.unavailable += bal
-      }
+      const split = classifyBalance(account.type, bal)
+      entry.available += split.available
+      entry.unavailable += split.unavailable
     }
 
     return Array.from(months.entries())
