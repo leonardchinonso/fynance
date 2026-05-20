@@ -6,6 +6,7 @@ import type {
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
+  PatchAccountBody,
   CreateCategoryBody,
   Currency,
   PatchCategoryBody,
@@ -25,7 +26,13 @@ import type {
 } from "@/types"
 import type { Category } from "@/bindings/Category"
 import type { CategoryNode } from "@/bindings/CategoryNode"
-import type { ApiService } from "./service"
+import type { IngestionPreview } from "@/bindings/IngestionPreview"
+import type { ParseHints } from "@/bindings/ParseHints"
+import type { ImportPayload } from "@/bindings/ImportPayload"
+import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
+import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
+import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+import type { ApiService, HoldingsImportResponse } from "./service"
 import {
   MOCK_PROFILES,
   MOCK_ACCOUNTS,
@@ -569,6 +576,51 @@ export class MockApiService implements ApiService {
     return profile
   }
 
+  async updateProfile(id: string, body: { name?: string }): Promise<Profile> {
+    await delay(DELAY_MS)
+    const idx = MOCK_PROFILES.findIndex((p) => p.id === id)
+    if (idx === -1) throw new Error(`profile ${id} not found`)
+    const updated: Profile = { ...MOCK_PROFILES[idx], ...(body.name ? { name: body.name } : {}) }
+    MOCK_PROFILES[idx] = updated
+    return updated
+  }
+
+  async deleteProfile(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    if (id === "default") throw new Error("cannot delete the default profile")
+    const refs = MOCK_ACCOUNTS.filter((a) => a.profile_ids?.includes(id)).length
+    if (refs > 0) throw new Error(`${refs} account(s) still reference profile ${id}`)
+    const idx = MOCK_PROFILES.findIndex((p) => p.id === id)
+    if (idx === -1) throw new Error(`profile ${id} not found`)
+    MOCK_PROFILES.splice(idx, 1)
+  }
+
+  async updateAccount(id: string, body: PatchAccountBody): Promise<Account> {
+    await delay(DELAY_MS)
+    const idx = MOCK_ACCOUNTS.findIndex((a) => a.id === id)
+    if (idx === -1) throw new Error(`account ${id} not found`)
+    const cur = MOCK_ACCOUNTS[idx]
+    const updated: Account = {
+      ...cur,
+      name: body.name ?? cur.name,
+      institution: body.institution ?? cur.institution,
+      type: (body.type as Account["type"]) ?? cur.type,
+      currency: body.currency ?? cur.currency,
+      is_active: body.is_active ?? cur.is_active,
+      profile_ids: body.profile_ids ?? cur.profile_ids,
+      notes: body.notes !== undefined ? body.notes : cur.notes,
+    }
+    MOCK_ACCOUNTS[idx] = updated
+    return updated
+  }
+
+  async deleteAccount(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    const idx = MOCK_ACCOUNTS.findIndex((a) => a.id === id)
+    if (idx === -1) throw new Error(`account ${id} not found`)
+    MOCK_ACCOUNTS[idx] = { ...MOCK_ACCOUNTS[idx], is_active: false }
+  }
+
   async createAccount(body: CreateAccountBody): Promise<Account> {
     await delay(DELAY_MS)
     const account: Account = {
@@ -728,5 +780,128 @@ export class MockApiService implements ApiService {
       detection_confidence: 0.95,
       errors: [],
     }
+  }
+
+  async parseDocuments(
+    files: File[],
+    accountId: string,
+    hints: ParseHints
+  ): Promise<IngestionPreview> {
+    await delay(DELAY_MS * 2)
+    const wantTx = hints.return_type.transactions
+    const wantHoldings = hints.return_type.holdings.enabled
+    const wantInv = hints.return_type.investments
+
+    const txRows = wantTx
+      ? [
+          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null },
+          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null },
+          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null },
+          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null },
+        ]
+      : []
+    const txPayload: ImportPayload | null = wantTx
+      ? {
+          account_id: accountId,
+          transactions: [
+            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category: "Transport", category_id: null, category_source: "rule", notes: null, is_recurring: null, exclude_from_summary: null },
+            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category: "Eating Out", category_id: null, category_source: "rule", notes: null, is_recurring: null, exclude_from_summary: null },
+            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category: "Subscriptions", category_id: null, category_source: "rule", notes: null, is_recurring: true, exclude_from_summary: null },
+          ],
+        }
+      : null
+
+    const holdingRows = wantHoldings
+      ? [
+          { account_id: accountId, symbol: "VUSA", sub_account: null, value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", status: "modify", existing_value: "3654.00" },
+          { account_id: accountId, symbol: "AAPL", sub_account: null, value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", status: "new", existing_value: null },
+        ]
+      : []
+    const holdingsPayload: HoldingsImportPayload | null = wantHoldings
+      ? {
+          account_id: accountId,
+          holdings: [
+            { account_id: accountId, symbol: "VUSA", name: "Vanguard S&P 500 UCITS ETF", holding_type: "etf", quantity: "50.0000", price_per_unit: "76.32", value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", short_name: "VUSA", sub_account: null, is_closed: false },
+            { account_id: accountId, symbol: "AAPL", name: "Apple Inc", holding_type: "stock", quantity: "10.0000", price_per_unit: "198.45", value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", short_name: "AAPL", sub_account: null, is_closed: false },
+          ],
+        }
+      : null
+
+    const invRows = wantInv
+      ? [
+          { index: 0, event_type: "buy", symbol: "AAPL", date: "2026-04-10T14:30:00", quantity: "10.0000", price_per_share: "185.20", currency: "USD", status: "new" as const, existing_id: null },
+          { index: 1, event_type: "buy", symbol: "VUSA", date: "2026-01-15T09:00:00", quantity: "5.0000", price_per_share: "72.10", currency: "GBP", status: "duplicate" as const, existing_id: "inv_xyz789" },
+        ]
+      : []
+    const invPayload: InvestmentsImportPayload | null = wantInv
+      ? {
+          account_id: accountId,
+          events: [
+            { account_id: accountId, event_type: "buy", symbol: "AAPL", date: "2026-04-10T14:30:00", quantity: "10.0000", price_per_share: "185.20", fee: "0.00", currency: "USD", notes: null },
+          ],
+        }
+      : null
+
+    const newCount = (n: number, d = 0) => n - d
+    const _ = files // referenced to keep ts-rs happy
+    void _
+    return {
+      status: "success",
+      metadata: {
+        files_processed: files.length,
+        institution_detected: "monzo",
+        detection_confidence: 0.97,
+        processing_time_ms: BigInt(2340),
+        notes: [],
+        relationships_found: [],
+      },
+      transactions: {
+        count: txRows.length,
+        new: newCount(txRows.filter((r) => r.status === "new").length),
+        duplicate: txRows.filter((r) => r.status === "duplicate").length,
+        errors: 0,
+        rows: txRows,
+        payload: txPayload,
+      },
+      holdings: {
+        count: holdingRows.length,
+        new: holdingRows.filter((r) => r.status === "new").length,
+        modify: holdingRows.filter((r) => r.status === "modify").length,
+        rows: holdingRows,
+        payload: holdingsPayload,
+      },
+      investments: {
+        count: invRows.length,
+        new: invRows.filter((r) => r.status === "new").length,
+        duplicate: invRows.filter((r) => r.status === "duplicate").length,
+        rows: invRows,
+        payload: invPayload,
+      },
+      clarifications_needed: [],
+    }
+  }
+
+  async commitTransactions(payload: ImportPayload): Promise<ImportResult> {
+    await delay(DELAY_MS)
+    return {
+      rows_total: BigInt(payload.transactions.length),
+      rows_inserted: BigInt(payload.transactions.length),
+      rows_duplicate: BigInt(0),
+      filename: "<api>",
+      account_id: payload.account_id,
+      detected_bank: "unknown",
+      detection_confidence: 0,
+      errors: [],
+    }
+  }
+
+  async commitHoldings(payload: HoldingsImportPayload): Promise<HoldingsImportResponse> {
+    await delay(DELAY_MS)
+    return { inserted: payload.holdings.length, updated: 0, total: payload.holdings.length }
+  }
+
+  async commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult> {
+    await delay(DELAY_MS)
+    return { total: payload.events.length, inserted: payload.events.length, duplicates: 0, errors: [] }
   }
 }

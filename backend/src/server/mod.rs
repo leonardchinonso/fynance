@@ -32,6 +32,8 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         // ── Accounts ───────────────────────────────────────────────────────
         .route("/accounts", get(routes::accounts::list_accounts))
         .route("/accounts", post(routes::accounts::create_account))
+        .route("/accounts/:id", patch(routes::accounts::update_account))
+        .route("/accounts/:id", delete(routes::accounts::delete_account))
         .route(
             "/accounts/:id/balance",
             patch(routes::accounts::set_account_balance),
@@ -39,6 +41,8 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         // ── Profiles ───────────────────────────────────────────────────────
         .route("/profiles", get(routes::profiles::list_profiles))
         .route("/profiles", post(routes::profiles::create_profile))
+        .route("/profiles/:id", patch(routes::profiles::update_profile))
+        .route("/profiles/:id", delete(routes::profiles::delete_profile))
         // ── Categories ─────────────────────────────────────────────────────
         .route("/categories", post(routes::categories::create_category))
         .route("/categories", get(routes::categories::list_categories))
@@ -76,11 +80,18 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             get(routes::transactions::list_transaction_accounts),
         )
         .route(
+            "/transactions/import",
+            post(routes::import_api::import_json),
+        )
+        .route(
             "/transactions/:id",
             patch(routes::transactions::patch_transaction),
         )
         // ── Import ────��─────────────────────────────���──────────────────────
-        .route("/import", post(routes::import_api::import_json))
+        // `/api/import` is deprecated; new callers should use
+        // `/api/transactions/import` (registered above). The legacy route
+        // adds a `Deprecation` / `Link` header pointing at the successor.
+        .route("/import", post(routes::import_api::import_json_legacy))
         .route("/import/csv", post(routes::import_api::import_csv))
         .route("/import/bulk", post(routes::import_api::import_bulk))
         // ── Parse (Stage 1) ───────────────────────────────────────────────

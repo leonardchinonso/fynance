@@ -31,11 +31,20 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
 
 ### Accounts
 
-- ⚠️ **Add PATCH and DELETE endpoints for accounts and profiles** — currently there is no way to edit or delete an account or profile once created (highest priority gap for usability). Backend needs: `PATCH /api/accounts/:id` (name, institution, type, currency, is_active), `DELETE /api/accounts/:id`, `PATCH /api/profiles/:id` (name), `DELETE /api/profiles/:id`. Frontend settings page already has disabled edit/delete buttons with "Coming soon" tooltips — once backend endpoints exist, wire them up.
+- [x] ✅ **PATCH and DELETE endpoints for accounts and profiles**
+  - `PATCH /api/accounts/:id` (routes/accounts.rs) — name, institution, type, currency, is_active, profile_ids, notes; at least one field required.
+  - `DELETE /api/accounts/:id` — 409 `account_in_use` if any transactions/holdings reference; soft-delete via `is_active = 0`.
+  - `PATCH /api/profiles/:id` (routes/profiles.rs) — name only.
+  - `DELETE /api/profiles/:id` — protects `default`; 409 `profile_in_use` if any account still references via `profile_ids` JSON array.
+  - All wired in server/mod.rs.
 
-- ⚠️ **Expand holding PATCH + add holding DELETE** — `PATCH /api/holdings/:account_id/:symbol` currently only supports toggling `is_closed`; it should also allow editing value, currency, and sub_account. `DELETE /api/holdings/:account_id/:symbol` does not exist at all. Backend needs: expand `PatchHoldingRequest` to include optional value/currency/sub_account fields, and add a `DELETE` handler that removes the holding row(s) for the given account/symbol (optionally scoped by sub_account and as_of).
+- [x] ✅ **Expand holding PATCH + add holding DELETE**
+  - `PatchHoldingRequest` now accepts optional value, currency, new_sub_account in addition to is_closed (routes/holdings.rs).
+  - Scope (which row to update) is still `as_of` + existing `sub_account`; `new_sub_account` is the rename target.
+  - `DELETE /api/holdings/:account_id/:symbol` (already wired via the multi-method route at server/mod.rs:133-138).
+  - `update_holding_fields` added in storage/db.rs for the value/currency/sub_account writes.
 
-- ⚠️ **Remove `accounts.balance` and `accounts.balance_date` columns** — these are a confusing denormalized cache that is never read back; balance is always derived from `SUM(holdings.value)`. Removal involves: drop columns in a migration, remove from `Account` struct in `model.rs`, remove from all upsert/insert SQL in `db.rs`, remove the `UPDATE accounts SET balance = ...` write in `set_account_balance`, remove `balance`/`balance_date` from `POST /api/accounts` request body and the `account add` CLI command.
+- [x] ✅ **Remove `accounts.balance` and `accounts.balance_date` columns** (Option A: minimal — table columns dropped, struct fields preserved and runtime-computed from holdings; chosen 2026-05-20 to avoid touching 9 frontend usages).
 
 - [x] ✅ Account `type` field should be an enum
   - AccountType enum defined (model.rs:110-148) with: Checking, Savings, Investment, Credit, Cash, Pension, Property, Mortgage
@@ -102,8 +111,8 @@ Implemented endpoints by entity:
 | Holdings | GET /api/holdings, POST /api/holdings/import (?dry_run), POST /api/holdings/:account_id, PATCH /api/holdings/:account_id/:symbol, (+ summary/history/balances/cash-flow views) | ✅ Done |
 | Categories | POST /api/categories, GET /api/categories, GET /api/categories/:id, GET /api/categories/resolve, PATCH /api/categories/:id, DELETE /api/categories/:id | ✅ Done (full CRUD) |
 | Sections | GET /api/sections, PUT /api/sections (replaces all mappings) | ✅ Done |
-| Accounts | GET /api/accounts, POST /api/accounts, PATCH /api/accounts/:id/balance | ✅ Done |
-| Profiles | GET /api/profiles, POST /api/profiles | ✅ Done (no DELETE yet) |
+| Accounts | GET /api/accounts, POST /api/accounts, PATCH /api/accounts/:id, DELETE /api/accounts/:id, PATCH /api/accounts/:id/balance | ✅ Done (full CRUD) |
+| Profiles | GET /api/profiles, POST /api/profiles, PATCH /api/profiles/:id, DELETE /api/profiles/:id | ✅ Done (full CRUD) |
 | Import | POST /api/import (JSON), POST /api/import/csv, POST /api/import/bulk | ✅ Done (no dry_run) |
 | Budget | GET /api/budget/:month, POST /api/budget (standing), POST /api/budget/override (monthly) | ✅ Done |
 
@@ -323,6 +332,12 @@ Completed:
 - OpenAPI 3.1 documentation with embedded category taxonomy (GET /api/docs)
 - API token generation and validation (bearer token auth)
 
+Done in this PR (2026-05-20):
+- **PATCH /api/accounts/:id** (full field set) + **DELETE /api/accounts/:id** (soft-delete, 409 when in use)
+- **PATCH /api/profiles/:id** + **DELETE /api/profiles/:id** (default protected, 409 when referenced)
+- **PATCH /api/holdings/:account_id/:symbol** expanded to value/currency/sub_account in addition to is_closed; **DELETE /api/holdings/:account_id/:symbol** wired
+- **Drop accounts.balance and accounts.balance_date columns** (Option A: table columns dropped, struct fields preserved and runtime-computed from holdings — no frontend change required)
+
 Deferred to V1+:
 - **PDF/image document imports** (requires LLM extraction)
 - **Transactions dry-run** (only holdings has ?dry_run=true)
@@ -330,8 +345,6 @@ Deferred to V1+:
 - **Generic `Paginated<T>` type** (current endpoints return arrays or single objects)
 - **Fingerprint collision disambiguation** (using simple sha256(datetime, amount, account_id))
 - **Automatic holding snapshot extraction from imports** (manual entry required)
-- **DELETE endpoints** for accounts, profiles (POST/GET only)
-- **Account PATCH endpoints** (only balance endpoint exists)
 - **T212 PDF parsing** (no PDF support in V0)
 
 **✅ Frontend (Ope) — BUILD PASSING, CORE COMPLETE**

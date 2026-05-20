@@ -56,6 +56,16 @@ impl PdfStatementParser {
             )
             .await?;
 
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                filename,
+                tool = "parse_bank_statement",
+                source = "pdf",
+                raw_tool_input = %tool_input,
+                "raw tool_use input before deserialization"
+            );
+        }
+
         let parsed: ParsedStatement = serde_json::from_value(tool_input)
             .context("deserializing ParsedStatement from PDF tool_use")?;
 
@@ -106,6 +116,16 @@ impl PdfHoldingsParser {
                 tool_schema,
             )
             .await?;
+
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                filename,
+                tool = "parse_holdings",
+                source = "pdf",
+                raw_tool_input = %tool_input,
+                "raw tool_use input before deserialization"
+            );
+        }
 
         let parsed: ParsedHoldings =
             serde_json::from_value(tool_input).context("deserializing ParsedHoldings from PDF")?;
@@ -165,6 +185,17 @@ impl PdfPeriodicHoldingsParser {
             )
             .await?;
 
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                filename,
+                period = period_str,
+                tool = "extract_periodic_holdings",
+                source = "pdf",
+                raw_tool_input = %tool_input,
+                "raw tool_use input before deserialization"
+            );
+        }
+
         let parsed: ParsedHoldings = serde_json::from_value(tool_input)
             .context("deserializing ParsedHoldings from PDF periodic holdings")?;
 
@@ -213,6 +244,16 @@ impl PdfInvestmentsParser {
                 tool_schema,
             )
             .await?;
+
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                filename,
+                tool = "parse_investments",
+                source = "pdf",
+                raw_tool_input = %tool_input,
+                "raw tool_use input before deserialization"
+            );
+        }
 
         let parsed: ParsedInvestments = serde_json::from_value(tool_input)
             .context("deserializing ParsedInvestments from PDF tool_use")?;

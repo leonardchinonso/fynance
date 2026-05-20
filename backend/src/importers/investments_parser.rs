@@ -151,6 +151,15 @@ impl LlmInvestmentsParser {
             )
             .await?;
 
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                filename,
+                tool = "parse_investments",
+                raw_tool_input = %tool_input,
+                "raw tool_use input before deserialization"
+            );
+        }
+
         let parsed: ParsedInvestments = serde_json::from_value(tool_input)
             .context("deserializing ParsedInvestments from tool_use input")?;
 

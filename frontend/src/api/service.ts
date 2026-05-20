@@ -6,6 +6,7 @@ import type {
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
+  PatchAccountBody,
   CreateCategoryBody,
   Currency,
   PatchCategoryBody,
@@ -25,6 +26,14 @@ import type {
 } from "@/types"
 import type { Category } from "@/bindings/Category"
 import type { CategoryNode } from "@/bindings/CategoryNode"
+import type { IngestionPreview } from "@/bindings/IngestionPreview"
+import type { ParseHints } from "@/bindings/ParseHints"
+import type { ImportPayload } from "@/bindings/ImportPayload"
+import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
+import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
+import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+
+export interface HoldingsImportResponse { inserted: number; updated: number; total: number }
 
 /**
  * ApiService defines the contract between the frontend and backend.
@@ -107,7 +116,12 @@ export interface ApiService {
 
   // ── Settings / CRUD ───────────────────────────────────────────────
   createProfile(body: { id: string; name: string }): Promise<Profile>
+  updateProfile(id: string, body: { name?: string }): Promise<Profile>
+  deleteProfile(id: string): Promise<void>
+
   createAccount(body: CreateAccountBody): Promise<Account>
+  updateAccount(id: string, body: PatchAccountBody): Promise<Account>
+  deleteAccount(id: string): Promise<void>
 
   getCategoryDetails(): Promise<CategoryNode[]>
   createCategory(body: CreateCategoryBody): Promise<Category>
@@ -123,4 +137,13 @@ export interface ApiService {
 
   // ── Import ────────────────────────────────────────────────────────
   importCsv(accountId: string, file: File): Promise<ImportResult>
+
+  /** Stage 1: upload files to `/api/parse`. Returns a preview with payloads. */
+  parseDocuments(files: File[], accountId: string, hints: ParseHints): Promise<IngestionPreview>
+  /** Stage 2: commit transactions via `/api/transactions/import`. */
+  commitTransactions(payload: ImportPayload): Promise<ImportResult>
+  /** Stage 2: commit holdings via `/api/holdings/import`. */
+  commitHoldings(payload: HoldingsImportPayload): Promise<HoldingsImportResponse>
+  /** Stage 2: commit investment events via `/api/investments/import`. */
+  commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult>
 }

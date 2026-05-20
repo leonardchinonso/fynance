@@ -21,6 +21,7 @@ import type {
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
+  PatchAccountBody,
   CreateCategoryBody,
   Currency,
   PatchCategoryBody,
@@ -40,7 +41,13 @@ import type {
 } from "@/types"
 import type { Category } from "@/bindings/Category"
 import type { CategoryNode } from "@/bindings/CategoryNode"
-import type { ApiService } from "./service"
+import type { IngestionPreview } from "@/bindings/IngestionPreview"
+import type { ParseHints } from "@/bindings/ParseHints"
+import type { ImportPayload } from "@/bindings/ImportPayload"
+import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
+import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
+import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+import type { ApiService, HoldingsImportResponse } from "./service"
 import { MockApiService } from "./mock_service"
 
 const BASE = "/api"
@@ -267,8 +274,24 @@ export class RealApiService implements ApiService {
     return post<Profile>(`${BASE}/profiles`, body)
   }
 
+  async updateProfile(id: string, body: { name?: string }): Promise<Profile> {
+    return patch<Profile>(`${BASE}/profiles/${encodeURIComponent(id)}`, body)
+  }
+
+  async deleteProfile(id: string): Promise<void> {
+    return del(`${BASE}/profiles/${encodeURIComponent(id)}`)
+  }
+
   async createAccount(body: CreateAccountBody): Promise<Account> {
     return post<Account>(`${BASE}/accounts`, body)
+  }
+
+  async updateAccount(id: string, body: PatchAccountBody): Promise<Account> {
+    return patch<Account>(`${BASE}/accounts/${encodeURIComponent(id)}`, body)
+  }
+
+  async deleteAccount(id: string): Promise<void> {
+    return del(`${BASE}/accounts/${encodeURIComponent(id)}`)
   }
 
   async getCategoryDetails(): Promise<CategoryNode[]> {
@@ -302,6 +325,38 @@ export class RealApiService implements ApiService {
       `${BASE}/import/csv?account=${encodeURIComponent(accountId)}`,
       formData
     )
+  }
+
+  async parseDocuments(
+    files: File[],
+    accountId: string,
+    hints: ParseHints
+  ): Promise<IngestionPreview> {
+    const formData = new FormData()
+    files.forEach((f) => formData.append("files[]", f, f.name))
+    formData.append("account_id", accountId)
+    formData.append("hints", JSON.stringify(hints))
+    return postMultipart<IngestionPreview>(`${BASE}/parse`, formData)
+  }
+
+  async commitTransactions(payload: ImportPayload): Promise<ImportResult> {
+    return post<ImportResult>(`${BASE}/transactions/import`, payload)
+  }
+
+  async commitHoldings(payload: HoldingsImportPayload): Promise<HoldingsImportResponse> {
+    const res = await post<{ inserted?: number; updated?: number; total?: number; holdings_imported?: number; ok?: boolean }>(
+      `${BASE}/holdings/import`,
+      payload
+    )
+    return {
+      inserted: res.inserted ?? res.holdings_imported ?? 0,
+      updated: res.updated ?? 0,
+      total: res.total ?? res.holdings_imported ?? (payload.holdings?.length ?? 0),
+    }
+  }
+
+  async commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult> {
+    return post<InvestmentImportResult>(`${BASE}/investments/import`, payload)
   }
 
   // ── Currencies ────────────────────────────────────────────────────

@@ -77,8 +77,6 @@ CREATE TABLE IF NOT EXISTS accounts (
     institution     TEXT NOT NULL,
     type            TEXT NOT NULL,   -- 'checking' | 'savings' | 'investment' | 'investment_isa' | 'credit' | 'cash' | 'pension'
     currency        TEXT NOT NULL DEFAULT 'GBP',
-    balance         TEXT,
-    balance_date    TEXT,
     is_active       INTEGER NOT NULL DEFAULT 1,
     notes           TEXT,
     profile_ids     TEXT NOT NULL DEFAULT '[]'

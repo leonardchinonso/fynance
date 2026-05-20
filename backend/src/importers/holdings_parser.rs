@@ -115,6 +115,15 @@ impl HoldingsExtractor for LlmHoldingsParser {
             )
             .await?;
 
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                filename,
+                tool = "parse_holdings",
+                raw_tool_input = %tool_input,
+                "raw tool_use input before deserialization"
+            );
+        }
+
         let parsed: ParsedHoldings = serde_json::from_value(tool_input)
             .context("deserializing ParsedHoldings from tool_use input")?;
 

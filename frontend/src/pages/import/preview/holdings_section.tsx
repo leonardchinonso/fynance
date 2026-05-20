@@ -1,0 +1,448 @@
+import { useMemo, useState, useEffect } from "react"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Button } from "@/components/ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Input } from "@/components/ui/input"
+import { Trash2, RotateCcw } from "lucide-react"
+import { cn } from "@/lib/utils"
+import type { HoldingsIngestionResult } from "@/bindings/HoldingsIngestionResult"
+import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
+import type { Holding } from "@/bindings/Holding"
+import type { HoldingType } from "@/bindings/HoldingType"
+import type { Currency } from "@/types"
+import { StatusBadge } from "./status_badge"
+import { DateCell, SelectCell, TextCell } from "./editors"
+import { SectionShell, useSectionControls } from "./section_shell"
+import {
+  Select as UiSelect,
+  SelectContent as UiSelectContent,
+  SelectItem as UiSelectItem,
+  SelectTrigger as UiSelectTrigger,
+  SelectValue as UiSelectValue,
+} from "@/components/ui/select"
+
+const HOLDING_TYPES: HoldingType[] = [
+  "stock", "etf", "fund", "bond", "crypto", "cash", "property", "loan", "credit",
+]
+
+const DECIMAL_RE = /^-?\d*\.?\d*$/
+
+function toNum(s: string): number {
+  const n = parseFloat(s)
+  return Number.isFinite(n) ? n : 0
+}
+
+function trimZeros(s: string): string {
+  if (!s.includes(".")) return s
+  return s.replace(/\.?0+$/, "")
+}
+
+/**
+ * Value editor for a holding. The backend always wants `quantity` and `value`
+ * (and optionally `price_per_unit`) with the invariant `value = qty * price`.
+ * The table only ever shows `value`; this popover lets the user edit value
+ * directly, OR drill into quantity + price-per-unit. Editing any field
+ * propagates per `value = qty * price`.
+ */
+function HoldingValuePopover({
+  value,
+  quantity,
+  pricePerUnit,
+  currency,
+  disabled,
+  onChange,
+}: {
+  value: string
+  quantity: string
+  pricePerUnit: string | null
+  currency: string
+  disabled?: boolean
+  onChange: (next: { value: string; quantity: string; pricePerUnit: string | null }) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [v, setV] = useState(value)
+  const [q, setQ] = useState(quantity || "1")
+  const [p, setP] = useState(pricePerUnit ?? "")
+
+  useEffect(() => {
+    if (open) {
+      setV(value)
+      setQ(quantity || "1")
+      setP(pricePerUnit ?? "")
+    }
+  }, [open, value, quantity, pricePerUnit])
+
+  function setVRecalcPrice(nv: string) {
+    if (!(nv === "" || nv === "-" || DECIMAL_RE.test(nv))) return
+    setV(nv)
+    const qn = toNum(q)
+    if (qn > 0 && nv && nv !== "-") {
+      setP(trimZeros((toNum(nv) / qn).toFixed(6)))
+    }
+  }
+
+  function setQRecalcValue(nq: string) {
+    if (!(nq === "" || nq === "-" || DECIMAL_RE.test(nq))) return
+    setQ(nq)
+    const pn = toNum(p)
+    if (nq && nq !== "-" && p) {
+      setV(trimZeros((toNum(nq) * pn).toFixed(2)))
+    }
+  }
+
+  function setPRecalcValue(np: string) {
+    if (!(np === "" || np === "-" || DECIMAL_RE.test(np))) return
+    setP(np)
+    const qn = toNum(q)
+    if (np && np !== "-" && q) {
+      setV(trimZeros((qn * toNum(np)).toFixed(2)))
+    }
+  }
+
+  function commitAndClose() {
+    onChange({
+      value: v || "0",
+      quantity: q || "1",
+      pricePerUnit: p ? p : null,
+    })
+    setOpen(false)
+  }
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        if (o) setOpen(true)
+        else commitAndClose()
+      }}
+    >
+      <PopoverTrigger
+        nativeButton={false}
+        render={
+          <button
+            type="button"
+            disabled={disabled}
+            className={cn(
+              "h-7 px-1.5 py-0.5 text-xs text-right tabular-nums rounded-md border bg-transparent w-full",
+              "hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
+          >
+            {value || "0"}
+          </button>
+        }
+      />
+      <PopoverContent className="w-[260px] p-3" align="end">
+        <p className="text-xs font-medium text-muted-foreground mb-2">
+          Value <span className="text-muted-foreground/60">({currency})</span>
+        </p>
+        <Input
+          className="h-8 text-sm text-right tabular-nums mb-3"
+          inputMode="decimal"
+          value={v}
+          onChange={(e) => setVRecalcPrice(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") commitAndClose() }}
+          autoFocus
+        />
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+          or set quantity × price
+        </p>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
+          <Input
+            className="h-7 text-xs text-right tabular-nums"
+            inputMode="decimal"
+            value={q}
+            onChange={(e) => setQRecalcValue(e.target.value)}
+            placeholder="Qty"
+            aria-label="Quantity"
+            onKeyDown={(e) => { if (e.key === "Enter") commitAndClose() }}
+          />
+          <span className="text-xs text-muted-foreground">×</span>
+          <Input
+            className="h-7 text-xs text-right tabular-nums"
+            inputMode="decimal"
+            value={p}
+            onChange={(e) => setPRecalcValue(e.target.value)}
+            placeholder="Price"
+            aria-label="Price per unit"
+            onKeyDown={(e) => { if (e.key === "Enter") commitAndClose() }}
+          />
+        </div>
+        <div className="mt-3 flex justify-end">
+          <Button size="sm" className="h-7 text-xs" onClick={commitAndClose}>Done</Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+interface Props {
+  result: HoldingsIngestionResult
+  payload: HoldingsImportPayload | null
+  setPayload: (p: HoldingsImportPayload | null) => void
+  markedForDeletion: Set<number>
+  setMarkedForDeletion: (s: Set<number>) => void
+  currencyOptions: Currency[]
+}
+
+export function HoldingsSection({
+  result,
+  payload,
+  setPayload,
+  markedForDeletion,
+  setMarkedForDeletion,
+  currencyOptions,
+}: Props) {
+  const ctrls = useSectionControls()
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
+  const [holdingFilter, setHoldingFilter] = useState("__all__")
+
+  const holdingOptions = useMemo(() => {
+    const map = new Map<string, string>()
+    result.rows.forEach((r) => {
+      const key = `${r.symbol}::${r.sub_account ?? ""}`
+      const label = r.sub_account ? `${r.symbol} / ${r.sub_account}` : r.symbol
+      map.set(key, label)
+    })
+    return [...map.entries()].sort(([, a], [, b]) => a.localeCompare(b))
+  }, [result.rows])
+
+  /**
+   * Holdings payload contains both "new" and "modify" rows in the same
+   * order as `rows[]`. Every preview row maps to a payload entry.
+   */
+  const rowPayloadIndex = useMemo(() => {
+    let n = 0
+    return result.rows.map((r) =>
+      r.status === "new" || r.status === "modify" ? n++ : null
+    )
+  }, [result.rows])
+
+  const filteredEntries = useMemo(() => {
+    const fromIso = dateFrom ? `${dateFrom}T00:00:00` : null
+    const toIso = dateTo ? `${dateTo}T23:59:59` : null
+    return result.rows
+      .map((row, displayIdx) => ({ row, displayIdx, payloadIdx: rowPayloadIndex[displayIdx] }))
+      .filter(({ row }) => {
+        if (fromIso && row.as_of < fromIso) return false
+        if (toIso && row.as_of > toIso) return false
+        if (holdingFilter !== "__all__") {
+          const key = `${row.symbol}::${row.sub_account ?? ""}`
+          if (key !== holdingFilter) return false
+        }
+        return true
+      })
+  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, holdingFilter])
+
+  const totalRows = filteredEntries.length
+  const start = (ctrls.page - 1) * ctrls.pageSize
+  const pageEntries = filteredEntries.slice(start, start + ctrls.pageSize)
+
+  function updatePayloadAt(idx: number, patch: Partial<Holding>) {
+    if (!payload) return
+    const next: Holding[] = payload.holdings.map((h, i) => (i === idx ? { ...h, ...patch } : h))
+    setPayload({ ...payload, holdings: next })
+  }
+
+  function toggleDelete(idx: number) {
+    const next = new Set(markedForDeletion)
+    if (next.has(idx)) next.delete(idx)
+    else next.add(idx)
+    setMarkedForDeletion(next)
+  }
+
+  const willCommit = (payload?.holdings.length ?? 0) - markedForDeletion.size
+
+  const summary = (
+    <>
+      {result.new} new · {result.modify} update
+      {markedForDeletion.size > 0 && (
+        <> · <span className="text-foreground">{markedForDeletion.size} marked skip</span></>
+      )}
+      <> · <span className="text-foreground">{Math.max(0, willCommit)} will commit</span></>
+    </>
+  )
+
+  const holdingTypeOpts = HOLDING_TYPES.map((t) => ({ value: t, label: t }))
+  const currencyOpts = currencyOptions.map((c) => ({ value: c.code, label: c.code }))
+
+  const filterSlot = (
+    <>
+      <Input
+        type="date"
+        value={dateFrom}
+        onChange={(e) => { setDateFrom(e.target.value); ctrls.setPage(1) }}
+        className="h-8 w-[9rem] text-xs"
+        aria-label="From date"
+      />
+      <span className="text-xs text-muted-foreground">to</span>
+      <Input
+        type="date"
+        value={dateTo}
+        onChange={(e) => { setDateTo(e.target.value); ctrls.setPage(1) }}
+        className="h-8 w-[9rem] text-xs"
+        aria-label="To date"
+      />
+      <UiSelect
+        value={holdingFilter}
+        onValueChange={(v) => { if (v) { setHoldingFilter(v); ctrls.setPage(1) } }}
+      >
+        <UiSelectTrigger className="h-8 text-xs min-w-[10rem]">
+          <UiSelectValue />
+        </UiSelectTrigger>
+        <UiSelectContent>
+          <UiSelectItem value="__all__">All holdings</UiSelectItem>
+          {holdingOptions.map(([key, label]) => (
+            <UiSelectItem key={key} value={key}>{label}</UiSelectItem>
+          ))}
+        </UiSelectContent>
+      </UiSelect>
+    </>
+  )
+
+  return (
+    <SectionShell
+      title="Holdings"
+      summary={summary}
+      filterSlot={filterSlot}
+      totalRows={totalRows}
+      pageSize={ctrls.pageSize}
+      page={ctrls.page}
+      onPageChange={ctrls.setPage}
+      onPageSizeChange={(s) => {
+        ctrls.setPageSize(s)
+        ctrls.setPage(1)
+      }}
+    >
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-24">Action</TableHead>
+            <TableHead className="w-28">Symbol</TableHead>
+            <TableHead>Name</TableHead>
+            <TableHead className="w-28">Type</TableHead>
+            <TableHead className="w-32 text-right">Value</TableHead>
+            <TableHead className="w-20">Currency</TableHead>
+            <TableHead className="w-36">As of</TableHead>
+            <TableHead className="w-10" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {pageEntries.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={8} className="text-center text-xs text-muted-foreground py-6">
+                No rows match
+              </TableCell>
+            </TableRow>
+          )}
+          {pageEntries.map(({ row, displayIdx, payloadIdx }) => {
+            const editable = payloadIdx !== null && payload !== null
+            const h = editable ? payload.holdings[payloadIdx] : null
+            const marked = payloadIdx !== null && markedForDeletion.has(payloadIdx)
+            return (
+              <TableRow
+                key={`${displayIdx}-${row.symbol}`}
+                className={cn(
+                  marked && "opacity-40 line-through",
+                  !editable && "bg-muted/30 text-muted-foreground"
+                )}
+              >
+                <TableCell>
+                  <StatusBadge status={marked ? "duplicate" : row.status} />
+                </TableCell>
+                <TableCell>
+                  {editable && h && !marked ? (
+                    <TextCell value={h.symbol} onChange={(v) => updatePayloadAt(payloadIdx, { symbol: v })} />
+                  ) : (
+                    <span className="text-xs font-mono">{row.symbol}</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editable && h && !marked ? (
+                    <TextCell value={h.name} onChange={(v) => updatePayloadAt(payloadIdx, { name: v })} />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editable && h && !marked ? (
+                    <SelectCell
+                      value={h.holding_type}
+                      options={holdingTypeOpts}
+                      onChange={(v) => updatePayloadAt(payloadIdx, { holding_type: v as HoldingType })}
+                    />
+                  ) : (
+                    <span className="text-xs">—</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  {editable && h && !marked ? (
+                    <HoldingValuePopover
+                      value={h.value}
+                      quantity={h.quantity}
+                      pricePerUnit={h.price_per_unit}
+                      currency={h.currency}
+                      onChange={({ value, quantity, pricePerUnit }) =>
+                        updatePayloadAt(payloadIdx, {
+                          value,
+                          quantity,
+                          price_per_unit: pricePerUnit,
+                        })
+                      }
+                    />
+                  ) : (
+                    <span className="text-xs tabular-nums">
+                      {row.value}
+                      {row.status === "modify" && row.existing_value && (
+                        <span className="ml-1 text-muted-foreground">(was {row.existing_value})</span>
+                      )}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editable && h && !marked ? (
+                    <SelectCell
+                      value={h.currency}
+                      options={currencyOpts}
+                      onChange={(v) => updatePayloadAt(payloadIdx, { currency: v })}
+                    />
+                  ) : (
+                    <span className="text-xs">{row.currency}</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editable && h && !marked ? (
+                    <DateCell value={h.as_of} onChange={(v) => updatePayloadAt(payloadIdx, { as_of: v })} />
+                  ) : (
+                    <span className="text-xs">{(row.as_of.split("T")[0] ?? row.as_of)}</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editable && payloadIdx !== null && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => toggleDelete(payloadIdx)}
+                      aria-label={marked ? "Unmark deletion" : "Mark for deletion"}
+                    >
+                      {marked ? <RotateCcw className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    </Button>
+                  )}
+                </TableCell>
+              </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
+    </SectionShell>
+  )
+}

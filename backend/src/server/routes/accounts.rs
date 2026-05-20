@@ -1,14 +1,19 @@
-//! Account routes: GET /api/accounts, POST /api/accounts.
+//! Account routes:
+//!   GET    /api/accounts
+//!   POST   /api/accounts
+//!   PATCH  /api/accounts/:id
+//!   DELETE /api/accounts/:id
+//!   PATCH  /api/accounts/:id/balance
 
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::model::{Account, AccountType};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
-use crate::server::validation::{parse_naive_datetime, validate_currency};
+use crate::server::validation::validate_currency;
 
 // ── GET /api/accounts ─────────────────────────────────────────────────────────
 
@@ -39,8 +44,6 @@ pub struct CreateAccountBody {
     #[serde(rename = "type")]
     pub account_type: String,
     pub currency: Option<String>,
-    pub balance: Option<String>,
-    pub balance_date: Option<String>,
     #[serde(default)]
     pub profile_ids: Vec<String>,
     pub notes: Option<String>,
@@ -64,30 +67,6 @@ pub async fn create_account(
         )
     })?;
 
-    // Validate balance / balance_date pair
-    if body.balance.is_some() != body.balance_date.is_some() {
-        return Err(AppError::bad_request(
-            "balance and balance_date must both be provided or both omitted",
-            "missing_balance_date",
-        ));
-    }
-
-    let balance = body
-        .balance
-        .as_deref()
-        .map(|s| {
-            s.parse::<rust_decimal::Decimal>().map_err(|_| {
-                AppError::bad_request(format!("invalid balance: {s}"), "invalid_decimal")
-            })
-        })
-        .transpose()?;
-
-    let balance_date = body
-        .balance_date
-        .as_deref()
-        .map(parse_naive_datetime)
-        .transpose()?;
-
     // Normalize profile_ids: empty -> ["default"]
     let profile_ids = if body.profile_ids.is_empty() {
         vec!["default".to_string()]
@@ -104,8 +83,8 @@ pub async fn create_account(
         institution: body.institution,
         account_type,
         currency: currency.to_string(),
-        balance,
-        balance_date,
+        balance: None,
+        balance_date: None,
         is_active: true,
         notes: body.notes,
         profile_ids,
@@ -128,9 +107,117 @@ pub async fn create_account(
     Ok(Json(account))
 }
 
-// ── PATCH /api/accounts/:id/balance ──────────────────────────────────────────
+// ── PATCH /api/accounts/:id ──────────────────────────────────────────────────
 
-use axum::extract::Path;
+#[derive(Debug, Deserialize)]
+pub struct PatchAccountBody {
+    pub name: Option<String>,
+    pub institution: Option<String>,
+    #[serde(rename = "type")]
+    pub account_type: Option<String>,
+    pub currency: Option<String>,
+    pub is_active: Option<bool>,
+    pub profile_ids: Option<Vec<String>>,
+    pub notes: Option<String>,
+}
+
+pub async fn update_account(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PatchAccountBody>,
+) -> Result<Json<Account>, AppError> {
+    if body.name.is_none()
+        && body.institution.is_none()
+        && body.account_type.is_none()
+        && body.currency.is_none()
+        && body.is_active.is_none()
+        && body.profile_ids.is_none()
+        && body.notes.is_none()
+    {
+        return Err(AppError::bad_request(
+            "at least one field must be provided",
+            "empty_body",
+        ));
+    }
+
+    if let Some(ref n) = body.name {
+        if n.trim().is_empty() {
+            return Err(AppError::bad_request(
+                "name must not be empty",
+                "invalid_name",
+            ));
+        }
+    }
+    if let Some(ref inst) = body.institution {
+        if inst.trim().is_empty() {
+            return Err(AppError::bad_request(
+                "institution must not be empty",
+                "invalid_institution",
+            ));
+        }
+    }
+
+    let account_type = body
+        .account_type
+        .as_deref()
+        .map(|s| {
+            AccountType::parse(s).ok_or_else(|| {
+                AppError::bad_request(
+                    format!("invalid account type: {s}"),
+                    "invalid_account_type",
+                )
+            })
+        })
+        .transpose()?;
+
+    let db = state.db.lock().expect("db mutex poisoned");
+    if !db.account_exists(&id)? {
+        return Err(AppError::NotFound(format!("account {id} not found")));
+    }
+    if let Some(ref c) = body.currency {
+        validate_currency(&db, c)?;
+    }
+
+    let notes_arg = body.notes.as_deref().map(Some);
+    let updated = db.update_account(
+        &id,
+        body.name.as_deref(),
+        body.institution.as_deref(),
+        account_type.as_ref(),
+        body.currency.as_deref(),
+        body.is_active,
+        notes_arg,
+        body.profile_ids.as_deref(),
+    )?;
+
+    Ok(Json(updated))
+}
+
+// ── DELETE /api/accounts/:id ─────────────────────────────────────────────────
+
+pub async fn delete_account(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let db = state.db.lock().expect("db mutex poisoned");
+    if !db.account_exists(&id)? {
+        return Err(AppError::NotFound(format!("account {id} not found")));
+    }
+    let tx_count = db.count_transactions_for_account(&id)?;
+    let holding_count = db.count_holdings_for_account(&id)?;
+    if tx_count > 0 || holding_count > 0 {
+        return Err(AppError::conflict(
+            format!(
+                "account {id} is still referenced by {tx_count} transaction(s) and {holding_count} holding(s); remove them first"
+            ),
+            "account_in_use",
+        ));
+    }
+    db.delete_account(&id)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ── PATCH /api/accounts/:id/balance ──────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct SetBalanceBody {

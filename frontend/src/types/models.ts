@@ -51,6 +51,17 @@ export interface CreateAccountBody {
   notes?: string
 }
 
+/** Body for PATCH /api/accounts/:id. At least one field required server-side. */
+export interface PatchAccountBody {
+  name?: string
+  institution?: string
+  type?: string
+  currency?: string
+  is_active?: boolean
+  profile_ids?: string[]
+  notes?: string | null
+}
+
 export type IngestionStatus = "pending" | "completed" | "skipped"
 
 export interface Budget {

@@ -92,10 +92,9 @@ pub enum AccountCommand {
         account_type: String,
         #[arg(long)]
         currency: Option<String>,
-        #[arg(long)]
-        balance: Option<String>,
     },
-    /// Record a new balance snapshot for an existing account.
+    /// Record a new balance snapshot for an existing account (writes a `_CASH`
+    /// holding; the API exposes the aggregated balance derived from holdings).
     SetBalance {
         id: String,
         amount: String,
