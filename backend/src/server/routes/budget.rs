@@ -114,13 +114,14 @@ pub async fn set_standing_budget(
         cid.clone()
     } else if let Some(ref name) = body.category {
         if name.is_empty() {
-            return Err(AppError::bad_request("category must not be empty", "invalid_category"));
-        }
-        let cat = db.resolve_category_by_name(name)?
-            .ok_or_else(|| AppError::bad_request(
-                format!("category '{}' not found", name),
+            return Err(AppError::bad_request(
+                "category must not be empty",
                 "invalid_category",
-            ))?;
+            ));
+        }
+        let cat = db.resolve_category_by_name(name)?.ok_or_else(|| {
+            AppError::bad_request(format!("category '{}' not found", name), "invalid_category")
+        })?;
         cat.id
     } else {
         return Err(AppError::bad_request(
@@ -164,13 +165,14 @@ pub async fn set_budget_override(
         cid.clone()
     } else if let Some(ref name) = body.category {
         if name.is_empty() {
-            return Err(AppError::bad_request("category must not be empty", "invalid_category"));
-        }
-        let cat = db.resolve_category_by_name(name)?
-            .ok_or_else(|| AppError::bad_request(
-                format!("category '{}' not found", name),
+            return Err(AppError::bad_request(
+                "category must not be empty",
                 "invalid_category",
-            ))?;
+            ));
+        }
+        let cat = db.resolve_category_by_name(name)?.ok_or_else(|| {
+            AppError::bad_request(format!("category '{}' not found", name), "invalid_category")
+        })?;
         cat.id
     } else {
         return Err(AppError::bad_request(

@@ -1,8 +1,8 @@
 //! Currency conversion helpers.
 
-use std::collections::{HashMap, HashSet};
-use rust_decimal::Decimal;
 use crate::model::{Currency, DisplayCurrency};
+use rust_decimal::Decimal;
+use std::collections::{HashMap, HashSet};
 
 /// In-memory map of FX rates, loaded once per aggregation request.
 pub struct FxRateMap {
@@ -36,7 +36,9 @@ impl FxRateMap {
             return amount;
         }
         let rate = self.rates.get(source_currency).unwrap_or_else(|| {
-            panic!("currency {source_currency} missing from FxRateMap; write-time validation failed")
+            panic!(
+                "currency {source_currency} missing from FxRateMap; write-time validation failed"
+            )
         });
         amount * rate
     }

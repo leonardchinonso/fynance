@@ -14,14 +14,14 @@ use rusqlite::{Connection, OptionalExtension, params};
 use rust_decimal::Decimal;
 
 use crate::model::{
-    Account, AccountSnapshot, AccountType, AssetClass, BalanceDelta, BudgetRow, Category, CategoryNode,
-    CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
-    CreateInvestmentEventBody, Currency, Granularity, Holding, HoldingPreview, HoldingSummaryRow,
-    HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
+    Account, AccountSnapshot, AccountType, AssetClass, BalanceDelta, BudgetRow, Category,
+    CategoryNode, CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus,
+    CreateCategoryPayload, CreateInvestmentEventBody, Currency, Granularity, Holding,
+    HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
     ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentEvent,
-    InvestmentEventType, InvestmentMetrics,
-    PatchCategoryPayload, PatchInvestmentEventBody, Profile, SectionMapping, SpendingGridRow,
-    StandingBudget, Transaction,
+    InvestmentEventType, InvestmentMetrics, PatchCategoryPayload, PatchInvestmentEventBody,
+    Profile, SectionMapping, SpendingGridRow, StandingBudget, Transaction, TransactionPreviewRow,
+    TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -135,14 +135,15 @@ impl Db {
             "SELECT code, is_preferred, fx_rate, updated_at FROM currencies ORDER BY is_preferred DESC, code"
         )?;
 
-        let currencies = stmt.query_map([], |row| {
-            let code: String = row.get(0)?;
-            let is_preferred: bool = row.get::<_, i32>(1)? == 1;
-            let fx_rate_str: String = row.get(2)?;
-            let updated_at: Option<String> = row.get(3)?;
-            Ok((code, is_preferred, fx_rate_str, updated_at))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+        let currencies = stmt
+            .query_map([], |row| {
+                let code: String = row.get(0)?;
+                let is_preferred: bool = row.get::<_, i32>(1)? == 1;
+                let fx_rate_str: String = row.get(2)?;
+                let updated_at: Option<String> = row.get(3)?;
+                Ok((code, is_preferred, fx_rate_str, updated_at))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
         currencies
             .into_iter()
@@ -215,7 +216,10 @@ impl Db {
 
         let tx = self.conn.unchecked_transaction()?;
 
-        tx.execute("UPDATE currencies SET is_preferred = 0 WHERE is_preferred = 1", [])?;
+        tx.execute(
+            "UPDATE currencies SET is_preferred = 0 WHERE is_preferred = 1",
+            [],
+        )?;
         tx.execute(
             "UPDATE currencies SET is_preferred = 1, fx_rate = '1', updated_at = NULL WHERE code = ?1",
             params![code],
@@ -226,11 +230,14 @@ impl Db {
     }
 
     pub fn delete_currency(&self, code: &str) -> Result<()> {
-        let is_preferred: Option<i32> = self.conn.query_row(
-            "SELECT is_preferred FROM currencies WHERE code = ?1",
-            params![code],
-            |row| row.get(0),
-        ).optional()?;
+        let is_preferred: Option<i32> = self
+            .conn
+            .query_row(
+                "SELECT is_preferred FROM currencies WHERE code = ?1",
+                params![code],
+                |row| row.get(0),
+            )
+            .optional()?;
 
         let is_preferred = match is_preferred {
             Some(v) => v,
@@ -238,17 +245,25 @@ impl Db {
         };
 
         if is_preferred == 1 {
-            anyhow::bail!("cannot delete the preferred currency; set a different preferred currency first");
+            anyhow::bail!(
+                "cannot delete the preferred currency; set a different preferred currency first"
+            );
         }
 
         let holding_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM holdings WHERE currency = ?1", params![code], |r| r.get(0),
+            "SELECT COUNT(*) FROM holdings WHERE currency = ?1",
+            params![code],
+            |r| r.get(0),
         )?;
         let account_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM accounts WHERE currency = ?1", params![code], |r| r.get(0),
+            "SELECT COUNT(*) FROM accounts WHERE currency = ?1",
+            params![code],
+            |r| r.get(0),
         )?;
         let transaction_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM transactions WHERE currency = ?1", params![code], |r| r.get(0),
+            "SELECT COUNT(*) FROM transactions WHERE currency = ?1",
+            params![code],
+            |r| r.get(0),
         )?;
 
         let total = holding_count + account_count + transaction_count;
@@ -258,7 +273,8 @@ impl Db {
             );
         }
 
-        self.conn.execute("DELETE FROM currencies WHERE code = ?1", params![code])?;
+        self.conn
+            .execute("DELETE FROM currencies WHERE code = ?1", params![code])?;
         Ok(())
     }
 
@@ -501,7 +517,10 @@ impl Db {
         let fee = body
             .fee
             .as_deref()
-            .map(|s| s.parse::<Decimal>().map_err(|_| anyhow::anyhow!("invalid fee")))
+            .map(|s| {
+                s.parse::<Decimal>()
+                    .map_err(|_| anyhow::anyhow!("invalid fee"))
+            })
             .transpose()?;
         let date = parse_transaction_datetime(&body.date)
             .ok_or_else(|| anyhow::anyhow!("invalid date format"))?;
@@ -626,14 +645,16 @@ impl Db {
             )?;
         }
         if let Some(ref q) = body.quantity {
-            q.parse::<Decimal>().map_err(|_| anyhow::anyhow!("invalid quantity"))?;
+            q.parse::<Decimal>()
+                .map_err(|_| anyhow::anyhow!("invalid quantity"))?;
             self.conn.execute(
                 "UPDATE investments SET quantity = ?1 WHERE id = ?2",
                 params![q, id],
             )?;
         }
         if let Some(ref p) = body.price_per_share {
-            p.parse::<Decimal>().map_err(|_| anyhow::anyhow!("invalid price_per_share"))?;
+            p.parse::<Decimal>()
+                .map_err(|_| anyhow::anyhow!("invalid price_per_share"))?;
             self.conn.execute(
                 "UPDATE investments SET price_per_share = ?1 WHERE id = ?2",
                 params![p, id],
@@ -642,7 +663,8 @@ impl Db {
         if body.fee.is_some() {
             let fee_str = body.fee.as_deref();
             if let Some(f) = fee_str {
-                f.parse::<Decimal>().map_err(|_| anyhow::anyhow!("invalid fee"))?;
+                f.parse::<Decimal>()
+                    .map_err(|_| anyhow::anyhow!("invalid fee"))?;
             }
             self.conn.execute(
                 "UPDATE investments SET fee = ?1 WHERE id = ?2",
@@ -807,6 +829,121 @@ impl Db {
         Ok(result)
     }
 
+    /// Preview a batch of `ImportTransaction`s without writing anything.
+    /// Computes fingerprints and checks for existing matches.
+    pub fn dry_run_transactions(
+        &self,
+        account_id: &str,
+        transactions: &[ImportTransaction],
+    ) -> Result<Vec<TransactionPreviewRow>> {
+        let mut previews = Vec::with_capacity(transactions.len());
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, description FROM transactions WHERE fingerprint = ?1")?;
+
+        for (i, t) in transactions.iter().enumerate() {
+            let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let amount_str = t.amount.to_string();
+            let currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
+            let fp = crate::util::fingerprint(&date_iso, &amount_str, account_id);
+
+            let existing: Option<(String, String)> = stmt
+                .query_row(rusqlite::params![fp], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .ok();
+
+            let (status, existing_id, existing_description) = match existing {
+                Some((id, desc)) => (TransactionPreviewStatus::Duplicate, Some(id), Some(desc)),
+                None => (TransactionPreviewStatus::New, None, None),
+            };
+
+            previews.push(TransactionPreviewRow {
+                index: i,
+                date: t.date,
+                description: t.description.clone(),
+                amount: t.amount,
+                currency,
+                status,
+                existing_id,
+                existing_description,
+                error_reason: None,
+            });
+        }
+
+        Ok(previews)
+    }
+
+    /// Preview parsed CSV rows (from LLM) without writing anything.
+    /// Low-confidence rows are marked as errors rather than silently dropped.
+    pub fn dry_run_transactions_from_parsed(
+        &self,
+        account_id: &str,
+        rows: &[crate::importers::unified::UnifiedStatementRow],
+        min_row_confidence: f32,
+    ) -> Result<Vec<TransactionPreviewRow>> {
+        let mut previews = Vec::with_capacity(rows.len());
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, description FROM transactions WHERE fingerprint = ?1")?;
+
+        for (i, row) in rows.iter().enumerate() {
+            if row.row_confidence < min_row_confidence {
+                previews.push(TransactionPreviewRow {
+                    index: i,
+                    date: row.date,
+                    description: row.description.clone(),
+                    amount: row.amount,
+                    currency: row.currency.clone(),
+                    status: TransactionPreviewStatus::Error,
+                    existing_id: None,
+                    existing_description: None,
+                    error_reason: Some(format!(
+                        "row confidence {:.2} below threshold {:.2}",
+                        row.row_confidence, min_row_confidence
+                    )),
+                });
+                continue;
+            }
+
+            let date_iso = row.date.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let amount_str = row.amount.to_string();
+            let fp = crate::util::fingerprint(&date_iso, &amount_str, account_id);
+
+            let existing: Option<(String, String)> = stmt
+                .query_row(rusqlite::params![fp], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .ok();
+
+            let (status, existing_id, existing_description) = match existing {
+                Some((id, desc)) => (TransactionPreviewStatus::Duplicate, Some(id), Some(desc)),
+                None => (TransactionPreviewStatus::New, None, None),
+            };
+
+            previews.push(TransactionPreviewRow {
+                index: i,
+                date: row.date,
+                description: row
+                    .merchant
+                    .as_deref()
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or(&row.description)
+                    .to_string(),
+                amount: row.amount,
+                currency: row.currency.clone(),
+                status,
+                existing_id,
+                existing_description,
+                error_reason: None,
+            });
+        }
+
+        Ok(previews)
+    }
+
     /// List transactions with filtering, search, and pagination.
     /// Returns `(rows, total_count)` where `total_count` is the count ignoring
     /// the limit/offset.
@@ -849,9 +986,7 @@ impl Db {
                     })
                     .collect();
                 let ph = placeholders.join(",");
-                conditions.push(format!(
-                    "(t.category_id IN ({ph}) OR t.category IN ({ph}))"
-                ));
+                conditions.push(format!("(t.category_id IN ({ph}) OR t.category IN ({ph}))"));
             }
         }
         if let Some(ref source) = filters.category_source {
@@ -983,9 +1118,7 @@ impl Db {
                     })
                     .collect();
                 let ph = placeholders.join(",");
-                conditions.push(format!(
-                    "(t.category_id IN ({ph}) OR t.category IN ({ph}))"
-                ));
+                conditions.push(format!("(t.category_id IN ({ph}) OR t.category IN ({ph}))"));
             }
         }
         if let Some(pid) = &filters.profile_id {
@@ -1078,13 +1211,16 @@ impl Db {
         category_id: &str,
         source: CategorySource,
     ) -> Result<()> {
-        let cat = self.get_category_by_id(category_id)?
+        let cat = self
+            .get_category_by_id(category_id)?
             .ok_or_else(|| anyhow!("category {category_id} not found"))?;
         if !cat.is_active {
             return Err(anyhow!("category {category_id} is inactive"));
         }
         if cat.parent_id.is_none() {
-            return Err(anyhow!("category {category_id} is a parent; only leaf categories can be assigned"));
+            return Err(anyhow!(
+                "category {category_id} is a parent; only leaf categories can be assigned"
+            ));
         }
 
         let display_name = self.resolve_category_display_name(category_id)?;
@@ -1137,7 +1273,7 @@ impl Db {
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
               LEFT JOIN categories pc ON pc.id = c.parent_id
-              WHERE t.id = ?1"
+              WHERE t.id = ?1",
         )?;
         let result = stmt.query_row(params![id], row_to_transaction).optional()?;
         Ok(result)
@@ -1147,13 +1283,16 @@ impl Db {
 
     pub fn create_category(&self, payload: &CreateCategoryPayload) -> Result<Category> {
         if let Some(ref parent_id) = payload.parent_id {
-            let parent = self.get_category_by_id(parent_id)?
+            let parent = self
+                .get_category_by_id(parent_id)?
                 .ok_or_else(|| anyhow!("parent category {parent_id} not found"))?;
             if !parent.is_active {
                 return Err(anyhow!("parent category is inactive"));
             }
             if parent.parent_id.is_some() {
-                return Err(anyhow!("max category depth is 2: cannot create child of a child"));
+                return Err(anyhow!(
+                    "max category depth is 2: cannot create child of a child"
+                ));
             }
         }
 
@@ -1174,7 +1313,7 @@ impl Db {
     pub fn get_category_by_id(&self, id: &str) -> Result<Option<Category>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
-             FROM categories WHERE id = ?1"
+             FROM categories WHERE id = ?1",
         )?;
         let result = stmt.query_row(params![id], row_to_category).optional()?;
         Ok(result)
@@ -1184,14 +1323,15 @@ impl Db {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
              FROM categories WHERE is_active = 1
-             ORDER BY display_order, name"
+             ORDER BY display_order, name",
         )?;
-        let all: Vec<Category> = stmt.query_map([], row_to_category)?
+        let all: Vec<Category> = stmt
+            .query_map([], row_to_category)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let section_map: HashMap<String, String> = {
             let mut stmt = self.conn.prepare(
-                "SELECT category_id, section FROM section_mappings WHERE category_id IS NOT NULL"
+                "SELECT category_id, section FROM section_mappings WHERE category_id IS NOT NULL",
             )?;
             stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
@@ -1210,7 +1350,8 @@ impl Db {
                 .cloned()
                 .unwrap_or_else(|| "Spending".to_string());
 
-            let child_nodes: Vec<CategoryNode> = children.iter()
+            let child_nodes: Vec<CategoryNode> = children
+                .iter()
                 .filter(|c| c.parent_id.as_deref() == Some(&parent.id))
                 .map(|c| CategoryNode {
                     id: c.id.clone(),
@@ -1232,14 +1373,18 @@ impl Db {
     }
 
     pub fn update_category(&self, id: &str, payload: &PatchCategoryPayload) -> Result<Category> {
-        let existing = self.get_category_by_id(id)?
+        let existing = self
+            .get_category_by_id(id)?
             .ok_or_else(|| anyhow!("category {id} not found"))?;
 
         if let Some(ref new_parent_id) = payload.parent_id {
-            let parent = self.get_category_by_id(new_parent_id)?
+            let parent = self
+                .get_category_by_id(new_parent_id)?
                 .ok_or_else(|| anyhow!("parent category {new_parent_id} not found"))?;
             if parent.parent_id.is_some() {
-                return Err(anyhow!("max category depth is 2: cannot move under a child category"));
+                return Err(anyhow!(
+                    "max category depth is 2: cannot move under a child category"
+                ));
             }
             let child_count: i64 = self.conn.query_row(
                 "SELECT COUNT(*) FROM categories WHERE parent_id = ?1 AND is_active = 1",
@@ -1247,15 +1392,23 @@ impl Db {
                 |r| r.get(0),
             )?;
             if child_count > 0 {
-                return Err(anyhow!("cannot move a parent category under another parent"));
+                return Err(anyhow!(
+                    "cannot move a parent category under another parent"
+                ));
             }
         }
 
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let name = payload.name.as_deref().unwrap_or(&existing.name);
-        let parent_id = payload.parent_id.as_deref().or(existing.parent_id.as_deref());
+        let parent_id = payload
+            .parent_id
+            .as_deref()
+            .or(existing.parent_id.as_deref());
         let display_order = payload.display_order.unwrap_or(existing.display_order);
-        let is_active = payload.is_active.map(|v| v as i32).unwrap_or(existing.is_active as i32);
+        let is_active = payload
+            .is_active
+            .map(|v| v as i32)
+            .unwrap_or(existing.is_active as i32);
 
         self.conn.execute(
             "UPDATE categories SET name = ?1, parent_id = ?2, display_order = ?3, is_active = ?4, updated_at = ?5
@@ -1280,24 +1433,30 @@ impl Db {
     }
 
     pub fn resolve_category_by_name(&self, name: &str) -> Result<Option<Category>> {
-        let result = self.conn.query_row(
-            "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
+        let result = self
+            .conn
+            .query_row(
+                "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
              FROM categories WHERE name = ?1 AND is_active = 1",
-            params![name],
-            row_to_category,
-        ).optional()?;
+                params![name],
+                row_to_category,
+            )
+            .optional()?;
 
         if result.is_some() {
             return Ok(result);
         }
 
         if let Some((_, child_name)) = name.split_once(": ") {
-            let result = self.conn.query_row(
-                "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
+            let result = self
+                .conn
+                .query_row(
+                    "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
                  FROM categories WHERE name = ?1 AND is_active = 1",
-                params![child_name.trim()],
-                row_to_category,
-            ).optional()?;
+                    params![child_name.trim()],
+                    row_to_category,
+                )
+                .optional()?;
             return Ok(result);
         }
 
@@ -1305,14 +1464,17 @@ impl Db {
     }
 
     fn resolve_category_display_name(&self, category_id: &str) -> Result<Option<String>> {
-        let result: Option<(String, Option<String>)> = self.conn.query_row(
-            "SELECT c.name, pc.name
+        let result: Option<(String, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT c.name, pc.name
              FROM categories c
              LEFT JOIN categories pc ON pc.id = c.parent_id
              WHERE c.id = ?1",
-            params![category_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        ).optional()?;
+                params![category_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
 
         Ok(result.map(|(name, parent_name)| match parent_name {
             Some(pn) => format!("{pn}: {name}"),
@@ -1326,7 +1488,7 @@ impl Db {
         let mut stmt = self.conn.prepare(
             r"SELECT sm.section, sm.category, sm.category_id
               FROM section_mappings sm
-              ORDER BY sm.section, COALESCE(sm.category, '')"
+              ORDER BY sm.section, COALESCE(sm.category, '')",
         )?;
         let rows = stmt
             .query_map([], |row| {
@@ -1358,7 +1520,7 @@ impl Db {
 
     pub fn get_standing_budgets(&self) -> Result<Vec<StandingBudget>> {
         let mut stmt = self.conn.prepare(
-            "SELECT category_id, category, amount FROM standing_budgets ORDER BY category"
+            "SELECT category_id, category, amount FROM standing_budgets ORDER BY category",
         )?;
         let rows = stmt
             .query_map([], |row| {
@@ -1402,7 +1564,11 @@ impl Db {
     /// Returns effective budget rows for `month`, merging standing targets with
     /// per-month overrides. Includes actual spend from transactions.
     /// Excludes transactions with `exclude_from_summary = 1`.
-    pub fn get_effective_budget(&self, month: &str, fx: &crate::util::fx::FxRateMap) -> Result<Vec<BudgetRow>> {
+    pub fn get_effective_budget(
+        &self,
+        month: &str,
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<Vec<BudgetRow>> {
         use crate::util::fx::CurrencyAggregator;
         use std::collections::HashMap;
 
@@ -1491,19 +1657,16 @@ impl Db {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut categories_map: HashMap<String, (Option<String>, Option<String>, CurrencyAggregator)> = HashMap::new();
+        let mut categories_map: HashMap<
+            String,
+            (Option<String>, Option<String>, CurrencyAggregator),
+        > = HashMap::new();
 
         for (cat_id, _category_display, budgeted, _t_cat_id, amount_str, currency) in raw {
             let key = cat_id.clone().unwrap_or_else(|| "unknown".to_string());
             let entry = categories_map
                 .entry(key)
-                .or_insert_with(|| {
-                    (
-                        cat_id.clone(),
-                        budgeted.clone(),
-                        Default::default(),
-                    )
-                });
+                .or_insert_with(|| (cat_id.clone(), budgeted.clone(), Default::default()));
 
             if let (Some(amount_s), Some(curr)) = (amount_str, currency) {
                 if let Ok(amount) = amount_s.parse::<Decimal>() {
@@ -1646,15 +1809,24 @@ impl Db {
         let raw: Vec<(String, Option<String>, String, String, String, f64)> = stmt
             .query_map(
                 rusqlite::params_from_iter(base_args.iter().map(|b| b.as_ref())),
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         // Fetch standing budgets keyed by category_id
         let budgets: HashMap<String, String> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT category_id, amount FROM standing_budgets WHERE category_id IS NOT NULL")?;
+            let mut stmt = self.conn.prepare(
+                "SELECT category_id, amount FROM standing_budgets WHERE category_id IS NOT NULL",
+            )?;
             stmt.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
@@ -1664,32 +1836,40 @@ impl Db {
         };
 
         // Build the grid rows with CurrencyAggregator tracking
-        let mut grid: HashMap<String, (SpendingGridRow, CurrencyAggregator, HashMap<String, CurrencyAggregator>)> = HashMap::new();
+        let mut grid: HashMap<
+            String,
+            (
+                SpendingGridRow,
+                CurrencyAggregator,
+                HashMap<String, CurrencyAggregator>,
+            ),
+        > = HashMap::new();
         for (category, category_id, section, period, currency, total_f64) in raw {
             let total_dec = Decimal::try_from(total_f64).unwrap_or_default();
             let key = category.clone();
-            let entry = grid
-                .entry(key)
-                .or_insert_with(|| {
-                    (
-                        SpendingGridRow {
-                            category: category.clone(),
-                            category_id: category_id.clone(),
-                            section: section.clone(),
-                            periods: HashMap::new(),
-                            periods_display: HashMap::new(),
-                            average: None,
-                            average_display: None,
-                            budget: None,
-                            total: None,
-                            total_display: None,
-                        },
-                        Default::default(),
-                        HashMap::new(),
-                    )
-                });
+            let entry = grid.entry(key).or_insert_with(|| {
+                (
+                    SpendingGridRow {
+                        category: category.clone(),
+                        category_id: category_id.clone(),
+                        section: section.clone(),
+                        periods: HashMap::new(),
+                        periods_display: HashMap::new(),
+                        average: None,
+                        average_display: None,
+                        budget: None,
+                        total: None,
+                        total_display: None,
+                    },
+                    Default::default(),
+                    HashMap::new(),
+                )
+            });
 
-            entry.0.periods.insert(period.clone(), Some(total_dec.to_string()));
+            entry
+                .0
+                .periods
+                .insert(period.clone(), Some(total_dec.to_string()));
             entry.1.add(total_dec, &currency, fx);
 
             entry
@@ -2232,13 +2412,14 @@ impl Db {
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut periods_map: HashMap<String, (CurrencyAggregator, CurrencyAggregator)> = HashMap::new();
+        let mut periods_map: HashMap<String, (CurrencyAggregator, CurrencyAggregator)> =
+            HashMap::new();
         for (period, currency, income_f, spending_f) in raw {
             let income = Decimal::try_from(income_f).unwrap_or_default();
             let spending = Decimal::try_from(spending_f).unwrap_or_default();
-            let entry = periods_map.entry(period).or_insert_with(|| {
-                (Default::default(), Default::default())
-            });
+            let entry = periods_map
+                .entry(period)
+                .or_insert_with(|| (Default::default(), Default::default()));
             entry.0.add(income, &currency, fx);
             entry.1.add(spending, &currency, fx);
         }
@@ -2279,7 +2460,8 @@ impl Db {
     ) -> Result<Vec<HoldingSummaryRow>> {
         let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
 
-        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id {
+        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
+        {
             let pattern = format!("%\"{pid}\"%");
             ("AND a.profile_ids LIKE ?2".to_string(), Some(pattern))
         } else {
@@ -2422,7 +2604,11 @@ impl Db {
     }
 
     /// Returns the latest holdings (carry-forward) for all specified accounts.
-    pub fn get_holdings_batch(&self, account_ids: &[String], include_closed: bool) -> Result<Vec<Holding>> {
+    pub fn get_holdings_batch(
+        &self,
+        account_ids: &[String],
+        include_closed: bool,
+    ) -> Result<Vec<Holding>> {
         if account_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -2718,6 +2904,135 @@ impl Db {
         Ok(previews)
     }
 
+    /// Preview parsed investment rows without writing anything.
+    /// Computes fingerprints matching `create_investment_event` and checks the `investments` table.
+    pub fn dry_run_investments(
+        &self,
+        account_id: &str,
+        rows: &[crate::importers::investments_parser::ParsedInvestmentRow],
+        min_row_confidence: f32,
+    ) -> anyhow::Result<Vec<crate::model::InvestmentPreviewRow>> {
+        use crate::model::TransactionPreviewStatus;
+
+        let mut previews = Vec::with_capacity(rows.len());
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM investments WHERE fingerprint = ?1")?;
+
+        for (i, row) in rows.iter().enumerate() {
+            if row.row_confidence < min_row_confidence {
+                previews.push(crate::model::InvestmentPreviewRow {
+                    index: i,
+                    event_type: row.event_type.clone(),
+                    symbol: row.symbol.clone(),
+                    date: row.date.clone(),
+                    quantity: row.quantity.clone(),
+                    price_per_share: row.price_per_share.clone(),
+                    currency: row.currency.clone(),
+                    status: TransactionPreviewStatus::Error,
+                    existing_id: None,
+                });
+                continue;
+            }
+
+            let date_str = match parse_transaction_datetime(&row.date) {
+                Some(dt) => dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                None => {
+                    tracing::warn!(
+                        symbol = %row.symbol,
+                        date = %row.date,
+                        "invalid date in investment row; marking as error"
+                    );
+                    previews.push(crate::model::InvestmentPreviewRow {
+                        index: i,
+                        event_type: row.event_type.clone(),
+                        symbol: row.symbol.clone(),
+                        date: row.date.clone(),
+                        quantity: row.quantity.clone(),
+                        price_per_share: row.price_per_share.clone(),
+                        currency: row.currency.clone(),
+                        status: TransactionPreviewStatus::Error,
+                        existing_id: None,
+                    });
+                    continue;
+                }
+            };
+
+            let quantity = match row.quantity.parse::<rust_decimal::Decimal>() {
+                Ok(d) => d.to_string(),
+                Err(_) => {
+                    tracing::warn!(symbol = %row.symbol, "invalid quantity in investment row; marking as error");
+                    previews.push(crate::model::InvestmentPreviewRow {
+                        index: i,
+                        event_type: row.event_type.clone(),
+                        symbol: row.symbol.clone(),
+                        date: row.date.clone(),
+                        quantity: row.quantity.clone(),
+                        price_per_share: row.price_per_share.clone(),
+                        currency: row.currency.clone(),
+                        status: TransactionPreviewStatus::Error,
+                        existing_id: None,
+                    });
+                    continue;
+                }
+            };
+
+            let price_per_share = match row.price_per_share.parse::<rust_decimal::Decimal>() {
+                Ok(d) => d.to_string(),
+                Err(_) => {
+                    tracing::warn!(symbol = %row.symbol, "invalid price_per_share in investment row; marking as error");
+                    previews.push(crate::model::InvestmentPreviewRow {
+                        index: i,
+                        event_type: row.event_type.clone(),
+                        symbol: row.symbol.clone(),
+                        date: row.date.clone(),
+                        quantity: row.quantity.clone(),
+                        price_per_share: row.price_per_share.clone(),
+                        currency: row.currency.clone(),
+                        status: TransactionPreviewStatus::Error,
+                        existing_id: None,
+                    });
+                    continue;
+                }
+            };
+
+            let fingerprint = sha256_hex(&format!(
+                "{}|{}|{}|{}|{}|{}",
+                account_id,
+                row.symbol,
+                date_str,
+                quantity,
+                price_per_share,
+                row.event_type,
+            ));
+
+            let existing_id: Option<String> = stmt
+                .query_row(rusqlite::params![fingerprint], |row| row.get::<_, String>(0))
+                .ok();
+
+            let status = if existing_id.is_some() {
+                TransactionPreviewStatus::Duplicate
+            } else {
+                TransactionPreviewStatus::New
+            };
+
+            previews.push(crate::model::InvestmentPreviewRow {
+                index: i,
+                event_type: row.event_type.clone(),
+                symbol: row.symbol.clone(),
+                date: row.date.clone(),
+                quantity: row.quantity.clone(),
+                price_per_share: row.price_per_share.clone(),
+                currency: row.currency.clone(),
+                status,
+                existing_id,
+            });
+        }
+
+        Ok(previews)
+    }
+
     // ── Stats ─────────────────────────────────────────────────────────────────
 
     pub fn stats(&self) -> Result<Stats> {
@@ -2866,8 +3181,8 @@ fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> 
         amount: amount.parse::<Decimal>().unwrap_or_default(),
         currency: row.get(5)?,
         account_id: row.get(6)?,
-        category: row.get(7)?,           // resolved display name from COALESCE
-        category_id: row.get(8)?,        // FK to categories.id
+        category: row.get(7)?,    // resolved display name from COALESCE
+        category_id: row.get(8)?, // FK to categories.id
         category_source: cat_source.as_deref().and_then(CategorySource::parse),
         confidence: row.get(10)?,
         notes: row.get(11)?,
@@ -2911,8 +3226,7 @@ fn row_to_investment_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Investme
     Ok(InvestmentEvent {
         id: row.get(0)?,
         account_id: row.get(1)?,
-        event_type: InvestmentEventType::parse(&event_type_str)
-            .unwrap_or(InvestmentEventType::Buy),
+        event_type: InvestmentEventType::parse(&event_type_str).unwrap_or(InvestmentEventType::Buy),
         symbol: row.get(3)?,
         date: parse_transaction_datetime(&date_str)
             .unwrap_or_else(|| chrono::Utc::now().naive_utc()),
@@ -2947,7 +3261,9 @@ pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
     match t {
         AccountType::Investment | AccountType::InvestmentIsa => AssetClass::Investments,
         AccountType::Pension => AssetClass::Pension,
-        AccountType::Checking | AccountType::Savings | AccountType::Cash | AccountType::Credit => AssetClass::Cash,
+        AccountType::Checking | AccountType::Savings | AccountType::Cash | AccountType::Credit => {
+            AssetClass::Cash
+        }
         AccountType::Property => AssetClass::Property,
     }
 }
@@ -3110,7 +3426,10 @@ fn seed_categories(conn: &Connection) -> Result<()> {
     let mut order = 0i32;
 
     for cat in cats {
-        let parent_name = cat.get("parent").and_then(|v| v.as_str()).unwrap_or_default();
+        let parent_name = cat
+            .get("parent")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         if parent_name.is_empty() {
             continue;
         }
@@ -3152,11 +3471,13 @@ fn seed_section_mappings(conn: &Connection) -> Result<()> {
     }
 
     for (parent_name, section) in PARENT_SECTION_MAP {
-        let parent_id: Option<String> = conn.query_row(
-            "SELECT id FROM categories WHERE name = ?1 AND parent_id IS NULL",
-            params![parent_name],
-            |r| r.get(0),
-        ).optional()?;
+        let parent_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = ?1 AND parent_id IS NULL",
+                params![parent_name],
+                |r| r.get(0),
+            )
+            .optional()?;
 
         if let Some(pid) = parent_id {
             conn.execute(
@@ -3184,7 +3505,7 @@ fn seed_currencies(conn: &Connection) -> Result<()> {
              UNION
              SELECT currency FROM holdings
          )
-         WHERE currency NOT IN (SELECT code FROM currencies)"
+         WHERE currency NOT IN (SELECT code FROM currencies)",
     )?;
 
     Ok(())
@@ -3206,11 +3527,13 @@ fn migrate_category_data(conn: &Connection) -> Result<()> {
             .map(|(_, child)| child.trim())
             .unwrap_or(category_str.trim());
 
-        let cat_id: Option<String> = conn.query_row(
-            "SELECT id FROM categories WHERE name = ?1 AND is_active = 1",
-            params![child_name],
-            |r| r.get(0),
-        ).optional()?;
+        let cat_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = ?1 AND is_active = 1",
+                params![child_name],
+                |r| r.get(0),
+            )
+            .optional()?;
 
         if let Some(id) = cat_id {
             conn.execute(
@@ -3235,11 +3558,13 @@ fn migrate_category_data(conn: &Connection) -> Result<()> {
             .map(|(_, child)| child.trim())
             .unwrap_or(category_str.trim());
 
-        let cat_id: Option<String> = conn.query_row(
-            "SELECT id FROM categories WHERE name = ?1 AND is_active = 1",
-            params![child_name],
-            |r| r.get(0),
-        ).optional()?;
+        let cat_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = ?1 AND is_active = 1",
+                params![child_name],
+                |r| r.get(0),
+            )
+            .optional()?;
 
         if let Some(id) = cat_id {
             conn.execute(
@@ -3264,11 +3589,13 @@ fn migrate_category_data(conn: &Connection) -> Result<()> {
             .map(|(_, child)| child.trim())
             .unwrap_or(category_str.trim());
 
-        let cat_id: Option<String> = conn.query_row(
-            "SELECT id FROM categories WHERE name = ?1 AND is_active = 1",
-            params![child_name],
-            |r| r.get(0),
-        ).optional()?;
+        let cat_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = ?1 AND is_active = 1",
+                params![child_name],
+                |r| r.get(0),
+            )
+            .optional()?;
 
         if let Some(id) = cat_id {
             conn.execute(
@@ -3293,11 +3620,13 @@ fn migrate_category_data(conn: &Connection) -> Result<()> {
             .map(|(parent, _)| parent.trim())
             .unwrap_or(category_str.trim());
 
-        let parent_id: Option<String> = conn.query_row(
-            "SELECT id FROM categories WHERE name = ?1 AND parent_id IS NULL AND is_active = 1",
-            params![parent_name],
-            |r| r.get(0),
-        ).optional()?;
+        let parent_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = ?1 AND parent_id IS NULL AND is_active = 1",
+                params![parent_name],
+                |r| r.get(0),
+            )
+            .optional()?;
 
         if let Some(pid) = parent_id {
             conn.execute(
@@ -3312,19 +3641,25 @@ fn migrate_category_data(conn: &Connection) -> Result<()> {
 
 fn migrate_schema(conn: &Connection) -> Result<()> {
     // ── 1. Add category_id to transactions ──
-    if conn.prepare("SELECT category_id FROM transactions LIMIT 0").is_err() {
+    if conn
+        .prepare("SELECT category_id FROM transactions LIMIT 0")
+        .is_err()
+    {
         conn.execute_batch(
-            "ALTER TABLE transactions ADD COLUMN category_id TEXT REFERENCES categories(id)"
+            "ALTER TABLE transactions ADD COLUMN category_id TEXT REFERENCES categories(id)",
         )?;
         conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_tx_category_id ON transactions(category_id)"
+            "CREATE INDEX IF NOT EXISTS idx_tx_category_id ON transactions(category_id)",
         )?;
     }
 
     // ── 2. Add exclude_from_summary to transactions ──
-    if conn.prepare("SELECT exclude_from_summary FROM transactions LIMIT 0").is_err() {
+    if conn
+        .prepare("SELECT exclude_from_summary FROM transactions LIMIT 0")
+        .is_err()
+    {
         conn.execute_batch(
-            "ALTER TABLE transactions ADD COLUMN exclude_from_summary INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE transactions ADD COLUMN exclude_from_summary INTEGER NOT NULL DEFAULT 0",
         )?;
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_tx_exclude_summary ON transactions(exclude_from_summary)"
@@ -3332,30 +3667,42 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
     }
 
     // ── 3. Add category_id to standing_budgets ──
-    if conn.prepare("SELECT category_id FROM standing_budgets LIMIT 0").is_err() {
+    if conn
+        .prepare("SELECT category_id FROM standing_budgets LIMIT 0")
+        .is_err()
+    {
         conn.execute_batch(
-            "ALTER TABLE standing_budgets ADD COLUMN category_id TEXT REFERENCES categories(id)"
+            "ALTER TABLE standing_budgets ADD COLUMN category_id TEXT REFERENCES categories(id)",
         )?;
     }
 
     // ── 4. Add category_id to budget_overrides ──
-    if conn.prepare("SELECT category_id FROM budget_overrides LIMIT 0").is_err() {
+    if conn
+        .prepare("SELECT category_id FROM budget_overrides LIMIT 0")
+        .is_err()
+    {
         conn.execute_batch(
-            "ALTER TABLE budget_overrides ADD COLUMN category_id TEXT REFERENCES categories(id)"
+            "ALTER TABLE budget_overrides ADD COLUMN category_id TEXT REFERENCES categories(id)",
         )?;
     }
 
     // ── 5. Add category_id to budgets ──
-    if conn.prepare("SELECT category_id FROM budgets LIMIT 0").is_err() {
+    if conn
+        .prepare("SELECT category_id FROM budgets LIMIT 0")
+        .is_err()
+    {
         conn.execute_batch(
-            "ALTER TABLE budgets ADD COLUMN category_id TEXT REFERENCES categories(id)"
+            "ALTER TABLE budgets ADD COLUMN category_id TEXT REFERENCES categories(id)",
         )?;
     }
 
     // ── 6. Add category_id to section_mappings ──
-    if conn.prepare("SELECT category_id FROM section_mappings LIMIT 0").is_err() {
+    if conn
+        .prepare("SELECT category_id FROM section_mappings LIMIT 0")
+        .is_err()
+    {
         conn.execute_batch(
-            "ALTER TABLE section_mappings ADD COLUMN category_id TEXT REFERENCES categories(id)"
+            "ALTER TABLE section_mappings ADD COLUMN category_id TEXT REFERENCES categories(id)",
         )?;
     }
 
@@ -3385,7 +3732,8 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
     };
 
     if needs_nullable {
-        conn.execute_batch(r"
+        conn.execute_batch(
+            r"
             CREATE TABLE IF NOT EXISTS section_mappings_new (
                 section     TEXT NOT NULL,
                 category    TEXT,
@@ -3396,7 +3744,8 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
                 SELECT section, category, category_id FROM section_mappings;
             DROP TABLE section_mappings;
             ALTER TABLE section_mappings_new RENAME TO section_mappings;
-        ")?;
+        ",
+        )?;
     }
 
     Ok(())
@@ -3513,7 +3862,9 @@ mod consolidation_tests {
         db.set_account_balance("monzo", dec!(1500), naive_dt(2025, 1, 15))
             .unwrap();
 
-        let holdings = db.get_holdings_batch(&["monzo".to_string()], false).unwrap();
+        let holdings = db
+            .get_holdings_batch(&["monzo".to_string()], false)
+            .unwrap();
         assert_eq!(holdings.len(), 1);
         assert_eq!(holdings[0].symbol, "_CASH");
         assert_eq!(holdings[0].holding_type, HoldingType::Cash);
@@ -3530,7 +3881,9 @@ mod consolidation_tests {
         db.set_account_balance("monzo", dec!(1000), dt).unwrap();
         db.set_account_balance("monzo", dec!(1200), dt).unwrap();
 
-        let holdings = db.get_holdings_batch(&["monzo".to_string()], false).unwrap();
+        let holdings = db
+            .get_holdings_batch(&["monzo".to_string()], false)
+            .unwrap();
         assert_eq!(holdings.len(), 1, "should not duplicate on same date");
         assert_eq!(holdings[0].value, dec!(1200));
     }
@@ -3767,7 +4120,9 @@ mod consolidation_tests {
         )
         .unwrap();
 
-        let holdings = db.get_holdings_batch(&["monzo".to_string()], false).unwrap();
+        let holdings = db
+            .get_holdings_batch(&["monzo".to_string()], false)
+            .unwrap();
         assert_eq!(
             holdings.len(),
             3,
@@ -4329,5 +4684,212 @@ mod consolidation_tests {
             .unwrap();
         // 1000 USD * 0.5 = 500 GBP, + 200 GBP = 700 GBP (raw sum would be 1200).
         assert_eq!(m.end_value, dec!(700));
+    }
+}
+
+#[cfg(test)]
+mod transaction_dryrun_tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use rust_decimal::Decimal;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn setup_test_account(db: &Db, id: &str) {
+        db.create_account(&Account {
+            id: id.to_string(),
+            name: id.to_string(),
+            institution: "TestBank".to_string(),
+            account_type: AccountType::Checking,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+    }
+
+    fn make_txn(date: (i32, u32, u32), desc: &str, amount: i64, scale: u32) -> ImportTransaction {
+        ImportTransaction {
+            date: NaiveDate::from_ymd_opt(date.0, date.1, date.2)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            description: desc.to_string(),
+            amount: Decimal::new(amount, scale),
+            currency: Some("GBP".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_dry_run_transactions_new() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let txns = vec![make_txn((2025, 1, 15), "Coffee Shop", -350, 2)];
+
+        let previews = db.dry_run_transactions("acc1", &txns).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::New);
+        assert!(previews[0].existing_id.is_none());
+    }
+
+    #[test]
+    fn test_dry_run_transactions_duplicate() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let txns = vec![make_txn((2025, 1, 15), "Coffee Shop", -350, 2)];
+
+        db.insert_transactions_bulk("acc1", &txns).unwrap();
+
+        let previews = db.dry_run_transactions("acc1", &txns).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
+        assert!(previews[0].existing_id.is_some());
+        assert_eq!(
+            previews[0].existing_description.as_deref(),
+            Some("Coffee Shop")
+        );
+    }
+
+    #[test]
+    fn test_dry_run_transactions_no_writes() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let txns = vec![make_txn((2025, 1, 15), "Coffee Shop", -350, 2)];
+
+        db.dry_run_transactions("acc1", &txns).unwrap();
+
+        let (rows, count) = db.get_transactions(&TransactionFilters::default()).unwrap();
+        assert_eq!(count, 0);
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn test_dry_run_transactions_mixed() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let existing = vec![make_txn((2025, 1, 15), "Coffee", -350, 2)];
+        db.insert_transactions_bulk("acc1", &existing).unwrap();
+
+        let txns = vec![
+            make_txn((2025, 1, 15), "Coffee", -350, 2),
+            make_txn((2025, 1, 16), "Groceries", -2500, 2),
+        ];
+
+        let previews = db.dry_run_transactions("acc1", &txns).unwrap();
+        assert_eq!(previews.len(), 2);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
+        assert_eq!(previews[1].status, TransactionPreviewStatus::New);
+    }
+}
+
+#[cfg(test)]
+mod investment_dedup_tests {
+    use super::*;
+    use crate::importers::investments_parser::ParsedInvestmentRow;
+    use crate::model::TransactionPreviewStatus;
+    use tempfile::NamedTempFile;
+
+    fn make_inv_row(event_type: &str, symbol: &str) -> ParsedInvestmentRow {
+        ParsedInvestmentRow {
+            event_type: event_type.to_string(),
+            symbol: symbol.to_string(),
+            date: "2026-03-15T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            total_value: None,
+            fee: "0".to_string(),
+            currency: "GBP".to_string(),
+            notes: None,
+            row_confidence: 0.95,
+        }
+    }
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    #[test]
+    fn dry_run_investments_marks_new_row() {
+        let (db, _file) = test_db();
+        let rows = vec![make_inv_row("buy", "VUSA")];
+        let previews = db.dry_run_investments("acct-1", &rows, 0.70).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::New);
+        assert!(previews[0].existing_id.is_none());
+    }
+
+    #[test]
+    fn dry_run_investments_marks_duplicate_after_insert() {
+        let (db, _file) = test_db();
+
+        db.create_account(&crate::model::Account {
+            id: "acct-1".to_string(),
+            name: "Test".to_string(),
+            institution: "Test Bank".to_string(),
+            account_type: crate::model::AccountType::Checking,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+
+        let body = crate::model::CreateInvestmentEventBody {
+            account_id: "acct-1".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "VUSA".to_string(),
+            date: "2026-03-15T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            fee: Some("0".to_string()),
+            currency: "GBP".to_string(),
+            notes: None,
+        };
+        db.create_investment_event(&body).unwrap();
+
+        let rows = vec![make_inv_row("buy", "VUSA")];
+        let previews = db.dry_run_investments("acct-1", &rows, 0.70).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
+        assert!(previews[0].existing_id.is_some());
+    }
+
+    #[test]
+    fn dry_run_investments_marks_error_for_low_confidence() {
+        let (db, _file) = test_db();
+        let mut row = make_inv_row("buy", "VUSA");
+        row.row_confidence = 0.50;
+        let previews = db.dry_run_investments("acct-1", &[row], 0.70).unwrap();
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Error);
+    }
+
+    #[test]
+    fn dry_run_investments_marks_error_for_invalid_date() {
+        let (db, _file) = test_db();
+        let mut row = make_inv_row("buy", "VUSA");
+        row.date = "not-a-date".to_string();
+        let previews = db.dry_run_investments("acct-1", &[row], 0.70).unwrap();
+        assert_eq!(previews[0].status, TransactionPreviewStatus::Error);
     }
 }

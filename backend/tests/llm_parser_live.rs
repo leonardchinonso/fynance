@@ -16,6 +16,7 @@ use std::sync::Arc;
 use fynance::importers::Importer;
 use fynance::importers::csv_importer::CsvImporter;
 use fynance::importers::llm_parser::LlmStatementParser;
+use fynance::importers::provider::create_provider;
 use fynance::model::BankFormat;
 use fynance::storage::Db;
 use tempfile::tempdir;
@@ -35,8 +36,8 @@ fn live_monzo_import() {
     // from the project root.
     let _ = dotenvy::dotenv();
 
-    let parser = LlmStatementParser::from_env()
-        .expect("FYNANCE_ANTHROPIC_API_KEY must be set for live tests");
+    let provider = create_provider().expect("FYNANCE_ANTHROPIC_API_KEY must be set for live tests");
+    let parser = LlmStatementParser::new(provider);
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
 

@@ -5,8 +5,8 @@ use axum::extract::{Path, Query, State};
 use serde_json::Value;
 
 use crate::model::{
-    CreateInvestmentEventBody, InvestmentEvent, ListInvestmentEventsQuery,
-    PatchInvestmentEventBody,
+    CreateInvestmentEventBody, InvestmentEvent, InvestmentImportError, InvestmentImportResult,
+    InvestmentsImportPayload, ListInvestmentEventsQuery, PatchInvestmentEventBody,
 };
 use crate::server::error::AppError;
 use crate::server::state::AppState;
@@ -113,4 +113,60 @@ pub async fn delete_investment(
             "investment event {id} not found"
         )))
     }
+}
+
+// ── POST /api/investments/import ────────────────────────────────────────────
+
+pub async fn import_investments(
+    State(state): State<AppState>,
+    Json(payload): Json<InvestmentsImportPayload>,
+) -> Result<Json<InvestmentImportResult>, AppError> {
+    if payload.account_id.is_empty() {
+        return Err(AppError::bad_request(
+            "account_id must not be empty",
+            "invalid_account_id",
+        ));
+    }
+
+    let mut inserted: usize = 0;
+    let mut duplicates: usize = 0;
+    let mut errors: Vec<InvestmentImportError> = Vec::new();
+
+    {
+        let db = state.db.lock().expect("db mutex poisoned");
+        for (index, event) in payload.events.iter().enumerate() {
+            let body = CreateInvestmentEventBody {
+                account_id: payload.account_id.clone(),
+                event_type: event.event_type.clone(),
+                symbol: event.symbol.clone(),
+                date: event.date.clone(),
+                quantity: event.quantity.clone(),
+                price_per_share: event.price_per_share.clone(),
+                fee: event.fee.clone(),
+                currency: event.currency.clone(),
+                notes: event.notes.clone(),
+            };
+
+            match db.create_investment_event(&body) {
+                Ok(_) => {
+                    inserted += 1;
+                }
+                Err(e) => {
+                    let reason = e.to_string();
+                    if reason.contains("UNIQUE constraint") || reason.contains("duplicate") {
+                        duplicates += 1;
+                    } else {
+                        errors.push(InvestmentImportError { index, reason });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Json(InvestmentImportResult {
+        total: payload.events.len(),
+        inserted,
+        duplicates,
+        errors,
+    }))
 }

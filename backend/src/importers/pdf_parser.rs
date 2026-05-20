@@ -1,0 +1,230 @@
+use std::sync::Arc;
+
+use anyhow::{Context, Result, anyhow};
+
+use super::document_parser::SnapshotPeriod;
+use super::holdings_parser::ParsedHoldings;
+use super::investments_parser::{ParsedInvestments, build_investments_tool_schema};
+use super::llm_parser::ParsedStatement;
+use super::provider::LlmProvider;
+
+const STATEMENT_PROMPT: &str = include_str!("../../config/prompts/statement_parser.txt");
+const HOLDINGS_PROMPT: &str = include_str!("../../config/prompts/holdings_parser.txt");
+const PERIODIC_HOLDINGS_PROMPT: &str =
+    include_str!("../../config/prompts/periodic_holdings_parser.txt");
+const INVESTMENTS_PROMPT: &str = include_str!("../../config/prompts/investments_parser.txt");
+
+// ── PDF Transaction Parser ─────────────────────────────────────────────────
+
+pub struct PdfStatementParser {
+    provider: Arc<dyn LlmProvider>,
+}
+
+impl PdfStatementParser {
+    pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
+        Self { provider }
+    }
+
+    pub async fn parse(
+        &self,
+        pdf_bytes: &[u8],
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedStatement> {
+        let tool_schema = super::llm_parser::build_tool_schema();
+
+        let mut text_supplement = format!("filename: {filename}");
+        if let Some(hint) = user_hint {
+            text_supplement = format!("User instructions: {hint}\n\n{text_supplement}");
+        }
+
+        tracing::debug!(
+            provider = self.provider.name(),
+            filename,
+            pdf_size = pdf_bytes.len(),
+            "sending PDF for transaction extraction"
+        );
+
+        let tool_input = self
+            .provider
+            .chat_with_pdf_and_tools(
+                STATEMENT_PROMPT,
+                pdf_bytes,
+                &text_supplement,
+                "parse_bank_statement",
+                tool_schema,
+            )
+            .await?;
+
+        let parsed: ParsedStatement = serde_json::from_value(tool_input)
+            .context("deserializing ParsedStatement from PDF tool_use")?;
+
+        if parsed.rows.is_empty() {
+            return Err(anyhow!(
+                "No transactions could be extracted from PDF '{}'. \
+                 This may be a scanned/image-only PDF that requires OCR (not supported). \
+                 Try exporting as CSV from your bank instead.",
+                filename
+            ));
+        }
+
+        Ok(parsed)
+    }
+}
+
+// ── PDF Holdings Parser ────────────────────────────────────────────────────
+
+pub struct PdfHoldingsParser {
+    provider: Arc<dyn LlmProvider>,
+}
+
+impl PdfHoldingsParser {
+    pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
+        Self { provider }
+    }
+
+    pub async fn extract(
+        &self,
+        pdf_bytes: &[u8],
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedHoldings> {
+        let tool_schema = super::holdings_parser::build_holdings_tool_schema();
+
+        let mut text_supplement = format!("filename: {filename}");
+        if let Some(hint) = user_hint {
+            text_supplement = format!("User instructions: {hint}\n\n{text_supplement}");
+        }
+
+        let tool_input = self
+            .provider
+            .chat_with_pdf_and_tools(
+                HOLDINGS_PROMPT,
+                pdf_bytes,
+                &text_supplement,
+                "parse_holdings",
+                tool_schema,
+            )
+            .await?;
+
+        let parsed: ParsedHoldings =
+            serde_json::from_value(tool_input).context("deserializing ParsedHoldings from PDF")?;
+
+        if parsed.rows.is_empty() {
+            return Err(anyhow!(
+                "No holdings could be extracted from PDF '{}'. \
+                 This may be a scanned document or the format is not recognized.",
+                filename
+            ));
+        }
+
+        Ok(parsed)
+    }
+}
+
+// ── PDF Periodic Holdings Parser ───────────────────────────────────────────
+
+pub struct PdfPeriodicHoldingsParser {
+    provider: Arc<dyn LlmProvider>,
+}
+
+impl PdfPeriodicHoldingsParser {
+    pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
+        Self { provider }
+    }
+
+    pub async fn extract(
+        &self,
+        pdf_bytes: &[u8],
+        filename: &str,
+        period: &SnapshotPeriod,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedHoldings> {
+        let tool_schema = super::periodic_holdings_parser::build_periodic_holdings_tool_schema();
+
+        let period_str = match period {
+            SnapshotPeriod::Monthly => "monthly",
+            SnapshotPeriod::Quarterly => "quarterly",
+            SnapshotPeriod::Yearly => "yearly",
+        };
+
+        let mut text_supplement =
+            format!("Requested snapshot period: {period_str}\n\nfilename: {filename}");
+        if let Some(hint) = user_hint {
+            text_supplement = format!("User instructions: {hint}\n\n{text_supplement}");
+        }
+
+        let tool_input = self
+            .provider
+            .chat_with_pdf_and_tools(
+                PERIODIC_HOLDINGS_PROMPT,
+                pdf_bytes,
+                &text_supplement,
+                "extract_periodic_holdings",
+                tool_schema,
+            )
+            .await?;
+
+        let parsed: ParsedHoldings = serde_json::from_value(tool_input)
+            .context("deserializing ParsedHoldings from PDF periodic holdings")?;
+
+        Ok(parsed)
+    }
+}
+
+// ── PDF Investments Parser ────────────────────────────────────────────────────
+
+pub struct PdfInvestmentsParser {
+    provider: Arc<dyn LlmProvider>,
+}
+
+impl PdfInvestmentsParser {
+    pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
+        Self { provider }
+    }
+
+    pub async fn extract(
+        &self,
+        pdf_bytes: &[u8],
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedInvestments> {
+        let tool_schema = build_investments_tool_schema();
+
+        let mut text_supplement = format!("filename: {filename}");
+        if let Some(hint) = user_hint {
+            text_supplement = format!("User instructions: {hint}\n\n{text_supplement}");
+        }
+
+        tracing::debug!(
+            provider = self.provider.name(),
+            filename,
+            pdf_size = pdf_bytes.len(),
+            "sending PDF for investment event extraction"
+        );
+
+        let tool_input = self
+            .provider
+            .chat_with_pdf_and_tools(
+                INVESTMENTS_PROMPT,
+                pdf_bytes,
+                &text_supplement,
+                "parse_investments",
+                tool_schema,
+            )
+            .await?;
+
+        let parsed: ParsedInvestments = serde_json::from_value(tool_input)
+            .context("deserializing ParsedInvestments from PDF tool_use")?;
+
+        if parsed.rows.is_empty() {
+            return Err(anyhow!(
+                "No investment events could be extracted from PDF '{}'. \
+                 This may be a scanned document or the format is not recognized.",
+                filename
+            ));
+        }
+
+        Ok(parsed)
+    }
+}

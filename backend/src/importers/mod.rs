@@ -5,7 +5,14 @@
 //! without touching the `import` command.
 
 pub mod csv_importer;
+pub mod document_parser;
+pub mod format_detection;
+pub mod holdings_parser;
+pub mod investments_parser;
 pub mod llm_parser;
+pub mod pdf_parser;
+pub mod periodic_holdings_parser;
+pub mod provider;
 pub mod unified;
 
 use std::path::Path;
@@ -31,7 +38,8 @@ pub fn get_importer(path: &Path) -> Result<Box<dyn Importer>> {
         .map(|e| e.to_ascii_lowercase());
     match ext.as_deref() {
         Some("csv") => {
-            let parser = llm_parser::LlmStatementParser::from_env()?;
+            let llm_provider = provider::create_provider()?;
+            let parser = llm_parser::LlmStatementParser::new(llm_provider);
             let min_detection_confidence = parser.min_detection_confidence;
             let min_row_confidence = parser.min_row_confidence;
             Ok(Box::new(csv_importer::CsvImporter {

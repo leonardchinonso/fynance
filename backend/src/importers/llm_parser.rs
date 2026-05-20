@@ -6,12 +6,14 @@
 //! response. `MockStatementParser` is a test-only implementation that
 //! returns a pre-canned `ParsedStatement` without any network traffic.
 
-use anyhow::{Context, Result, anyhow};
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::provider::{LlmProvider, ModelTier};
 use super::unified::UnifiedStatementRow;
 use crate::model::BankFormat;
 
@@ -40,17 +42,20 @@ pub struct ParsedStatement {
 
 #[async_trait]
 pub trait StatementParser: Send + Sync {
-    async fn parse(&self, raw: &str, filename: &str) -> Result<ParsedStatement>;
+    async fn parse(
+        &self,
+        raw: &str,
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedStatement>;
 }
 
 // ── LLM implementation ────────────────────────────────────────────────────────
 
-/// Parses a CSV bank statement by sending it to Anthropic and using tool_use
-/// to receive a `ParsedStatement`-shaped JSON object back.
+/// Parses a CSV bank statement by sending it to an LLM provider and using
+/// tool_use to receive a `ParsedStatement`-shaped JSON object back.
 pub struct LlmStatementParser {
-    client: Client,
-    api_key: String,
-    model: String,
+    provider: Arc<dyn LlmProvider>,
     /// File-level confidence threshold. Import fails if detection_confidence
     /// falls below this.
     pub min_detection_confidence: f32,
@@ -60,21 +65,7 @@ pub struct LlmStatementParser {
 }
 
 impl LlmStatementParser {
-    /// Build from environment variables.
-    ///
-    /// Required: `FYNANCE_ANTHROPIC_API_KEY`
-    /// Optional: `FYNANCE_IMPORT_LLM_MODEL`, `FYNANCE_IMPORT_MIN_DETECT_CONF`,
-    ///           `FYNANCE_IMPORT_MIN_ROW_CONF`
-    pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("FYNANCE_ANTHROPIC_API_KEY").map_err(|_| {
-            anyhow!(
-                "FYNANCE_ANTHROPIC_API_KEY is not set. \
-                 LLM-based CSV import requires an Anthropic API key. \
-                 Set it in your .env file or environment and try again."
-            )
-        })?;
-        let model = std::env::var("FYNANCE_IMPORT_LLM_MODEL")
-            .unwrap_or_else(|_| "claude-haiku-4-5-20251001".to_string());
+    pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
         let min_detection_confidence = std::env::var("FYNANCE_IMPORT_MIN_DETECT_CONF")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -84,21 +75,22 @@ impl LlmStatementParser {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0.70_f32);
 
-        Ok(Self {
-            client: Client::new(),
-            api_key,
-            model,
+        Self {
+            provider,
             min_detection_confidence,
             min_row_confidence,
-        })
+        }
     }
 }
 
 #[async_trait]
 impl StatementParser for LlmStatementParser {
-    async fn parse(&self, raw: &str, filename: &str) -> Result<ParsedStatement> {
-        // Truncate very large files. The open-question chunking path in
-        // docs/plans/10_llm_csv_import.md §11 will handle >200 KB properly.
+    async fn parse(
+        &self,
+        raw: &str,
+        filename: &str,
+        user_hint: Option<&str>,
+    ) -> Result<ParsedStatement> {
         let content = if raw.len() > MAX_CSV_BYTES {
             tracing::warn!(
                 filename,
@@ -113,79 +105,28 @@ impl StatementParser for LlmStatementParser {
 
         let tool_schema = build_tool_schema();
 
-        let request_body = json!({
-            "model": self.model,
-            "max_tokens": 8192,
-            "system": SYSTEM_PROMPT,
-            "tools": [{
-                "name": "parse_bank_statement",
-                "description": "Parse a bank statement CSV into structured transaction records.",
-                "input_schema": tool_schema
-            }],
-            "tool_choice": { "type": "tool", "name": "parse_bank_statement" },
-            "messages": [{
-                "role": "user",
-                "content": format!("filename: {filename}\n\n{content}")
-            }]
-        });
-
-        tracing::debug!(
-            filename,
-            bytes = content.len(),
-            model = self.model,
-            "sending CSV to Anthropic"
-        );
-
-        let response = self
-            .client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request_body)
-            .send()
-            .await
-            .context("sending request to Anthropic API")?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("reading Anthropic API response body")?;
-
-        if !status.is_success() {
-            return Err(anyhow!("Anthropic API returned {status}: {body}"));
+        let mut user_msg = format!("filename: {filename}\n\n{content}");
+        if let Some(hint) = user_hint {
+            user_msg = format!("User instructions: {hint}\n\n{user_msg}");
         }
 
-        // Log at DEBUG only; never log full body at INFO to avoid leaking
-        // transaction descriptions (see CLAUDE.md security conventions).
         tracing::debug!(
+            provider = self.provider.name(),
             filename,
-            response_preview = &body[..body.len().min(300)],
-            "received Anthropic response"
+            bytes = content.len(),
+            "parsing statement"
         );
 
-        let api_resp: AnthropicResponse = serde_json::from_str(&body).with_context(|| {
-            format!(
-                "parsing Anthropic response JSON (preview: {}...)",
-                &body[..body.len().min(200)]
+        let tool_input = self
+            .provider
+            .chat_with_tools(
+                SYSTEM_PROMPT,
+                &user_msg,
+                "parse_bank_statement",
+                tool_schema,
+                ModelTier::Standard,
             )
-        })?;
-
-        let tool_input = api_resp
-            .content
-            .into_iter()
-            .find_map(|block| match block {
-                ContentBlock::ToolUse {
-                    block_type,
-                    name,
-                    input,
-                } if block_type == "tool_use" && name == "parse_bank_statement" => Some(input),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                anyhow!("Anthropic response contained no parse_bank_statement tool_use block")
-            })?;
+            .await?;
 
         let parsed: ParsedStatement = serde_json::from_value(tool_input)
             .context("deserializing ParsedStatement from tool_use input")?;
@@ -202,33 +143,9 @@ impl StatementParser for LlmStatementParser {
     }
 }
 
-// ── Anthropic response types (internal) ───────────────────────────────────────
-
-#[derive(Deserialize)]
-struct AnthropicResponse {
-    content: Vec<ContentBlock>,
-}
-
-/// We only need the `tool_use` block; all other block types (text, thinking,
-/// etc.) are captured as a raw `Value` and discarded. Using `#[serde(untagged)]`
-/// lets serde try `ToolUse` first and fall through to `Other` for anything
-/// that does not match.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ContentBlock {
-    ToolUse {
-        #[serde(rename = "type")]
-        block_type: String,
-        name: String,
-        input: Value,
-    },
-    #[allow(dead_code)]
-    Other(Value),
-}
-
 // ── Tool schema (hand-written JSON Schema) ────────────────────────────────────
 
-fn build_tool_schema() -> Value {
+pub(crate) fn build_tool_schema() -> Value {
     json!({
         "type": "object",
         "required": ["detected_bank", "detection_confidence", "rows"],
@@ -333,12 +250,56 @@ impl MockStatementParser {
 
 #[async_trait]
 impl StatementParser for MockStatementParser {
-    async fn parse(&self, _raw: &str, _filename: &str) -> Result<ParsedStatement> {
+    async fn parse(
+        &self,
+        _raw: &str,
+        _filename: &str,
+        _user_hint: Option<&str>,
+    ) -> Result<ParsedStatement> {
         Ok(self.result.clone())
     }
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod provider_tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use crate::importers::provider::testing::MockProvider;
+    use crate::model::BankFormat;
+
+    use super::{LlmStatementParser, StatementParser};
+
+    #[tokio::test]
+    async fn test_parser_uses_provider_result() {
+        let mock_input = json!({
+            "detected_bank": "monzo",
+            "detection_confidence": 0.97,
+            "rows": [{
+                "date": "2026-05-01",
+                "description": "Lidl",
+                "amount": "-5.50",
+                "currency": "GBP",
+                "row_confidence": 0.99
+            }]
+        });
+
+        let provider = MockProvider::new(mock_input);
+        let parser = LlmStatementParser::new(provider as Arc<_>);
+        let result = parser
+            .parse("some csv content", "test.csv", None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.detected_bank, BankFormat::Monzo);
+        assert_eq!(result.detection_confidence, 0.97);
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0].description, "Lidl");
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -410,7 +371,7 @@ mod tests {
             rows: vec![make_row("2026-03-10", "Test", "-1.00", 0.9)],
         };
         let mock = MockStatementParser { result: stmt };
-        let parsed = mock.parse("anything", "test.csv").await.unwrap();
+        let parsed = mock.parse("anything", "test.csv", None).await.unwrap();
         assert_eq!(parsed.detected_bank, BankFormat::Unknown);
         assert_eq!(parsed.rows.len(), 1);
     }

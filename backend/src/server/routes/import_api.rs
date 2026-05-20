@@ -12,7 +12,11 @@ use axum::extract::{Multipart, Query, State};
 use serde::Deserialize;
 
 use crate::importers::llm_parser::StatementParser;
-use crate::model::{BankFormat, ImportLog, ImportPayload, ImportResult};
+use crate::importers::provider::create_provider;
+use crate::model::{
+    BankFormat, ImportLog, ImportPayload, ImportResult, ImportTransaction,
+    TransactionImportPreview, TransactionPreviewStatus,
+};
 use crate::server::auth::AuthContext;
 use crate::server::error::AppError;
 use crate::server::state::AppState;
@@ -34,8 +38,9 @@ fn require_token_if_remote(state: &AppState, auth: &AuthContext) -> Result<(), A
 pub async fn import_json(
     State(state): State<AppState>,
     auth: axum::extract::Extension<AuthContext>,
+    Query(q): Query<ImportJsonQuery>,
     Json(payload): Json<ImportPayload>,
-) -> Result<Json<ImportResult>, AppError> {
+) -> Result<Json<serde_json::Value>, AppError> {
     require_token_if_remote(&state, &auth)?;
 
     if payload.transactions.is_empty() {
@@ -60,6 +65,38 @@ pub async fn import_json(
         validate_currency(&db, currency)?;
     }
 
+    if q.dry_run.unwrap_or(false) {
+        let preview_rows = db.dry_run_transactions(&payload.account_id, &payload.transactions)?;
+
+        let rows_new = preview_rows
+            .iter()
+            .filter(|r| r.status == TransactionPreviewStatus::New)
+            .count() as u64;
+        let rows_duplicate = preview_rows
+            .iter()
+            .filter(|r| r.status == TransactionPreviewStatus::Duplicate)
+            .count() as u64;
+        let rows_error = preview_rows
+            .iter()
+            .filter(|r| r.status == TransactionPreviewStatus::Error)
+            .count() as u64;
+
+        let preview = TransactionImportPreview {
+            account_id: payload.account_id.clone(),
+            filename: "<api>".to_string(),
+            detected_bank: BankFormat::Unknown,
+            detection_confidence: 0.0,
+            rows_total: payload.transactions.len() as u64,
+            rows_new,
+            rows_duplicate,
+            rows_error,
+            rows: preview_rows,
+            payload,
+        };
+
+        return Ok(Json(serde_json::to_value(preview).unwrap()));
+    }
+
     let result = db.insert_transactions_bulk(&payload.account_id, &payload.transactions)?;
 
     db.log_import(&ImportLog {
@@ -73,7 +110,7 @@ pub async fn import_json(
         detection_confidence: 0.0,
     })?;
 
-    Ok(Json(result))
+    Ok(Json(serde_json::to_value(result).unwrap()))
 }
 
 // ── POST /api/import/csv ──────────────────────────────────────────────────────
@@ -81,6 +118,14 @@ pub async fn import_json(
 #[derive(Debug, Deserialize)]
 pub struct CsvImportQuery {
     pub account: Option<String>,
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportJsonQuery {
+    #[serde(default)]
+    pub dry_run: Option<bool>,
 }
 
 pub async fn import_csv(
@@ -88,7 +133,7 @@ pub async fn import_csv(
     auth: axum::extract::Extension<AuthContext>,
     Query(q): Query<CsvImportQuery>,
     mut multipart: Multipart,
-) -> Result<Json<ImportResult>, AppError> {
+) -> Result<Json<serde_json::Value>, AppError> {
     require_token_if_remote(&state, &auth)?;
 
     let account_id = q.account.ok_or_else(|| {
@@ -107,11 +152,11 @@ pub async fn import_csv(
 
     let (filename, raw_csv) = extract_csv_from_multipart(&mut multipart).await?;
 
-    let parser = crate::importers::llm_parser::LlmStatementParser::from_env()?;
+    let parser = crate::importers::llm_parser::LlmStatementParser::new(create_provider()?);
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
 
-    let parsed = parser.parse(&raw_csv, &filename).await?;
+    let parsed = parser.parse(&raw_csv, &filename, None).await?;
 
     if parsed.detection_confidence < min_detection_confidence {
         return Err(AppError::bad_request(
@@ -121,6 +166,69 @@ pub async fn import_csv(
             ),
             "invalid_csv",
         ));
+    }
+
+    if q.dry_run.unwrap_or(false) {
+        let db = state.db.lock().expect("db mutex poisoned");
+        let preview_rows =
+            db.dry_run_transactions_from_parsed(&account_id, &parsed.rows, min_row_confidence)?;
+
+        let import_transactions: Vec<ImportTransaction> = parsed
+            .rows
+            .iter()
+            .filter(|r| r.row_confidence >= min_row_confidence)
+            .map(|r| ImportTransaction {
+                date: r.date,
+                description: r
+                    .merchant
+                    .as_deref()
+                    .filter(|m: &&str| !m.is_empty())
+                    .unwrap_or(&r.description)
+                    .to_string(),
+                amount: r.amount,
+                currency: Some(r.currency.clone()),
+                category: r.category.clone(),
+                category_id: None,
+                category_source: r
+                    .category
+                    .as_ref()
+                    .map(|_| crate::model::CategorySource::Rule),
+                notes: r.notes.clone(),
+                is_recurring: None,
+                exclude_from_summary: None,
+            })
+            .collect();
+
+        let rows_new = preview_rows
+            .iter()
+            .filter(|r| r.status == TransactionPreviewStatus::New)
+            .count() as u64;
+        let rows_duplicate = preview_rows
+            .iter()
+            .filter(|r| r.status == TransactionPreviewStatus::Duplicate)
+            .count() as u64;
+        let rows_error = preview_rows
+            .iter()
+            .filter(|r| r.status == TransactionPreviewStatus::Error)
+            .count() as u64;
+
+        let preview = TransactionImportPreview {
+            account_id: account_id.clone(),
+            filename,
+            detected_bank: parsed.detected_bank,
+            detection_confidence: parsed.detection_confidence,
+            rows_total: parsed.rows.len() as u64,
+            rows_new,
+            rows_duplicate,
+            rows_error,
+            rows: preview_rows,
+            payload: ImportPayload {
+                account_id,
+                transactions: import_transactions,
+            },
+        };
+
+        return Ok(Json(serde_json::to_value(preview).unwrap()));
     }
 
     let result = {
@@ -142,7 +250,7 @@ pub async fn import_csv(
         })?;
     }
 
-    Ok(Json(result))
+    Ok(Json(serde_json::to_value(result).unwrap()))
 }
 
 // ── POST /api/import/bulk ─────────────────────────────────────────────────────
@@ -194,7 +302,7 @@ pub async fn import_bulk(
         return Err(AppError::bad_request("no files provided", "missing_file"));
     }
 
-    let parser = crate::importers::llm_parser::LlmStatementParser::from_env()?;
+    let parser = crate::importers::llm_parser::LlmStatementParser::new(create_provider()?);
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
     let parser: Arc<dyn StatementParser> = Arc::new(parser);
@@ -231,7 +339,7 @@ pub async fn import_bulk(
             continue;
         }
 
-        let parse_result = parser.parse(&raw_csv, &filename).await;
+        let parse_result = parser.parse(&raw_csv, &filename, None).await;
 
         match parse_result {
             Err(e) => {
