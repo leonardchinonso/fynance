@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo } from "react"
 import {
   Table,
   TableBody,
@@ -18,7 +18,9 @@ import type { Currency } from "@/types"
 import { StatusBadge } from "./status_badge"
 import { DateCell, DecimalCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
+import { SortHeader } from "./sort_header"
 import { InlineDateRange } from "@/components/inline_date_range"
+import { useUrlState } from "@/hooks/use_url_state"
 import {
   Select as UiSelect,
   SelectContent as UiSelectContent,
@@ -29,6 +31,38 @@ import {
 const EVENT_TYPES: InvestmentEventType[] = [
   "buy", "sell", "vest", "transfer", "withhold", "split",
 ]
+
+const STATUS_RANK: Record<string, number> = {
+  new: 0,
+  modify: 1,
+  duplicate: 2,
+  error: 3,
+  removed: 4,
+}
+
+interface EntryShape {
+  row: { date: string; symbol: string; event_type: string; currency: string; status: string }
+  payloadIdx: number | null
+}
+
+function invSortValue(entry: EntryShape, column: string, marked: Set<number>): string | number {
+  switch (column) {
+    case "date":
+      return entry.row.date
+    case "action": {
+      const s = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
+      return STATUS_RANK[s] ?? 99
+    }
+    case "event":
+      return entry.row.event_type
+    case "symbol":
+      return entry.row.symbol
+    case "currency":
+      return entry.row.currency
+    default:
+      return 0
+  }
+}
 
 /** Cash-out events → red, cash-in events → green, structural events → neutral. */
 function priceColorClass(eventType: string): string {
@@ -62,6 +96,7 @@ export function InvestmentsSection({
   currencyOptions,
 }: Props) {
   const ctrls = useSectionControls()
+  const url = useUrlState()
 
   const { minDate, maxDate } = useMemo(() => {
     const dates = result.rows
@@ -71,9 +106,32 @@ export function InvestmentsSection({
     return { minDate: dates[0] ?? "", maxDate: dates[dates.length - 1] ?? "" }
   }, [result.rows])
 
-  const [dateFrom, setDateFrom] = useState(minDate)
-  const [dateTo, setDateTo] = useState(maxDate)
-  const [eventFilter, setEventFilter] = useState("__all__")
+  const dateFrom = url.get("invDateFrom", minDate)
+  const dateTo = url.get("invDateTo", maxDate)
+  const eventFilter = url.get("invEvent", "__all__")
+  const sortColumn = url.get("invSort", "")
+  const sortDir = (url.get("invDir", "asc") === "desc" ? "desc" : "asc") as "asc" | "desc"
+
+  function setDateRange(start: string, end: string) {
+    url.set({
+      invDateFrom: start === minDate ? null : start,
+      invDateTo: end === maxDate ? null : end,
+    })
+    ctrls.setPage(1)
+  }
+  function setEventFilter(v: string) {
+    url.set({ invEvent: v === "__all__" ? null : v })
+    ctrls.setPage(1)
+  }
+  function cycleSort(col: string) {
+    if (sortColumn !== col) {
+      url.set({ invSort: col, invDir: null })
+    } else if (sortDir === "asc") {
+      url.set({ invSort: col, invDir: "desc" })
+    } else {
+      url.set({ invSort: null, invDir: null })
+    }
+  }
 
   /**
    * Investment payload only contains rows with status === "new" in the
@@ -87,7 +145,7 @@ export function InvestmentsSection({
   const filteredEntries = useMemo(() => {
     const fromIso = dateFrom ? `${dateFrom}T00:00:00` : null
     const toIso = dateTo ? `${dateTo}T23:59:59` : null
-    return result.rows
+    const filtered = result.rows
       .map((row, displayIdx) => ({ row, displayIdx, payloadIdx: rowPayloadIndex[displayIdx] }))
       .filter(({ row }) => {
         if (fromIso && row.date < fromIso) return false
@@ -95,7 +153,16 @@ export function InvestmentsSection({
         if (eventFilter !== "__all__" && row.event_type !== eventFilter) return false
         return true
       })
-  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, eventFilter])
+    if (!sortColumn) return filtered
+    const sign = sortDir === "asc" ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      const av = invSortValue(a, sortColumn, markedForDeletion)
+      const bv = invSortValue(b, sortColumn, markedForDeletion)
+      if (av < bv) return -1 * sign
+      if (av > bv) return 1 * sign
+      return 0
+    })
+  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, eventFilter, sortColumn, sortDir, markedForDeletion])
 
   const totalRows = filteredEntries.length
   const start = (ctrls.page - 1) * ctrls.pageSize
@@ -136,15 +203,11 @@ export function InvestmentsSection({
       <InlineDateRange
         start={dateFrom}
         end={dateTo}
-        onChange={({ start, end }) => {
-          setDateFrom(start)
-          setDateTo(end)
-          ctrls.setPage(1)
-        }}
+        onChange={({ start, end }) => setDateRange(start, end)}
       />
       <UiSelect
         value={eventFilter}
-        onValueChange={(v) => { if (v) { setEventFilter(v); ctrls.setPage(1) } }}
+        onValueChange={(v) => { if (v) setEventFilter(v) }}
       >
         <UiSelectTrigger className="h-8 text-xs min-w-[8rem]">
           <span className="capitalize">
@@ -178,14 +241,14 @@ export function InvestmentsSection({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-24">Action</TableHead>
-            <TableHead className="w-28">Event</TableHead>
-            <TableHead className="w-28">Symbol</TableHead>
-            <TableHead className="w-36">Date</TableHead>
+            <SortHeader label="Action" columnId="action" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("action")} className="w-24" />
+            <SortHeader label="Event" columnId="event" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("event")} className="w-28" />
+            <SortHeader label="Symbol" columnId="symbol" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("symbol")} className="w-28" />
+            <SortHeader label="Date" columnId="date" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("date")} className="w-36" />
             <TableHead className="w-24 text-right">Qty</TableHead>
             <TableHead className="w-28 text-right">Price</TableHead>
             <TableHead className="w-24 text-right">Fee</TableHead>
-            <TableHead className="w-20">Currency</TableHead>
+            <SortHeader label="Currency" columnId="currency" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("currency")} className="w-20" />
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>

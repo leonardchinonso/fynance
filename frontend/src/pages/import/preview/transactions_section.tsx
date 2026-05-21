@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo } from "react"
 import {
   Table,
   TableBody,
@@ -17,9 +17,11 @@ import type { Currency } from "@/types"
 import { StatusBadge } from "./status_badge"
 import { DateCell, DecimalCell, SelectCell, TextCell, moneyDirectionClass } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
+import { SortHeader } from "./sort_header"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { InlineDateRange } from "@/components/inline_date_range"
+import { useUrlState } from "@/hooks/use_url_state"
 import {
   Select as UiSelect,
   SelectContent as UiSelectContent,
@@ -30,6 +32,42 @@ import {
 const TX_CATEGORY_LABELS: Record<string, string> = {
   __all__: "All categories",
   __none__: "Uncategorized",
+}
+
+const STATUS_RANK: Record<string, number> = {
+  new: 0,
+  modify: 1,
+  duplicate: 2,
+  error: 3,
+  removed: 4,
+}
+
+interface EntryShape {
+  row: { date: string; currency: string; status: string }
+  payloadIdx: number | null
+}
+
+function sortValue(
+  entry: EntryShape,
+  column: string,
+  payload: ImportPayload | null,
+  marked: Set<number>
+): string | number {
+  switch (column) {
+    case "date":
+      return entry.row.date
+    case "action": {
+      const status = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
+      return STATUS_RANK[status] ?? 99
+    }
+    case "currency":
+      return entry.row.currency
+    case "category":
+      // Sort uncategorized last regardless of direction.
+      return (entry.payloadIdx !== null ? payload?.transactions[entry.payloadIdx]?.category : null) ?? "￿"
+    default:
+      return 0
+  }
 }
 
 interface Props {
@@ -53,6 +91,7 @@ export function TransactionsSection({
 }: Props) {
   const ctrls = useSectionControls()
   const { categoryColors } = useCategoryColorsContext()
+  const url = useUrlState()
 
   const { minDate, maxDate } = useMemo(() => {
     const dates = result.rows
@@ -62,9 +101,32 @@ export function TransactionsSection({
     return { minDate: dates[0] ?? "", maxDate: dates[dates.length - 1] ?? "" }
   }, [result.rows])
 
-  const [dateFrom, setDateFrom] = useState(minDate)
-  const [dateTo, setDateTo] = useState(maxDate)
-  const [categoryFilter, setCategoryFilter] = useState("__all__")
+  const dateFrom = url.get("txDateFrom", minDate)
+  const dateTo = url.get("txDateTo", maxDate)
+  const categoryFilter = url.get("txCat", "__all__")
+  const sortColumn = url.get("txSort", "")
+  const sortDir = (url.get("txDir", "asc") === "desc" ? "desc" : "asc") as "asc" | "desc"
+
+  function setDateRange(start: string, end: string) {
+    url.set({
+      txDateFrom: start === minDate ? null : start,
+      txDateTo: end === maxDate ? null : end,
+    })
+    ctrls.setPage(1)
+  }
+  function setCategoryFilter(v: string) {
+    url.set({ txCat: v === "__all__" ? null : v })
+    ctrls.setPage(1)
+  }
+  function cycleSort(col: string) {
+    if (sortColumn !== col) {
+      url.set({ txSort: col, txDir: null })
+    } else if (sortDir === "asc") {
+      url.set({ txSort: col, txDir: "desc" })
+    } else {
+      url.set({ txSort: null, txDir: null })
+    }
+  }
 
   const availableCategories = useMemo(() => {
     const set = new Set<string>()
@@ -87,7 +149,7 @@ export function TransactionsSection({
   const filteredEntries = useMemo(() => {
     const fromIso = dateFrom ? `${dateFrom}T00:00:00` : null
     const toIso = dateTo ? `${dateTo}T23:59:59` : null
-    return result.rows
+    const filtered = result.rows
       .map((row, displayIdx) => ({ row, displayIdx, payloadIdx: rowPayloadIndex[displayIdx] }))
       .filter(({ row, payloadIdx }) => {
         if (fromIso && row.date < fromIso) return false
@@ -98,7 +160,17 @@ export function TransactionsSection({
         }
         return true
       })
-  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, categoryFilter, payload])
+    if (!sortColumn) return filtered
+    const sign = sortDir === "asc" ? 1 : -1
+    const sorted = [...filtered].sort((a, b) => {
+      const ax = sortValue(a, sortColumn, payload, markedForDeletion)
+      const bx = sortValue(b, sortColumn, payload, markedForDeletion)
+      if (ax < bx) return -1 * sign
+      if (ax > bx) return 1 * sign
+      return 0
+    })
+    return sorted
+  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, categoryFilter, payload, sortColumn, sortDir, markedForDeletion])
 
   const totalRows = filteredEntries.length
   const start = (ctrls.page - 1) * ctrls.pageSize
@@ -142,15 +214,11 @@ export function TransactionsSection({
       <InlineDateRange
         start={dateFrom}
         end={dateTo}
-        onChange={({ start, end }) => {
-          setDateFrom(start)
-          setDateTo(end)
-          ctrls.setPage(1)
-        }}
+        onChange={({ start, end }) => setDateRange(start, end)}
       />
       <UiSelect
         value={categoryFilter}
-        onValueChange={(v) => { if (v) { setCategoryFilter(v); ctrls.setPage(1) } }}
+        onValueChange={(v) => { if (v) setCategoryFilter(v) }}
       >
         <UiSelectTrigger className="h-8 text-xs min-w-[10rem]">
           <span>{TX_CATEGORY_LABELS[categoryFilter] ?? categoryFilter}</span>
@@ -183,12 +251,40 @@ export function TransactionsSection({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-24">Action</TableHead>
-            <TableHead className="w-36">Date</TableHead>
+            <SortHeader
+              label="Action"
+              columnId="action"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onClick={() => cycleSort("action")}
+              className="w-24"
+            />
+            <SortHeader
+              label="Date"
+              columnId="date"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onClick={() => cycleSort("date")}
+              className="w-36"
+            />
             <TableHead>Description</TableHead>
             <TableHead className="w-28 text-right">Amount</TableHead>
-            <TableHead className="w-20">Currency</TableHead>
-            <TableHead className="w-40">Category</TableHead>
+            <SortHeader
+              label="Currency"
+              columnId="currency"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onClick={() => cycleSort("currency")}
+              className="w-20"
+            />
+            <SortHeader
+              label="Category"
+              columnId="category"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onClick={() => cycleSort("category")}
+              className="w-40"
+            />
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>

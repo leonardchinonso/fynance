@@ -20,13 +20,47 @@ import type { Currency } from "@/types"
 import { StatusBadge } from "./status_badge"
 import { DateCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
+import { SortHeader } from "./sort_header"
 import { InlineDateRange } from "@/components/inline_date_range"
+import { useUrlState } from "@/hooks/use_url_state"
 import {
   Select as UiSelect,
   SelectContent as UiSelectContent,
   SelectItem as UiSelectItem,
   SelectTrigger as UiSelectTrigger,
 } from "@/components/ui/select"
+
+const STATUS_RANK: Record<string, number> = {
+  new: 0,
+  modify: 1,
+  duplicate: 2,
+  error: 3,
+  removed: 4,
+}
+
+interface HldEntryShape {
+  row: { symbol: string; sub_account: string | null; value: string; currency: string; as_of: string; status: string }
+  payloadIdx: number | null
+}
+
+function hldSortValue(entry: HldEntryShape, column: string, marked: Set<number>): string | number {
+  switch (column) {
+    case "as_of":
+      return entry.row.as_of
+    case "action": {
+      const s = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
+      return STATUS_RANK[s] ?? 99
+    }
+    case "symbol":
+      return `${entry.row.symbol}::${entry.row.sub_account ?? ""}`
+    case "currency":
+      return entry.row.currency
+    case "value":
+      return parseFloat(entry.row.value) || 0
+    default:
+      return 0
+  }
+}
 
 const HOLDING_TYPES: HoldingType[] = [
   "stock", "etf", "fund", "bond", "crypto", "cash", "property", "loan", "credit",
@@ -201,6 +235,7 @@ export function HoldingsSection({
   currencyOptions,
 }: Props) {
   const ctrls = useSectionControls()
+  const url = useUrlState()
 
   const { minDate, maxDate } = useMemo(() => {
     const dates = result.rows
@@ -210,9 +245,32 @@ export function HoldingsSection({
     return { minDate: dates[0] ?? "", maxDate: dates[dates.length - 1] ?? "" }
   }, [result.rows])
 
-  const [dateFrom, setDateFrom] = useState(minDate)
-  const [dateTo, setDateTo] = useState(maxDate)
-  const [holdingFilter, setHoldingFilter] = useState("__all__")
+  const dateFrom = url.get("hldDateFrom", minDate)
+  const dateTo = url.get("hldDateTo", maxDate)
+  const holdingFilter = url.get("hldKey", "__all__")
+  const sortColumn = url.get("hldSort", "")
+  const sortDir = (url.get("hldDir", "asc") === "desc" ? "desc" : "asc") as "asc" | "desc"
+
+  function setDateRange(start: string, end: string) {
+    url.set({
+      hldDateFrom: start === minDate ? null : start,
+      hldDateTo: end === maxDate ? null : end,
+    })
+    ctrls.setPage(1)
+  }
+  function setHoldingFilter(v: string) {
+    url.set({ hldKey: v === "__all__" ? null : v })
+    ctrls.setPage(1)
+  }
+  function cycleSort(col: string) {
+    if (sortColumn !== col) {
+      url.set({ hldSort: col, hldDir: null })
+    } else if (sortDir === "asc") {
+      url.set({ hldSort: col, hldDir: "desc" })
+    } else {
+      url.set({ hldSort: null, hldDir: null })
+    }
+  }
 
   const holdingOptions = useMemo(() => {
     const map = new Map<string, string>()
@@ -238,7 +296,7 @@ export function HoldingsSection({
   const filteredEntries = useMemo(() => {
     const fromIso = dateFrom ? `${dateFrom}T00:00:00` : null
     const toIso = dateTo ? `${dateTo}T23:59:59` : null
-    return result.rows
+    const filtered = result.rows
       .map((row, displayIdx) => ({ row, displayIdx, payloadIdx: rowPayloadIndex[displayIdx] }))
       .filter(({ row }) => {
         if (fromIso && row.as_of < fromIso) return false
@@ -249,7 +307,16 @@ export function HoldingsSection({
         }
         return true
       })
-  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, holdingFilter])
+    if (!sortColumn) return filtered
+    const sign = sortDir === "asc" ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      const av = hldSortValue(a, sortColumn, markedForDeletion)
+      const bv = hldSortValue(b, sortColumn, markedForDeletion)
+      if (av < bv) return -1 * sign
+      if (av > bv) return 1 * sign
+      return 0
+    })
+  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, holdingFilter, sortColumn, sortDir, markedForDeletion])
 
   const totalRows = filteredEntries.length
   const start = (ctrls.page - 1) * ctrls.pageSize
@@ -292,15 +359,11 @@ export function HoldingsSection({
       <InlineDateRange
         start={dateFrom}
         end={dateTo}
-        onChange={({ start, end }) => {
-          setDateFrom(start)
-          setDateTo(end)
-          ctrls.setPage(1)
-        }}
+        onChange={({ start, end }) => setDateRange(start, end)}
       />
       <UiSelect
         value={holdingFilter}
-        onValueChange={(v) => { if (v) { setHoldingFilter(v); ctrls.setPage(1) } }}
+        onValueChange={(v) => { if (v) setHoldingFilter(v) }}
       >
         <UiSelectTrigger className="h-8 text-xs min-w-[10rem]">
           <span>{holdingFilterLabel}</span>
@@ -332,13 +395,13 @@ export function HoldingsSection({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-24">Action</TableHead>
-            <TableHead className="w-28">Symbol</TableHead>
+            <SortHeader label="Action" columnId="action" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("action")} className="w-24" />
+            <SortHeader label="Symbol" columnId="symbol" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("symbol")} className="w-28" />
             <TableHead>Name</TableHead>
             <TableHead className="w-28">Type</TableHead>
-            <TableHead className="w-32 text-right">Value</TableHead>
-            <TableHead className="w-20">Currency</TableHead>
-            <TableHead className="w-36">As of</TableHead>
+            <SortHeader label="Value" columnId="value" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("value")} className="w-32" align="right" />
+            <SortHeader label="Currency" columnId="currency" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("currency")} className="w-20" />
+            <SortHeader label="As of" columnId="as_of" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("as_of")} className="w-36" />
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CountBadge } from "@/components/count_badge"
 import { AlertTriangle } from "lucide-react"
+import { useUrlState } from "@/hooks/use_url_state"
 import { MetadataHeader } from "./metadata_header"
 import { TransactionsSection } from "./transactions_section"
 import { HoldingsSection } from "./holdings_section"
@@ -108,7 +109,12 @@ export function PreviewReview({
   if (showTx) sectionTabs.push("transactions")
   if (showHoldings) sectionTabs.push("holdings")
   if (showInv) sectionTabs.push("investments")
-  const [tab, setTab] = useState<Tab>(sectionTabs[0] ?? "transactions")
+
+  const url = useUrlState()
+  const fallbackTab = sectionTabs[0] ?? "transactions"
+  const urlTab = url.get("tab", "")
+  const tab: Tab = sectionTabs.includes(urlTab as Tab) ? (urlTab as Tab) : fallbackTab
+  const setTab = (next: Tab) => url.set({ tab: next === fallbackTab ? null : next })
 
   function buildCommitPayloads() {
     const txOut = txPayload && {
