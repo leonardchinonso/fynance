@@ -3,4 +3,8 @@
 /**
  * Tree node used in `GET /api/categories` response.
  */
-export type CategoryNode = { id: string, name: string, children: Array<CategoryNode>, };
+export type CategoryNode = { id: string, name: string, 
+/**
+ * Optional free-text description. Same role as on `Category`.
+ */
+description: string | null, children: Array<CategoryNode>, };

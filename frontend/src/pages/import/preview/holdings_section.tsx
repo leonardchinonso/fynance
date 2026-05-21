@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Input } from "@/components/ui/input"
 import { Trash2, RotateCcw } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn, formatDate } from "@/lib/utils"
 import type { HoldingsIngestionResult } from "@/bindings/HoldingsIngestionResult"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { Holding } from "@/bindings/Holding"
@@ -20,13 +20,59 @@ import type { Currency } from "@/types"
 import { StatusBadge } from "./status_badge"
 import { DateCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
+import { SortHeader } from "./sort_header"
+import { InlineDateRange } from "@/components/inline_date_range"
+import { useUrlState } from "@/hooks/use_url_state"
 import {
   Select as UiSelect,
   SelectContent as UiSelectContent,
   SelectItem as UiSelectItem,
   SelectTrigger as UiSelectTrigger,
-  SelectValue as UiSelectValue,
 } from "@/components/ui/select"
+
+const STATUS_RANK: Record<string, number> = {
+  new: 0,
+  modify: 1,
+  duplicate: 2,
+  error: 3,
+  removed: 4,
+}
+
+interface HldEntryShape {
+  row: { symbol: string; sub_account: string | null; value: string; currency: string; as_of: string; status: string }
+  payloadIdx: number | null
+}
+
+function hldSortValue(
+  entry: HldEntryShape,
+  column: string,
+  payload: HoldingsImportPayload | null,
+  marked: Set<number>
+): string | number {
+  const edited = entry.payloadIdx !== null ? payload?.holdings[entry.payloadIdx] : undefined
+  switch (column) {
+    case "as_of":
+      return edited?.as_of ?? entry.row.as_of
+    case "action": {
+      const s = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
+      return STATUS_RANK[s] ?? 99
+    }
+    case "symbol": {
+      const sym = edited?.symbol ?? entry.row.symbol
+      const sub = edited?.sub_account ?? entry.row.sub_account ?? ""
+      return `${sym}::${sub}`
+    }
+    case "currency":
+      return edited?.currency ?? entry.row.currency
+    case "value": {
+      const raw = edited?.value ?? entry.row.value
+      const n = parseFloat(raw)
+      return Number.isFinite(n) ? n : 0
+    }
+    default:
+      return 0
+  }
+}
 
 const HOLDING_TYPES: HoldingType[] = [
   "stock", "etf", "fund", "bond", "crypto", "cash", "property", "loan", "credit",
@@ -124,7 +170,6 @@ function HoldingValuePopover({
       }}
     >
       <PopoverTrigger
-        nativeButton={false}
         render={
           <button
             type="button"
@@ -201,9 +246,42 @@ export function HoldingsSection({
   currencyOptions,
 }: Props) {
   const ctrls = useSectionControls()
-  const [dateFrom, setDateFrom] = useState("")
-  const [dateTo, setDateTo] = useState("")
-  const [holdingFilter, setHoldingFilter] = useState("__all__")
+  const url = useUrlState()
+
+  const { minDate, maxDate } = useMemo(() => {
+    const dates = result.rows
+      .map((r) => r.as_of.split("T")[0] ?? "")
+      .filter(Boolean)
+      .sort()
+    return { minDate: dates[0] ?? "", maxDate: dates[dates.length - 1] ?? "" }
+  }, [result.rows])
+
+  const dateFrom = url.get("hldDateFrom", minDate)
+  const dateTo = url.get("hldDateTo", maxDate)
+  const holdingFilter = url.get("hldKey", "__all__")
+  const sortColumn = url.get("hldSort", "")
+  const sortDir = (url.get("hldDir", "asc") === "desc" ? "desc" : "asc") as "asc" | "desc"
+
+  function setDateRange(start: string, end: string) {
+    url.set({
+      hldDateFrom: start === minDate ? null : start,
+      hldDateTo: end === maxDate ? null : end,
+    })
+    ctrls.setPage(1)
+  }
+  function setHoldingFilter(v: string) {
+    url.set({ hldKey: v === "__all__" ? null : v })
+    ctrls.setPage(1)
+  }
+  function cycleSort(col: string) {
+    if (sortColumn !== col) {
+      url.set({ hldSort: col, hldDir: null })
+    } else if (sortDir === "asc") {
+      url.set({ hldSort: col, hldDir: "desc" })
+    } else {
+      url.set({ hldSort: null, hldDir: null })
+    }
+  }
 
   const holdingOptions = useMemo(() => {
     const map = new Map<string, string>()
@@ -229,7 +307,7 @@ export function HoldingsSection({
   const filteredEntries = useMemo(() => {
     const fromIso = dateFrom ? `${dateFrom}T00:00:00` : null
     const toIso = dateTo ? `${dateTo}T23:59:59` : null
-    return result.rows
+    const filtered = result.rows
       .map((row, displayIdx) => ({ row, displayIdx, payloadIdx: rowPayloadIndex[displayIdx] }))
       .filter(({ row }) => {
         if (fromIso && row.as_of < fromIso) return false
@@ -240,7 +318,16 @@ export function HoldingsSection({
         }
         return true
       })
-  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, holdingFilter])
+    if (!sortColumn) return filtered
+    const sign = sortDir === "asc" ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      const av = hldSortValue(a, sortColumn, payload, markedForDeletion)
+      const bv = hldSortValue(b, sortColumn, payload, markedForDeletion)
+      if (av < bv) return -1 * sign
+      if (av > bv) return 1 * sign
+      return 0
+    })
+  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, holdingFilter, sortColumn, sortDir, markedForDeletion, payload])
 
   const totalRows = filteredEntries.length
   const start = (ctrls.page - 1) * ctrls.pageSize
@@ -274,29 +361,23 @@ export function HoldingsSection({
   const holdingTypeOpts = HOLDING_TYPES.map((t) => ({ value: t, label: t }))
   const currencyOpts = currencyOptions.map((c) => ({ value: c.code, label: c.code }))
 
+  const holdingFilterLabel = holdingFilter === "__all__"
+    ? "All holdings"
+    : holdingOptions.find(([k]) => k === holdingFilter)?.[1] ?? holdingFilter
+
   const filterSlot = (
     <>
-      <Input
-        type="date"
-        value={dateFrom}
-        onChange={(e) => { setDateFrom(e.target.value); ctrls.setPage(1) }}
-        className="h-8 w-[9rem] text-xs"
-        aria-label="From date"
-      />
-      <span className="text-xs text-muted-foreground">to</span>
-      <Input
-        type="date"
-        value={dateTo}
-        onChange={(e) => { setDateTo(e.target.value); ctrls.setPage(1) }}
-        className="h-8 w-[9rem] text-xs"
-        aria-label="To date"
+      <InlineDateRange
+        start={dateFrom}
+        end={dateTo}
+        onChange={({ start, end }) => setDateRange(start, end)}
       />
       <UiSelect
         value={holdingFilter}
-        onValueChange={(v) => { if (v) { setHoldingFilter(v); ctrls.setPage(1) } }}
+        onValueChange={(v) => { if (v) setHoldingFilter(v) }}
       >
         <UiSelectTrigger className="h-8 text-xs min-w-[10rem]">
-          <UiSelectValue />
+          <span>{holdingFilterLabel}</span>
         </UiSelectTrigger>
         <UiSelectContent>
           <UiSelectItem value="__all__">All holdings</UiSelectItem>
@@ -325,13 +406,13 @@ export function HoldingsSection({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-24">Action</TableHead>
-            <TableHead className="w-28">Symbol</TableHead>
+            <SortHeader label="Action" columnId="action" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("action")} className="w-24" />
+            <SortHeader label="Symbol" columnId="symbol" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("symbol")} className="w-28" />
             <TableHead>Name</TableHead>
             <TableHead className="w-28">Type</TableHead>
-            <TableHead className="w-32 text-right">Value</TableHead>
-            <TableHead className="w-20">Currency</TableHead>
-            <TableHead className="w-36">As of</TableHead>
+            <SortHeader label="Value" columnId="value" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("value")} className="w-32" align="right" />
+            <SortHeader label="Currency" columnId="currency" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("currency")} className="w-20" />
+            <SortHeader label="As of" columnId="as_of" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("as_of")} className="w-36" />
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>
@@ -356,7 +437,7 @@ export function HoldingsSection({
                 )}
               >
                 <TableCell>
-                  <StatusBadge status={marked ? "duplicate" : row.status} />
+                  <StatusBadge status={marked ? "removed" : row.status} />
                 </TableCell>
                 <TableCell>
                   {editable && h && !marked ? (
@@ -422,7 +503,7 @@ export function HoldingsSection({
                   {editable && h && !marked ? (
                     <DateCell value={h.as_of} onChange={(v) => updatePayloadAt(payloadIdx, { as_of: v })} />
                   ) : (
-                    <span className="text-xs">{(row.as_of.split("T")[0] ?? row.as_of)}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">{formatDate(row.as_of.split("T")[0] ?? row.as_of)}</span>
                   )}
                 </TableCell>
                 <TableCell>

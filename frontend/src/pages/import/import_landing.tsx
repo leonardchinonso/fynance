@@ -11,14 +11,14 @@ interface CardOption {
 
 const OPTIONS: CardOption[] = [
   {
-    to: "/import?mode=single",
+    to: "/import/single",
     icon: <FileUp className="h-6 w-6" />,
     title: "Import to specific account",
     description:
       "Pick one account, drop in statements (CSV, PDF, XLSX), review the parsed rows, and commit.",
   },
   {
-    to: "/import?mode=wizard",
+    to: "/import/wizard",
     icon: <ListChecks className="h-6 w-6" />,
     title: "Monthly ingestion wizard",
     description:

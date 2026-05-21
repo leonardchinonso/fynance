@@ -24,6 +24,7 @@ export interface CreateCategoryBody {
   name: string
   parent_id?: string
   display_order?: number
+  description?: string
 }
 
 /** Request body for PATCH /api/categories/:id. */
@@ -31,6 +32,8 @@ export interface PatchCategoryBody {
   name?: string
   parent_id?: string
   display_order?: number
+  /** Pass an empty string to clear; omit to leave unchanged. */
+  description?: string
 }
 
 /** Request body for PATCH /api/transactions/:id. */

@@ -587,7 +587,6 @@ export class MockApiService implements ApiService {
 
   async deleteProfile(id: string): Promise<void> {
     await delay(DELAY_MS)
-    if (id === "default") throw new Error("cannot delete the default profile")
     const refs = MOCK_ACCOUNTS.filter((a) => a.profile_ids?.includes(id)).length
     if (refs > 0) throw new Error(`${refs} account(s) still reference profile ${id}`)
     const idx = MOCK_PROFILES.findIndex((p) => p.id === id)
@@ -642,29 +641,29 @@ export class MockApiService implements ApiService {
   }
 
   private mockCategoryTree: CategoryNode[] = [
-    { id: "food", name: "Food", children: [
-      { id: "groceries", name: "Groceries", children: [] },
-      { id: "dining", name: "Dining & Bars", children: [] },
+    { id: "food", name: "Food", description: null, children: [
+      { id: "groceries", name: "Groceries", description: null, children: [] },
+      { id: "dining", name: "Dining & Bars", description: null, children: [] },
     ]},
-    { id: "housing", name: "Housing", children: [
-      { id: "rent", name: "Rent", children: [] },
-      { id: "utilities", name: "Utilities", children: [] },
+    { id: "housing", name: "Housing", description: null, children: [
+      { id: "rent", name: "Rent", description: null, children: [] },
+      { id: "utilities", name: "Utilities", description: null, children: [] },
     ]},
-    { id: "transport", name: "Transport", children: [
-      { id: "transport-general", name: "Transport", children: [] },
+    { id: "transport", name: "Transport", description: null, children: [
+      { id: "transport-general", name: "Transport", description: null, children: [] },
     ]},
-    { id: "lifestyle", name: "Lifestyle", children: [
-      { id: "entertainment", name: "Entertainment", children: [] },
-      { id: "shopping", name: "Shopping", children: [] },
+    { id: "lifestyle", name: "Lifestyle", description: null, children: [
+      { id: "entertainment", name: "Entertainment", description: null, children: [] },
+      { id: "shopping", name: "Shopping", description: null, children: [] },
     ]},
-    { id: "health", name: "Health", children: [
-      { id: "health-general", name: "Health", children: [] },
+    { id: "health", name: "Health", description: null, children: [
+      { id: "health-general", name: "Health", description: null, children: [] },
     ]},
-    { id: "income", name: "Income", children: [
-      { id: "salary", name: "Salary", children: [] },
+    { id: "income", name: "Income", description: null, children: [
+      { id: "salary", name: "Salary", description: null, children: [] },
     ]},
-    { id: "transfers", name: "Transfers", children: [
-      { id: "transfers-general", name: "Transfers", children: [] },
+    { id: "transfers", name: "Transfers", description: null, children: [
+      { id: "transfers-general", name: "Transfers", description: null, children: [] },
     ]},
   ]
 
@@ -682,14 +681,15 @@ export class MockApiService implements ApiService {
       parent_id: body.parent_id ?? null,
       display_order: body.display_order ?? 0,
       is_active: true,
+      description: body.description ?? null,
       created_at: now,
       updated_at: now,
     }
     if (!cat.parent_id) {
-      this.mockCategoryTree.push({ id: cat.id, name: cat.name, children: [] })
+      this.mockCategoryTree.push({ id: cat.id, name: cat.name, description: cat.description, children: [] })
     } else {
       const parent = this.mockCategoryTree.find(p => p.id === cat.parent_id)
-      if (parent) parent.children.push({ id: cat.id, name: cat.name, children: [] })
+      if (parent) parent.children.push({ id: cat.id, name: cat.name, description: null, children: [] })
     }
     return cat
   }
@@ -700,12 +700,12 @@ export class MockApiService implements ApiService {
     for (const node of this.mockCategoryTree) {
       if (node.id === id) {
         if (body.name) node.name = body.name
-        return { id, name: node.name, parent_id: null, display_order: 0, is_active: true, created_at: now, updated_at: now }
+        return { id, name: node.name, parent_id: null, display_order: 0, is_active: true, description: null, created_at: now, updated_at: now }
       }
       for (const child of node.children) {
         if (child.id === id) {
           if (body.name) child.name = body.name
-          return { id, name: child.name, parent_id: node.id, display_order: 0, is_active: true, created_at: now, updated_at: now }
+          return { id, name: child.name, parent_id: node.id, display_order: 0, is_active: true, description: null, created_at: now, updated_at: now }
         }
       }
     }

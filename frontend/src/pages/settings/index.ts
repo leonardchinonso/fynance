@@ -1,1 +1,5 @@
 export { SettingsPage } from "./settings"
+export { SettingsGeneralPage } from "./general_page"
+export { SettingsAccountsPage } from "./accounts_page"
+export { SettingsCategoriesPage } from "./categories_page"
+export { SettingsAuthPage } from "./auth_page"

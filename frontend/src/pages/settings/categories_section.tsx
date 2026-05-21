@@ -18,8 +18,8 @@ import { Trash2, Pencil, Plus, Tag } from "lucide-react"
 export function CategoriesSection() {
   const [categoriesData, refresh] = useCategories()
   const [showAdd, setShowAdd] = useState(false)
-  const [editCat, setEditCat] = useState<{ id: string; name: string; parent_id: string | null } | null>(null)
-  const [form, setForm] = useState({ name: "", parent_id: "" })
+  const [editCat, setEditCat] = useState<{ id: string; name: string; parent_id: string | null; description: string | null } | null>(null)
+  const [form, setForm] = useState({ name: "", parent_id: "", description: "" })
   const [saving, setSaving] = useState(false)
 
   const tree = categoriesData.status === "succeeded" || categoriesData.status === "reloading"
@@ -40,11 +40,16 @@ export function CategoriesSection() {
         await api.updateCategory(editCat.id, {
           name: form.name.trim(),
           parent_id: form.parent_id || undefined,
+          // Empty string = explicit "clear" on the backend; an unchanged
+          // value still round-trips because the API treats omitted as
+          // "leave alone".
+          description: form.description.trim(),
         })
       } else {
         await api.createCategory({
           name: form.name.trim(),
           parent_id: form.parent_id || undefined,
+          description: form.description.trim() || undefined,
         })
       }
       setShowAdd(false)
@@ -61,8 +66,8 @@ export function CategoriesSection() {
   }
 
   function openEdit(node: CategoryNode, parentId: string | null) {
-    setEditCat({ id: node.id, name: node.name, parent_id: parentId })
-    setForm({ name: node.name, parent_id: parentId ?? "" })
+    setEditCat({ id: node.id, name: node.name, parent_id: parentId, description: node.description ?? null })
+    setForm({ name: node.name, parent_id: parentId ?? "", description: node.description ?? "" })
     setShowAdd(true)
   }
 
@@ -72,7 +77,7 @@ export function CategoriesSection() {
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">Categories</CardTitle>
           {(categoriesData.status === "succeeded" || categoriesData.status === "reloading") && (
-            <Button size="sm" className="gap-1.5" onClick={() => { setEditCat(null); setForm({ name: "", parent_id: "" }); setShowAdd(true) }}>
+            <Button size="sm" className="gap-1.5" onClick={() => { setEditCat(null); setForm({ name: "", parent_id: "", description: "" }); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" /> Add Category
             </Button>
           )}
@@ -117,6 +122,15 @@ export function CategoriesSection() {
                   <option key={node.id} value={node.id}>{node.name}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></label>
+              <textarea
+                className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm resize-y min-h-[3.5rem]"
+                placeholder="e.g. Utility bills — internet, water, gas, electricity. Not Netflix or Spotify."
+                value={form.description}
+                onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
+              />
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>

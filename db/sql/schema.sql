@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS categories (
     parent_id     TEXT,
     display_order INTEGER DEFAULT 0,
     is_active     INTEGER NOT NULL DEFAULT 1,
+    description   TEXT,
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (parent_id) REFERENCES categories(id)

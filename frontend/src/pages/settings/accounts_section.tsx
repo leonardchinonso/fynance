@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Trash2, Pencil, Plus, Building2, Eye, EyeOff } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -31,33 +32,43 @@ interface Props {
 export function AccountsSection({ data, profilesData, onRefresh }: Props) {
   const profiles = profilesData.status === "succeeded" || profilesData.status === "reloading"
     ? profilesData.value : []
+  // Flat list is the default; toggle exposes the import-wizard config view
+  // (drag-to-reorder + per-account visibility split).
+  const [wizardMode, setWizardMode] = useState(false)
 
   return (
     <Card id="accounts">
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <CardTitle className="text-lg">Accounts</CardTitle>
-          {(data.status === "succeeded" || data.status === "reloading") && (
-            <AddAccountButton profiles={profiles} onRefresh={onRefresh} />
-          )}
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+              <span>Import wizard config</span>
+              <Switch checked={wizardMode} onCheckedChange={(v) => setWizardMode(!!v)} size="sm" />
+            </label>
+            {(data.status === "succeeded" || data.status === "reloading") && (
+              <AddAccountButton profiles={profiles} onRefresh={onRefresh} />
+            )}
+          </div>
         </div>
         <p className="text-sm text-muted-foreground">
-          Bank accounts, investment accounts, credit cards, and other financial accounts.
-          Drag to set the import wizard order. Toggle visibility to include or exclude from the wizard.
+          {wizardMode
+            ? "Drag to set the import wizard order. Toggle visibility to include or exclude from the wizard."
+            : "Bank accounts, investment accounts, credit cards, and other financial accounts."}
         </p>
       </CardHeader>
       <CardContent>
         {visitRemoteData(data, {
           notLoaded: () => <SettingsListSkeleton rows={4} />,
           failed: (error) => <AuthAwareError error={error} onRetry={onRefresh} />,
-          hasValue: (accounts) => <AccountsList accounts={accounts} profiles={profiles} onRefresh={onRefresh} />,
+          hasValue: (accounts) => <AccountsList accounts={accounts} profiles={profiles} onRefresh={onRefresh} wizardMode={wizardMode} />,
         })}
       </CardContent>
     </Card>
   )
 }
 
-function AccountsList({ accounts, profiles, onRefresh }: { accounts: Account[]; profiles: Profile[]; onRefresh: () => void }) {
+function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts: Account[]; profiles: Profile[]; onRefresh: () => void; wizardMode: boolean }) {
   const [dragId, setDragId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Account | null>(null)
   const [deleting, setDeleting] = useState<Account | null>(null)
@@ -83,6 +94,63 @@ function AccountsList({ accounts, profiles, onRefresh }: { accounts: Account[]; 
   if (accounts.length === 0) return (
     <p className="text-sm text-muted-foreground py-4 text-center">No accounts yet.</p>
   )
+
+  // Flat-list view: no drag, no visibility toggle, just edit + delete.
+  if (!wizardMode) {
+    return (
+      <>
+        <div className="space-y-2">
+          {accounts.map((a) => (
+            <div key={a.id} className="flex items-center gap-3 rounded-lg border p-3 bg-background group">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary shrink-0">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium truncate">{a.name}</p>
+                  <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
+                </div>
+                <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
+              </div>
+              {a.balance && (
+                <p className="text-sm font-medium tabular-nums shrink-0">
+                  {formatCurrency(a.balance, a.currency)}
+                </p>
+              )}
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setDeleting(a)} title="Delete account">
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        {editing && (
+          <EditAccountDialog
+            account={editing}
+            profiles={profiles}
+            onClose={() => setEditing(null)}
+            onSaved={() => { setEditing(null); onRefresh() }}
+          />
+        )}
+
+        <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null) }}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader><DialogTitle>Delete account?</DialogTitle></DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              This deactivates <strong>{deleting?.name}</strong>. If the account still has transactions or holdings, the delete will be rejected — clear those first.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
+              <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
+    )
+  }
 
   const visibleAccounts = getOrderedAccounts(accounts)
   const hiddenAccounts = getHiddenAccounts(accounts)

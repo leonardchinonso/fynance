@@ -3,4 +3,10 @@
 /**
  * A hierarchical category entry.
  */
-export type Category = { id: string, name: string, parent_id: string | null, display_order: number, is_active: boolean, created_at: string, updated_at: string, };
+export type Category = { id: string, name: string, parent_id: string | null, display_order: number, is_active: boolean, 
+/**
+ * Optional free-text description. Surfaced to LLM categorisation agents
+ * to disambiguate categories that share similar names (e.g. "Bills:
+ * utility bills like internet, water, electricity" vs "Subscriptions").
+ */
+description: string | null, created_at: string, updated_at: string, };

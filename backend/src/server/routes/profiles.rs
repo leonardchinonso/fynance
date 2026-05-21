@@ -87,12 +87,6 @@ pub async fn delete_profile(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
-    if id == "default" {
-        return Err(AppError::bad_request(
-            "cannot delete the default profile",
-            "default_profile_protected",
-        ));
-    }
     let db = state.db.lock().expect("db mutex poisoned");
     if !db.profile_exists(&id)? {
         return Err(AppError::NotFound(format!("profile {id} not found")));

@@ -2,7 +2,7 @@ import { useState } from "react"
 import type { Account, Profile } from "@/types"
 import { Button } from "@/components/ui/button"
 import { DraggableList, DragHandle } from "@/components/draggable_list"
-import { Building2, Eye, EyeOff, ArrowRight } from "lucide-react"
+import { Building2, Eye, EyeOff, ArrowRight, ChevronDown, ChevronRight } from "lucide-react"
 import { useProfileColorsContext } from "@/context/profile_colors_context"
 
 interface Props {
@@ -59,6 +59,9 @@ export function WizardSetup({
   onCancel,
 }: Props) {
   const [dragId, setDragId] = useState<string | null>(null)
+  // Collapse the "Won't be imported" section by default — the user is here
+  // to walk through the queued accounts; the hidden list is a side concern.
+  const [showHidden, setShowHidden] = useState(false)
   const draggableItems = queued.map((a) => ({ ...a, id: a.id }))
   void _accounts
 
@@ -125,21 +128,28 @@ export function WizardSetup({
       </section>
 
       <section className="space-y-2">
-        <header>
-          <h3 className="text-sm font-medium">
-            Won't be imported this session{" "}
-            <span className="text-muted-foreground tabular-nums">({hidden.length})</span>
-          </h3>
-          <p className="text-xs text-muted-foreground">
-            Click to add an account to this session.
-          </p>
-        </header>
+        <button
+          type="button"
+          onClick={() => setShowHidden((v) => !v)}
+          className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
+        >
+          {showHidden ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          <span>Won't be imported this session</span>
+          <span className="text-muted-foreground tabular-nums">({hidden.length})</span>
+        </button>
 
-        {hidden.length === 0 ? (
+        {showHidden && (
+          <p className="text-xs text-muted-foreground pl-5">
+            Click an account to add it to this session.
+          </p>
+        )}
+
+        {showHidden && hidden.length === 0 && (
           <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
             Every account is already queued.
           </div>
-        ) : (
+        )}
+        {showHidden && hidden.length > 0 && (
           <div className="space-y-1.5">
             {hidden.map((a) => (
               <div
