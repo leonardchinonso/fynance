@@ -70,8 +70,6 @@ function sortValue(
       const status = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
       return STATUS_RANK[status] ?? 99
     }
-    case "currency":
-      return edited?.currency ?? entry.row.currency
     default:
       return 0
   }
@@ -262,7 +260,7 @@ export function TransactionsSection({
             <SortHeader label="Date" columnId="date" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("date")} className="w-36" />
             <TableHead>Description</TableHead>
             <SortHeader label="Amount" columnId="amount" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("amount")} className="w-28" align="right" />
-            <SortHeader label="Currency" columnId="currency" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("currency")} className="w-20" />
+            <TableHead className="w-20">Currency</TableHead>
             <TableHead className="w-40">Category</TableHead>
             <TableHead className="w-10" />
           </TableRow>
