@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Trash2, RotateCcw } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn, formatDate } from "@/lib/utils"
 import type { InvestmentIngestionResult } from "@/bindings/InvestmentIngestionResult"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
@@ -45,20 +45,26 @@ interface EntryShape {
   payloadIdx: number | null
 }
 
-function invSortValue(entry: EntryShape, column: string, marked: Set<number>): string | number {
+function invSortValue(
+  entry: EntryShape,
+  column: string,
+  payload: InvestmentsImportPayload | null,
+  marked: Set<number>
+): string | number {
+  const edited = entry.payloadIdx !== null ? payload?.events[entry.payloadIdx] : undefined
   switch (column) {
     case "date":
-      return entry.row.date
+      return edited?.date ?? entry.row.date
     case "action": {
       const s = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
       return STATUS_RANK[s] ?? 99
     }
     case "event":
-      return entry.row.event_type
+      return edited?.event_type ?? entry.row.event_type
     case "symbol":
-      return entry.row.symbol
+      return edited?.symbol ?? entry.row.symbol
     case "currency":
-      return entry.row.currency
+      return edited?.currency ?? entry.row.currency
     default:
       return 0
   }
@@ -156,13 +162,13 @@ export function InvestmentsSection({
     if (!sortColumn) return filtered
     const sign = sortDir === "asc" ? 1 : -1
     return [...filtered].sort((a, b) => {
-      const av = invSortValue(a, sortColumn, markedForDeletion)
-      const bv = invSortValue(b, sortColumn, markedForDeletion)
+      const av = invSortValue(a, sortColumn, payload, markedForDeletion)
+      const bv = invSortValue(b, sortColumn, payload, markedForDeletion)
       if (av < bv) return -1 * sign
       if (av > bv) return 1 * sign
       return 0
     })
-  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, eventFilter, sortColumn, sortDir, markedForDeletion])
+  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, eventFilter, sortColumn, sortDir, markedForDeletion, payload])
 
   const totalRows = filteredEntries.length
   const start = (ctrls.page - 1) * ctrls.pageSize
@@ -297,7 +303,7 @@ export function InvestmentsSection({
                   {editable && ev && !marked ? (
                     <DateCell value={ev.date} onChange={(v) => updatePayloadAt(payloadIdx, { date: v })} />
                   ) : (
-                    <span className="text-xs">{(row.date.split("T")[0] ?? row.date)}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">{formatDate(row.date.split("T")[0] ?? row.date)}</span>
                   )}
                 </TableCell>
                 <TableCell className="text-right">

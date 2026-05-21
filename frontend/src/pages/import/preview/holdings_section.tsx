@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Input } from "@/components/ui/input"
 import { Trash2, RotateCcw } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn, formatDate } from "@/lib/utils"
 import type { HoldingsIngestionResult } from "@/bindings/HoldingsIngestionResult"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { Holding } from "@/bindings/Holding"
@@ -43,20 +43,32 @@ interface HldEntryShape {
   payloadIdx: number | null
 }
 
-function hldSortValue(entry: HldEntryShape, column: string, marked: Set<number>): string | number {
+function hldSortValue(
+  entry: HldEntryShape,
+  column: string,
+  payload: HoldingsImportPayload | null,
+  marked: Set<number>
+): string | number {
+  const edited = entry.payloadIdx !== null ? payload?.holdings[entry.payloadIdx] : undefined
   switch (column) {
     case "as_of":
-      return entry.row.as_of
+      return edited?.as_of ?? entry.row.as_of
     case "action": {
       const s = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
       return STATUS_RANK[s] ?? 99
     }
-    case "symbol":
-      return `${entry.row.symbol}::${entry.row.sub_account ?? ""}`
+    case "symbol": {
+      const sym = edited?.symbol ?? entry.row.symbol
+      const sub = edited?.sub_account ?? entry.row.sub_account ?? ""
+      return `${sym}::${sub}`
+    }
     case "currency":
-      return entry.row.currency
-    case "value":
-      return parseFloat(entry.row.value) || 0
+      return edited?.currency ?? entry.row.currency
+    case "value": {
+      const raw = edited?.value ?? entry.row.value
+      const n = parseFloat(raw)
+      return Number.isFinite(n) ? n : 0
+    }
     default:
       return 0
   }
@@ -310,13 +322,13 @@ export function HoldingsSection({
     if (!sortColumn) return filtered
     const sign = sortDir === "asc" ? 1 : -1
     return [...filtered].sort((a, b) => {
-      const av = hldSortValue(a, sortColumn, markedForDeletion)
-      const bv = hldSortValue(b, sortColumn, markedForDeletion)
+      const av = hldSortValue(a, sortColumn, payload, markedForDeletion)
+      const bv = hldSortValue(b, sortColumn, payload, markedForDeletion)
       if (av < bv) return -1 * sign
       if (av > bv) return 1 * sign
       return 0
     })
-  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, holdingFilter, sortColumn, sortDir, markedForDeletion])
+  }, [result.rows, rowPayloadIndex, dateFrom, dateTo, holdingFilter, sortColumn, sortDir, markedForDeletion, payload])
 
   const totalRows = filteredEntries.length
   const start = (ctrls.page - 1) * ctrls.pageSize
@@ -492,7 +504,7 @@ export function HoldingsSection({
                   {editable && h && !marked ? (
                     <DateCell value={h.as_of} onChange={(v) => updatePayloadAt(payloadIdx, { as_of: v })} />
                   ) : (
-                    <span className="text-xs">{(row.as_of.split("T")[0] ?? row.as_of)}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">{formatDate(row.as_of.split("T")[0] ?? row.as_of)}</span>
                   )}
                 </TableCell>
                 <TableCell>

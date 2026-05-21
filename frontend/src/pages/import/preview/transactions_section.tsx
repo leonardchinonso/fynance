@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Trash2, RotateCcw } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn, formatDate } from "@/lib/utils"
 import type { TransactionIngestionResult } from "@/bindings/TransactionIngestionResult"
 import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { ImportTransaction } from "@/bindings/ImportTransaction"
@@ -43,7 +43,7 @@ const STATUS_RANK: Record<string, number> = {
 }
 
 interface EntryShape {
-  row: { date: string; currency: string; status: string }
+  row: { date: string; amount: string; currency: string; status: string }
   payloadIdx: number | null
 }
 
@@ -53,18 +53,25 @@ function sortValue(
   payload: ImportPayload | null,
   marked: Set<number>
 ): string | number {
+  // For edited rows, prefer the value the user actually sees. The display
+  // mutates payload.transactions[payloadIdx] while row.* stays at the
+  // original parsed value, so sorting by row.* alone made edited rows
+  // appear stuck in their original position.
+  const edited = entry.payloadIdx !== null ? payload?.transactions[entry.payloadIdx] : undefined
   switch (column) {
     case "date":
-      return entry.row.date
+      return edited?.date ?? entry.row.date
+    case "amount": {
+      const raw = edited?.amount ?? entry.row.amount
+      const n = parseFloat(raw)
+      return Number.isFinite(n) ? n : 0
+    }
     case "action": {
       const status = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
       return STATUS_RANK[status] ?? 99
     }
     case "currency":
-      return entry.row.currency
-    case "category":
-      // Sort uncategorized last regardless of direction.
-      return (entry.payloadIdx !== null ? payload?.transactions[entry.payloadIdx]?.category : null) ?? "￿"
+      return edited?.currency ?? entry.row.currency
     default:
       return 0
   }
@@ -251,40 +258,12 @@ export function TransactionsSection({
       <Table>
         <TableHeader>
           <TableRow>
-            <SortHeader
-              label="Action"
-              columnId="action"
-              activeColumn={sortColumn}
-              direction={sortDir}
-              onClick={() => cycleSort("action")}
-              className="w-24"
-            />
-            <SortHeader
-              label="Date"
-              columnId="date"
-              activeColumn={sortColumn}
-              direction={sortDir}
-              onClick={() => cycleSort("date")}
-              className="w-36"
-            />
+            <SortHeader label="Action" columnId="action" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("action")} className="w-24" />
+            <SortHeader label="Date" columnId="date" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("date")} className="w-36" />
             <TableHead>Description</TableHead>
-            <TableHead className="w-28 text-right">Amount</TableHead>
-            <SortHeader
-              label="Currency"
-              columnId="currency"
-              activeColumn={sortColumn}
-              direction={sortDir}
-              onClick={() => cycleSort("currency")}
-              className="w-20"
-            />
-            <SortHeader
-              label="Category"
-              columnId="category"
-              activeColumn={sortColumn}
-              direction={sortDir}
-              onClick={() => cycleSort("category")}
-              className="w-40"
-            />
+            <SortHeader label="Amount" columnId="amount" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("amount")} className="w-28" align="right" />
+            <SortHeader label="Currency" columnId="currency" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("currency")} className="w-20" />
+            <TableHead className="w-40">Category</TableHead>
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>
@@ -318,7 +297,7 @@ export function TransactionsSection({
                   {editable && tx && !marked ? (
                     <DateCell value={tx.date} onChange={(v) => updatePayloadAt(payloadIdx, { date: v })} />
                   ) : (
-                    <span className="text-xs">{(row.date.split("T")[0] ?? row.date)}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">{formatDate(row.date.split("T")[0] ?? row.date)}</span>
                   )}
                 </TableCell>
                 <TableCell>

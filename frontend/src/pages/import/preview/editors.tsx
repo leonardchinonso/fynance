@@ -1,3 +1,5 @@
+import { useState } from "react"
+import { format, parse } from "date-fns"
 import {
   Select,
   SelectContent,
@@ -6,7 +8,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
-import { cn } from "@/lib/utils"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { formatDate, cn } from "@/lib/utils"
 
 const cellInputClass = "h-7 px-1.5 py-0.5 text-xs"
 
@@ -77,29 +81,51 @@ export function DecimalCell({
   )
 }
 
-/** Accepts an ISO 8601 datetime; lets the user edit just the date portion. */
+/**
+ * Inline date editor: renders the date as plain (humanised) text that
+ * opens a Calendar popover on click. Keeps the same readonly-style look
+ * as a static cell so the table doesn't read as a forest of input boxes.
+ */
 export function DateCell({
   value,
   onChange,
   disabled,
 }: {
+  /** ISO 8601 datetime string. Only the date portion is editable. */
   value: string
   onChange: (isoDateTime: string) => void
   disabled?: boolean
 }) {
+  const [open, setOpen] = useState(false)
   const datePart = value.split("T")[0] ?? value
+  const parsed = datePart ? parse(datePart, "yyyy-MM-dd", new Date()) : undefined
   return (
-    <Input
-      type="date"
-      value={datePart}
-      onChange={(e) => {
-        const next = e.target.value
-        if (!next) return
-        onChange(`${next}T00:00:00`)
-      }}
-      disabled={disabled}
-      className={cn(cellInputClass)}
-    />
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        disabled={disabled}
+        className={cn(
+          "inline-flex items-center text-xs tabular-nums cursor-pointer",
+          "hover:text-foreground hover:underline transition-colors",
+          "text-muted-foreground",
+          "disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+        )}
+      >
+        {datePart ? formatDate(datePart) : "—"}
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <Calendar
+          mode="single"
+          selected={parsed}
+          onSelect={(date) => {
+            if (date) {
+              onChange(`${format(date, "yyyy-MM-dd")}T00:00:00`)
+              setOpen(false)
+            }
+          }}
+          defaultMonth={parsed}
+        />
+      </PopoverContent>
+    </Popover>
   )
 }
 
