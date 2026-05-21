@@ -253,7 +253,6 @@ export function ImportPage() {
   }
 
   const preview = currentEntry?.preview ?? null
-  const currentEntryId = currentEntry?.id ?? null
 
   // Derive "skipped" accounts directly: any wizard account before the current
   // one that hasn't been completed in this session is treated as skipped. This
@@ -345,9 +344,9 @@ export function ImportPage() {
 
   function handleCommitted(outcome: CommitOutcome) {
     if (!currentAccount) return
-    if (currentEntryId) {
-      recents.remove(currentEntryId)
-    }
+    // Recent imports are no longer auto-removed on successful commit — keep
+    // them around so the user can re-open / reference them. The LRU eviction
+    // (oldest beyond MAX_ENTRIES) and the manual X handle cleanup.
     setAccountResults((prev) => [...prev, {
       accountId: currentAccount.id,
       accountName: currentAccount.name,

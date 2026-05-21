@@ -170,7 +170,6 @@ function HoldingValuePopover({
       }}
     >
       <PopoverTrigger
-        nativeButton={false}
         render={
           <button
             type="button"

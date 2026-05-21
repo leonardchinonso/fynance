@@ -181,9 +181,13 @@ export function PreviewReview({
         api.commitTransactions(txOut).then((r) => {
           outcome.transactionsInserted = Number(r.rows_inserted)
           outcome.transactionsDuplicate = Number(r.rows_duplicate)
-          if (r.errors.length > 0) {
+          // Backend uses `#[serde(skip_serializing_if = "Vec::is_empty")]` on
+          // `errors`, so the field is absent from the JSON when there are
+          // none. Treat missing/null as an empty list.
+          const errs = r.errors ?? []
+          if (errs.length > 0) {
             outcome.errors.push(
-              ...r.errors.map((e) => `Transaction row ${e.index + 1}: ${e.reason}`)
+              ...errs.map((e) => `Transaction row ${e.index + 1}: ${e.reason}`)
             )
           }
         }).catch((e: unknown) => {
@@ -206,9 +210,10 @@ export function PreviewReview({
         api.commitInvestments(invOut).then((r) => {
           outcome.investmentsInserted = r.inserted
           outcome.investmentsDuplicate = r.duplicates
-          if (r.errors.length > 0) {
+          const errs = r.errors ?? []
+          if (errs.length > 0) {
             outcome.errors.push(
-              ...r.errors.map((e) => `Investment row ${e.index + 1}: ${e.reason}`)
+              ...errs.map((e) => `Investment row ${e.index + 1}: ${e.reason}`)
             )
           }
         }).catch((e: unknown) => {
@@ -219,9 +224,12 @@ export function PreviewReview({
 
     await Promise.all(calls)
     setSubmitting(false)
-
+    // Always close the confirm dialog after a submit attempt. Errors are
+    // surfaced via the inline banner on the main page so the user can read,
+    // copy, or screenshot them; keeping the dialog open over the error was
+    // its own UX bug.
+    setConfirmOpen(false)
     if (outcome.errors.length === 0) {
-      setConfirmOpen(false)
       onCommitted(outcome)
     } else {
       setSubmitError(outcome.errors.join("\n"))
