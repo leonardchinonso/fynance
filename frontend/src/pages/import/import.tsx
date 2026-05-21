@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { useSearchParams, useNavigate } from "react-router-dom"
+import { useSearchParams, useNavigate, useLocation } from "react-router-dom"
 import { api } from "@/api/client"
 import type { Account, Profile } from "@/types"
 import type { ParseHints } from "@/bindings/ParseHints"
@@ -109,10 +109,11 @@ function AccountLabel({ account, profiles }: { account: Account; profiles: Profi
 export function ImportPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const modeParam = searchParams.get("mode")
-  // No mode = landing page. Treat anything other than "wizard" as single.
-  const mode = modeParam === "wizard" ? "wizard" : "single"
-  const showLanding = modeParam !== "single" && modeParam !== "wizard"
+  const location = useLocation()
+  // Mode lives in the path: /import (landing), /import/wizard, /import/single.
+  const pathSegment = location.pathname.split("/")[2]
+  const mode: "wizard" | "single" = pathSegment === "wizard" ? "wizard" : "single"
+  const showLanding = pathSegment !== "wizard" && pathSegment !== "single"
 
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
@@ -166,16 +167,16 @@ export function ImportPage() {
    * mirrored into state via useEffect (the mirror pattern caused render
    * loops and made browser-back stop working).
    *
-   * Single mode:
-   *   ?mode=single                              → account-select
-   *   ?mode=single&account=<id>                 → upload
-   *   ?mode=single&account=<id>&entry=<entryId> → preview (from cache)
+   * Single mode (/import/single):
+   *   …                              → account-select
+   *   ?account=<id>                  → upload
+   *   ?account=<id>&entry=<entryId>  → preview (from cache)
    *
-   * Wizard mode:
-   *   ?mode=wizard                              → wizard-prep
-   *   ?mode=wizard&account=<id>                 → upload (id must be in queue)
-   *   ?mode=wizard&account=<id>&entry=<entryId> → preview (from cache)
-   *   ?mode=wizard&done=1                       → completion summary
+   * Wizard mode (/import/wizard):
+   *   …                              → wizard-prep
+   *   ?account=<id>                  → upload (id must be in queue)
+   *   ?account=<id>&entry=<entryId>  → preview (from cache)
+   *   ?done=1                        → completion summary
    *
    * Wizard progress is also encoded via `&completed=<id>,<id>,...` so a
    * refresh keeps the success markers on already-finished accounts. Skipped
@@ -289,7 +290,6 @@ export function ImportPage() {
     completedAt?: Map<string, number>
   }) {
     const sp = new URLSearchParams()
-    sp.set("mode", mode)
     if (params.account) sp.set("account", params.account)
     if (params.entry) sp.set("entry", params.entry)
     if (params.done) sp.set("done", "1")
@@ -300,7 +300,8 @@ export function ImportPage() {
         [...map.entries()].map(([id, ts]) => (ts ? `${id}:${ts}` : id)).join(",")
       )
     }
-    navigate(`/import?${sp.toString()}`)
+    const qs = sp.toString()
+    navigate(`/import/${mode}${qs ? `?${qs}` : ""}`)
   }
 
   async function callParse(filesToSend: File[], hints: ParseHints) {
