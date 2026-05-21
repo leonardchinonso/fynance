@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -115,8 +115,12 @@ impl HoldingsExtractor for LlmHoldingsParser {
             )
             .await?;
 
-        let parsed: ParsedHoldings = serde_json::from_value(tool_input)
-            .context("deserializing ParsedHoldings from tool_use input")?;
+        let parsed: ParsedHoldings = super::deserialize_tool_use(
+            tool_input,
+            "holdings parser",
+            filename,
+            "parse_holdings",
+        )?;
 
         tracing::debug!(
             filename,

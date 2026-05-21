@@ -162,8 +162,11 @@ pub async fn parse_documents(
         })?
     };
 
-    // Create the LLM provider (reads FYNANCE_PARSE_PROVIDER from env)
-    let provider = create_provider().map_err(AppError::Internal)?;
+    // Create the LLM provider (reads FYNANCE_PARSE_PROVIDER from env).
+    // Surface the config message: this is almost always a missing API key,
+    // and hiding it as a generic 500 makes the issue impossible to debug.
+    let provider = create_provider()
+        .map_err(|e| AppError::bad_request(e.to_string(), "provider_config"))?;
 
     // Run the multi-file LLM pipeline
     let start = std::time::Instant::now();

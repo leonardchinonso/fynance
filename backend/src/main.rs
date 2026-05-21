@@ -40,7 +40,6 @@ fn main() -> Result<()> {
                 institution,
                 account_type,
                 currency,
-                balance,
             } => account::add(
                 &db,
                 &id,
@@ -48,7 +47,6 @@ fn main() -> Result<()> {
                 &institution,
                 &account_type,
                 currency.as_deref(),
-                balance.as_deref(),
             ),
             AccountCommand::SetBalance { id, amount, date } => {
                 account::set_balance(&db, &id, &amount, &date)

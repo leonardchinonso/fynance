@@ -147,28 +147,10 @@ export function Navbar() {
 
           {/* Desktop: Import CTA */}
           <div className="hidden md:block">
-            <Popover>
-              <PopoverTrigger
-                render={<Button size="sm" className="h-8 gap-1.5" />}
-              >
-                <Upload className="h-3.5 w-3.5" />
-                <span className="hidden lg:inline">Import</span>
-              </PopoverTrigger>
-              <PopoverContent className="w-[220px] !p-1.5" align="end">
-                <NavLink
-                  to="/import?mode=single"
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted transition-colors"
-                >
-                  Import to specific account
-                </NavLink>
-                <NavLink
-                  to="/import?mode=wizard"
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted transition-colors"
-                >
-                  Monthly ingestion wizard
-                </NavLink>
-              </PopoverContent>
-            </Popover>
+            <Button size="sm" className="h-8 gap-1.5" onClick={() => navigate("/import")}>
+              <Upload className="h-3.5 w-3.5" />
+              <span className="hidden lg:inline">Import</span>
+            </Button>
           </div>
 
           {/* Desktop: Profile selector */}
@@ -235,16 +217,10 @@ export function Navbar() {
               </Select>
             </div>
             {/* Import CTA (mobile) */}
-            <div className="space-y-1">
-              <NavLink to="/import?mode=single" onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted transition-colors">
-                <Upload className="h-4 w-4" /> Import to account
-              </NavLink>
-              <NavLink to="/import?mode=wizard" onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted transition-colors">
-                <Upload className="h-4 w-4" /> Monthly ingestion wizard
-              </NavLink>
-            </div>
+            <NavLink to="/import" onClick={() => setMobileMenuOpen(false)}
+              className="flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted transition-colors">
+              <Upload className="h-4 w-4" /> Import
+            </NavLink>
             {/* Save view */}
             <Button variant="outline" size="sm" className="w-full" onClick={() => { setMobileMenuOpen(false); setPinLabel(""); setShowPinDialog(true) }}>
               <Bookmark className="h-4 w-4 mr-2" /> Save current view

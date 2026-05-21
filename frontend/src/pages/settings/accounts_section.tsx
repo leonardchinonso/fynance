@@ -9,13 +9,14 @@ import { SettingsListSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Trash2, Pencil, Plus, Building2, Eye, EyeOff } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { formatCurrency } from "@/lib/utils"
+import { cn, formatCurrency } from "@/lib/utils"
+import { accountTypeClasses } from "@/lib/account_type_colors"
 
 const ACCOUNT_TYPES: AccountType[] = [
   "checking", "savings", "investment", "investment_isa", "credit", "cash", "pension", "property",
@@ -49,15 +50,17 @@ export function AccountsSection({ data, profilesData, onRefresh }: Props) {
         {visitRemoteData(data, {
           notLoaded: () => <SettingsListSkeleton rows={4} />,
           failed: (error) => <AuthAwareError error={error} onRetry={onRefresh} />,
-          hasValue: (accounts) => <AccountsList accounts={accounts} />,
+          hasValue: (accounts) => <AccountsList accounts={accounts} profiles={profiles} onRefresh={onRefresh} />,
         })}
       </CardContent>
     </Card>
   )
 }
 
-function AccountsList({ accounts }: { accounts: Account[] }) {
+function AccountsList({ accounts, profiles, onRefresh }: { accounts: Account[]; profiles: Profile[]; onRefresh: () => void }) {
   const [dragId, setDragId] = useState<string | null>(null)
+  const [editing, setEditing] = useState<Account | null>(null)
+  const [deleting, setDeleting] = useState<Account | null>(null)
   const {
     getOrderedAccounts,
     getHiddenAccounts,
@@ -65,6 +68,17 @@ function AccountsList({ accounts }: { accounts: Account[] }) {
     hideAccount,
     reorderAccounts,
   } = useIngestionPreferences()
+
+  async function handleDeleteConfirm() {
+    if (!deleting) return
+    try {
+      await api.deleteAccount(deleting.id)
+      setDeleting(null)
+      onRefresh()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   if (accounts.length === 0) return (
     <p className="text-sm text-muted-foreground py-4 text-center">No accounts yet.</p>
@@ -93,7 +107,7 @@ function AccountsList({ accounts }: { accounts: Account[] }) {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium truncate">{a.name}</p>
-                <Badge variant="secondary" className="text-[10px] capitalize">{a.type}</Badge>
+                <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
               </div>
               <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
             </div>
@@ -108,18 +122,24 @@ function AccountsList({ accounts }: { accounts: Account[] }) {
               </TooltipTrigger>
               <TooltipContent>Hide from import wizard</TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled />}>
-                <Pencil className="h-3.5 w-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>Edit coming soon</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled />}>
-                <Trash2 className="h-3.5 w-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>Delete coming soon</TooltipContent>
-            </Tooltip>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
+              onClick={() => setEditing(a)}
+              title="Edit account"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
+              onClick={() => setDeleting(a)}
+              title="Delete account"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
           </div>
         )}
       />
@@ -138,7 +158,7 @@ function AccountsList({ accounts }: { accounts: Account[] }) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium truncate">{a.name}</p>
-                    <Badge variant="secondary" className="text-[10px] capitalize">{a.type}</Badge>
+                    <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
                   </div>
                   <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
                 </div>
@@ -148,12 +168,140 @@ function AccountsList({ accounts }: { accounts: Account[] }) {
                   </TooltipTrigger>
                   <TooltipContent>Show in import wizard</TooltipContent>
                 </Tooltip>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setDeleting(a)} title="Delete account">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      {editing && (
+        <EditAccountDialog
+          account={editing}
+          profiles={profiles}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); onRefresh() }}
+        />
+      )}
+
+      <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Delete account?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This deactivates <strong>{deleting?.name}</strong>. If the account still has transactions or holdings, the delete will be rejected — clear those first.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  )
+}
+
+function EditAccountDialog({ account, profiles, onClose, onSaved }: {
+  account: Account
+  profiles: Profile[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [form, setForm] = useState({
+    name: account.name,
+    institution: account.institution,
+    type: account.type as AccountType,
+    currency: account.currency,
+    profileIds: account.profile_ids ?? [],
+  })
+  const [saving, setSaving] = useState(false)
+
+  function toggleProfile(id: string) {
+    setForm((f) => ({
+      ...f,
+      profileIds: f.profileIds.includes(id)
+        ? f.profileIds.filter((x) => x !== id)
+        : [...f.profileIds, id],
+    }))
+  }
+
+  async function handleSave() {
+    if (!form.name.trim() || !form.institution.trim()) return
+    setSaving(true)
+    try {
+      await api.updateAccount(account.id, {
+        name: form.name.trim(),
+        institution: form.institution.trim(),
+        type: form.type,
+        currency: form.currency.toUpperCase(),
+        profile_ids: form.profileIds,
+      })
+      onSaved()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>Edit account</DialogTitle></DialogHeader>
+        <div className="space-y-3 pt-2">
+          <div>
+            <label className="text-sm font-medium">Name</label>
+            <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoFocus />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Institution</label>
+            <Input value={form.institution} onChange={(e) => setForm((f) => ({ ...f, institution: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">Type</label>
+              <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v as AccountType }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ACCOUNT_TYPES.map((t) => <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Currency</label>
+              <Input value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))} />
+            </div>
+          </div>
+          {profiles.length > 0 && (
+            <div>
+              <label className="text-sm font-medium">Profiles</label>
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {profiles.map((p) => (
+                  <Badge
+                    key={p.id}
+                    variant={form.profileIds.includes(p.id) ? "default" : "outline"}
+                    className="cursor-pointer"
+                    onClick={() => toggleProfile(p.id)}
+                  >
+                    {p.name}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={handleSave} disabled={!form.name.trim() || !form.institution.trim() || saving}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

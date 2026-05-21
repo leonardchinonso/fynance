@@ -312,6 +312,38 @@ impl Db {
         Ok(count > 0)
     }
 
+    pub fn update_profile_name(&self, id: &str, name: &str) -> Result<()> {
+        let updated = self.conn.execute(
+            "UPDATE profiles SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("profile {id} not found"));
+        }
+        Ok(())
+    }
+
+    /// Number of accounts that currently include the given profile id in their
+    /// JSON `profile_ids` array. Used to gate deletion.
+    pub fn count_accounts_referencing_profile(&self, id: &str) -> Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(DISTINCT a.id) FROM accounts a, json_each(a.profile_ids) j WHERE j.value = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    pub fn delete_profile(&self, id: &str) -> Result<()> {
+        let deleted = self
+            .conn
+            .execute("DELETE FROM profiles WHERE id = ?1", params![id])?;
+        if deleted == 0 {
+            return Err(anyhow!("profile {id} not found"));
+        }
+        Ok(())
+    }
+
     // ── Accounts ─────────────────────────────────────────────────────────────
 
     pub fn upsert_account(&self, account: &Account) -> Result<()> {
@@ -319,16 +351,14 @@ impl Db {
             .unwrap_or_else(|_| r#"["default"]"#.to_string());
         self.conn.execute(
             r"INSERT INTO accounts (
-                id, name, institution, type, currency, balance, balance_date,
+                id, name, institution, type, currency,
                 is_active, notes, profile_ids
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(id) DO UPDATE SET
                 name        = excluded.name,
                 institution = excluded.institution,
                 type        = excluded.type,
                 currency    = excluded.currency,
-                balance     = COALESCE(excluded.balance, accounts.balance),
-                balance_date = COALESCE(excluded.balance_date, accounts.balance_date),
                 is_active   = excluded.is_active,
                 notes       = excluded.notes,
                 profile_ids = excluded.profile_ids",
@@ -338,10 +368,6 @@ impl Db {
                 account.institution,
                 account.account_type.as_str(),
                 account.currency,
-                account.balance.map(|b| b.to_string()),
-                account
-                    .balance_date
-                    .map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string()),
                 account.is_active as i64,
                 account.notes,
                 profile_ids,
@@ -357,19 +383,15 @@ impl Db {
             .unwrap_or_else(|_| r#"["default"]"#.to_string());
         self.conn.execute(
             r"INSERT INTO accounts (
-                id, name, institution, type, currency, balance, balance_date,
+                id, name, institution, type, currency,
                 is_active, notes, profile_ids
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 account.id,
                 account.name,
                 account.institution,
                 account.account_type.as_str(),
                 account.currency,
-                account.balance.map(|b| b.to_string()),
-                account
-                    .balance_date
-                    .map(|d| d.format("%Y-%m-%dT%H:%M:%S").to_string()),
                 account.is_active as i64,
                 account.notes,
                 profile_ids,
@@ -381,11 +403,15 @@ impl Db {
     /// Returns all accounts, optionally filtered to those belonging to a
     /// specific profile. When `profile_id` is `None`, all accounts are returned
     /// (household view).
+    ///
+    /// `balance` and `balance_date` are derived at read time from the SUM of
+    /// the account's latest carry-forward holdings (as of today); accounts with
+    /// no holdings get `None` for both.
     pub fn get_accounts(&self, profile_id: Option<&str>) -> Result<Vec<Account>> {
         let (sql, args): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(pid) = profile_id {
             let pattern = format!("%\"{pid}\"%");
             (
-                r"SELECT id, name, institution, type, currency, balance, balance_date,
+                r"SELECT id, name, institution, type, currency,
                          is_active, notes, profile_ids
                   FROM accounts
                   WHERE profile_ids LIKE ?1
@@ -395,7 +421,7 @@ impl Db {
             )
         } else {
             (
-                r"SELECT id, name, institution, type, currency, balance, balance_date,
+                r"SELECT id, name, institution, type, currency,
                          is_active, notes, profile_ids
                   FROM accounts
                   ORDER BY institution, name"
@@ -405,28 +431,100 @@ impl Db {
         };
 
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt
+        let mut rows: Vec<Account> = stmt
             .query_map(
                 rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
                 row_to_account,
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let today = chrono::Local::now().date_naive();
+        let balances = self.balances_from_holdings_as_of(today)?;
+        for account in &mut rows {
+            if let Some((sum, max_as_of)) = balances.get(&account.id) {
+                account.balance = Some(*sum);
+                account.balance_date = Some(*max_as_of);
+            }
+        }
         Ok(rows)
     }
 
     pub fn get_account_by_id(&self, id: &str) -> Result<Option<Account>> {
         let result = self.conn.query_row(
-            r"SELECT id, name, institution, type, currency, balance, balance_date,
+            r"SELECT id, name, institution, type, currency,
                      is_active, notes, profile_ids
               FROM accounts WHERE id = ?1",
             params![id],
             row_to_account,
         );
         match result {
-            Ok(a) => Ok(Some(a)),
+            Ok(mut a) => {
+                let today = chrono::Local::now().date_naive();
+                if let Some((sum, max_as_of)) =
+                    self.balance_for_account_as_of(&a.id, today)?
+                {
+                    a.balance = Some(sum);
+                    a.balance_date = Some(max_as_of);
+                }
+                Ok(Some(a))
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// SUM(holdings.value) per account, carrying each (account, symbol,
+    /// sub_account) forward to the most recent snapshot on/before `as_of`.
+    /// Returns `account_id -> (balance, latest_as_of_among_carried_rows)`.
+    fn balances_from_holdings_as_of(
+        &self,
+        as_of: NaiveDate,
+    ) -> Result<std::collections::HashMap<String, (Decimal, NaiveDateTime)>> {
+        use std::collections::HashMap;
+        let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
+        let mut stmt = self.conn.prepare(
+            r"SELECT h.account_id, h.value, h.as_of
+              FROM holdings h
+              WHERE h.as_of = (
+                  SELECT MAX(h2.as_of) FROM holdings h2
+                  WHERE h2.account_id = h.account_id
+                    AND h2.symbol = h.symbol
+                    AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
+                    AND h2.as_of <= ?1
+              )",
+        )?;
+        let rows = stmt.query_map(params![as_of_str], |row| {
+            let account_id: String = row.get(0)?;
+            let value_str: String = row.get(1)?;
+            let as_of_str: String = row.get(2)?;
+            Ok((account_id, value_str, as_of_str))
+        })?;
+
+        let mut agg: HashMap<String, (Decimal, NaiveDateTime)> = HashMap::new();
+        for r in rows {
+            let (account_id, value_str, as_of_str) = r?;
+            let value: Decimal = value_str.parse().unwrap_or(Decimal::ZERO);
+            let snapshot_dt = parse_transaction_datetime(&as_of_str)
+                .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+            let entry = agg
+                .entry(account_id)
+                .or_insert((Decimal::ZERO, snapshot_dt));
+            entry.0 += value;
+            if snapshot_dt > entry.1 {
+                entry.1 = snapshot_dt;
+            }
+        }
+        Ok(agg)
+    }
+
+    fn balance_for_account_as_of(
+        &self,
+        account_id: &str,
+        as_of: NaiveDate,
+    ) -> Result<Option<(Decimal, NaiveDateTime)>> {
+        Ok(self
+            .balances_from_holdings_as_of(as_of)?
+            .remove(account_id))
     }
 
     pub fn account_exists(&self, id: &str) -> Result<bool> {
@@ -438,6 +536,9 @@ impl Db {
         Ok(count > 0)
     }
 
+    /// Record a point-in-time balance for `account_id` by upserting a `_CASH`
+    /// holding row. Returns an error if the account is unknown. The aggregated
+    /// balance shown on the API surface is always derived from `holdings`.
     pub fn set_account_balance(
         &self,
         account_id: &str,
@@ -446,27 +547,13 @@ impl Db {
     ) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
 
-        // 1. Update the denormalized balance on the accounts table.
-        let updated = tx.execute(
-            "UPDATE accounts SET balance = ?1, balance_date = ?2 WHERE id = ?3",
-            params![
-                balance.to_string(),
-                date.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                account_id
-            ],
-        )?;
-        if updated == 0 {
-            return Err(anyhow!("unknown account: {account_id}"));
-        }
-
-        // 2. Upsert a cash holding to record the point-in-time balance.
         let currency: String = tx
             .query_row(
                 "SELECT currency FROM accounts WHERE id = ?1",
                 params![account_id],
                 |row| row.get(0),
             )
-            .unwrap_or_else(|_| "GBP".to_string());
+            .map_err(|_| anyhow!("unknown account: {account_id}"))?;
 
         let as_of_str = date.format("%Y-%m-%dT%H:%M:%S").to_string();
         let exists: bool = tx.query_row(
@@ -495,6 +582,104 @@ impl Db {
         }
 
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Apply optional field updates to an account. Returns the updated row.
+    /// Caller validates `account_type` parse and `currency` exists.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_account(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        institution: Option<&str>,
+        account_type: Option<&AccountType>,
+        currency: Option<&str>,
+        is_active: Option<bool>,
+        notes: Option<Option<&str>>,
+        profile_ids: Option<&[String]>,
+    ) -> Result<Account> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        if let Some(v) = name {
+            tx.execute(
+                "UPDATE accounts SET name = ?1 WHERE id = ?2",
+                params![v, id],
+            )?;
+        }
+        if let Some(v) = institution {
+            tx.execute(
+                "UPDATE accounts SET institution = ?1 WHERE id = ?2",
+                params![v, id],
+            )?;
+        }
+        if let Some(v) = account_type {
+            tx.execute(
+                "UPDATE accounts SET type = ?1 WHERE id = ?2",
+                params![v.as_str(), id],
+            )?;
+        }
+        if let Some(v) = currency {
+            tx.execute(
+                "UPDATE accounts SET currency = ?1 WHERE id = ?2",
+                params![v, id],
+            )?;
+        }
+        if let Some(v) = is_active {
+            tx.execute(
+                "UPDATE accounts SET is_active = ?1 WHERE id = ?2",
+                params![v as i64, id],
+            )?;
+        }
+        if let Some(v) = notes {
+            tx.execute(
+                "UPDATE accounts SET notes = ?1 WHERE id = ?2",
+                params![v, id],
+            )?;
+        }
+        if let Some(ids) = profile_ids {
+            let json = serde_json::to_string(ids).unwrap_or_else(|_| "[\"default\"]".to_string());
+            tx.execute(
+                "UPDATE accounts SET profile_ids = ?1 WHERE id = ?2",
+                params![json, id],
+            )?;
+        }
+
+        tx.commit()?;
+
+        self.get_account_by_id(id)?
+            .ok_or_else(|| anyhow!("account {id} not found after update"))
+    }
+
+    pub fn count_transactions_for_account(&self, id: &str) -> Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE account_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    pub fn count_holdings_for_account(&self, id: &str) -> Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM holdings WHERE account_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Soft-delete by setting `is_active = 0`. Hard delete is unsafe because
+    /// holdings / transactions reference the account; callers must verify
+    /// there are no references before calling this.
+    pub fn delete_account(&self, id: &str) -> Result<()> {
+        let deleted = self.conn.execute(
+            "UPDATE accounts SET is_active = 0 WHERE id = ?1",
+            params![id],
+        )?;
+        if deleted == 0 {
+            return Err(anyhow!("account {id} not found"));
+        }
         Ok(())
     }
 
@@ -2830,6 +3015,62 @@ impl Db {
         Ok(rows as u64)
     }
 
+    /// Apply optional field updates (value, currency, sub_account) to the
+    /// holding row identified by (account_id, symbol, current_sub_account, as_of).
+    /// `new_sub_account` semantics: `None` = leave unchanged, `Some(None)` = set
+    /// to NULL, `Some(Some(s))` = set to the given label.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_holding_fields(
+        &self,
+        account_id: &str,
+        symbol: &str,
+        current_sub_account: Option<&str>,
+        as_of: NaiveDateTime,
+        value: Option<Decimal>,
+        currency: Option<&str>,
+        new_sub_account: Option<Option<&str>>,
+    ) -> Result<u64> {
+        if value.is_none() && currency.is_none() && new_sub_account.is_none() {
+            return Ok(0);
+        }
+        let scope_sub = current_sub_account.unwrap_or("");
+        let as_of_str = as_of.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+        let tx = self.conn.unchecked_transaction()?;
+        let mut total: u64 = 0;
+
+        if let Some(v) = value {
+            let n = tx.execute(
+                "UPDATE holdings SET value = ?1
+                 WHERE account_id = ?2 AND symbol = ?3
+                   AND COALESCE(sub_account, '') = ?4 AND as_of = ?5",
+                params![v.to_string(), account_id, symbol, scope_sub, as_of_str],
+            )?;
+            total = total.max(n as u64);
+        }
+        if let Some(c) = currency {
+            let n = tx.execute(
+                "UPDATE holdings SET currency = ?1
+                 WHERE account_id = ?2 AND symbol = ?3
+                   AND COALESCE(sub_account, '') = ?4 AND as_of = ?5",
+                params![c, account_id, symbol, scope_sub, as_of_str],
+            )?;
+            total = total.max(n as u64);
+        }
+        if let Some(new_sub) = new_sub_account {
+            let n = tx.execute(
+                "UPDATE holdings SET sub_account = ?1
+                 WHERE account_id = ?2 AND symbol = ?3
+                   AND COALESCE(sub_account, '') = ?4 AND as_of = ?5",
+                params![new_sub, account_id, symbol, scope_sub, as_of_str],
+            )?;
+            total = total.max(n as u64);
+        }
+
+        tx.commit()?;
+        Ok(total)
+    }
+
     pub fn get_holding_snapshots(&self, account_id: &str, symbol: &str) -> Result<Vec<Holding>> {
         let mut stmt = self.conn.prepare(
             "SELECT account_id, symbol, name, holding_type, quantity, price_per_unit,
@@ -3193,11 +3434,16 @@ fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> 
     })
 }
 
+/// Reads the persisted columns of `accounts` into an `Account`. `balance` and
+/// `balance_date` are runtime-derived from `holdings` and intentionally left
+/// `None` here; callers (`get_accounts`, `get_account_by_id`, `accounts_as_of`)
+/// fill them in.
+///
+/// Column order expected: id, name, institution, type, currency, is_active,
+/// notes, profile_ids.
 fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
     let type_str: String = row.get(3)?;
-    let balance: Option<String> = row.get(5)?;
-    let balance_date: Option<String> = row.get(6)?;
-    let profile_ids_str: String = row.get(9).unwrap_or_else(|_| "[]".to_string());
+    let profile_ids_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
     let profile_ids: Vec<String> =
         serde_json::from_str(&profile_ids_str).unwrap_or_else(|_| vec!["default".to_string()]);
     let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
@@ -3208,10 +3454,10 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         institution: row.get(2)?,
         account_type,
         currency: row.get(4)?,
-        balance: balance.and_then(|s| s.parse::<Decimal>().ok()),
-        balance_date: balance_date.and_then(|s| parse_transaction_datetime(&s)),
-        is_active: row.get::<_, i64>(7)? != 0,
-        notes: row.get(8)?,
+        balance: None,
+        balance_date: None,
+        is_active: row.get::<_, i64>(5)? != 0,
+        notes: row.get(6)?,
         profile_ids,
         is_stale: None,
         is_available,
@@ -3746,6 +3992,23 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
             ALTER TABLE section_mappings_new RENAME TO section_mappings;
         ",
         )?;
+    }
+
+    // ── 9. Drop denormalised accounts.balance / accounts.balance_date ──
+    // Balances are now sourced at read time from SUM(holdings.value) per account
+    // (see Db::get_accounts and Db::accounts_as_of). Any historical column data
+    // was already mirrored to a `_CASH` holding by set_account_balance.
+    if conn
+        .prepare("SELECT balance FROM accounts LIMIT 0")
+        .is_ok()
+    {
+        conn.execute_batch("ALTER TABLE accounts DROP COLUMN balance")?;
+    }
+    if conn
+        .prepare("SELECT balance_date FROM accounts LIMIT 0")
+        .is_ok()
+    {
+        conn.execute_batch("ALTER TABLE accounts DROP COLUMN balance_date")?;
     }
 
     Ok(())

@@ -154,6 +154,7 @@ function CategoryColorPicker({
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setHexInput(color) }}>
       <PopoverTrigger
+        nativeButton={false}
         render={
           <div
             role="button"

@@ -239,6 +239,44 @@ To cut a new release:
 
 The workflow will: tag the commit, build the Linux binary, push the Docker image to GHCR with `latest` and the version tag, and create a GitHub Release with binaries attached.
 
+## Visual smoke testing (frontend)
+
+`tsc` and `cargo test` verify code correctness; they don't catch UI regressions, render-loop crashes, or broken navigation. When you change frontend code that runs in the browser — pages, components, hooks, navigation — you need to actually drive the UI and look at it.
+
+There are two ways to do this. Either is fine; pick whichever fits the change.
+
+**Option 1: Re-use / extend the existing smoke script.**
+
+`frontend/scripts/smoke_preview.mjs` is a headless Playwright script that walks the import → parse → preview → commit flow in mock mode, on both desktop (1440×900) and mobile (390×844) viewports, and writes screenshots to `.playwright-mcp/`. To run it: make sure the dev server is up (`cd frontend && npm run dev`), then `cd frontend && node scripts/smoke_preview.mjs`. It prints `[<view>] OK` per viewport when green, or dumps the failing locator otherwise. Add steps to this script when you add new UI surfaces — it doubles as a regression check for future changes.
+
+**Option 2: Drive Playwright MCP directly.**
+
+If you have the Playwright MCP tools available, use them to navigate, click, screenshot, and inspect console output ad-hoc. Useful when iterating on a single screen or debugging a specific interaction (e.g. a render loop only triggered by a category dropdown selection — the smoke script won't see that unless you teach it to).
+
+**Either way:**
+
+- Always capture screenshots to `.playwright-mcp/` (already enforced by `.gitignore`-style conventions; never write to the repo root or `frontend/`).
+- Watch the page console output. `Maximum update depth exceeded`, uncontrolled-to-controlled warnings, and silent JSON serialization failures are all real bugs that only show up in the browser.
+- If a smoke run uncovers a new bug class, extend the script so future changes are caught automatically.
+
+`tsc --noEmit` + `npm run build` are necessary but not sufficient for frontend work. They tell you the code compiles; they don't tell you the feature works.
+
+## Working efficiently (parallelism + backgrounding)
+
+Sitting idle while a build or test runs is wasted time. Two specific habits to keep:
+
+**Run long commands in the background.** Anything that takes more than a few seconds — `cargo build`, `cargo test`, `cargo clippy`, `npm run build`, the smoke script, a backend dev server, etc. — should be backgrounded so you can continue with other work while it runs. You'll get a notification when it finishes. If the next step genuinely depends on the result (e.g. you need the typed bindings before writing frontend code that imports them), then it has to be foreground; otherwise background it. Don't wait. Don't poll. Don't sleep loops.
+
+**Spawn subagents for parallel, non-overlapping work.** When the queue has chunks that don't touch each other (a backend feature + a frontend polish pass, a doc rewrite + a refactor on a different module), spawn one or more agents to handle the parallel branches and keep working on a third yourself. Rules:
+
+- The branches must be **file-disjoint or close to it**. Two agents editing the same file is a recipe for clobbering changes. If overlap is real, use `isolation: "worktree"` so each agent has its own copy, and merge results yourself.
+- **Each agent's prompt must stand alone.** It doesn't see your conversation. Spell out the goal, the relevant files and patterns to mirror, the verification commands to run, and what to report back. Don't say "follow the plan" — quote the plan.
+- **Prefer one well-scoped agent over many tiny ones.** Spawning has overhead (cold context re-read). Bundle related tasks into one agent rather than splitting hair-thin.
+- **Don't delegate the things you'd learn from doing.** Anything where the synthesis is the value (architectural decisions, judgement calls, ambiguous specs) stays with you. Delegate the mechanical bits — wire up these three endpoints exactly like the existing two; run these verification commands; report back.
+- **When you launch an agent, keep working.** That's the point. The notification will arrive.
+
+A reasonable rule of thumb: if you're about to type "I'll wait for X to finish before doing Y," and Y doesn't actually depend on X — start Y now. If a multi-hour task naturally splits into two independent chunks — spawn one as an agent and do the other yourself.
+
 ## Conventions
 
 - Filenames use underscores, not spaces

@@ -1,11 +1,23 @@
 import { useState, useRef, type DragEvent } from "react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Upload, X, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
+import type { ParseHints } from "@/bindings/ParseHints"
+import type { SnapshotPeriod } from "@/bindings/SnapshotPeriod"
 
 interface Props {
   files: File[]
   onFilesChange: (files: File[]) => void
+  hints: ParseHints
+  onHintsChange: (hints: ParseHints) => void
   onSubmit: () => void
   onSkip?: () => void
   submitting?: boolean
@@ -13,7 +25,14 @@ interface Props {
   accountInstitution: string
 }
 
-export function FileUpload({ files, onFilesChange, onSubmit, onSkip, submitting, accountName, accountInstitution }: Props) {
+const PERIOD_LABELS: Record<"none" | SnapshotPeriod, string> = {
+  none: "Only snapshots present in the document",
+  monthly: "Monthly snapshots",
+  quarterly: "Quarterly snapshots",
+  yearly: "Yearly snapshots",
+}
+
+export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmit, onSkip, submitting, accountName, accountInstitution }: Props) {
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -89,6 +108,89 @@ export function FileUpload({ files, onFilesChange, onSubmit, onSkip, submitting,
         </div>
       )}
 
+      {/* What does this document contain? */}
+      <div className="space-y-3 rounded-lg border p-3">
+        <p className="text-sm font-medium">What does this document contain?</p>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <Checkbox
+              checked={hints.return_type.transactions}
+              onCheckedChange={(v) =>
+                onHintsChange({
+                  ...hints,
+                  return_type: { ...hints.return_type, transactions: !!v },
+                })
+              }
+              disabled={submitting}
+            />
+            Transactions
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <Checkbox
+              checked={hints.return_type.holdings.enabled}
+              onCheckedChange={(v) =>
+                onHintsChange({
+                  ...hints,
+                  return_type: {
+                    ...hints.return_type,
+                    holdings: { ...hints.return_type.holdings, enabled: !!v },
+                  },
+                })
+              }
+              disabled={submitting}
+            />
+            Holdings
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <Checkbox
+              checked={hints.return_type.investments}
+              onCheckedChange={(v) =>
+                onHintsChange({
+                  ...hints,
+                  return_type: { ...hints.return_type, investments: !!v },
+                })
+              }
+              disabled={submitting}
+            />
+            Investments
+          </label>
+        </div>
+        {hints.return_type.holdings.enabled && (
+          <div className="flex items-center gap-3 pt-1">
+            <span className="text-xs text-muted-foreground">Snapshot frequency:</span>
+            <Select
+              value={hints.return_type.holdings.period ?? "none"}
+              onValueChange={(v) =>
+                onHintsChange({
+                  ...hints,
+                  return_type: {
+                    ...hints.return_type,
+                    holdings: {
+                      ...hints.return_type.holdings,
+                      period: v === "none" ? null : (v as SnapshotPeriod),
+                    },
+                  },
+                })
+              }
+              disabled={submitting}
+              items={PERIOD_LABELS}
+            >
+              <SelectTrigger className="h-8 w-auto min-w-[16rem] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.entries(PERIOD_LABELS) as Array<[
+                  "none" | SnapshotPeriod,
+                  string,
+                ]>).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+
       {/* Actions */}
       <div className="flex justify-between">
         {onSkip && (
@@ -97,7 +199,17 @@ export function FileUpload({ files, onFilesChange, onSubmit, onSkip, submitting,
           </Button>
         )}
         <div className="flex gap-2 ml-auto">
-          <Button onClick={onSubmit} disabled={files.length === 0 || submitting}>
+          <Button
+            onClick={onSubmit}
+            disabled={
+              files.length === 0 ||
+              submitting ||
+              (!hints.return_type.transactions &&
+                !hints.return_type.holdings.enabled &&
+                !hints.return_type.investments)
+            }
+            className="bg-blue-600 text-white hover:bg-blue-600/90"
+          >
             {submitting ? "Importing..." : "Import"}
           </Button>
         </div>

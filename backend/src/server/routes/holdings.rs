@@ -486,12 +486,28 @@ pub async fn delete_holding_handler(
 }
 
 // ── PATCH /api/holdings/:account_id/:symbol ──────────────────────────────────
+//
+// Scope (which row to update) is supplied via the body's `as_of` and the
+// optional `sub_account` field. New field values use the `new_*` prefix so
+// they don't collide with the scoping `sub_account`. To rename a holding's
+// sub-account in place, pass the current value in `sub_account` and the
+// desired value in `new_sub_account` (empty string means "set to null").
 
 #[derive(Debug, Deserialize)]
 pub struct PatchHoldingRequest {
-    pub is_closed: Option<bool>,
-    pub sub_account: Option<String>,
+    /// Snapshot timestamp identifying the row to update.
     pub as_of: String,
+    /// Current sub-account label for the row (used together with `as_of` to scope).
+    pub sub_account: Option<String>,
+    /// If set, close (true) or reopen (false) the row.
+    pub is_closed: Option<bool>,
+    /// New scalar value for the holding.
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    pub value: Option<Decimal>,
+    /// New currency code for the holding.
+    pub currency: Option<String>,
+    /// New sub-account label. Empty string sets it to NULL.
+    pub new_sub_account: Option<String>,
 }
 
 pub async fn patch_holding(
@@ -499,19 +515,60 @@ pub async fn patch_holding(
     Path((account_id, symbol)): Path<(String, String)>,
     Json(body): Json<PatchHoldingRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
     let as_of = parse_naive_datetime(&body.as_of)?;
 
-    if let Some(close) = body.is_closed {
-        let rows = if close {
-            db.close_holding(&account_id, &symbol, body.sub_account.as_deref(), as_of)?
-        } else {
-            db.reopen_holding(&account_id, &symbol, body.sub_account.as_deref(), as_of)?
-        };
-        Ok(Json(
-            serde_json::json!({ "ok": true, "rows_updated": rows }),
-        ))
-    } else {
-        Err(AppError::bad_request("nothing to update", "empty_patch"))
+    if body.is_closed.is_none()
+        && body.value.is_none()
+        && body.currency.is_none()
+        && body.new_sub_account.is_none()
+    {
+        return Err(AppError::bad_request("nothing to update", "empty_patch"));
     }
+
+    let db = state.db.lock().expect("db mutex poisoned");
+
+    if let Some(ref c) = body.currency {
+        validate_currency(&db, c)?;
+    }
+
+    let new_sub_account = body
+        .new_sub_account
+        .as_deref()
+        .map(|s| if s.is_empty() { None } else { Some(s) });
+
+    let mut rows_updated: u64 = 0;
+    rows_updated += db.update_holding_fields(
+        &account_id,
+        &symbol,
+        body.sub_account.as_deref(),
+        as_of,
+        body.value,
+        body.currency.as_deref(),
+        new_sub_account,
+    )?;
+
+    if let Some(close) = body.is_closed {
+        // After a sub_account rename, scope for close/reopen follows the new label.
+        let scope_sub = match new_sub_account {
+            Some(opt) => opt,
+            None => body.sub_account.as_deref(),
+        };
+        let n = if close {
+            db.close_holding(&account_id, &symbol, scope_sub, as_of)?
+        } else {
+            db.reopen_holding(&account_id, &symbol, scope_sub, as_of)?
+        };
+        rows_updated = rows_updated.max(n);
+    }
+
+    if rows_updated == 0 {
+        return Err(AppError::NotFound(format!(
+            "no holding found for account={account_id} symbol={symbol} as_of={}",
+            as_of.format("%Y-%m-%dT%H:%M:%S")
+        )));
+    }
+
+    Ok(Json(
+        serde_json::json!({ "ok": true, "rows_updated": rows_updated }),
+    ))
 }

@@ -28,3 +28,14 @@ Rules:
     any tables showing positions, funds, or asset summaries. Look for columns like Symbol/Name,
     Quantity/Units, Price, Value/Market Value. Ignore marketing content, contact information,
     and performance charts.
+
+OUTPUT SHAPE (strict):
+The tool call MUST include both top-level fields every single time:
+  - `detection_confidence` (number)
+  - `rows` (array)
+
+`rows` is REQUIRED and MUST always be present, even when there is nothing to
+extract. If the document contains no holdings — for example you were given a
+transactions-only file, a header-only file, or unrelated content — emit
+`"rows": []`. **Do NOT omit `rows`** in that case. Downstream parsing is
+strict and will reject any response missing `rows`.

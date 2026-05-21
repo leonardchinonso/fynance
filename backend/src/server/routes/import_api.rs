@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Multipart, Query, State};
+use axum::http::{HeaderMap, HeaderValue};
+use axum::response::IntoResponse;
 use serde::Deserialize;
 
 use crate::importers::llm_parser::StatementParser;
@@ -33,7 +35,32 @@ fn require_token_if_remote(state: &AppState, auth: &AuthContext) -> Result<(), A
     Ok(())
 }
 
-// ── POST /api/import ──────────────────────────────────────────────────────────
+// ── POST /api/import (legacy) ────────────────────────────────────────────────
+//
+// Wraps `import_json` and adds `Deprecation` / `Link` response headers
+// pointing at the successor route `/api/transactions/import`. New callers
+// should use the successor; this alias stays for backward compatibility.
+
+pub async fn import_json_legacy(
+    state: State<AppState>,
+    auth: axum::extract::Extension<AuthContext>,
+    q: Query<ImportJsonQuery>,
+    payload: Json<ImportPayload>,
+) -> axum::response::Response {
+    let inner = import_json(state, auth, q, payload).await;
+    let mut headers = HeaderMap::new();
+    headers.insert("Deprecation", HeaderValue::from_static("true"));
+    headers.insert(
+        "Link",
+        HeaderValue::from_static("</api/transactions/import>; rel=\"successor-version\""),
+    );
+    match inner {
+        Ok(json) => (headers, json).into_response(),
+        Err(err) => (headers, err.into_response()).into_response(),
+    }
+}
+
+// ── POST /api/transactions/import ────────────────────────────────────────────
 
 pub async fn import_json(
     State(state): State<AppState>,

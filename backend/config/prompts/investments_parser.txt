@@ -28,3 +28,13 @@ Rules:
     fields are inferred or ambiguous; below 0.70 when the row cannot be reliably parsed.
 14. detection_confidence: 0.95+ for clearly structured investment history;
     0.80-0.94 for plausible but ambiguous; below 0.80 if this is not investment event data.
+
+OUTPUT SHAPE (strict):
+The tool call MUST include both top-level fields every single time:
+  - `detection_confidence` (number)
+  - `rows` (array)
+
+`rows` is REQUIRED and MUST always be present, even when there is nothing to
+extract. If the document contains no investment events, emit `"rows": []`.
+**Do NOT omit `rows`** in that case. Downstream parsing is strict and will
+reject any response missing `rows`.

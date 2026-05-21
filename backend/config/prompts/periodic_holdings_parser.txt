@@ -46,3 +46,13 @@ Important:
 - If the input is a PDF document (sent as a document/image), extract balance information
   from any tables or summary sections. Look for closing balances, period-end values, or
   balance summaries. Financial statements often show these at the top or bottom of pages.
+
+OUTPUT SHAPE (strict):
+The tool call MUST include both top-level fields every single time:
+  - `detection_confidence` (number)
+  - `rows` (array)
+
+`rows` is REQUIRED and MUST always be present, even when there is nothing to
+extract. If the document does not span any period boundary at the requested
+frequency, emit `"rows": []`. **Do NOT omit `rows`** in that case. Downstream
+parsing is strict and will reject any response missing `rows`.

@@ -14,17 +14,9 @@ pub fn add(
     institution: &str,
     account_type: &str,
     currency: Option<&str>,
-    balance: Option<&str>,
 ) -> Result<()> {
     let account_type = AccountType::parse(account_type)
         .ok_or_else(|| anyhow!("invalid account type: {account_type}"))?;
-    let balance: Option<Decimal> = match balance {
-        Some(raw) => Some(
-            raw.parse()
-                .map_err(|e| anyhow!("invalid balance {raw:?}: {e}"))?,
-        ),
-        None => None,
-    };
     let is_available = crate::storage::db::is_available_account(&account_type);
     let account = Account {
         id: id.to_string(),
@@ -32,7 +24,7 @@ pub fn add(
         institution: institution.to_string(),
         account_type,
         currency: currency.unwrap_or("GBP").to_string(),
-        balance,
+        balance: None,
         balance_date: None,
         is_active: true,
         notes: None,

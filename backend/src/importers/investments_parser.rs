@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -151,8 +151,12 @@ impl LlmInvestmentsParser {
             )
             .await?;
 
-        let parsed: ParsedInvestments = serde_json::from_value(tool_input)
-            .context("deserializing ParsedInvestments from tool_use input")?;
+        let parsed: ParsedInvestments = super::deserialize_tool_use(
+            tool_input,
+            "investments parser",
+            filename,
+            "parse_investments",
+        )?;
 
         tracing::debug!(
             filename,
