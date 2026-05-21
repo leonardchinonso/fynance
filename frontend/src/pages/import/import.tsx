@@ -422,7 +422,7 @@ export function ImportPage() {
   }
 
   const isPreviewing = step === "preview"
-  const containerWidth = isPreviewing ? "max-w-6xl" : "max-w-3xl"
+  const containerWidth = isPreviewing ? "max-w-[88rem]" : "max-w-3xl"
 
   function handleBack() {
     setFiles([])

@@ -20,12 +20,12 @@ import type { Currency } from "@/types"
 import { StatusBadge } from "./status_badge"
 import { DateCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
+import { InlineDateRange } from "@/components/inline_date_range"
 import {
   Select as UiSelect,
   SelectContent as UiSelectContent,
   SelectItem as UiSelectItem,
   SelectTrigger as UiSelectTrigger,
-  SelectValue as UiSelectValue,
 } from "@/components/ui/select"
 
 const HOLDING_TYPES: HoldingType[] = [
@@ -274,29 +274,27 @@ export function HoldingsSection({
   const holdingTypeOpts = HOLDING_TYPES.map((t) => ({ value: t, label: t }))
   const currencyOpts = currencyOptions.map((c) => ({ value: c.code, label: c.code }))
 
+  const holdingFilterLabel = holdingFilter === "__all__"
+    ? "All holdings"
+    : holdingOptions.find(([k]) => k === holdingFilter)?.[1] ?? holdingFilter
+
   const filterSlot = (
     <>
-      <Input
-        type="date"
-        value={dateFrom}
-        onChange={(e) => { setDateFrom(e.target.value); ctrls.setPage(1) }}
-        className="h-8 w-[9rem] text-xs"
-        aria-label="From date"
-      />
-      <span className="text-xs text-muted-foreground">to</span>
-      <Input
-        type="date"
-        value={dateTo}
-        onChange={(e) => { setDateTo(e.target.value); ctrls.setPage(1) }}
-        className="h-8 w-[9rem] text-xs"
-        aria-label="To date"
+      <InlineDateRange
+        start={dateFrom}
+        end={dateTo}
+        onChange={({ start, end }) => {
+          setDateFrom(start)
+          setDateTo(end)
+          ctrls.setPage(1)
+        }}
       />
       <UiSelect
         value={holdingFilter}
         onValueChange={(v) => { if (v) { setHoldingFilter(v); ctrls.setPage(1) } }}
       >
         <UiSelectTrigger className="h-8 text-xs min-w-[10rem]">
-          <UiSelectValue />
+          <span>{holdingFilterLabel}</span>
         </UiSelectTrigger>
         <UiSelectContent>
           <UiSelectItem value="__all__">All holdings</UiSelectItem>
@@ -356,7 +354,7 @@ export function HoldingsSection({
                 )}
               >
                 <TableCell>
-                  <StatusBadge status={marked ? "duplicate" : row.status} />
+                  <StatusBadge status={marked ? "removed" : row.status} />
                 </TableCell>
                 <TableCell>
                   {editable && h && !marked ? (

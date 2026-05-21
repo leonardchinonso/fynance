@@ -18,13 +18,12 @@ import type { Currency } from "@/types"
 import { StatusBadge } from "./status_badge"
 import { DateCell, DecimalCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
-import { Input } from "@/components/ui/input"
+import { InlineDateRange } from "@/components/inline_date_range"
 import {
   Select as UiSelect,
   SelectContent as UiSelectContent,
   SelectItem as UiSelectItem,
   SelectTrigger as UiSelectTrigger,
-  SelectValue as UiSelectValue,
 } from "@/components/ui/select"
 
 const EVENT_TYPES: InvestmentEventType[] = [
@@ -125,27 +124,23 @@ export function InvestmentsSection({
 
   const filterSlot = (
     <>
-      <Input
-        type="date"
-        value={dateFrom}
-        onChange={(e) => { setDateFrom(e.target.value); ctrls.setPage(1) }}
-        className="h-8 w-[9rem] text-xs"
-        aria-label="From date"
-      />
-      <span className="text-xs text-muted-foreground">to</span>
-      <Input
-        type="date"
-        value={dateTo}
-        onChange={(e) => { setDateTo(e.target.value); ctrls.setPage(1) }}
-        className="h-8 w-[9rem] text-xs"
-        aria-label="To date"
+      <InlineDateRange
+        start={dateFrom}
+        end={dateTo}
+        onChange={({ start, end }) => {
+          setDateFrom(start)
+          setDateTo(end)
+          ctrls.setPage(1)
+        }}
       />
       <UiSelect
         value={eventFilter}
         onValueChange={(v) => { if (v) { setEventFilter(v); ctrls.setPage(1) } }}
       >
         <UiSelectTrigger className="h-8 text-xs min-w-[8rem]">
-          <UiSelectValue />
+          <span className="capitalize">
+            {eventFilter === "__all__" ? "All events" : eventFilter}
+          </span>
         </UiSelectTrigger>
         <UiSelectContent>
           <UiSelectItem value="__all__">All events</UiSelectItem>
@@ -206,7 +201,7 @@ export function InvestmentsSection({
                 )}
               >
                 <TableCell>
-                  <StatusBadge status={marked ? "duplicate" : row.status} />
+                  <StatusBadge status={marked ? "removed" : row.status} />
                 </TableCell>
                 <TableCell>
                   {editable && ev && !marked ? (
