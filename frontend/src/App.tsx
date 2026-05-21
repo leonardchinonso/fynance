@@ -10,7 +10,13 @@ import { TransactionsPage } from "@/pages/transactions"
 import { BudgetPage } from "@/pages/budget"
 import { PortfolioPage } from "@/pages/portfolio"
 import { ReportsPage } from "@/pages/reports"
-import { SettingsPage } from "@/pages/settings"
+import {
+  SettingsPage,
+  SettingsGeneralPage,
+  SettingsAccountsPage,
+  SettingsCategoriesPage,
+  SettingsAuthPage,
+} from "@/pages/settings"
 import { ImportPage } from "@/pages/import"
 
 function getHomepage(): string {
@@ -35,7 +41,13 @@ function Layout() {
           <Route path="/budget" element={<BudgetPage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/reports" element={<ReportsPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings" element={<SettingsPage />}>
+            <Route index element={<Navigate to="general" replace />} />
+            <Route path="general" element={<SettingsGeneralPage />} />
+            <Route path="accounts" element={<SettingsAccountsPage />} />
+            <Route path="categories" element={<SettingsCategoriesPage />} />
+            <Route path="auth" element={<SettingsAuthPage />} />
+          </Route>
           <Route path="/import" element={<ImportPage />} />
           <Route path="/import/wizard" element={<ImportPage />} />
           <Route path="/import/single" element={<ImportPage />} />
