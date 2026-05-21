@@ -53,8 +53,17 @@ export function TransactionsSection({
 }: Props) {
   const ctrls = useSectionControls()
   const { categoryColors } = useCategoryColorsContext()
-  const [dateFrom, setDateFrom] = useState("")
-  const [dateTo, setDateTo] = useState("")
+
+  const { minDate, maxDate } = useMemo(() => {
+    const dates = result.rows
+      .map((r) => r.date.split("T")[0] ?? "")
+      .filter(Boolean)
+      .sort()
+    return { minDate: dates[0] ?? "", maxDate: dates[dates.length - 1] ?? "" }
+  }, [result.rows])
+
+  const [dateFrom, setDateFrom] = useState(minDate)
+  const [dateTo, setDateTo] = useState(maxDate)
   const [categoryFilter, setCategoryFilter] = useState("__all__")
 
   const availableCategories = useMemo(() => {

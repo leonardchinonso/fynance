@@ -201,8 +201,17 @@ export function HoldingsSection({
   currencyOptions,
 }: Props) {
   const ctrls = useSectionControls()
-  const [dateFrom, setDateFrom] = useState("")
-  const [dateTo, setDateTo] = useState("")
+
+  const { minDate, maxDate } = useMemo(() => {
+    const dates = result.rows
+      .map((r) => r.as_of.split("T")[0] ?? "")
+      .filter(Boolean)
+      .sort()
+    return { minDate: dates[0] ?? "", maxDate: dates[dates.length - 1] ?? "" }
+  }, [result.rows])
+
+  const [dateFrom, setDateFrom] = useState(minDate)
+  const [dateTo, setDateTo] = useState(maxDate)
   const [holdingFilter, setHoldingFilter] = useState("__all__")
 
   const holdingOptions = useMemo(() => {

@@ -427,18 +427,18 @@ export function ImportPage() {
   function handleBack() {
     setFiles([])
     setParseError(null)
-    // Wizard: upload/preview/complete all belong to a session; back returns
-    // to wizard-prep (which is `?mode=wizard` with no account).
-    if (mode === "wizard" && (step === "upload" || step === "preview" || step === "complete")) {
-      navStep({})
-      return
-    }
-    // Single: from preview, drop the entry param (back to upload for that account).
-    if (mode === "single" && step === "preview" && currentAccount) {
+    // From preview, back goes one step: drop the entry param so the user
+    // lands on the same account's upload screen, regardless of mode.
+    if (step === "preview" && currentAccount) {
       navStep({ account: currentAccount.id })
       return
     }
-    // Single: from upload or account-select, leave the import flow entirely.
+    // From upload in wizard mode, back goes to the wizard-prep screen.
+    if (mode === "wizard" && (step === "upload" || step === "complete")) {
+      navStep({})
+      return
+    }
+    // From upload or account-select in single mode, leave the import flow.
     navigate("/import")
   }
 

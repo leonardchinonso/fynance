@@ -62,8 +62,17 @@ export function InvestmentsSection({
   currencyOptions,
 }: Props) {
   const ctrls = useSectionControls()
-  const [dateFrom, setDateFrom] = useState("")
-  const [dateTo, setDateTo] = useState("")
+
+  const { minDate, maxDate } = useMemo(() => {
+    const dates = result.rows
+      .map((r) => r.date.split("T")[0] ?? "")
+      .filter(Boolean)
+      .sort()
+    return { minDate: dates[0] ?? "", maxDate: dates[dates.length - 1] ?? "" }
+  }, [result.rows])
+
+  const [dateFrom, setDateFrom] = useState(minDate)
+  const [dateTo, setDateTo] = useState(maxDate)
   const [eventFilter, setEventFilter] = useState("__all__")
 
   /**
