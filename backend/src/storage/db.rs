@@ -1486,9 +1486,9 @@ impl Db {
         let display_order = payload.display_order.unwrap_or(0);
 
         self.conn.execute(
-            "INSERT INTO categories (id, name, parent_id, display_order, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
-            params![id, payload.name, payload.parent_id, display_order, now],
+            "INSERT INTO categories (id, name, parent_id, display_order, is_active, description, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?6)",
+            params![id, payload.name, payload.parent_id, display_order, payload.description, now],
         )?;
 
         self.get_category_by_id(&id)?
@@ -1497,7 +1497,7 @@ impl Db {
 
     pub fn get_category_by_id(&self, id: &str) -> Result<Option<Category>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
+            "SELECT id, name, parent_id, display_order, is_active, description, created_at, updated_at
              FROM categories WHERE id = ?1",
         )?;
         let result = stmt.query_row(params![id], row_to_category).optional()?;
@@ -1506,7 +1506,7 @@ impl Db {
 
     pub fn get_categories_tree(&self) -> Result<HashMap<String, Vec<CategoryNode>>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
+            "SELECT id, name, parent_id, display_order, is_active, description, created_at, updated_at
              FROM categories WHERE is_active = 1
              ORDER BY display_order, name",
         )?;
@@ -1541,6 +1541,7 @@ impl Db {
                 .map(|c| CategoryNode {
                     id: c.id.clone(),
                     name: c.name.clone(),
+                    description: c.description.clone(),
                     children: vec![],
                 })
                 .collect();
@@ -1548,6 +1549,7 @@ impl Db {
             let node = CategoryNode {
                 id: parent.id.clone(),
                 name: parent.name.clone(),
+                description: parent.description.clone(),
                 children: child_nodes,
             };
 
@@ -1594,11 +1596,18 @@ impl Db {
             .is_active
             .map(|v| v as i32)
             .unwrap_or(existing.is_active as i32);
+        // PATCH treats `description: Some("")` as "clear" and `None` as
+        // "leave unchanged" so the user can blank a description out via the UI.
+        let description = match payload.description.as_ref() {
+            Some(s) if s.is_empty() => None,
+            Some(s) => Some(s.clone()),
+            None => existing.description.clone(),
+        };
 
         self.conn.execute(
-            "UPDATE categories SET name = ?1, parent_id = ?2, display_order = ?3, is_active = ?4, updated_at = ?5
-             WHERE id = ?6",
-            params![name, parent_id, display_order, is_active, now, id],
+            "UPDATE categories SET name = ?1, parent_id = ?2, display_order = ?3, is_active = ?4, description = ?5, updated_at = ?6
+             WHERE id = ?7",
+            params![name, parent_id, display_order, is_active, description, now, id],
         )?;
 
         self.get_category_by_id(id)?
@@ -1621,7 +1630,7 @@ impl Db {
         let result = self
             .conn
             .query_row(
-                "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
+                "SELECT id, name, parent_id, display_order, is_active, description, created_at, updated_at
              FROM categories WHERE name = ?1 AND is_active = 1",
                 params![name],
                 row_to_category,
@@ -1636,7 +1645,7 @@ impl Db {
             let result = self
                 .conn
                 .query_row(
-                    "SELECT id, name, parent_id, display_order, is_active, created_at, updated_at
+                    "SELECT id, name, parent_id, display_order, is_active, description, created_at, updated_at
                  FROM categories WHERE name = ?1 AND is_active = 1",
                     params![child_name.trim()],
                     row_to_category,
@@ -3375,8 +3384,9 @@ fn row_to_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {
         parent_id: row.get(2)?,
         display_order: row.get(3)?,
         is_active: row.get::<_, i64>(4)? != 0,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        description: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 
@@ -4009,6 +4019,16 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         .is_ok()
     {
         conn.execute_batch("ALTER TABLE accounts DROP COLUMN balance_date")?;
+    }
+
+    // ── 10. Add free-text description to categories ──
+    // Used by LLM categorisation agents to disambiguate categories whose
+    // names overlap. Existing rows get NULL.
+    if conn
+        .prepare("SELECT description FROM categories LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE categories ADD COLUMN description TEXT")?;
     }
 
     Ok(())

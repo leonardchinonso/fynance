@@ -54,6 +54,10 @@ pub struct Category {
     pub parent_id: Option<String>,
     pub display_order: i32,
     pub is_active: bool,
+    /// Optional free-text description. Surfaced to LLM categorisation agents
+    /// to disambiguate categories that share similar names (e.g. "Bills:
+    /// utility bills like internet, water, electricity" vs "Subscriptions").
+    pub description: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -64,6 +68,8 @@ pub struct Category {
 pub struct CategoryNode {
     pub id: String,
     pub name: String,
+    /// Optional free-text description. Same role as on `Category`.
+    pub description: Option<String>,
     pub children: Vec<CategoryNode>,
 }
 
@@ -72,6 +78,7 @@ pub struct CreateCategoryPayload {
     pub name: String,
     pub parent_id: Option<String>,
     pub display_order: Option<i32>,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -80,6 +87,7 @@ pub struct PatchCategoryPayload {
     pub parent_id: Option<String>,
     pub display_order: Option<i32>,
     pub is_active: Option<bool>,
+    pub description: Option<String>,
 }
 
 /// Where a transaction's category came from. Phase 1 only writes `Rule`

@@ -97,8 +97,7 @@ function ProfilesList({ profiles, onRefresh }: { profiles: Profile[]; onRefresh:
               size="icon"
               className="h-8 w-8 opacity-0 group-hover:opacity-100"
               onClick={() => setDeleting(p)}
-              disabled={p.id === "default"}
-              title={p.id === "default" ? "The default profile can't be deleted" : "Delete profile"}
+              title="Delete profile"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
