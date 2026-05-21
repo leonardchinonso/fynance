@@ -128,17 +128,12 @@ impl StatementParser for LlmStatementParser {
             )
             .await?;
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!(
-                filename,
-                tool = "parse_bank_statement",
-                raw_tool_input = %tool_input,
-                "raw tool_use input before deserialization"
-            );
-        }
-
-        let parsed: ParsedStatement = serde_json::from_value(tool_input)
-            .context("deserializing ParsedStatement from tool_use input")?;
+        let parsed: ParsedStatement = super::deserialize_tool_use(
+            tool_input,
+            "bank statement parser",
+            filename,
+            "parse_bank_statement",
+        )?;
 
         tracing::debug!(
             filename,

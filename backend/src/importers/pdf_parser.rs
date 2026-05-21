@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 
 use super::document_parser::SnapshotPeriod;
 use super::holdings_parser::ParsedHoldings;
@@ -56,18 +56,13 @@ impl PdfStatementParser {
             )
             .await?;
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!(
-                filename,
-                tool = "parse_bank_statement",
-                source = "pdf",
-                raw_tool_input = %tool_input,
-                "raw tool_use input before deserialization"
-            );
-        }
 
-        let parsed: ParsedStatement = serde_json::from_value(tool_input)
-            .context("deserializing ParsedStatement from PDF tool_use")?;
+        let parsed: ParsedStatement = super::deserialize_tool_use(
+            tool_input,
+            "pdf bank statement parser",
+            filename,
+            "parse_bank_statement",
+        )?;
 
         if parsed.rows.is_empty() {
             return Err(anyhow!(
@@ -117,18 +112,13 @@ impl PdfHoldingsParser {
             )
             .await?;
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!(
-                filename,
-                tool = "parse_holdings",
-                source = "pdf",
-                raw_tool_input = %tool_input,
-                "raw tool_use input before deserialization"
-            );
-        }
 
-        let parsed: ParsedHoldings =
-            serde_json::from_value(tool_input).context("deserializing ParsedHoldings from PDF")?;
+        let parsed: ParsedHoldings = super::deserialize_tool_use(
+            tool_input,
+            "pdf holdings parser",
+            filename,
+            "parse_holdings",
+        )?;
 
         if parsed.rows.is_empty() {
             return Err(anyhow!(
@@ -185,19 +175,13 @@ impl PdfPeriodicHoldingsParser {
             )
             .await?;
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!(
-                filename,
-                period = period_str,
-                tool = "extract_periodic_holdings",
-                source = "pdf",
-                raw_tool_input = %tool_input,
-                "raw tool_use input before deserialization"
-            );
-        }
 
-        let parsed: ParsedHoldings = serde_json::from_value(tool_input)
-            .context("deserializing ParsedHoldings from PDF periodic holdings")?;
+        let parsed: ParsedHoldings = super::deserialize_tool_use(
+            tool_input,
+            "pdf periodic holdings parser",
+            filename,
+            "extract_periodic_holdings",
+        )?;
 
         Ok(parsed)
     }
@@ -245,18 +229,13 @@ impl PdfInvestmentsParser {
             )
             .await?;
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!(
-                filename,
-                tool = "parse_investments",
-                source = "pdf",
-                raw_tool_input = %tool_input,
-                "raw tool_use input before deserialization"
-            );
-        }
 
-        let parsed: ParsedInvestments = serde_json::from_value(tool_input)
-            .context("deserializing ParsedInvestments from PDF tool_use")?;
+        let parsed: ParsedInvestments = super::deserialize_tool_use(
+            tool_input,
+            "pdf investments parser",
+            filename,
+            "parse_investments",
+        )?;
 
         if parsed.rows.is_empty() {
             return Err(anyhow!(

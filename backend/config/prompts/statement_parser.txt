@@ -24,3 +24,15 @@ Rules:
     any tables visible in the pages. Look for columns like Date, Description, Amount, Balance.
     Ignore headers, logos, account holder information, and summary sections. Focus only on the
     transaction line items.
+
+OUTPUT SHAPE (strict):
+The tool call MUST include all three top-level fields every single time:
+  - `detected_bank` (string)
+  - `detection_confidence` (number)
+  - `rows` (array)
+
+`rows` is REQUIRED and MUST always be present, even when there is nothing to
+extract. If the document contains no transactions — for example you were given
+a holdings-only CSV, a header-only file, or a document with no recognisable
+transaction lines — emit `"rows": []`. **Do NOT omit `rows`** in that case.
+Downstream parsing is strict and will reject any response missing `rows`.

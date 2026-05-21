@@ -351,10 +351,26 @@ async fn extract_all_parallel(
     hints: &ParseHints,
     provider: Arc<dyn LlmProvider>,
 ) -> Result<ExtractionResult> {
-    let mut join_set: JoinSet<Result<ExtractionResult>> = JoinSet::new();
+    let mut join_set: JoinSet<(String, ContentType, Result<ExtractionResult>)> = JoinSet::new();
 
     let user_hint = hints.hint.clone();
     let period = hints.return_type.holdings.period.clone();
+
+    let active_content_types: Vec<&ContentType> = content_types
+        .iter()
+        .filter(|ct| **ct != ContentType::Unknown)
+        .collect();
+    let total_tasks = documents.len() * active_content_types.len();
+    tracing::info!(
+        documents = documents.len(),
+        content_types = ?active_content_types,
+        period = ?period,
+        total_tasks,
+        "parse: starting extraction across {} documents x {} content types ({} LLM calls)",
+        documents.len(),
+        active_content_types.len(),
+        total_tasks,
+    );
 
     for doc in documents {
         for ct in content_types {
@@ -362,6 +378,7 @@ async fn extract_all_parallel(
                 continue;
             }
 
+            let filename = doc.filename.clone();
             let doc_clone = doc.clone();
             let ct_clone = ct.clone();
             let hint_clone = user_hint.clone();
@@ -369,14 +386,15 @@ async fn extract_all_parallel(
             let provider_clone = provider.clone();
 
             join_set.spawn(async move {
-                extract_single_file(
+                let res = extract_single_file(
                     &doc_clone,
                     &ct_clone,
                     hint_clone.as_deref(),
                     period_clone.as_ref(),
                     provider_clone,
                 )
-                .await
+                .await;
+                (filename, ct_clone, res)
             });
         }
     }
@@ -390,23 +408,56 @@ async fn extract_all_parallel(
     };
 
     let mut max_confidence: f32 = 0.0;
+    let mut completed: usize = 0;
 
-    while let Some(result) = join_set.join_next().await {
-        let extraction = result
-            .map_err(|e| anyhow!("extraction task panicked: {e}"))?
-            .map_err(|e| anyhow!("extraction failed: {e}"))?;
-
-        merged.transactions.extend(extraction.transactions);
-        merged.holdings.extend(extraction.holdings);
-        merged.investments.extend(extraction.investments);
-
-        if extraction.detection_confidence > max_confidence {
-            max_confidence = extraction.detection_confidence;
-            merged.detected_bank = extraction.detected_bank;
+    while let Some(joined) = join_set.join_next().await {
+        let (filename, ct, res) =
+            joined.map_err(|e| anyhow!("extraction task panicked: {e}"))?;
+        match res {
+            Ok(extraction) => {
+                completed += 1;
+                tracing::info!(
+                    filename = %filename,
+                    content_type = ?ct,
+                    transactions = extraction.transactions.len(),
+                    holdings = extraction.holdings.len(),
+                    investments = extraction.investments.len(),
+                    detection_confidence = extraction.detection_confidence,
+                    "parse: extraction OK"
+                );
+                merged.transactions.extend(extraction.transactions);
+                merged.holdings.extend(extraction.holdings);
+                merged.investments.extend(extraction.investments);
+                if extraction.detection_confidence > max_confidence {
+                    max_confidence = extraction.detection_confidence;
+                    merged.detected_bank = extraction.detected_bank;
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    filename = %filename,
+                    content_type = ?ct,
+                    error = %e,
+                    "parse: extraction FAILED"
+                );
+                return Err(anyhow!(
+                    "extraction failed for `{filename}` ({:?}): {e}",
+                    ct
+                ));
+            }
         }
     }
 
     merged.detection_confidence = max_confidence;
+    tracing::info!(
+        total_transactions = merged.transactions.len(),
+        total_holdings = merged.holdings.len(),
+        total_investments = merged.investments.len(),
+        detected_bank = ?merged.detected_bank,
+        detection_confidence = merged.detection_confidence,
+        completed,
+        "parse: complete"
+    );
     Ok(merged)
 }
 

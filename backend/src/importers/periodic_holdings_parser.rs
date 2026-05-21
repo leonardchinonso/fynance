@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{Value, json};
 
 use super::document_parser::SnapshotPeriod;
@@ -71,18 +71,12 @@ impl LlmPeriodicHoldingsParser {
             )
             .await?;
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!(
-                filename,
-                period = period_str,
-                tool = "extract_periodic_holdings",
-                raw_tool_input = %tool_input,
-                "raw tool_use input before deserialization"
-            );
-        }
-
-        let parsed: ParsedHoldings = serde_json::from_value(tool_input)
-            .context("deserializing ParsedHoldings from periodic holdings tool_use input")?;
+        let parsed: ParsedHoldings = super::deserialize_tool_use(
+            tool_input,
+            "periodic holdings parser",
+            filename,
+            "extract_periodic_holdings",
+        )?;
 
         tracing::debug!(
             filename,
