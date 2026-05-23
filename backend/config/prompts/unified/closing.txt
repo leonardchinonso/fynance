@@ -1,0 +1,4 @@
+CLOSING NOTES
+- All three top-level arrays (`transactions`, `holdings`, `investments`) MUST be present in the tool input. Use `[]` for any section that was not described above; never omit a key.
+- `row_confidence` on every row reflects how cleanly that single row could be extracted from the source. 0.95+ when all fields are clearly present; 0.70–0.95 when some are ambiguous; below 0.70 when the row had to be guessed and should probably be skipped on import.
+- Do not invent entries that are not visible or calculated from the documents. If a type was not described in the sections above, return an empty array for it.

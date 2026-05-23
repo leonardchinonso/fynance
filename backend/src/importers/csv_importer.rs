@@ -51,7 +51,7 @@ impl Importer for CsvImporter {
             .enable_all()
             .build()
             .context("building tokio runtime for CSV import")?;
-        let parsed = rt.block_on(self.parser.parse(&raw, &filename, None))?;
+        let (parsed, _call) = rt.block_on(self.parser.parse(&raw, &filename, None, None))?;
 
         if parsed.detection_confidence < self.min_detection_confidence {
             return Err(anyhow!(

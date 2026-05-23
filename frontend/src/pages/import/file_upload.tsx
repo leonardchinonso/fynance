@@ -12,6 +12,8 @@ import { Upload, X, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ParseHints } from "@/bindings/ParseHints"
 import type { SnapshotPeriod } from "@/bindings/SnapshotPeriod"
+import type { ParseMode } from "@/bindings/ParseMode"
+import type { Agent } from "@/bindings/Agent"
 
 interface Props {
   files: File[]
@@ -189,6 +191,72 @@ export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmi
             </Select>
           </div>
         )}
+      </div>
+
+      {/* EXPERIMENTAL knobs. */}
+      <div className="space-y-2 rounded-lg border border-dashed border-muted-foreground/30 p-3">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium">Parsing strategy</p>
+          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+            experimental
+          </span>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Try different parsing strategies and model agents. May be removed
+          once one is promoted to default.
+        </p>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 pt-1">
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-xs text-muted-foreground">Mode:</span>
+            <Select
+              value={hints.experimental?.mode ?? "split"}
+              onValueChange={(v) =>
+                onHintsChange({
+                  ...hints,
+                  experimental: {
+                    mode: v as ParseMode,
+                    agent: hints.experimental?.agent ?? null,
+                  },
+                })
+              }
+              disabled={submitting}
+            >
+              <SelectTrigger className="h-8 w-auto min-w-[10rem] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="split">Split (per-type)</SelectItem>
+                <SelectItem value="unified">Unified (single call)</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-xs text-muted-foreground">Agent:</span>
+            <Select
+              value={hints.experimental?.agent ?? "default"}
+              onValueChange={(v) =>
+                onHintsChange({
+                  ...hints,
+                  experimental: {
+                    mode: hints.experimental?.mode ?? "split",
+                    agent: v === "default" ? null : (v as Agent),
+                  },
+                })
+              }
+              disabled={submitting}
+            >
+              <SelectTrigger className="h-8 w-auto min-w-[8rem] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default</SelectItem>
+                <SelectItem value="haiku">Haiku</SelectItem>
+                <SelectItem value="sonnet">Sonnet</SelectItem>
+                <SelectItem value="opus">Opus</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        </div>
       </div>
 
       {/* Actions */}

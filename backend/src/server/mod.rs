@@ -10,7 +10,9 @@ pub mod validation;
 use std::sync::{Arc, Mutex};
 
 use axum::{
-    Router, middleware,
+    Router,
+    extract::DefaultBodyLimit,
+    middleware,
     routing::{delete, get, patch, post, put},
 };
 use tower_http::cors::CorsLayer;
@@ -95,7 +97,14 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route("/import/csv", post(routes::import_api::import_csv))
         .route("/import/bulk", post(routes::import_api::import_bulk))
         // ── Parse (Stage 1) ───────────────────────────────────────────────
-        .route("/parse", post(routes::parse::parse_documents))
+        // The route enforces its own size caps (50 MB total, 10 MB per
+        // file) inside the handler. Lift Axum's 2 MB default so multi-PDF
+        // uploads aren't rejected at the body layer.
+        .route(
+            "/parse",
+            post(routes::parse::parse_documents)
+                .layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
         // ── Budget ─────────────────────────────────────────────────────────
         .route(
             "/budget/spending-grid",

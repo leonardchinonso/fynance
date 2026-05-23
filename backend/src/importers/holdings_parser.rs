@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::provider::{LlmProvider, ModelTier};
+use super::provider::{LlmProvider, ModelTier, ProviderCallResult};
+use crate::model::Agent;
 
 const HOLDINGS_PROMPT: &str = include_str!("../../config/prompts/holdings_parser.txt");
 const MAX_CSV_BYTES: usize = 200_000;
@@ -47,7 +48,8 @@ pub trait HoldingsExtractor: Send + Sync {
         raw: &str,
         filename: &str,
         user_hint: Option<&str>,
-    ) -> Result<ParsedHoldings>;
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedHoldings, ProviderCallResult)>;
 }
 
 // ── LLM implementation ──────────────────────────────────────────────────────
@@ -84,7 +86,8 @@ impl HoldingsExtractor for LlmHoldingsParser {
         raw: &str,
         filename: &str,
         user_hint: Option<&str>,
-    ) -> Result<ParsedHoldings> {
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedHoldings, ProviderCallResult)> {
         let content = if raw.len() > MAX_CSV_BYTES {
             tracing::warn!(
                 filename,
@@ -104,7 +107,7 @@ impl HoldingsExtractor for LlmHoldingsParser {
             user_msg = format!("User instructions: {hint}\n\n{user_msg}");
         }
 
-        let tool_input = self
+        let call = self
             .provider
             .chat_with_tools(
                 HOLDINGS_PROMPT,
@@ -112,11 +115,12 @@ impl HoldingsExtractor for LlmHoldingsParser {
                 "parse_holdings",
                 tool_schema,
                 ModelTier::Standard,
+                agent_override,
             )
             .await?;
 
         let parsed: ParsedHoldings = super::deserialize_tool_use(
-            tool_input,
+            call.value.clone(),
             "holdings parser",
             filename,
             "parse_holdings",
@@ -129,7 +133,7 @@ impl HoldingsExtractor for LlmHoldingsParser {
             "LLM parsed holdings"
         );
 
-        Ok(parsed)
+        Ok((parsed, call))
     }
 }
 
@@ -214,8 +218,18 @@ impl HoldingsExtractor for MockHoldingsParser {
         _raw: &str,
         _filename: &str,
         _user_hint: Option<&str>,
-    ) -> Result<ParsedHoldings> {
-        Ok(self.result.clone())
+        _agent_override: Option<Agent>,
+    ) -> Result<(ParsedHoldings, ProviderCallResult)> {
+        Ok((
+            self.result.clone(),
+            ProviderCallResult {
+                value: Value::Null,
+                usage: super::provider::TokenUsage::default(),
+                model: "mock".to_string(),
+                duration_ms: 0,
+                stop_reason: None,
+            },
+        ))
     }
 }
 
@@ -246,8 +260,8 @@ mod tests {
         let mock = MockHoldingsParser {
             result: parsed.clone(),
         };
-        let result = mock
-            .extract_holdings("anything", "test.csv", None)
+        let (result, _call) = mock
+            .extract_holdings("anything", "test.csv", None, None)
             .await
             .unwrap();
         assert_eq!(result.rows.len(), 1);

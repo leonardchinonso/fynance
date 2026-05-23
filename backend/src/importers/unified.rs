@@ -59,6 +59,14 @@ pub struct UnifiedStatementRow {
     // -- Per-row confidence from the LLM --
     /// LLM's confidence that this row was correctly extracted [0.0, 1.0].
     pub row_confidence: f32,
+    /// LLM-assigned category id (only populated in unified mode where the
+    /// model is asked to categorise). `None` in split mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<String>,
+    /// LLM's confidence in the category assignment, in `[0.0, 1.0]`. `None`
+    /// for split-mode rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category_confidence: Option<f32>,
 }
 
 impl Transaction {

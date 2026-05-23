@@ -1054,6 +1054,8 @@ impl Db {
                 existing_id,
                 existing_description,
                 error_reason: None,
+                category_id: t.category_id.clone(),
+                category_confidence: None,
             });
         }
 
@@ -1089,6 +1091,8 @@ impl Db {
                         "row confidence {:.2} below threshold {:.2}",
                         row.row_confidence, min_row_confidence
                     )),
+                    category_id: row.category_id.clone(),
+                    category_confidence: row.category_confidence,
                 });
                 continue;
             }
@@ -1123,6 +1127,8 @@ impl Db {
                 existing_id,
                 existing_description,
                 error_reason: None,
+                category_id: row.category_id.clone(),
+                category_confidence: row.category_confidence,
             });
         }
 

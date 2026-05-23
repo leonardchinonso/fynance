@@ -28,6 +28,7 @@ import type { Category } from "@/bindings/Category"
 import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { IngestionPreview } from "@/bindings/IngestionPreview"
 import type { ParseHints } from "@/bindings/ParseHints"
+import type { CategorySource } from "@/bindings/CategorySource"
 import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
@@ -193,6 +194,29 @@ export class MockApiService implements ApiService {
       if (t.category) cats.add(t.category)
     }
     return Array.from(cats).sort()
+  }
+
+  async getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>> {
+    await delay(DELAY_MS)
+    const cats = new Set<string>()
+    for (const t of MOCK_TRANSACTIONS) {
+      if (t.category) cats.add(t.category)
+    }
+    const fromMock = Array.from(cats)
+      .sort()
+      .map((name) => ({
+        id: `cat-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        name,
+      }))
+    // Demo ids returned by mock `parseDocuments` so the preview can resolve
+    // them to readable names in the SelectCell.
+    return [
+      ...fromMock,
+      { id: "cat-transport", name: "Transport" },
+      { id: "cat-groceries", name: "Groceries" },
+      { id: "cat-eating-out", name: "Eating Out" },
+      { id: "cat-subscriptions", name: "Subscriptions" },
+    ]
   }
 
   async getAccounts(profileId?: string): Promise<Account[]> {
@@ -792,21 +816,22 @@ export class MockApiService implements ApiService {
     const wantHoldings = hints.return_type.holdings.enabled
     const wantInv = hints.return_type.investments
 
+    const isUnified = hints.experimental?.mode === "unified"
     const txRows = wantTx
       ? [
-          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null },
-          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null },
-          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null },
-          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null },
+          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-transport" : null, category_confidence: isUnified ? 0.95 : null },
+          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null, category_id: isUnified ? "cat-groceries" : null, category_confidence: isUnified ? 0.97 : null },
+          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-eating-out" : null, category_confidence: isUnified ? 0.78 : null },
+          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-subscriptions" : null, category_confidence: isUnified ? 0.45 : null },
         ]
       : []
     const txPayload: ImportPayload | null = wantTx
       ? {
           account_id: accountId,
           transactions: [
-            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category: "Transport", category_id: null, category_source: "rule", notes: null, is_recurring: null, exclude_from_summary: null },
-            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category: "Eating Out", category_id: null, category_source: "rule", notes: null, is_recurring: null, exclude_from_summary: null },
-            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category: "Subscriptions", category_id: null, category_source: "rule", notes: null, is_recurring: true, exclude_from_summary: null },
+            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category: null, category_id: isUnified ? "cat-transport" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: null, exclude_from_summary: null },
+            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category: null, category_id: isUnified ? "cat-eating-out" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: null, exclude_from_summary: null },
+            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category: null, category_id: isUnified ? "cat-subscriptions" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: true, exclude_from_summary: null },
           ],
         }
       : null
@@ -845,6 +870,74 @@ export class MockApiService implements ApiService {
     const newCount = (n: number, d = 0) => n - d
     const _ = files // referenced to keep ts-rs happy
     void _
+    const unifiedAgent = (hints.experimental?.agent ?? "sonnet") as "haiku" | "sonnet" | "opus"
+    const splitAgent = (hints.experimental?.agent ?? "haiku") as "haiku" | "sonnet" | "opus"
+    const modelFor: Record<"haiku" | "sonnet" | "opus", string> = {
+      haiku: "claude-haiku-4-5-20251001",
+      sonnet: "claude-sonnet-4-6",
+      opus: "claude-opus-4-7",
+    }
+    const calls = isUnified
+      ? [
+          {
+            parser: "unified",
+            agent: unifiedAgent,
+            model: modelFor[unifiedAgent],
+            input_tokens: BigInt(8420),
+            output_tokens: BigInt(1180),
+            duration_ms: BigInt(2340),
+            amount: "0.0430",
+            currency: "USD",
+          },
+        ]
+      : [
+          ...(wantTx
+            ? [
+                {
+                  parser: "csv_transactions",
+                  agent: splitAgent,
+                  model: modelFor[splitAgent],
+                  input_tokens: BigInt(3120),
+                  output_tokens: BigInt(540),
+                  duration_ms: BigInt(820),
+                  amount: "0.0058",
+                  currency: "USD",
+                },
+              ]
+            : []),
+          ...(wantHoldings
+            ? [
+                {
+                  parser: "csv_holdings",
+                  agent: splitAgent,
+                  model: modelFor[splitAgent],
+                  input_tokens: BigInt(2100),
+                  output_tokens: BigInt(340),
+                  duration_ms: BigInt(710),
+                  amount: "0.0038",
+                  currency: "USD",
+                },
+              ]
+            : []),
+          ...(wantInv
+            ? [
+                {
+                  parser: "csv_investments",
+                  agent: splitAgent,
+                  model: modelFor[splitAgent],
+                  input_tokens: BigInt(1840),
+                  output_tokens: BigInt(420),
+                  duration_ms: BigInt(620),
+                  amount: "0.0039",
+                  currency: "USD",
+                },
+              ]
+            : []),
+        ]
+    const totalUsd = calls
+      .reduce((s, c) => s + parseFloat(c.amount), 0)
+      .toFixed(4)
+
     return {
       status: "success",
       metadata: {
@@ -854,6 +947,11 @@ export class MockApiService implements ApiService {
         processing_time_ms: BigInt(2340),
         notes: [],
         relationships_found: [],
+        estimated_price: {
+          calls,
+          total: totalUsd,
+          currency: "USD",
+        },
       },
       transactions: {
         count: txRows.length,

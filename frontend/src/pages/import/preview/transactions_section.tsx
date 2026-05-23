@@ -13,6 +13,7 @@ import { cn, formatDate } from "@/lib/utils"
 import type { TransactionIngestionResult } from "@/bindings/TransactionIngestionResult"
 import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { ImportTransaction } from "@/bindings/ImportTransaction"
+import type { CategorySource } from "@/bindings/CategorySource"
 import type { Currency } from "@/types"
 import { StatusBadge } from "./status_badge"
 import { DateCell, DecimalCell, SelectCell, TextCell, moneyDirectionClass } from "./editors"
@@ -43,7 +44,13 @@ const STATUS_RANK: Record<string, number> = {
 }
 
 interface EntryShape {
-  row: { date: string; amount: string; currency: string; status: string }
+  row: {
+    date: string
+    amount: string
+    currency: string
+    status: string
+    category_confidence?: number | null
+  }
   payloadIdx: number | null
 }
 
@@ -70,9 +77,20 @@ function sortValue(
       const status = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
       return STATUS_RANK[status] ?? 99
     }
+    case "confidence": {
+      const v = entry.row.category_confidence
+      // Sort missing values to the end regardless of direction.
+      return v == null ? Number.POSITIVE_INFINITY : v
+    }
     default:
       return 0
   }
+}
+
+function confidenceChipClasses(value: number): string {
+  if (value >= 0.9) return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30"
+  if (value >= 0.7) return "bg-amber-500/10 text-amber-700 border-amber-500/30"
+  return "bg-rose-500/10 text-rose-700 border-rose-500/30"
 }
 
 interface Props {
@@ -81,8 +99,17 @@ interface Props {
   setPayload: (p: ImportPayload | null) => void
   markedForDeletion: Set<number>
   setMarkedForDeletion: (s: Set<number>) => void
-  categoryOptions: string[]
+  /** `category_id` → "Parent: Child" display name. */
+  categoryById: Record<string, string>
   currencyOptions: Currency[]
+}
+
+function nameFromId(
+  categoryId: string | null | undefined,
+  categoryById: Record<string, string>
+): string | null {
+  if (!categoryId) return null
+  return categoryById[categoryId] ?? null
 }
 
 export function TransactionsSection({
@@ -91,7 +118,7 @@ export function TransactionsSection({
   setPayload,
   markedForDeletion,
   setMarkedForDeletion,
-  categoryOptions,
+  categoryById,
   currencyOptions,
 }: Props) {
   const ctrls = useSectionControls()
@@ -133,9 +160,12 @@ export function TransactionsSection({
     }
   }
 
-  const availableCategories = useMemo(() => {
+  // Limit the filter dropdown to ids actually present on the payload.
+  const availableCategoryIds = useMemo(() => {
     const set = new Set<string>()
-    payload?.transactions.forEach((t) => { if (t.category) set.add(t.category) })
+    payload?.transactions.forEach((t) => {
+      if (t.category_id) set.add(t.category_id)
+    })
     return [...set].sort()
   }, [payload])
 
@@ -160,8 +190,10 @@ export function TransactionsSection({
         if (fromIso && row.date < fromIso) return false
         if (toIso && row.date > toIso) return false
         if (categoryFilter !== "__all__") {
-          const cat = payloadIdx !== null ? payload?.transactions[payloadIdx]?.category : null
-          if (categoryFilter === "__none__" ? cat : cat !== categoryFilter) return false
+          const id = payloadIdx !== null
+            ? payload?.transactions[payloadIdx]?.category_id ?? null
+            : row.category_id ?? null
+          if (categoryFilter === "__none__" ? id : id !== categoryFilter) return false
         }
         return true
       })
@@ -201,6 +233,20 @@ export function TransactionsSection({
   const errCount = result.errors
   const willCommit = (payload?.transactions.length ?? 0) - markedForDeletion.size
 
+  const categoryIdOpts = useMemo(
+    () =>
+      Object.entries(categoryById)
+        .map(([id, name]) => ({ value: id, label: name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [categoryById]
+  )
+
+  // Hide the Confidence column when no row has it populated (split mode).
+  const showConfidence = useMemo(
+    () => result.rows.some((r) => r.category_confidence != null),
+    [result.rows]
+  )
+
   const summary = (
     <>
       {newCount} new · {dupCount} duplicate · {errCount} error
@@ -211,7 +257,6 @@ export function TransactionsSection({
     </>
   )
 
-  const categoryOpts = categoryOptions.map((c) => ({ value: c, label: c }))
   const currencyOpts = currencyOptions.map((c) => ({ value: c.code, label: c.code }))
 
   const filterSlot = (
@@ -226,13 +271,19 @@ export function TransactionsSection({
         onValueChange={(v) => { if (v) setCategoryFilter(v) }}
       >
         <UiSelectTrigger className="h-8 text-xs min-w-[10rem]">
-          <span>{TX_CATEGORY_LABELS[categoryFilter] ?? categoryFilter}</span>
+          <span>
+            {TX_CATEGORY_LABELS[categoryFilter] ??
+              categoryById[categoryFilter] ??
+              categoryFilter}
+          </span>
         </UiSelectTrigger>
         <UiSelectContent>
           <UiSelectItem value="__all__">All categories</UiSelectItem>
           <UiSelectItem value="__none__">Uncategorized</UiSelectItem>
-          {availableCategories.map((c) => (
-            <UiSelectItem key={c} value={c}>{c}</UiSelectItem>
+          {availableCategoryIds.map((id) => (
+            <UiSelectItem key={id} value={id}>
+              {categoryById[id] ?? id}
+            </UiSelectItem>
           ))}
         </UiSelectContent>
       </UiSelect>
@@ -262,13 +313,24 @@ export function TransactionsSection({
             <SortHeader label="Amount" columnId="amount" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("amount")} className="w-28" align="right" />
             <TableHead className="w-20">Currency</TableHead>
             <TableHead className="w-40">Category</TableHead>
+            {showConfidence && (
+              <SortHeader
+                label="Confidence"
+                columnId="confidence"
+                activeColumn={sortColumn}
+                direction={sortDir}
+                onClick={() => cycleSort("confidence")}
+                className="w-24"
+                align="right"
+              />
+            )}
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>
         <TableBody>
           {pageEntries.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">
+              <TableCell colSpan={showConfidence ? 8 : 7} className="text-center text-xs text-muted-foreground py-6">
                 No rows match
               </TableCell>
             </TableRow>
@@ -338,24 +400,52 @@ export function TransactionsSection({
                   )}
                 </TableCell>
                 <TableCell>
-                  {editable && tx && !marked ? (
-                    <SelectCell
-                      value={tx.category}
-                      options={categoryOpts}
-                      onChange={(v) =>
-                        updatePayloadAt(payloadIdx, { category: v, category_source: "manual" })
-                      }
-                      placeholder="Uncategorized"
-                      tintColor={
-                        tx.category
-                          ? categoryColors[tx.category] ?? CATEGORY_COLORS[tx.category]
-                          : undefined
-                      }
-                    />
-                  ) : (
-                    <span className="text-xs text-muted-foreground">—</span>
-                  )}
+                  {editable && tx && !marked ? (() => {
+                    const displayName = nameFromId(tx.category_id, categoryById)
+                    return (
+                      <SelectCell
+                        value={tx.category_id ?? null}
+                        options={categoryIdOpts}
+                        onChange={(v) =>
+                          updatePayloadAt(payloadIdx, {
+                            category_id: v || null,
+                            category: null,
+                            category_source: "manual" satisfies CategorySource,
+                          })
+                        }
+                        placeholder="Uncategorized"
+                        tintColor={
+                          displayName
+                            ? categoryColors[displayName] ?? CATEGORY_COLORS[displayName]
+                            : undefined
+                        }
+                      />
+                    )
+                  })() : (() => {
+                    const displayName = nameFromId(row.category_id, categoryById)
+                    return displayName ? (
+                      <span className="text-xs">{displayName}</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )
+                  })()}
                 </TableCell>
+                {showConfidence && (
+                  <TableCell className="text-right">
+                    {row.category_confidence != null ? (
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium tabular-nums",
+                          confidenceChipClasses(row.category_confidence)
+                        )}
+                      >
+                        {Math.round(row.category_confidence * 100)}%
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell>
                   {editable && payloadIdx !== null && (
                     <Button

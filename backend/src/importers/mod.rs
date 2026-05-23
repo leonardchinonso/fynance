@@ -12,8 +12,10 @@ pub mod investments_parser;
 pub mod llm_parser;
 pub mod pdf_parser;
 pub mod periodic_holdings_parser;
+pub mod pricing;
 pub mod provider;
 pub mod unified;
+pub mod unified_parser;
 
 use std::path::Path;
 use std::sync::Arc;
