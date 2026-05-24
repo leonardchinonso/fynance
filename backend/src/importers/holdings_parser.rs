@@ -37,6 +37,12 @@ pub struct ParsedHoldingRow {
     pub sub_account: Option<String>,
     pub as_of: Option<String>,
     pub row_confidence: f32,
+    /// True when this snapshot was computed from other data (e.g. interpolated
+    /// from transactions or neighbouring period balances) rather than read
+    /// directly from the source document. Surfaces to the import preview so
+    /// the user can tell explicit vs derived rows apart.
+    #[serde(default)]
+    pub derived: bool,
 }
 
 // ── Trait ────────────────────────────────────────────────────────────────────
@@ -195,6 +201,10 @@ pub(crate) fn build_holdings_tool_schema() -> Value {
                             "minimum": 0.0,
                             "maximum": 1.0,
                             "description": "Confidence that this row was correctly parsed."
+                        },
+                        "derived": {
+                            "type": "boolean",
+                            "description": "True if this snapshot was computed/inferred from other data (e.g. interpolated from transactions or neighbouring period balances). False if read directly from the source document."
                         }
                     }
                 }
@@ -254,6 +264,7 @@ mod tests {
                 sub_account: None,
                 as_of: None,
                 row_confidence: 0.97,
+                derived: false,
             }],
         };
 

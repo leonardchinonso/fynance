@@ -162,6 +162,8 @@ export class RealApiService implements ApiService {
     if (filters.profile_id) params.profile_id = filters.profile_id
     if (filters.page) params.page = String(filters.page)
     if (filters.limit) params.limit = String(filters.limit)
+    if (filters.sort) params.sort = filters.sort
+    if (filters.sort_dir) params.sort_dir = filters.sort_dir
     return get<PaginatedResponse<Transaction>>(`${BASE}/transactions`, params)
   }
 
@@ -261,10 +263,14 @@ export class RealApiService implements ApiService {
     start: string,
     end: string,
     granularity: Granularity = "monthly",
-    profileId?: string
+    profileId?: string,
+    excludeCategoryIds?: string[]
   ): Promise<CashFlowMonth[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
+    if (excludeCategoryIds && excludeCategoryIds.length > 0) {
+      params.exclude_category_ids = excludeCategoryIds.join(",")
+    }
     const res = await get<{ preferred_currency: string; rows: CashFlowMonth[] }>(`${BASE}/holdings/cash-flow`, params)
     return res.rows
   }

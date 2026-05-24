@@ -133,21 +133,18 @@ async function runView(browser, view) {
   await tooltipTable.waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_4b_cost_tooltip`)
 
-  // 5d. Validate the Confidence column appears in unified mode.
-  //     The column header reads "Confidence"; chips use rounded-full borders.
-  const confidenceHeader = page
-    .locator("th")
-    .filter({ hasText: /^Confidence$/ })
+  // 5d. Confidence is now embedded inline next to the Category select in
+  //     unified mode. Confirm at least one row shows the inline % chip when
+  //     the agent's pick is intact (we haven't overridden anything yet).
+  const inlineConfidence = page
+    .locator("td span.tabular-nums")
+    .filter({ hasText: /%$/ })
     .first()
-  if ((await confidenceHeader.count()) === 0) {
-    throw new Error("Confidence column header missing in unified-mode preview")
+  await inlineConfidence.waitFor({ timeout: 5000 })
+  if ((await inlineConfidence.count()) === 0) {
+    throw new Error("Inline category-confidence indicator missing in unified-mode preview")
   }
-
-  // 5e. Click the Confidence header to sort ascending — should put the lowest
-  //     confidence chips at the top of the visible page.
-  await confidenceHeader.locator("button").first().click()
-  await page.waitForTimeout(200)
-  await shot(page, `preview_${label}_4c_confidence_sorted_asc`)
+  await shot(page, `preview_${label}_4c_inline_confidence`)
 
   // 6. Submit → confirm dialog.
   await page.getByRole("button", { name: /^submit/i }).click()

@@ -22,7 +22,7 @@ use crate::model::{
     Agent, BankFormat, CategorySource, CreateInvestmentEventBody, Holding, HoldingType,
     HoldingsImportPayload, HoldingsIngestionResult, ImportPayload, ImportTransaction,
     IngestionMetadata, IngestionPreview, IngestionStatus, InvestmentIngestionResult,
-    InvestmentsImportPayload, TransactionIngestionResult,
+    InvestmentsImportPayload, KnownHolding, TransactionIngestionResult,
     TransactionPreviewStatus,
 };
 use crate::storage::Db;
@@ -291,6 +291,8 @@ pub fn build_multi_preview(
 
     // ── Holdings deduplication ───────────────────────────────────────────────
 
+    let known_holdings = load_known_holdings(db, account_id);
+
     let holdings_result = if !extraction.holdings.is_empty() {
         let holdings_with_account: Vec<Holding> = extraction
             .holdings
@@ -315,6 +317,7 @@ pub fn build_multi_preview(
                 account_id: account_id.to_string(),
                 holdings: holdings_with_account,
             }),
+            known_holdings,
         }
     } else {
         HoldingsIngestionResult {
@@ -323,6 +326,7 @@ pub fn build_multi_preview(
             modify: 0,
             rows: vec![],
             payload: None,
+            known_holdings,
         }
     };
 
@@ -684,6 +688,31 @@ async fn extract_single_file(
     }
 }
 
+// ── Known-holdings lookup ──────────────────────────────────────────────────
+
+/// Latest open snapshot per distinct (symbol, sub_account) for one account,
+/// shaped for the holdings preview's symbol picker and diff column. Silent on
+/// errors: an empty list just means the picker falls back to free-text.
+fn load_known_holdings(db: &Db, account_id: &str) -> Vec<KnownHolding> {
+    let today = chrono::Local::now().date_naive();
+    db.get_holdings_for_summary(today, None)
+        .map(|rows| {
+            rows.into_iter()
+                .filter(|r| r.holding.account_id == account_id && !r.holding.is_closed)
+                .map(|r| KnownHolding {
+                    symbol: r.holding.symbol,
+                    name: r.holding.name,
+                    holding_type: r.holding.holding_type,
+                    currency: r.holding.currency,
+                    sub_account: r.holding.sub_account,
+                    last_value: r.holding.value.to_string(),
+                    last_as_of: r.holding.as_of.format("%Y-%m-%d").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 // ── Holdings conversion ─────────────────────────────────────────────────────
 
 pub(crate) fn convert_parsed_holdings(parsed: &ParsedHoldings) -> Result<Vec<Holding>> {
@@ -743,6 +772,7 @@ pub(crate) fn convert_parsed_holdings(parsed: &ParsedHoldings) -> Result<Vec<Hol
             short_name: Some(row.symbol.clone()),
             sub_account: row.sub_account.clone(),
             is_closed: false,
+            derived: row.derived,
         });
     }
 
@@ -957,6 +987,7 @@ mod tests {
                     sub_account: None,
                     as_of: None,
                     row_confidence: 0.95,
+                    derived: false,
                 },
                 super::super::holdings_parser::ParsedHoldingRow {
                     symbol: "BAD".to_string(),
@@ -969,6 +1000,7 @@ mod tests {
                     sub_account: None,
                     as_of: None,
                     row_confidence: 0.50,
+                    derived: false,
                 },
             ],
         };
@@ -993,6 +1025,7 @@ mod tests {
                 sub_account: None,
                 as_of: None,
                 row_confidence: 0.90,
+                derived: false,
             }],
         };
 
@@ -1017,6 +1050,7 @@ mod tests {
                 sub_account: None,
                 as_of: None,
                 row_confidence: 0.85,
+                derived: false,
             }],
         };
 

@@ -103,7 +103,8 @@ export interface ApiService {
     start: string,
     end: string,
     granularity?: Granularity,
-    profileId?: string
+    profileId?: string,
+    excludeCategoryIds?: string[]
   ): Promise<CashFlowMonth[]>
 
   // Account balances (per-account monthly balances for delta calculations)

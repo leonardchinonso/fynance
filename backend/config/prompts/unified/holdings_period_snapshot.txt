@@ -1,2 +1,4 @@
 HOLDINGS PERIOD: single snapshot
 Find the most recent balance / valuation for each distinct holding in the documents and emit one snapshot per holding. If the documents contain only transactions, derive the closing balance from the running total at the end of the document.
+
+Set `derived: false` when the snapshot is read directly from the document. Set `derived: true` when you computed it from the running total of transactions.

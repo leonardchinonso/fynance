@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
 import {
   Table,
   TableBody,
@@ -8,7 +8,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
-import { Trash2, RotateCcw } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Trash2, RotateCcw, Undo2 } from "lucide-react"
 import { cn, formatDate } from "@/lib/utils"
 import type { TransactionIngestionResult } from "@/bindings/TransactionIngestionResult"
 import type { ImportPayload } from "@/bindings/ImportPayload"
@@ -77,20 +78,31 @@ function sortValue(
       const status = entry.payloadIdx !== null && marked.has(entry.payloadIdx) ? "removed" : entry.row.status
       return STATUS_RANK[status] ?? 99
     }
-    case "confidence": {
-      const v = entry.row.category_confidence
-      // Sort missing values to the end regardless of direction.
-      return v == null ? Number.POSITIVE_INFINITY : v
-    }
     default:
       return 0
   }
 }
 
-function confidenceChipClasses(value: number): string {
-  if (value >= 0.9) return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30"
-  if (value >= 0.7) return "bg-amber-500/10 text-amber-700 border-amber-500/30"
-  return "bg-rose-500/10 text-rose-700 border-rose-500/30"
+function parentNameFromDisplay(displayName: string | null | undefined): string | null {
+  if (!displayName) return null
+  const idx = displayName.indexOf(":")
+  return idx > 0 ? displayName.slice(0, idx).trim() : displayName.trim()
+}
+
+function confidenceWording(value: number): string {
+  if (value >= 0.9) {
+    return "Agent is highly confident in this category. Skim to confirm, no deep review needed."
+  }
+  if (value >= 0.7) {
+    return "Agent is reasonably confident, but a quick sanity check is worth it."
+  }
+  return "Agent is unsure about this category. Review carefully and pick the right one."
+}
+
+function confidenceColorClass(value: number): string {
+  if (value >= 0.9) return "text-emerald-600 dark:text-emerald-400"
+  if (value >= 0.7) return "text-amber-600 dark:text-amber-400"
+  return "text-rose-600 dark:text-rose-400"
 }
 
 interface Props {
@@ -122,8 +134,19 @@ export function TransactionsSection({
   currencyOptions,
 }: Props) {
   const ctrls = useSectionControls()
-  const { categoryColors } = useCategoryColorsContext()
+  const { categoryColors, syncParents } = useCategoryColorsContext()
   const url = useUrlState()
+
+  // Ensure parent-category colors are populated for tinting the Category select.
+  // Without this, fresh sessions (no localStorage) leave the trigger ungoosed.
+  useEffect(() => {
+    const parents = new Set<string>()
+    for (const name of Object.values(categoryById)) {
+      const p = parentNameFromDisplay(name)
+      if (p) parents.add(p)
+    }
+    if (parents.size > 0) syncParents([...parents])
+  }, [categoryById, syncParents])
 
   const { minDate, maxDate } = useMemo(() => {
     const dates = result.rows
@@ -241,12 +264,6 @@ export function TransactionsSection({
     [categoryById]
   )
 
-  // Hide the Confidence column when no row has it populated (split mode).
-  const showConfidence = useMemo(
-    () => result.rows.some((r) => r.category_confidence != null),
-    [result.rows]
-  )
-
   const summary = (
     <>
       {newCount} new · {dupCount} duplicate · {errCount} error
@@ -312,25 +329,14 @@ export function TransactionsSection({
             <TableHead>Description</TableHead>
             <SortHeader label="Amount" columnId="amount" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("amount")} className="w-28" align="right" />
             <TableHead className="w-20">Currency</TableHead>
-            <TableHead className="w-40">Category</TableHead>
-            {showConfidence && (
-              <SortHeader
-                label="Confidence"
-                columnId="confidence"
-                activeColumn={sortColumn}
-                direction={sortDir}
-                onClick={() => cycleSort("confidence")}
-                className="w-24"
-                align="right"
-              />
-            )}
+            <TableHead className="w-56">Category</TableHead>
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>
         <TableBody>
           {pageEntries.length === 0 && (
             <TableRow>
-              <TableCell colSpan={showConfidence ? 8 : 7} className="text-center text-xs text-muted-foreground py-6">
+              <TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">
                 No rows match
               </TableCell>
             </TableRow>
@@ -402,24 +408,77 @@ export function TransactionsSection({
                 <TableCell>
                   {editable && tx && !marked ? (() => {
                     const displayName = nameFromId(tx.category_id, categoryById)
+                    const parent = parentNameFromDisplay(displayName)
+                    const tintColor = parent
+                      ? categoryColors[parent] ?? CATEGORY_COLORS[parent]
+                      : undefined
+                    const agentPickId = row.category_id
+                    const conf = row.category_confidence
+                    const isAgentPick =
+                      agentPickId != null && tx.category_id === agentPickId
+                    const userOverrode =
+                      agentPickId != null && tx.category_id !== agentPickId
                     return (
-                      <SelectCell
-                        value={tx.category_id ?? null}
-                        options={categoryIdOpts}
-                        onChange={(v) =>
-                          updatePayloadAt(payloadIdx, {
-                            category_id: v || null,
-                            category: null,
-                            category_source: "manual" satisfies CategorySource,
-                          })
-                        }
-                        placeholder="Uncategorized"
-                        tintColor={
-                          displayName
-                            ? categoryColors[displayName] ?? CATEGORY_COLORS[displayName]
-                            : undefined
-                        }
-                      />
+                      <div className="flex items-center gap-1.5">
+                        <SelectCell
+                          value={tx.category_id ?? null}
+                          options={categoryIdOpts}
+                          onChange={(v) =>
+                            updatePayloadAt(payloadIdx, {
+                              category_id: v || null,
+                              category: null,
+                              category_source: "manual" satisfies CategorySource,
+                            })
+                          }
+                          placeholder="Uncategorized"
+                          tintColor={tintColor}
+                        />
+                        {isAgentPick && conf != null && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span
+                                  className={cn(
+                                    "text-[11px] tabular-nums cursor-help",
+                                    confidenceColorClass(conf)
+                                  )}
+                                >
+                                  {Math.round(conf * 100)}%
+                                </span>
+                              }
+                            />
+                            <TooltipContent>{confidenceWording(conf)}</TooltipContent>
+                          </Tooltip>
+                        )}
+                        {userOverrode && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                  onClick={() =>
+                                    updatePayloadAt(payloadIdx, {
+                                      category_id: agentPickId,
+                                      category: null,
+                                      category_source: "agent" satisfies CategorySource,
+                                    })
+                                  }
+                                  aria-label="Reset to agent's category"
+                                >
+                                  <Undo2 className="h-3 w-3" />
+                                </Button>
+                              }
+                            />
+                            <TooltipContent>
+                              Reset to agent's pick (
+                              {nameFromId(agentPickId, categoryById) ?? agentPickId})
+                              {conf != null && ` · ${Math.round(conf * 100)}%`}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
                     )
                   })() : (() => {
                     const displayName = nameFromId(row.category_id, categoryById)
@@ -430,22 +489,6 @@ export function TransactionsSection({
                     )
                   })()}
                 </TableCell>
-                {showConfidence && (
-                  <TableCell className="text-right">
-                    {row.category_confidence != null ? (
-                      <span
-                        className={cn(
-                          "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium tabular-nums",
-                          confidenceChipClasses(row.category_confidence)
-                        )}
-                      >
-                        {Math.round(row.category_confidence * 100)}%
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                )}
                 <TableCell>
                   {editable && payloadIdx !== null && (
                     <Button

@@ -327,6 +327,8 @@ pub struct HoldingsCashFlowQuery {
     pub end: Option<String>,
     pub granularity: Option<String>,
     pub profile_id: Option<String>,
+    /// Comma-separated leaf category IDs to exclude from income/spending totals.
+    pub exclude_category_ids: Option<String>,
 }
 
 pub async fn get_holdings_cash_flow(
@@ -352,12 +354,24 @@ pub async fn get_holdings_cash_flow(
         .and_then(parse_granularity)?;
 
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
+    let exclude_category_ids: Vec<String> = q
+        .exclude_category_ids
+        .as_deref()
+        .and_then(split_csv_param)
+        .unwrap_or_default();
 
     let (rows, preferred_currency) = {
         let db = state.db.lock().expect("db mutex poisoned");
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
-        let rows = db.get_cash_flow(start, end, profile_id, &granularity, &fx)?;
+        let rows = db.get_cash_flow(
+            start,
+            end,
+            profile_id,
+            &granularity,
+            &exclude_category_ids,
+            &fx,
+        )?;
         let preferred = fx.preferred().to_string();
         (rows, preferred)
     };

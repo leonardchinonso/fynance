@@ -109,7 +109,11 @@ export class MockApiService implements ApiService {
     }
     if (filters.categories && filters.categories.length > 0) {
       const set = new Set(filters.categories)
-      data = data.filter((t) => t.category !== null && set.has(t.category))
+      const wantUncategorized = set.delete("__uncategorized__")
+      data = data.filter((t) => {
+        if (t.category == null || t.category === "") return wantUncategorized
+        return set.has(t.category)
+      })
     }
     if (filters.search) {
       const q = filters.search.toLowerCase()
@@ -121,6 +125,39 @@ export class MockApiService implements ApiService {
           t.account_id.toLowerCase().includes(q) ||
           (t.notes ?? "").toLowerCase().includes(q)
       )
+    }
+
+    // Sort BEFORE pagination so it matches what the backend would return.
+    const sort = filters.sort
+    const dir = filters.sort_dir ?? "desc"
+    const sign = dir === "asc" ? 1 : -1
+    if (sort) {
+      data = [...data].sort((a, b) => {
+        let av: string | number
+        let bv: string | number
+        switch (sort) {
+          case "date":
+            av = a.date
+            bv = b.date
+            break
+          case "amount":
+            av = parseFloat(a.amount)
+            bv = parseFloat(b.amount)
+            break
+          case "category": {
+            const aHas = a.category != null && a.category !== ""
+            const bHas = b.category != null && b.category !== ""
+            // Uncategorized always at the bottom regardless of direction.
+            if (aHas !== bHas) return aHas ? -1 : 1
+            av = a.category ?? ""
+            bv = b.category ?? ""
+            break
+          }
+        }
+        if (av < bv) return -1 * sign
+        if (av > bv) return 1 * sign
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+      })
     }
 
     const total = data.length
@@ -539,15 +576,18 @@ export class MockApiService implements ApiService {
     start: string,
     end: string,
     _granularity?: Granularity,
-    _profileId?: string
+    _profileId?: string,
+    excludeCategoryIds?: string[]
   ): Promise<CashFlowMonth[]> {
     await delay(DELAY_MS)
 
     const months = new Map<string, { income: number; spending: number }>()
+    const excludeSet = new Set(excludeCategoryIds ?? [])
 
     for (const t of MOCK_TRANSACTIONS) {
       if (start && t.date < start) continue
       if (end && t.date > end) continue
+      if (t.category_id && excludeSet.has(t.category_id)) continue
 
       const month = getMonthFromDate(t.date)
       if (!months.has(month)) months.set(month, { income: 0, spending: 0 })
@@ -838,16 +878,16 @@ export class MockApiService implements ApiService {
 
     const holdingRows = wantHoldings
       ? [
-          { account_id: accountId, symbol: "VUSA", sub_account: null, value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", status: "modify", existing_value: "3654.00" },
-          { account_id: accountId, symbol: "AAPL", sub_account: null, value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", status: "new", existing_value: null },
+          { account_id: accountId, symbol: "VUSA", sub_account: null, value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", status: "modify", existing_value: "3654.00", derived: false },
+          { account_id: accountId, symbol: "AAPL", sub_account: null, value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", status: "new", existing_value: null, derived: true },
         ]
       : []
     const holdingsPayload: HoldingsImportPayload | null = wantHoldings
       ? {
           account_id: accountId,
           holdings: [
-            { account_id: accountId, symbol: "VUSA", name: "Vanguard S&P 500 UCITS ETF", holding_type: "etf", quantity: "50.0000", price_per_unit: "76.32", value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", short_name: "VUSA", sub_account: null, is_closed: false },
-            { account_id: accountId, symbol: "AAPL", name: "Apple Inc", holding_type: "stock", quantity: "10.0000", price_per_unit: "198.45", value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", short_name: "AAPL", sub_account: null, is_closed: false },
+            { account_id: accountId, symbol: "VUSA", name: "Vanguard S&P 500 UCITS ETF", holding_type: "etf", quantity: "50.0000", price_per_unit: "76.32", value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", short_name: "VUSA", sub_account: null, is_closed: false, derived: false },
+            { account_id: accountId, symbol: "AAPL", name: "Apple Inc", holding_type: "stock", quantity: "10.0000", price_per_unit: "198.45", value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", short_name: "AAPL", sub_account: null, is_closed: false, derived: true },
           ],
         }
       : null
@@ -967,6 +1007,11 @@ export class MockApiService implements ApiService {
         modify: holdingRows.filter((r) => r.status === "modify").length,
         rows: holdingRows,
         payload: holdingsPayload,
+        known_holdings: wantHoldings
+          ? [
+              { symbol: "VUSA", name: "Vanguard S&P 500 UCITS ETF", holding_type: "etf", currency: "GBP", sub_account: null, last_value: "3654.00", last_as_of: "2026-02-29" },
+            ]
+          : [],
       },
       investments: {
         count: invRows.length,

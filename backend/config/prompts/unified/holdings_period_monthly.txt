@@ -4,3 +4,5 @@ For every month covered by the documents, emit an end-of-month snapshot per dist
 If the documents only give one snapshot in a month, work forwards or backwards using the transactions in that month to derive the other month-ends. Example: if the month ends with £50 and there were five outflow transactions of £5 each (£25 total) during that month, the previous month ended with £75. Reverse the sign for inflows.
 
 Mark each derived snapshot with `row_confidence` reflecting how directly the value was supported by the data: 0.95+ when the document gave the balance explicitly, 0.75–0.95 when you derived it from neighbour months and complete transactions, below 0.75 when the chain has gaps.
+
+Set `derived: false` ONLY for month-ends the document states explicitly. Every snapshot you computed by working forwards or backwards through transactions is `derived: true`, even if `row_confidence` is high.

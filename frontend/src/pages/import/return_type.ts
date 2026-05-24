@@ -15,7 +15,7 @@ export function defaultHintsForAccount(accountType: AccountType): ParseHints {
       holdings: { enabled: true, period: null },
       investments: isInvestment,
     },
-    experimental: null,
+    experimental: { mode: "unified", agent: null },
     hint: null,
   }
 }

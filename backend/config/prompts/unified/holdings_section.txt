@@ -13,11 +13,14 @@ Each entry has this shape:
   "currency": "GBP",
   "sub_account": null,
   "as_of": "2026-03-31",
-  "row_confidence": 0.97
+  "row_confidence": 0.97,
+  "derived": false
 }
 ```
 
 `holding_type` is one of: `stock`, `etf`, `fund`, `bond`, `crypto`, `cash`, `property`, `loan`, `credit`.
+
+`derived` is a hard boolean: set it `false` when the snapshot value at this `as_of` is read directly from the document, and `true` when you computed or inferred it (e.g. interpolated a missing month-end from neighbouring snapshots and transactions). Do not conflate this with `row_confidence` — a derived value can still be high-confidence.
 
 Continuity context — these are the user's most recent existing snapshots for each open holding on this account (JSON). Use them to maintain the same `symbol` and `name` spelling, and to anchor amounts where the documents are silent:
 {{LAST_HOLDINGS_JSON}}

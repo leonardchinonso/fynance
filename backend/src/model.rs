@@ -534,6 +534,13 @@ pub struct Holding {
     pub sub_account: Option<String>,
     #[serde(default)]
     pub is_closed: bool,
+    /// Import-time provenance: `true` when this snapshot was computed/inferred
+    /// from other data (e.g. interpolated from transactions or neighbouring
+    /// period balances), `false` when read directly from the source document.
+    /// Not persisted to SQLite; surfaces in the import preview only and
+    /// defaults to `false` when round-tripped through the API or read back.
+    #[serde(default)]
+    pub derived: bool,
 }
 
 /// Internal row type used only by `get_holdings_for_summary` -- not serialized.
@@ -558,6 +565,12 @@ pub struct HoldingPreview {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_value: Option<String>,
+    /// True when the underlying snapshot was computed/inferred rather than
+    /// read directly from the source document. Drives the "Source" badge in
+    /// the import preview. Always `false` for previews that did not come from
+    /// the LLM extraction pipeline (e.g. the user-driven /api/holdings preview).
+    #[serde(default)]
+    pub derived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1093,6 +1106,31 @@ pub struct HoldingsIngestionResult {
     pub modify: usize,
     pub rows: Vec<HoldingPreview>,
     pub payload: Option<HoldingsImportPayload>,
+    /// Latest open snapshot per distinct (symbol, sub_account) already on this
+    /// account in the DB. Drives the Holdings preview's symbol picker
+    /// (autocomplete vs free-text) and the "vs prev" diff column on each row.
+    /// Empty when the account has no holdings yet.
+    #[serde(default)]
+    pub known_holdings: Vec<KnownHolding>,
+}
+
+/// Compact summary of an account's most recent open snapshot for a given
+/// `(symbol, sub_account)`. Sent on the holdings preview response so the
+/// frontend can offer existing symbols as suggestions and show diff-from-prev
+/// without a second round-trip.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct KnownHolding {
+    pub symbol: String,
+    pub name: String,
+    pub holding_type: HoldingType,
+    pub currency: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_account: Option<String>,
+    /// Last value for this holding as a decimal string.
+    pub last_value: String,
+    /// ISO date of the last snapshot (`YYYY-MM-DD`).
+    pub last_as_of: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -21,6 +21,9 @@ export type { TransactionDirection } from "@/bindings/TransactionDirection"
 
 // ── Frontend-only API types ─────────────────────────────────────────
 
+export type TransactionSortColumn = "date" | "amount" | "category"
+export type SortDir = "asc" | "desc"
+
 export interface TransactionFilters {
   start?: string // YYYY-MM-DD
   end?: string // YYYY-MM-DD
@@ -30,6 +33,10 @@ export interface TransactionFilters {
   page?: number
   limit?: number
   profile_id?: string
+  /** Column to sort by. When unset, backend returns newest-first by date. */
+  sort?: TransactionSortColumn
+  /** Direction. Defaults to "desc" when omitted. */
+  sort_dir?: SortDir
 }
 
 // Filters for GET /api/transactions/by-category.

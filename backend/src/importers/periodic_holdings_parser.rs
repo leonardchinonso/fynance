@@ -156,6 +156,10 @@ pub(crate) fn build_periodic_holdings_tool_schema() -> Value {
                             "minimum": 0.0,
                             "maximum": 1.0,
                             "description": "Confidence that this snapshot is correct."
+                        },
+                        "derived": {
+                            "type": "boolean",
+                            "description": "True if this snapshot was computed from transactions (or neighbouring balances). False if the balance was read directly from the document for this exact period boundary."
                         }
                     }
                 }

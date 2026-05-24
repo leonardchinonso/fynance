@@ -419,6 +419,7 @@ mod tests {
                 sub_account: None,
                 as_of: None,
                 row_confidence: 0.9,
+                derived: false,
             }],
             investments: vec![],
         };
