@@ -160,7 +160,7 @@ function CategoryEditPopover({
   triggerLabel: ReactNode
   triggerColor: string
   options: Array<{ id: string; name: string }>
-  onSelect: (name: string) => void
+  onSelect: (option: { id: string; name: string }) => void
   disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
@@ -205,7 +205,7 @@ function CategoryEditPopover({
                     key={opt.id}
                     value={opt.name}
                     onSelect={() => {
-                      if (!isCurrent) onSelect(opt.name)
+                      if (!isCurrent) onSelect(opt)
                       setOpen(false)
                     }}
                   >
@@ -291,14 +291,18 @@ function TransactionTableInternal({
     }
   }
 
-  async function changeCategory(id: string, previousCategory: string | null, nextCategoryName: string) {
+  async function changeCategory(
+    id: string,
+    previousCategory: string | null,
+    next: { id: string; name: string }
+  ) {
     setTransactions(prev =>
       prev.map(t =>
-        t.id === id ? { ...t, category: nextCategoryName, category_source: "manual" } : t
+        t.id === id ? { ...t, category: next.name, category_source: "manual" } : t
       )
     )
     try {
-      const updated = await api.patchTransaction(id, { category: nextCategoryName })
+      const updated = await api.patchTransaction(id, { category_id: next.id })
       // Refresh from server in case the response normalises any fields.
       setTransactions(prev => prev.map(t => (t.id === id ? updated : t)))
     } catch {
@@ -368,7 +372,7 @@ function TransactionTableInternal({
                     triggerLabel={t.category ?? "Uncategorized"}
                     triggerColor={t.category ? getCategoryColor(t.category, categoryColors) : "#78716c"}
                     options={categoryOptions}
-                    onSelect={(name) => changeCategory(t.id, t.category, name)}
+                    onSelect={(opt) => changeCategory(t.id, t.category, opt)}
                     disabled={categoryOptions.length === 0}
                   />
                 </TableCell>
