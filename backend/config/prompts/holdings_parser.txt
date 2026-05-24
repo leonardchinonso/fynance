@@ -22,6 +22,11 @@ Rules:
 11. Skip header rows, summary/total rows, and empty rows.
 12. For row_confidence: set 0.95+ when all fields are clearly present; 0.70-0.95 when
     some fields are inferred; below 0.70 when the row cannot be reliably parsed.
+12a. For `derived`: set `false` when the entire row (value/quantity for the given
+    `as_of`) was read directly from the source document. Set `true` only when
+    you computed or inferred the snapshot from other data (e.g. you back-filled
+    a missing month-end from transactions). This is a hard boolean — not a
+    confidence band.
 13. For detection_confidence: 0.95+ for clearly structured holdings data;
     0.80-0.95 for plausible but ambiguous; below 0.80 if not holdings data.
 14. If the input is a PDF document (sent as a document/image), extract holdings data from

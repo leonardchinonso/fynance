@@ -258,6 +258,7 @@ If you have the Playwright MCP tools available, use them to navigate, click, scr
 - Always capture screenshots to `.playwright-mcp/` (already enforced by `.gitignore`-style conventions; never write to the repo root or `frontend/`).
 - Watch the page console output. `Maximum update depth exceeded`, uncontrolled-to-controlled warnings, and silent JSON serialization failures are all real bugs that only show up in the browser.
 - If a smoke run uncovers a new bug class, extend the script so future changes are caught automatically.
+- **When you change the UI, update the smoke script in the same PR.** It locates elements by visible text, role, and `data-slot` attributes — renames, removed flow steps, and reshaped layouts all break it silently (you'll see `waitFor: Timeout` rather than a useful error). Concretely: if you rename a button label the script references, change a route segment it navigates to, remove a step in the wizard, or add a new UI surface worth a regression check, edit `frontend/scripts/smoke_preview.mjs` alongside the UI change. Selectors live there are: heading text on each step, the "Parsing strategy" card and its Mode/Agent labels, the file `<input type=file>`, the **Confidence** column header, the CostTag `<button.tabular-nums>` with a currency symbol, the tooltip table at `[data-slot=tooltip-content] table`, and the Recent imports section.
 
 `tsc --noEmit` + `npm run build` are necessary but not sufficient for frontend work. They tell you the code compiles; they don't tell you the feature works.
 

@@ -90,7 +90,7 @@ export function PreviewReview({
     })
   }, [txPayload, holdingsPayload, invPayload, txDeleted, holdingsDeleted, invDeleted])
 
-  const [categoryOptions, setCategoryOptions] = useState<string[]>([])
+  const [categoryById, setCategoryById] = useState<Record<string, string>>({})
   const [currencyOptions, setCurrencyOptions] = useState<Currency[]>([])
 
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -98,7 +98,13 @@ export function PreviewReview({
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.getCategories().then(setCategoryOptions).catch(() => setCategoryOptions([]))
+    api.getCategoriesWithIds()
+      .then((entries) => {
+        const map: Record<string, string> = {}
+        for (const e of entries) map[e.id] = e.name
+        setCategoryById(map)
+      })
+      .catch(() => setCategoryById({}))
     api.getCurrencies().then(setCurrencyOptions).catch(() => setCurrencyOptions([]))
   }, [])
 
@@ -262,7 +268,7 @@ export function PreviewReview({
               setPayload={setTxPayload}
               markedForDeletion={txDeleted}
               setMarkedForDeletion={setTxDeleted}
-              categoryOptions={categoryOptions}
+              categoryById={categoryById}
               currencyOptions={currencyOptions}
             />
           )}
@@ -319,7 +325,7 @@ export function PreviewReview({
                   setPayload={setTxPayload}
                   markedForDeletion={txDeleted}
                   setMarkedForDeletion={setTxDeleted}
-                  categoryOptions={categoryOptions}
+                  categoryById={categoryById}
                   currencyOptions={currencyOptions}
                 />
               )}

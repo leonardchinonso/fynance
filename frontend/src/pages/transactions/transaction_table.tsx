@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, type ReactNode } from "react"
 import type { Transaction } from "@/types"
 import { api } from "@/api/client"
 import type { RemoteData } from "@/lib/remote_data"
@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge"
 import { MoneyDisplay } from "@/components/currency"
 import { formatDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, Settings2, Check } from "lucide-react"
+import { ChevronLeft, ChevronRight, Settings2, Check, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -32,8 +32,18 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { Switch } from "@/components/ui/switch"
+import { cn } from "@/lib/utils"
+import type { SortDir, TransactionSortColumn } from "@/types"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const PAGE_SIZE_KEY = "fynance-page-size"
@@ -76,11 +86,17 @@ interface TransactionTableOuterProps {
   onPageSizeChange: (size: number) => void
   accountNames: Record<string, string>
   categoryColors?: Record<string, string>
+  /** Categories available for the inline-edit popover. Empty until loaded. */
+  categoryOptions?: Array<{ id: string; name: string }>
+  sort?: TransactionSortColumn
+  sortDir: SortDir
+  onSort: (col: TransactionSortColumn) => void
   onResetFilters?: () => void
 }
 
 export function TransactionTable({
-  data, page, pageSize, onPageChange, onPageSizeChange, accountNames, categoryColors = {}, onResetFilters,
+  data, page, pageSize, onPageChange, onPageSizeChange, accountNames, categoryColors = {},
+  categoryOptions = [], sort, sortDir, onSort, onResetFilters,
 }: TransactionTableOuterProps) {
   return visitRemoteData(data, {
     notLoaded: () => <TableSkeleton rows={25} cols={5} />,
@@ -99,6 +115,10 @@ export function TransactionTable({
             onLimitChange={onPageSizeChange}
             accountNames={accountNames}
             categoryColors={categoryColors}
+            categoryOptions={categoryOptions}
+            sort={sort}
+            sortDir={sortDir}
+            onSort={onSort}
           />
         )}
         <ReloadingOverlay active={data.status === "reloading"} />
@@ -116,6 +136,128 @@ interface TransactionTableProps {
   onLimitChange: (limit: number) => void
   accountNames?: Record<string, string>
   categoryColors?: Record<string, string>
+  categoryOptions: Array<{ id: string; name: string }>
+  sort?: TransactionSortColumn
+  sortDir: SortDir
+  onSort: (col: TransactionSortColumn) => void
+}
+
+/**
+ * Inline category editor. The trigger is the existing Badge so the rest of
+ * the row layout doesn't shift. Selecting a category PATCHes the transaction
+ * (backend sets category_source=manual automatically) and is applied
+ * optimistically — failures roll back via the parent's local state.
+ */
+function CategoryEditPopover({
+  current,
+  triggerLabel,
+  triggerColor,
+  options,
+  onSelect,
+  disabled,
+}: {
+  current: string | null
+  triggerLabel: ReactNode
+  triggerColor: string
+  options: Array<{ id: string; name: string }>
+  onSelect: (option: { id: string; name: string }) => void
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const sorted = [...options].sort((a, b) => a.name.localeCompare(b.name))
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        disabled={disabled}
+        className={cn(
+          "rounded-md",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          disabled && "cursor-not-allowed opacity-60",
+          !disabled && "cursor-pointer"
+        )}
+      >
+        <Badge
+          variant={current ? "secondary" : "outline"}
+          className={cn("text-xs", !current && "text-muted-foreground")}
+          style={
+            current
+              ? {
+                  backgroundColor: triggerColor + "20",
+                  color: triggerColor,
+                  borderColor: triggerColor + "40",
+                }
+              : undefined
+          }
+        >
+          {triggerLabel}
+        </Badge>
+      </PopoverTrigger>
+      <PopoverContent className="w-[260px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search categories..." className="h-9 text-xs" />
+          <CommandList className="max-h-[280px]">
+            <CommandEmpty>No matches.</CommandEmpty>
+            <CommandGroup>
+              {sorted.map((opt) => {
+                const isCurrent = opt.name === current
+                return (
+                  <CommandItem
+                    key={opt.id}
+                    value={opt.name}
+                    onSelect={() => {
+                      if (!isCurrent) onSelect(opt)
+                      setOpen(false)
+                    }}
+                  >
+                    <Check className={cn("mr-2 h-3.5 w-3.5", isCurrent ? "opacity-100" : "opacity-0")} />
+                    {opt.name}
+                  </CommandItem>
+                )
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function SortableHeader({
+  label,
+  column,
+  activeColumn,
+  direction,
+  onClick,
+  align = "left",
+  className,
+}: {
+  label: string
+  column: TransactionSortColumn
+  activeColumn: TransactionSortColumn | undefined
+  direction: SortDir
+  onClick: (col: TransactionSortColumn) => void
+  align?: "left" | "right"
+  className?: string
+}) {
+  const active = activeColumn === column
+  const Icon = !active ? ArrowUpDown : direction === "asc" ? ArrowUp : ArrowDown
+  return (
+    <TableHead className={className}>
+      <button
+        type="button"
+        onClick={() => onClick(column)}
+        className={cn(
+          "inline-flex items-center gap-1 select-none cursor-pointer rounded-md px-1 py-0.5 -mx-1 hover:bg-muted transition-colors",
+          align === "right" && "flex-row-reverse w-full justify-start",
+          active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+        )}
+        aria-label={`Sort by ${label}`}
+      >
+        <span>{label}</span>
+        <Icon className={cn("h-3 w-3", active ? "opacity-100" : "opacity-50")} />
+      </button>
+    </TableHead>
+  )
 }
 
 function TransactionTableInternal({
@@ -127,6 +269,10 @@ function TransactionTableInternal({
   onLimitChange,
   accountNames = {},
   categoryColors = {},
+  categoryOptions,
+  sort,
+  sortDir,
+  onSort,
 }: TransactionTableProps) {
   const totalPages = Math.ceil(total / limit)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
@@ -142,6 +288,27 @@ function TransactionTableInternal({
       await api.patchTransaction(id, { exclude_from_summary: !current })
     } catch {
       setTransactions(prev => prev.map(t => t.id === id ? { ...t, exclude_from_summary: current } : t))
+    }
+  }
+
+  async function changeCategory(
+    id: string,
+    previousCategory: string | null,
+    next: { id: string; name: string }
+  ) {
+    setTransactions(prev =>
+      prev.map(t =>
+        t.id === id ? { ...t, category: next.name, category_source: "manual" } : t
+      )
+    )
+    try {
+      const updated = await api.patchTransaction(id, { category_id: next.id })
+      // Refresh from server in case the response normalises any fields.
+      setTransactions(prev => prev.map(t => (t.id === id ? updated : t)))
+    } catch {
+      setTransactions(prev =>
+        prev.map(t => (t.id === id ? { ...t, category: previousCategory } : t))
+      )
     }
   }
 
@@ -165,10 +332,16 @@ function TransactionTableInternal({
       <Table>
         <TableHeader>
           <TableRow>
-            {isVisible("date") && <TableHead>Date</TableHead>}
+            {isVisible("date") && (
+              <SortableHeader label="Date" column="date" activeColumn={sort} direction={sortDir} onClick={onSort} />
+            )}
             {isVisible("merchant") && <TableHead>Merchant</TableHead>}
-            {isVisible("category") && <TableHead>Category</TableHead>}
-            {isVisible("amount") && <TableHead className="text-right">Amount</TableHead>}
+            {isVisible("category") && (
+              <SortableHeader label="Category" column="category" activeColumn={sort} direction={sortDir} onClick={onSort} />
+            )}
+            {isVisible("amount") && (
+              <SortableHeader label="Amount" column="amount" activeColumn={sort} direction={sortDir} onClick={onSort} align="right" className="text-right" />
+            )}
             {isVisible("account") && <TableHead>Account</TableHead>}
             {isVisible("source") && <TableHead>Source</TableHead>}
             {isVisible("exclude") && <TableHead className="text-center">Exclude</TableHead>}
@@ -194,23 +367,14 @@ function TransactionTableInternal({
               )}
               {isVisible("category") && (
                 <TableCell>
-                  {t.category ? (
-                    <Badge
-                      variant="secondary"
-                      className="text-xs"
-                      style={{
-                        backgroundColor: getCategoryColor(t.category, categoryColors) + "20",
-                        color: getCategoryColor(t.category, categoryColors),
-                        borderColor: getCategoryColor(t.category, categoryColors) + "40",
-                      }}
-                    >
-                      {t.category}
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-xs text-muted-foreground">
-                      Uncategorized
-                    </Badge>
-                  )}
+                  <CategoryEditPopover
+                    current={t.category}
+                    triggerLabel={t.category ?? "Uncategorized"}
+                    triggerColor={t.category ? getCategoryColor(t.category, categoryColors) : "#78716c"}
+                    options={categoryOptions}
+                    onSelect={(opt) => changeCategory(t.id, t.category, opt)}
+                    disabled={categoryOptions.length === 0}
+                  />
                 </TableCell>
               )}
               {isVisible("amount") && (

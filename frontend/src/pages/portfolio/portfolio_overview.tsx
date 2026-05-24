@@ -8,6 +8,7 @@ import type {
   InvestmentMetrics,
   PortfolioResponse,
 } from "@/types"
+import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioSummaryData } from "@/hooks/data"
@@ -18,13 +19,16 @@ import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Switch } from "@/components/ui/switch"
+import { Badge } from "@/components/ui/badge"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { MoneyDisplay, DualAmount } from "@/components/currency"
 import { InteractivePie } from "@/components/charts"
 import type { PieDataItem } from "@/components/charts/interactive_pie"
 import {
   TrendingUp, TrendingDown, Wallet, PiggyBank, Building2, Shield,
   ArrowUpRight, ArrowDownRight, BarChart3, Lock, CreditCard, Home,
-  Landmark, Banknote, Settings2,
+  Landmark, Banknote, Settings2, Check, ChevronsUpDown, X,
 } from "lucide-react"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency } from "@/lib/utils"
@@ -83,11 +87,17 @@ export function PortfolioOverview({
   dateLabel,
   assetClassSettings,
   hideSmall,
+  categoryTree,
+  excludedCategories,
+  setExcludedCategories,
 }: {
   data: RemoteData<PortfolioSummaryData>
   dateLabel?: string
   assetClassSettings: AssetClassSettings
   hideSmall: boolean
+  categoryTree: CategoryNode[]
+  excludedCategories: string[]
+  setExcludedCategories: (ids: string[]) => void
 }) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioOverviewSkeleton />,
@@ -108,6 +118,9 @@ export function PortfolioOverview({
             investmentMetrics={portfolio.investment_metrics}
             assetClassSettings={assetClassSettings}
             hideSmall={hideSmall}
+            categoryTree={categoryTree}
+            excludedCategories={excludedCategories}
+            setExcludedCategories={setExcludedCategories}
           />
           <ReloadingOverlay active={data.status === "reloading"} />
         </div>
@@ -127,6 +140,9 @@ interface PortfolioOverviewProps {
   investmentMetrics?: InvestmentMetrics
   assetClassSettings: AssetClassSettings
   hideSmall: boolean
+  categoryTree: CategoryNode[]
+  excludedCategories: string[]
+  setExcludedCategories: (ids: string[]) => void
 }
 
 function PortfolioOverviewInternal({
@@ -139,9 +155,13 @@ function PortfolioOverviewInternal({
   investmentMetrics,
   assetClassSettings,
   hideSmall,
+  categoryTree,
+  excludedCategories,
+  setExcludedCategories,
 }: PortfolioOverviewProps) {
   const { setFilter } = useUrlFilters()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [cashFlowSettingsOpen, setCashFlowSettingsOpen] = useState(false)
 
 
   const preferredCurrency = portfolio.preferred_currency
@@ -320,90 +340,150 @@ function PortfolioOverviewInternal({
       {/* Income/Outgoing + Portfolio pie */}
       <div className="grid gap-4 md:grid-cols-2">
         {/* Income, Spending & Investments card */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <BarChart3 className="h-4 w-4" />
-              Income, Spending & Investments
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <ArrowUpRight className="h-3 w-3 text-green-500" />
-                  Total Income
-                </div>
-                <p className="text-xl font-semibold text-green-500 tabular-nums">
-                  {formatCurrency(totalIncome.toFixed(2), preferredCurrency)}
+        <Card className="overflow-hidden py-0 gap-0 min-h-[300px]">
+          <div className="flex h-full">
+            <div className="@container/cashflow flex-1 min-w-0 flex flex-col">
+              <div className="flex items-center justify-between pt-4 pl-4 pr-4 pb-2 @[380px]/cashflow:pt-5 @[380px]/cashflow:pl-5 @[380px]/cashflow:pr-5">
+                <p className="text-xs @[380px]/cashflow:text-sm font-medium text-muted-foreground flex items-center gap-1.5 @[380px]/cashflow:gap-2 min-w-0">
+                  <BarChart3 className="h-3.5 w-3.5 @[380px]/cashflow:h-4 @[380px]/cashflow:w-4 shrink-0" />
+                  <span className="truncate">Income, Spending & Investments</span>
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  ~{formatCurrency(avgIncome.toFixed(2), preferredCurrency)}/mo
-                </p>
+                {!cashFlowSettingsOpen && (
+                  <button
+                    onClick={() => setCashFlowSettingsOpen(true)}
+                    className="rounded-md p-1 transition-colors hover:bg-muted relative shrink-0"
+                    aria-label="Cash flow settings"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    {excludedCategories.length > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-orange-500" />
+                    )}
+                  </button>
+                )}
               </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <ArrowDownRight className="h-3 w-3 text-red-500" />
-                  Total Spending
+              <div className="px-4 pb-4 @[380px]/cashflow:px-5 @[380px]/cashflow:pb-5 flex-1 min-h-0">
+                <div className="grid grid-cols-3 gap-2 @[380px]/cashflow:gap-4">
+                  <div className="space-y-0.5 @[380px]/cashflow:space-y-1 min-w-0">
+                    <div className="flex items-center gap-1 @[380px]/cashflow:gap-1.5 text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap">
+                      <ArrowUpRight className="h-3 w-3 text-green-500 shrink-0" />
+                      <span className="truncate">Total Income</span>
+                    </div>
+                    <p className="text-sm @[300px]/cashflow:text-base @[380px]/cashflow:text-xl font-semibold text-green-500 tabular-nums truncate">
+                      {formatCurrency(totalIncome.toFixed(2), preferredCurrency)}
+                    </p>
+                    <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
+                      ~{formatCurrency(avgIncome.toFixed(2), preferredCurrency)}/mo
+                    </p>
+                  </div>
+                  <div className="space-y-0.5 @[380px]/cashflow:space-y-1 min-w-0">
+                    <div className="flex items-center gap-1 @[380px]/cashflow:gap-1.5 text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap">
+                      <ArrowDownRight className="h-3 w-3 text-red-500 shrink-0" />
+                      <span className="truncate">Total Spending</span>
+                    </div>
+                    <p className="text-sm @[300px]/cashflow:text-base @[380px]/cashflow:text-xl font-semibold text-red-500 tabular-nums truncate">
+                      {formatCurrency(totalSpending.toFixed(2), preferredCurrency)}
+                    </p>
+                    <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
+                      ~{formatCurrency(avgSpending.toFixed(2), preferredCurrency)}/mo
+                    </p>
+                  </div>
+                  <div className="space-y-0.5 @[380px]/cashflow:space-y-1 min-w-0">
+                    <div className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">
+                      Net Savings
+                    </div>
+                    <p className={`text-sm @[300px]/cashflow:text-base @[380px]/cashflow:text-xl font-semibold tabular-nums truncate ${totalIncome - totalSpending >= 0 ? "text-green-500" : "text-red-500"}`}>
+                      {formatCurrency((totalIncome - totalSpending).toFixed(2), preferredCurrency)}
+                    </p>
+                    <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
+                      ~{formatCurrency(((totalIncome - totalSpending) / monthCount).toFixed(2), preferredCurrency)}/mo
+                    </p>
+                  </div>
                 </div>
-                <p className="text-xl font-semibold text-red-500 tabular-nums">
-                  {formatCurrency(totalSpending.toFixed(2), preferredCurrency)}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  ~{formatCurrency(avgSpending.toFixed(2), preferredCurrency)}/mo
-                </p>
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  Net Savings
-                </div>
-                <p className={`text-xl font-semibold tabular-nums ${totalIncome - totalSpending >= 0 ? "text-green-500" : "text-red-500"}`}>
-                  {formatCurrency((totalIncome - totalSpending).toFixed(2), preferredCurrency)}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  ~{formatCurrency(((totalIncome - totalSpending) / monthCount).toFixed(2), preferredCurrency)}/mo
-                </p>
+
+                {investmentMetrics && (() => {
+                  const startValue = parseFloat(investmentMetrics.start_value)
+                  if (startValue <= 0) return null
+                  const totalGrowth = parseFloat(investmentMetrics.total_growth)
+                  const marketGrowth = parseFloat(investmentMetrics.market_growth)
+                  const newCashInvested = parseFloat(investmentMetrics.new_cash_invested)
+                  return (
+                    <div className="mt-3 @[380px]/cashflow:mt-4 border-t pt-2 @[380px]/cashflow:pt-3">
+                      <p className="text-[10px] @[380px]/cashflow:text-xs font-medium text-muted-foreground mb-1.5 @[380px]/cashflow:mb-2 uppercase tracking-wider">Investments</p>
+                      <div className="grid grid-cols-3 gap-2 @[380px]/cashflow:gap-4">
+                        <div className="space-y-0.5 min-w-0">
+                          <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">New Cash Invested</p>
+                          <p className="text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate">
+                            {formatCurrency(newCashInvested.toFixed(2), preferredCurrency)}
+                          </p>
+                        </div>
+                        <div className="space-y-0.5 min-w-0">
+                          <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">Total Growth</p>
+                          <p className={`text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate ${totalGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
+                            {totalGrowth >= 0 ? "+" : ""}
+                            {formatCurrency(totalGrowth.toFixed(2), preferredCurrency)}
+                          </p>
+                        </div>
+                        <div className="space-y-0.5 min-w-0">
+                          <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">Market Performance</p>
+                          <p className={`text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate ${marketGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
+                            {marketGrowth >= 0 ? "+" : ""}
+                            {formatCurrency(marketGrowth.toFixed(2), preferredCurrency)}
+                          </p>
+                          <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
+                            {((marketGrowth / startValue) * 100).toFixed(1)}% return
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
             </div>
 
-            {investmentMetrics && (() => {
-              const startValue = parseFloat(investmentMetrics.start_value)
-              if (startValue <= 0) return null
-              const totalGrowth = parseFloat(investmentMetrics.total_growth)
-              const marketGrowth = parseFloat(investmentMetrics.market_growth)
-              const newCashInvested = parseFloat(investmentMetrics.new_cash_invested)
-              return (
-                <div className="mt-4 border-t pt-3">
-                  <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Investments</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="space-y-0.5">
-                      <p className="text-xs text-muted-foreground">New Cash Invested</p>
-                      <p className="text-base font-semibold tabular-nums">
-                        {formatCurrency(newCashInvested.toFixed(2), preferredCurrency)}
-                      </p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-xs text-muted-foreground">Total Growth</p>
-                      <p className={`text-base font-semibold tabular-nums ${totalGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
-                        {totalGrowth >= 0 ? "+" : ""}
-                        {formatCurrency(totalGrowth.toFixed(2), preferredCurrency)}
-                      </p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-xs text-muted-foreground">Market Performance</p>
-                      <p className={`text-base font-semibold tabular-nums ${marketGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
-                        {marketGrowth >= 0 ? "+" : ""}
-                        {formatCurrency(marketGrowth.toFixed(2), preferredCurrency)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {((marketGrowth / startValue) * 100).toFixed(1)}% return
-                      </p>
-                    </div>
+            {/* Settings panel — slides in from the right */}
+            <div
+              className={cn(
+                "flex flex-col overflow-hidden transition-all duration-300 border-l bg-neutral-100 dark:bg-neutral-800",
+                cashFlowSettingsOpen ? "w-72 opacity-100" : "w-0 opacity-0 border-transparent",
+              )}
+            >
+              <div className="flex flex-col min-w-72 h-full overflow-hidden">
+                <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
+                  <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap">Cash Flow Settings</p>
+                  <button
+                    onClick={() => setCashFlowSettingsOpen(false)}
+                    className="rounded-md p-1 transition-colors hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400"
+                    aria-label="Close cash flow settings"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="flex flex-col gap-3 px-5 pb-5 overflow-y-auto">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs leading-tight text-neutral-700 dark:text-neutral-200">
+                      Exclude categories
+                    </label>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-snug">
+                      Removes matching transactions from Income, Spending &amp; Net Savings. Selecting a parent excludes all its children.
+                    </p>
+                    <CategoryExcludePicker
+                      tree={categoryTree}
+                      selected={excludedCategories}
+                      onChange={setExcludedCategories}
+                    />
+                    {excludedCategories.length > 0 && (
+                      <button
+                        onClick={() => setExcludedCategories([])}
+                        className="self-start text-[11px] text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 underline underline-offset-2"
+                      >
+                        Clear all
+                      </button>
+                    )}
                   </div>
                 </div>
-              )
-            })()}
-          </CardContent>
+              </div>
+            </div>
+          </div>
         </Card>
 
         {/* Portfolio breakdown pie */}
@@ -518,6 +598,105 @@ function PortfolioOverviewInternal({
           {portfolio.by_asset_class.length > 0 && (
             <BreakdownCard title="By Asset Class" items={portfolio.by_asset_class} preferredCurrency={preferredCurrency} />
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CategoryExcludePicker({
+  tree,
+  selected,
+  onChange,
+}: {
+  tree: CategoryNode[]
+  selected: string[]
+  onChange: (ids: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const selectedSet = new Set(selected)
+
+  const idToLabel = new Map<string, string>()
+  for (const parent of tree) {
+    idToLabel.set(parent.id, parent.name)
+    for (const child of parent.children) {
+      idToLabel.set(child.id, `${parent.name}: ${child.name}`)
+    }
+  }
+
+  function toggle(id: string) {
+    const next = new Set(selectedSet)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onChange(Array.from(next))
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger className="inline-flex items-center justify-between gap-1 rounded-md border bg-background px-3 py-1.5 text-xs font-medium shadow-xs hover:bg-accent hover:text-accent-foreground h-8">
+          <span className="text-neutral-500 dark:text-neutral-400">
+            {selected.length === 0 ? "Select categories…" : `${selected.length} selected`}
+          </span>
+          <ChevronsUpDown className="h-3 w-3 opacity-50" />
+        </PopoverTrigger>
+        <PopoverContent className="w-[280px] p-0" align="start" sideOffset={6}>
+          <Command>
+            <CommandInput placeholder="Search categories…" />
+            <CommandList>
+              <CommandEmpty>
+                {tree.length === 0 ? (
+                  <span className="text-muted-foreground">Loading categories…</span>
+                ) : (
+                  "No results."
+                )}
+              </CommandEmpty>
+              {tree.map(parent => (
+                <CommandGroup key={parent.id} heading={parent.name}>
+                  <CommandItem
+                    value={`${parent.name} (all)`}
+                    onSelect={() => toggle(parent.id)}
+                  >
+                    <Check className={cn("mr-2 h-4 w-4", selectedSet.has(parent.id) ? "opacity-100" : "opacity-0")} />
+                    <span className="font-medium">All {parent.name}</span>
+                  </CommandItem>
+                  {parent.children.map(child => {
+                    const isCheckedByParent = selectedSet.has(parent.id)
+                    const isCheckedDirectly = selectedSet.has(child.id)
+                    const isChecked = isCheckedByParent || isCheckedDirectly
+                    return (
+                      <CommandItem
+                        key={child.id}
+                        value={`${parent.name} ${child.name}`}
+                        disabled={isCheckedByParent}
+                        onSelect={() => { if (!isCheckedByParent) toggle(child.id) }}
+                      >
+                        <Check className={cn("mr-2 h-4 w-4", isChecked ? "opacity-100" : "opacity-0")} />
+                        <span className={cn("pl-3", isCheckedByParent && "text-muted-foreground")}>{child.name}</span>
+                      </CommandItem>
+                    )
+                  })}
+                </CommandGroup>
+              ))}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selected.map(id => (
+            <Badge key={id} variant="secondary" className="text-[11px] gap-1 pr-1">
+              <span className="truncate max-w-[180px]">{idToLabel.get(id) ?? id}</span>
+              <button
+                onClick={() => toggle(id)}
+                className="rounded-sm hover:bg-neutral-300 dark:hover:bg-neutral-600 p-0.5"
+                aria-label={`Remove ${idToLabel.get(id) ?? id}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
         </div>
       )}
     </div>

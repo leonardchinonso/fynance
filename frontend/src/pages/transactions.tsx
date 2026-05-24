@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils"
 import { useTransactions, useTransactionCharts, useFilterOptions } from "@/hooks/data"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
+import { api } from "@/api/client"
 
 const VIEW_MODES = [
   { value: "table",  label: "Table",  icon: <Table2 className="h-4 w-4" /> },
@@ -71,6 +72,7 @@ export function TransactionsPage() {
     accounts: selectedAccounts, setAccounts,
     categories: selectedCategories, setCategories,
     profileId, search, setSearch, setFilter,
+    txSort, txDir, cycleTxSort,
   } = useUrlFilters()
 
   const [pageSize, setPageSize] = useState(() => {
@@ -79,7 +81,7 @@ export function TransactionsPage() {
   })
 
   const transactionsData = useTransactions(
-    start, end, selectedAccounts, selectedCategories, search, page, pageSize, profileId,
+    start, end, selectedAccounts, selectedCategories, search, page, pageSize, profileId, txSort, txDir,
   )
   const chartData = useTransactionCharts(
     start, end, selectedAccounts, selectedCategories, profileId,
@@ -108,6 +110,18 @@ export function TransactionsPage() {
 
   useEffect(() => { syncParents(parentNames) }, [parentNames.join(",")])
 
+  // Categories with stable IDs are needed by the inline category-edit
+  // popover in the table. Loaded once per session and cached here so each
+  // row's editor doesn't re-fetch.
+  const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string }>>([])
+  useEffect(() => {
+    let cancelled = false
+    api.getCategoriesWithIds()
+      .then((list) => { if (!cancelled) setCategoryOptions(list) })
+      .catch(() => { if (!cancelled) setCategoryOptions([]) })
+    return () => { cancelled = true }
+  }, [])
+
   const resetFilters = () => setFilter({
     accounts: undefined, categories: undefined, search: undefined,
     preset: "last-12-months", start: undefined, end: undefined, page: "1",
@@ -133,7 +147,13 @@ export function TransactionsPage() {
           />
         </div>
         <MultiSelect label="Accounts" options={availableAccounts} selected={selectedAccounts} onChange={setAccounts} displayFn={(id) => accountNameMap[id] ?? id} />
-        <MultiSelect label="Categories" options={availableCategories} selected={selectedCategories} onChange={setCategories} />
+        <MultiSelect
+          label="Categories"
+          options={["__uncategorized__", ...availableCategories]}
+          selected={selectedCategories}
+          onChange={setCategories}
+          displayFn={(v) => (v === "__uncategorized__" ? "Uncategorized" : v)}
+        />
         {(selectedAccounts.length > 0 || selectedCategories.length > 0 || search) && (
           <Button variant="ghost" size="sm" onClick={() => { setAccounts([]); setCategories([]); setSearch("") }}>
             Clear filters
@@ -150,6 +170,10 @@ export function TransactionsPage() {
           onPageSizeChange={(s) => { setPageSize(s); setPage(1) }}
           accountNames={accountNameMap}
           categoryColors={categoryColors}
+          categoryOptions={categoryOptions}
+          sort={txSort}
+          sortDir={txDir}
+          onSort={cycleTxSort}
           onResetFilters={selectedAccounts.length > 0 || selectedCategories.length > 0 || search.length > 0 ? resetFilters : undefined}
         />
       ) : (

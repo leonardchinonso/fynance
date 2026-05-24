@@ -1,3 +1,3 @@
 pub mod db;
 
-pub use db::{Db, TransactionFilters};
+pub use db::{Db, SortDir, TransactionFilters, TransactionSort};

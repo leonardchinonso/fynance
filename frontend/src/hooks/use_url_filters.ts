@@ -78,6 +78,15 @@ export function useUrlFilters() {
     : []
   const search = searchParams.get("search") || ""
 
+  // Transactions table sort. `txSort` unset = backend default (newest-first).
+  const sortRaw = searchParams.get("txSort")
+  const txSort: "date" | "amount" | "category" | undefined =
+    sortRaw === "date" || sortRaw === "amount" || sortRaw === "category"
+      ? sortRaw
+      : undefined
+  const dirRaw = searchParams.get("txDir")
+  const txDir: "asc" | "desc" = dirRaw === "asc" ? "asc" : "desc"
+
   // Portfolio pie settings — default true (omitted from URL = true)
   const hideSmall = searchParams.get("hide_small") !== "0"
   const assetClassSettings: AssetClassSettings = Object.fromEntries(
@@ -89,6 +98,13 @@ export function useUrlFilters() {
       }]
     })
   ) as AssetClassSettings
+
+  // Categories excluded from Income/Spending totals. May be a mix of leaf and
+  // parent category IDs as the user selected them; parents are expanded to
+  // their leaves at the call site before being sent to the backend.
+  const excludedCategories = searchParams.get("exclude_cats")
+    ? searchParams.get("exclude_cats")!.split(",").filter(Boolean)
+    : []
 
   const setFilter = useCallback(
     (updates: Record<string, string | undefined>) => {
@@ -154,9 +170,34 @@ export function useUrlFilters() {
     [setFilter]
   )
 
+  const setExcludedCategories = useCallback(
+    (ids: string[]) =>
+      setFilter({ exclude_cats: ids.length > 0 ? ids.join(",") : undefined }),
+    [setFilter]
+  )
+
   const setSearch = useCallback(
     (q: string) => setFilter({ search: q || undefined, page: "1" }),
     [setFilter]
+  )
+
+  /**
+   * Cycle the transactions table sort by column. State machine per column:
+   * inactive → asc → desc → inactive. The active column's direction is
+   * tracked separately so toggling to another column resets the direction.
+   * Resets pagination to page 1 so the user sees the new first page.
+   */
+  const cycleTxSort = useCallback(
+    (col: "date" | "amount" | "category") => {
+      if (txSort !== col) {
+        setFilter({ txSort: col, txDir: "asc", page: "1" })
+      } else if (txDir === "asc") {
+        setFilter({ txSort: col, txDir: "desc", page: "1" })
+      } else {
+        setFilter({ txSort: undefined, txDir: undefined, page: "1" })
+      }
+    },
+    [setFilter, txSort, txDir]
   )
 
   return {
@@ -172,6 +213,10 @@ export function useUrlFilters() {
     search,
     hideSmall,
     assetClassSettings,
+    excludedCategories,
+    txSort,
+    txDir,
+    cycleTxSort,
     setFilter,
     setPreset,
     setSearch,
@@ -181,5 +226,6 @@ export function useUrlFilters() {
     setProfileId,
     setAccounts,
     setCategories,
+    setExcludedCategories,
   }
 }

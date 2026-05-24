@@ -1,42 +1,52 @@
 //! Pluggable LLM provider abstraction for the parse pipeline.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::model::Agent;
+
 // ── Tier hint ────────────────────────────────────────────────────────────────
 
-/// Which model tier to use for a given call.
-///
-/// Each provider maps these to its own model names via env vars.
+/// Default model tier for a call. Caller can override with `Agent`.
 #[derive(Debug, Clone, Copy)]
 pub enum ModelTier {
-    /// Fast, cheap model. Used for CSV/Excel text extraction.
-    /// Anthropic: FYNANCE_IMPORT_LLM_MODEL (default claude-haiku-4-5-20251001)
-    /// OpenAI: FYNANCE_OPENAI_TEXT_MODEL (default gpt-4o-mini)
+    /// CSV / Excel text extraction. Env: FYNANCE_IMPORT_LLM_MODEL.
     Standard,
-    /// More capable model. Used for PDF visual understanding.
-    /// Anthropic: FYNANCE_PARSE_PDF_MODEL (default claude-sonnet-4-6)
-    /// OpenAI: FYNANCE_OPENAI_PDF_MODEL (default gpt-4o)
+    /// PDF visual understanding. Env: FYNANCE_PARSE_PDF_MODEL.
     Advanced,
 }
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderCallResult {
+    pub value: Value,
+    pub usage: TokenUsage,
+    pub model: String,
+    pub duration_ms: u64,
+    /// `"max_tokens"` here means the tool input is truncated.
+    pub stop_reason: Option<String>,
+}
+
+const MAX_TOKENS_TEXT: u32 = 16_384;
+const MAX_TOKENS_DOCUMENTS: u32 = 32_000;
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
 /// Pluggable LLM backend for the parse pipeline.
-///
-/// Implementations hide all provider-specific HTTP formatting, auth headers,
-/// and response parsing. Callers pass the system prompt, user message, tool
-/// name, and tool JSON Schema; they receive back the tool's input as a
-/// `serde_json::Value`.
 #[async_trait]
 pub trait LlmProvider: Send + Sync + std::fmt::Debug {
-    /// Call the LLM with a text user message and force a specific tool call.
-    /// Returns the tool's input JSON on success.
     async fn chat_with_tools(
         &self,
         system_prompt: &str,
@@ -44,14 +54,10 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
         tool_name: &str,
         tool_schema: Value,
         tier: ModelTier,
-    ) -> Result<Value>;
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult>;
 
-    /// Call the LLM with a PDF document and force a specific tool call.
-    /// Returns the tool's input JSON on success.
-    ///
-    /// Providers that do not support PDF input (e.g., OpenAI in V0) must return
-    /// `Err` with a clear message explaining the limitation and how to work
-    /// around it.
+    /// Providers without PDF support (e.g. OpenAI v0) must return `Err`.
     async fn chat_with_pdf_and_tools(
         &self,
         system_prompt: &str,
@@ -59,7 +65,20 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
         text_supplement: &str,
         tool_name: &str,
         tool_schema: Value,
-    ) -> Result<Value>;
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult>;
+
+    /// Files routed by MIME: `application/pdf` → document, `image/*` →
+    /// image, `text/*` → inlined text. Other MIME types may error.
+    async fn chat_with_files_and_tools(
+        &self,
+        system_prompt: &str,
+        files: &[(String, String, Vec<u8>)],
+        text_supplement: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult>;
 
     /// Short identifier used in log messages and metrics.
     fn name(&self) -> &'static str;
@@ -106,6 +125,22 @@ impl AnthropicProvider {
             ModelTier::Advanced => &self.advanced_model,
         }
     }
+
+    fn resolve_model(&self, tier: ModelTier, agent_override: Option<Agent>) -> String {
+        match agent_override {
+            Some(agent) => anthropic_model_for_agent(agent).to_string(),
+            None => self.model_for_tier(tier).to_string(),
+        }
+    }
+}
+
+/// Latest frontier model id per agent. Keep in sync with `pricing.rs`.
+fn anthropic_model_for_agent(agent: Agent) -> &'static str {
+    match agent {
+        Agent::Haiku => "claude-haiku-4-5-20251001",
+        Agent::Sonnet => "claude-sonnet-4-6",
+        Agent::Opus => "claude-opus-4-7",
+    }
 }
 
 #[async_trait]
@@ -117,12 +152,13 @@ impl LlmProvider for AnthropicProvider {
         tool_name: &str,
         tool_schema: Value,
         tier: ModelTier,
-    ) -> Result<Value> {
-        let model = self.model_for_tier(tier);
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
+        let model = self.resolve_model(tier, agent_override);
 
         let request_body = json!({
             "model": model,
-            "max_tokens": 8192,
+            "max_tokens": MAX_TOKENS_TEXT,
             "system": system_prompt,
             "tools": [{
                 "name": tool_name,
@@ -135,33 +171,25 @@ impl LlmProvider for AnthropicProvider {
 
         tracing::debug!(
             provider = "anthropic",
-            model,
+            model = %model,
             tool_name,
             "sending text request"
         );
 
-        let response = self
-            .client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|e| anyhow!("sending request to Anthropic: {e}"))?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| anyhow!("reading Anthropic response: {e}"))?;
-
-        if !status.is_success() {
-            return Err(anyhow!("Anthropic returned {status}: {body}"));
-        }
-
-        extract_anthropic_tool_input(&body, tool_name)
+        let started = Instant::now();
+        let body = self.post_messages(&request_body, &[]).await?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        let value = extract_anthropic_tool_input(&body, tool_name)?;
+        let usage = extract_anthropic_usage(&body);
+        let stop_reason = extract_anthropic_stop_reason(&body);
+        warn_if_truncated(&model, tool_name, &stop_reason, &usage);
+        Ok(ProviderCallResult {
+            value,
+            usage,
+            model,
+            duration_ms,
+            stop_reason,
+        })
     }
 
     async fn chat_with_pdf_and_tools(
@@ -171,13 +199,14 @@ impl LlmProvider for AnthropicProvider {
         text_supplement: &str,
         tool_name: &str,
         tool_schema: Value,
-    ) -> Result<Value> {
-        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
         let b64 = BASE64.encode(pdf_bytes);
+        let model = self.resolve_model(ModelTier::Advanced, agent_override);
 
         let request_body = json!({
-            "model": self.advanced_model,
-            "max_tokens": 8192,
+            "model": model,
+            "max_tokens": MAX_TOKENS_DOCUMENTS,
             "system": system_prompt,
             "tools": [{
                 "name": tool_name,
@@ -206,35 +235,86 @@ impl LlmProvider for AnthropicProvider {
 
         tracing::debug!(
             provider = "anthropic",
-            model = self.advanced_model,
+            model = %model,
             tool_name,
             pdf_size = pdf_bytes.len(),
             "sending PDF request"
         );
 
-        let response = self
-            .client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("anthropic-beta", "pdfs-2024-09-25")
-            .header("content-type", "application/json")
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|e| anyhow!("sending PDF request to Anthropic: {e}"))?;
+        let started = Instant::now();
+        let body = self
+            .post_messages(&request_body, &[("anthropic-beta", "pdfs-2024-09-25")])
+            .await?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        let value = extract_anthropic_tool_input(&body, tool_name)?;
+        let usage = extract_anthropic_usage(&body);
+        let stop_reason = extract_anthropic_stop_reason(&body);
+        warn_if_truncated(&model, tool_name, &stop_reason, &usage);
+        Ok(ProviderCallResult {
+            value,
+            usage,
+            model,
+            duration_ms,
+            stop_reason,
+        })
+    }
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| anyhow!("reading Anthropic PDF response: {e}"))?;
+    async fn chat_with_files_and_tools(
+        &self,
+        system_prompt: &str,
+        files: &[(String, String, Vec<u8>)],
+        text_supplement: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
+        let model = self.resolve_model(ModelTier::Advanced, agent_override);
 
-        if !status.is_success() {
-            return Err(anyhow!("Anthropic returned {status} for PDF: {body}"));
+        let mut content: Vec<Value> = Vec::with_capacity(files.len() + 1);
+        for (filename, mime, bytes) in files {
+            content.push(anthropic_content_block_for_file(filename, mime, bytes)?);
+        }
+        if !text_supplement.is_empty() {
+            content.push(json!({ "type": "text", "text": text_supplement }));
         }
 
-        extract_anthropic_tool_input(&body, tool_name)
+        let request_body = json!({
+            "model": model,
+            "max_tokens": MAX_TOKENS_DOCUMENTS,
+            "system": system_prompt,
+            "tools": [{
+                "name": tool_name,
+                "description": format!("Extract structured data using the {} tool.", tool_name),
+                "input_schema": tool_schema
+            }],
+            "tool_choice": { "type": "tool", "name": tool_name },
+            "messages": [{ "role": "user", "content": content }]
+        });
+
+        tracing::debug!(
+            provider = "anthropic",
+            model = %model,
+            tool_name,
+            files = files.len(),
+            "sending files request"
+        );
+
+        let started = Instant::now();
+        let body = self
+            .post_messages(&request_body, &[("anthropic-beta", "pdfs-2024-09-25")])
+            .await?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        let value = extract_anthropic_tool_input(&body, tool_name)?;
+        let usage = extract_anthropic_usage(&body);
+        let stop_reason = extract_anthropic_stop_reason(&body);
+        warn_if_truncated(&model, tool_name, &stop_reason, &usage);
+        Ok(ProviderCallResult {
+            value,
+            usage,
+            model,
+            duration_ms,
+            stop_reason,
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -242,11 +322,114 @@ impl LlmProvider for AnthropicProvider {
     }
 }
 
+/// `max_tokens` returns a truncated tool input that would otherwise parse as
+/// an empty success. Warn so callers see the cause.
+fn warn_if_truncated(
+    model: &str,
+    tool_name: &str,
+    stop_reason: &Option<String>,
+    usage: &TokenUsage,
+) {
+    if stop_reason.as_deref() == Some("max_tokens") {
+        tracing::warn!(
+            model,
+            tool_name,
+            output_tokens = usage.output_tokens,
+            "LLM response was truncated by max_tokens; the parsed result is likely \
+             incomplete. Increase max_tokens or use a smaller input."
+        );
+    }
+}
+
+impl AnthropicProvider {
+    async fn post_messages(&self, body: &Value, extra_headers: &[(&str, &str)]) -> Result<String> {
+        let mut req = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json");
+        for (k, v) in extra_headers {
+            req = req.header(*k, *v);
+        }
+        let response = req
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| anyhow!("sending request to Anthropic: {e}"))?;
+
+        let status = response.status();
+        let body_str = response
+            .text()
+            .await
+            .map_err(|e| anyhow!("reading Anthropic response: {e}"))?;
+
+        if !status.is_success() {
+            return Err(anyhow!("Anthropic returned {status}: {body_str}"));
+        }
+        Ok(body_str)
+    }
+}
+
+fn anthropic_content_block_for_file(filename: &str, mime: &str, bytes: &[u8]) -> Result<Value> {
+    let mime_lower = mime.to_ascii_lowercase();
+    if mime_lower == "application/pdf" {
+        let b64 = BASE64.encode(bytes);
+        return Ok(json!({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": b64,
+            }
+        }));
+    }
+    if mime_lower.starts_with("image/") {
+        let b64 = BASE64.encode(bytes);
+        return Ok(json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime_lower,
+                "data": b64,
+            }
+        }));
+    }
+    if mime_lower.starts_with("text/")
+        || mime_lower == "application/csv"
+        || mime_lower == "application/json"
+        || mime_lower == "application/x-ndjson"
+    {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|e| anyhow!("file '{filename}' is not valid UTF-8 text: {e}"))?;
+        return Ok(json!({
+            "type": "text",
+            "text": format!("--- file: {filename} ({mime_lower}) ---\n{text}"),
+        }));
+    }
+    Err(anyhow!(
+        "Anthropic provider does not currently accept file '{filename}' with MIME '{mime}'. \
+         Supported: application/pdf, image/*, text/*."
+    ))
+}
+
 // ── Anthropic response parsing helpers ────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct AnthropicResponse {
     content: Vec<AnthropicContentBlock>,
+    #[serde(default)]
+    usage: Option<AnthropicUsage>,
+    #[serde(default)]
+    stop_reason: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct AnthropicUsage {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
 }
 
 #[derive(Deserialize)]
@@ -282,6 +465,23 @@ fn extract_anthropic_tool_input(body: &str, tool_name: &str) -> Result<Value> {
             _ => None,
         })
         .ok_or_else(|| anyhow!("no {tool_name} tool_use block in Anthropic response"))
+}
+
+fn extract_anthropic_usage(body: &str) -> TokenUsage {
+    serde_json::from_str::<AnthropicResponse>(body)
+        .ok()
+        .and_then(|r| r.usage)
+        .map(|u| TokenUsage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+        })
+        .unwrap_or_default()
+}
+
+fn extract_anthropic_stop_reason(body: &str) -> Option<String> {
+    serde_json::from_str::<AnthropicResponse>(body)
+        .ok()
+        .and_then(|r| r.stop_reason)
 }
 
 // ── OpenAIProvider ────────────────────────────────────────────────────────────
@@ -337,8 +537,15 @@ impl LlmProvider for OpenAIProvider {
         tool_name: &str,
         tool_schema: Value,
         tier: ModelTier,
-    ) -> Result<Value> {
-        let model = self.model_for_tier(tier);
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
+        if agent_override.is_some() {
+            return Err(anyhow!(
+                "agent override is only supported with the Anthropic provider. \
+                 Set FYNANCE_PARSE_PROVIDER=anthropic to use agent overrides."
+            ));
+        }
+        let model = self.model_for_tier(tier).to_string();
 
         let request_body = json!({
             "model": model,
@@ -362,11 +569,12 @@ impl LlmProvider for OpenAIProvider {
 
         tracing::debug!(
             provider = "openai",
-            model,
+            model = %model,
             tool_name,
             "sending text request"
         );
 
+        let started = Instant::now();
         let response = self
             .client
             .post("https://api.openai.com/v1/chat/completions")
@@ -382,12 +590,21 @@ impl LlmProvider for OpenAIProvider {
             .text()
             .await
             .map_err(|e| anyhow!("reading OpenAI response: {e}"))?;
+        let duration_ms = started.elapsed().as_millis() as u64;
 
         if !status.is_success() {
             return Err(anyhow!("OpenAI returned {status}: {body}"));
         }
 
-        extract_openai_tool_input(&body, tool_name)
+        let value = extract_openai_tool_input(&body, tool_name)?;
+        let usage = extract_openai_usage(&body);
+        Ok(ProviderCallResult {
+            value,
+            usage,
+            model,
+            duration_ms,
+            stop_reason: None,
+        })
     }
 
     async fn chat_with_pdf_and_tools(
@@ -397,10 +614,26 @@ impl LlmProvider for OpenAIProvider {
         _text_supplement: &str,
         _tool_name: &str,
         _tool_schema: Value,
-    ) -> Result<Value> {
+        _agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
         Err(anyhow!(
             "PDF input is not supported with the OpenAI provider in V0. \
              To import PDF documents, switch to FYNANCE_PARSE_PROVIDER=anthropic."
+        ))
+    }
+
+    async fn chat_with_files_and_tools(
+        &self,
+        _system_prompt: &str,
+        _files: &[(String, String, Vec<u8>)],
+        _text_supplement: &str,
+        _tool_name: &str,
+        _tool_schema: Value,
+        _agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
+        Err(anyhow!(
+            "Unified file input is not supported with the OpenAI provider in V0. \
+             To use unified mode, switch to FYNANCE_PARSE_PROVIDER=anthropic."
         ))
     }
 
@@ -414,6 +647,16 @@ impl LlmProvider for OpenAIProvider {
 #[derive(Deserialize)]
 struct OpenAIResponse {
     choices: Vec<OpenAIChoice>,
+    #[serde(default)]
+    usage: Option<OpenAIUsage>,
+}
+
+#[derive(Deserialize, Default)]
+struct OpenAIUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
 }
 
 #[derive(Deserialize)]
@@ -463,6 +706,17 @@ fn extract_openai_tool_input(body: &str, tool_name: &str) -> Result<Value> {
     })
 }
 
+fn extract_openai_usage(body: &str) -> TokenUsage {
+    serde_json::from_str::<OpenAIResponse>(body)
+        .ok()
+        .and_then(|r| r.usage)
+        .map(|u| TokenUsage {
+            input_tokens: u.prompt_tokens,
+            output_tokens: u.completion_tokens,
+        })
+        .unwrap_or_default()
+}
+
 // ── GeminiProvider ────────────────────────────────────────────────────────────
 
 /// Placeholder for Gemini support. Returns an error for all calls.
@@ -479,7 +733,8 @@ impl LlmProvider for GeminiProvider {
         _tool_name: &str,
         _tool_schema: Value,
         _tier: ModelTier,
-    ) -> Result<Value> {
+        _agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
         Err(anyhow!(
             "Gemini provider is not yet implemented. \
              Use FYNANCE_PARSE_PROVIDER=anthropic or FYNANCE_PARSE_PROVIDER=openai."
@@ -493,10 +748,26 @@ impl LlmProvider for GeminiProvider {
         _text_supplement: &str,
         _tool_name: &str,
         _tool_schema: Value,
-    ) -> Result<Value> {
+        _agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
         Err(anyhow!(
             "Gemini provider is not yet implemented. \
              Use FYNANCE_PARSE_PROVIDER=anthropic for PDF input."
+        ))
+    }
+
+    async fn chat_with_files_and_tools(
+        &self,
+        _system_prompt: &str,
+        _files: &[(String, String, Vec<u8>)],
+        _text_supplement: &str,
+        _tool_name: &str,
+        _tool_schema: Value,
+        _agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult> {
+        Err(anyhow!(
+            "Gemini provider is not yet implemented. \
+             Use FYNANCE_PARSE_PROVIDER=anthropic for unified mode."
         ))
     }
 
@@ -554,6 +825,16 @@ pub mod testing {
         pub fn new(tool_input: Value) -> Arc<Self> {
             Arc::new(Self { tool_input })
         }
+
+        fn pretend_result(&self) -> ProviderCallResult {
+            ProviderCallResult {
+                value: self.tool_input.clone(),
+                usage: TokenUsage::default(),
+                model: "mock".to_string(),
+                duration_ms: 0,
+                stop_reason: None,
+            }
+        }
     }
 
     #[async_trait]
@@ -565,8 +846,9 @@ pub mod testing {
             _tool_name: &str,
             _tool_schema: Value,
             _tier: ModelTier,
-        ) -> Result<Value> {
-            Ok(self.tool_input.clone())
+            _agent_override: Option<Agent>,
+        ) -> Result<ProviderCallResult> {
+            Ok(self.pretend_result())
         }
 
         async fn chat_with_pdf_and_tools(
@@ -576,8 +858,21 @@ pub mod testing {
             _text_supplement: &str,
             _tool_name: &str,
             _tool_schema: Value,
-        ) -> Result<Value> {
-            Ok(self.tool_input.clone())
+            _agent_override: Option<Agent>,
+        ) -> Result<ProviderCallResult> {
+            Ok(self.pretend_result())
+        }
+
+        async fn chat_with_files_and_tools(
+            &self,
+            _system_prompt: &str,
+            _files: &[(String, String, Vec<u8>)],
+            _text_supplement: &str,
+            _tool_name: &str,
+            _tool_schema: Value,
+            _agent_override: Option<Agent>,
+        ) -> Result<ProviderCallResult> {
+            Ok(self.pretend_result())
         }
 
         fn name(&self) -> &'static str {
@@ -660,6 +955,7 @@ mod tests {
             "tool",
             serde_json::json!({}),
             ModelTier::Standard,
+            None,
         ));
         assert!(result.is_err());
         assert!(
@@ -684,6 +980,7 @@ mod tests {
             "text",
             "tool",
             serde_json::json!({}),
+            None,
         ));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not supported"));
@@ -715,10 +1012,14 @@ mod tests {
                 "type": "tool_use",
                 "name": "parse_bank_statement",
                 "input": {"detected_bank": "revolut", "detection_confidence": 0.88, "rows": []}
-            }]
+            }],
+            "usage": {"input_tokens": 1234, "output_tokens": 567}
         }"#;
         let result = extract_anthropic_tool_input(body, "parse_bank_statement").unwrap();
         assert_eq!(result["detected_bank"], "revolut");
+        let usage = extract_anthropic_usage(body);
+        assert_eq!(usage.input_tokens, 1234);
+        assert_eq!(usage.output_tokens, 567);
     }
 
     #[test]
@@ -732,5 +1033,23 @@ mod tests {
                 .to_string()
                 .contains("parse_bank_statement")
         );
+    }
+
+    #[test]
+    fn test_anthropic_model_for_agent_mapping() {
+        assert_eq!(anthropic_model_for_agent(Agent::Haiku), "claude-haiku-4-5-20251001");
+        assert_eq!(anthropic_model_for_agent(Agent::Sonnet), "claude-sonnet-4-6");
+        assert_eq!(anthropic_model_for_agent(Agent::Opus), "claude-opus-4-7");
+    }
+
+    #[test]
+    fn test_openai_usage_parsing() {
+        let body = r#"{
+            "choices": [{"message": {"tool_calls": null}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 34}
+        }"#;
+        let usage = extract_openai_usage(body);
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 34);
     }
 }

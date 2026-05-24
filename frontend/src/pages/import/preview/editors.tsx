@@ -1,4 +1,4 @@
-import { useState } from "react"
+import React, { useState } from "react"
 import { format, parse } from "date-fns"
 import {
   Select,
@@ -157,6 +157,11 @@ export function SelectCell({
         color: tintColor,
       }
     : undefined
+  // base-ui Select.Value renders the raw value unless Select.Root has `items`.
+  const itemsMap = React.useMemo(
+    () => Object.fromEntries(options.map((o) => [o.value, o.label])),
+    [options]
+  )
   return (
     <Select
       // Always pass a defined value so the Select stays controlled for its
@@ -165,6 +170,7 @@ export function SelectCell({
       value={value ?? ""}
       onValueChange={(v) => { if (v) onChange(v) }}
       disabled={disabled}
+      items={itemsMap}
     >
       <SelectTrigger
         className={cn(cellInputClass, "min-w-[8rem]")}

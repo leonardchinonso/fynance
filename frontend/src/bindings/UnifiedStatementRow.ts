@@ -43,4 +43,14 @@ reference: string | null,
 /**
  * LLM's confidence that this row was correctly extracted [0.0, 1.0].
  */
-row_confidence: number, };
+row_confidence: number, 
+/**
+ * LLM-assigned category id (only populated in unified mode where the
+ * model is asked to categorise). `None` in split mode.
+ */
+category_id: string | null, 
+/**
+ * LLM's confidence in the category assignment, in `[0.0, 1.0]`. `None`
+ * for split-mode rows.
+ */
+category_confidence: number | null, };

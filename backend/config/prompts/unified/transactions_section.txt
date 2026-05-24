@@ -1,0 +1,25 @@
+TRANSACTIONS (requested)
+A transaction is a single money movement on the user's account — a payment, a receipt, or a transfer.
+
+Each entry has this shape:
+```
+{
+  "date": "YYYY-MM-DD",
+  "description": "Merchant or payee name",
+  "amount": "-5.50",
+  "currency": "GBP",
+  "category_id": "<id from the categories list below>",
+  "category_confidence": 0.93,
+  "row_confidence": 0.97,
+  "merchant": null,
+  "notes": null
+}
+```
+
+Categorization: for each transaction, pick the best-matching category from the user's active list below by `id`. Emit `category_confidence` in `[0.0, 1.0]`:
+- 0.95+ if the merchant clearly fits the category (`Uber` → Transport).
+- 0.70–0.95 if it's plausible but not certain.
+- below 0.70 if you are guessing — pick the closest category and let the user fix it.
+
+The user's active categories (JSON):
+{{CATEGORIES_JSON}}

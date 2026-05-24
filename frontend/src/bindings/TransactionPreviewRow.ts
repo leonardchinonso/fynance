@@ -4,4 +4,12 @@ import type { TransactionPreviewStatus } from "./TransactionPreviewStatus";
 /**
  * A single row in a transaction dryrun preview.
  */
-export type TransactionPreviewRow = { index: number, date: string, description: string, amount: string, currency: string, status: TransactionPreviewStatus, existing_id: string | null, existing_description: string | null, error_reason: string | null, };
+export type TransactionPreviewRow = { index: number, date: string, description: string, amount: string, currency: string, status: TransactionPreviewStatus, existing_id: string | null, existing_description: string | null, error_reason: string | null, 
+/**
+ * FK to categories.id (leaf). Frontend resolves the display name.
+ */
+category_id: string | null, 
+/**
+ * LLM confidence in the category assignment, [0.0, 1.0]. Unified mode only.
+ */
+category_confidence: number | null, };

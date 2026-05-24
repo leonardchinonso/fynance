@@ -6,6 +6,7 @@ import type { Account, Profile } from "@/types"
 import type { RecentImportEntry } from "@/hooks/use_recent_imports"
 import { useProfileColorsContext } from "@/context/profile_colors_context"
 import { accountTypeClasses } from "@/lib/account_type_colors"
+import { CostTag } from "./preview/cost_tag"
 
 interface Props {
   entries: RecentImportEntry[]
@@ -120,6 +121,7 @@ export function RecentImportsList({ entries, accounts, profiles, onResume, onDis
                     )}
                   </div>
                 </button>
+                <CostTag price={entry.preview.metadata.estimated_price} />
                 <Button
                   variant="ghost"
                   size="icon"

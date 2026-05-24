@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 
 use super::document_parser::SnapshotPeriod;
 use super::holdings_parser::ParsedHoldings;
-use super::provider::{LlmProvider, ModelTier};
+use super::provider::{LlmProvider, ModelTier, ProviderCallResult};
+use crate::model::Agent;
 
 const PERIODIC_HOLDINGS_PROMPT: &str =
     include_str!("../../config/prompts/periodic_holdings_parser.txt");
@@ -33,7 +34,8 @@ impl LlmPeriodicHoldingsParser {
         filename: &str,
         period: &SnapshotPeriod,
         user_hint: Option<&str>,
-    ) -> Result<ParsedHoldings> {
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedHoldings, ProviderCallResult)> {
         let content = if raw.len() > MAX_CSV_BYTES {
             tracing::warn!(
                 filename,
@@ -60,7 +62,7 @@ impl LlmPeriodicHoldingsParser {
             user_msg = format!("User instructions: {hint}\n\n{user_msg}");
         }
 
-        let tool_input = self
+        let call = self
             .provider
             .chat_with_tools(
                 PERIODIC_HOLDINGS_PROMPT,
@@ -68,11 +70,12 @@ impl LlmPeriodicHoldingsParser {
                 "extract_periodic_holdings",
                 tool_schema,
                 ModelTier::Standard,
+                agent_override,
             )
             .await?;
 
         let parsed: ParsedHoldings = super::deserialize_tool_use(
-            tool_input,
+            call.value.clone(),
             "periodic holdings parser",
             filename,
             "extract_periodic_holdings",
@@ -86,7 +89,7 @@ impl LlmPeriodicHoldingsParser {
             "LLM extracted periodic holdings"
         );
 
-        Ok(parsed)
+        Ok((parsed, call))
     }
 }
 
@@ -153,6 +156,10 @@ pub(crate) fn build_periodic_holdings_tool_schema() -> Value {
                             "minimum": 0.0,
                             "maximum": 1.0,
                             "description": "Confidence that this snapshot is correct."
+                        },
+                        "derived": {
+                            "type": "boolean",
+                            "description": "True if this snapshot was computed from transactions (or neighbouring balances). False if the balance was read directly from the document for this exact period boundary."
                         }
                     }
                 }

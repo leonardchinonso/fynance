@@ -76,10 +76,16 @@ export function ImportSummary({ accountResults, onImportMore }: Props) {
                 {ar.skipped ? (
                   <Badge variant="outline" className="text-xs">Skipped</Badge>
                 ) : totals ? (
-                  <div className="flex gap-2 text-xs text-muted-foreground tabular-nums">
-                    {totals.transactions > 0 && <span>{totals.transactions} tx</span>}
-                    {totals.holdings > 0 && <span>{totals.holdings} hldg</span>}
-                    {totals.investments > 0 && <span>{totals.investments} inv</span>}
+                  <div className="flex gap-3 text-xs text-muted-foreground tabular-nums">
+                    {totals.transactions > 0 && (
+                      <span>{totals.transactions} {totals.transactions === 1 ? "transaction" : "transactions"}</span>
+                    )}
+                    {totals.holdings > 0 && (
+                      <span>{totals.holdings} {totals.holdings === 1 ? "holding" : "holdings"}</span>
+                    )}
+                    {totals.investments > 0 && (
+                      <span>{totals.investments} {totals.investments === 1 ? "investment" : "investments"}</span>
+                    )}
                   </div>
                 ) : null}
               </div>
