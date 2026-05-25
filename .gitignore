@@ -2,6 +2,7 @@
 backend/target/
 /.claude/
 .env
+.antigravitycli/
 
 # Backend
 backend/workings/
