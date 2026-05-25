@@ -9,7 +9,7 @@ use axum::extract::{Query, State};
 use chrono::{Duration, NaiveDate, NaiveDateTime};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use ts_rs::TS;
 
 use crate::model::{AccountType, InvestmentEvent, InvestmentEventType};
@@ -146,6 +146,30 @@ pub struct S104PoolState {
 // ── Internal Calculation Types ───────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
+struct InternalMatch {
+    pub acquisition_id: Option<String>,
+    pub acquisition_date: Option<NaiveDateTime>,
+    pub quantity: Decimal,
+    pub price: Decimal,
+    pub is_s104: bool,
+}
+
+impl InternalMatch {
+    fn to_cgt_match_detail(&self) -> CgtMatchDetail {
+        CgtMatchDetail {
+            acquisition_id: self.acquisition_id.clone(),
+            acquisition_date: if self.is_s104 {
+                Some("S104 Pool".to_string())
+            } else {
+                self.acquisition_date.map(|d| d.date().to_string())
+            },
+            quantity: self.quantity,
+            price: self.price,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct CalEvent {
     id: String,
     event_type: InvestmentEventType,
@@ -157,9 +181,9 @@ struct CalEvent {
 
     // Tracking for matching algorithm
     remaining_qty: Decimal,
-    same_day_matches: Vec<CgtMatchDetail>,
-    thirty_day_matches: Vec<CgtMatchDetail>,
-    pool_matches: Vec<CgtMatchDetail>,
+    same_day_matches: Vec<InternalMatch>,
+    thirty_day_matches: Vec<InternalMatch>,
+    pool_matches: Vec<InternalMatch>,
 }
 
 impl From<InvestmentEvent> for CalEvent {
@@ -177,6 +201,22 @@ impl From<InvestmentEvent> for CalEvent {
             thirty_day_matches: Vec::new(),
             pool_matches: Vec::new(),
         }
+    }
+}
+
+impl CalEvent {
+    /// Calculates the normalized proceeds and proportional fee in preferred base currency (GBP) for a matched quantity.
+    fn calculate_matched_finance(&self, match_qty: Decimal, fx: &FxRateMap) -> (Decimal, Decimal) {
+        let proceeds_raw = match_qty * self.price_per_share;
+        let fee_raw = if self.quantity > Decimal::ZERO {
+            self.fee * (match_qty / self.quantity)
+        } else {
+            Decimal::ZERO
+        };
+
+        let proceeds = fx.convert_as_of(proceeds_raw, &self.currency, self.date.date());
+        let fee = fx.convert_as_of(fee_raw, &self.currency, self.date.date());
+        (proceeds, fee)
     }
 }
 
@@ -216,15 +256,12 @@ pub async fn get_s104_pools(
     State(state): State<AppState>,
     Query(q): Query<S104PoolsQuery>,
 ) -> Result<Json<Vec<S104PoolState>>, AppError> {
-    let as_at = if let Some(ref d) = q.as_at {
-        if !d.is_empty() {
-            Some(parse_date(d)?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let as_at = q
+        .as_at
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(parse_date)
+        .transpose()?;
 
     let db = state.db.lock().expect("db mutex poisoned");
 
@@ -245,7 +282,9 @@ pub async fn get_s104_pools(
     let events = db.list_investment_events(None, None, None)?;
 
     // Compute pools
-    let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None);
+    let currencies = db.get_currencies()?;
+    let fx = FxRateMap::new(currencies)?;
+    let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None, &fx);
 
     Ok(Json(pools.pools))
 }
@@ -256,46 +295,39 @@ pub async fn get_capital_gains(
     State(state): State<AppState>,
     Query(q): Query<CapitalGainsQuery>,
 ) -> Result<Json<CapitalGainsResponse>, AppError> {
-    let as_at = if let Some(ref d) = q.as_at {
-        if !d.is_empty() {
-            Some(parse_date(d)?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let as_at = q
+        .as_at
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(parse_date)
+        .transpose()?;
 
     // Date range logic
-    let mut filter_start = None;
-    let mut filter_end = None;
-
-    if let Some(ref ty) = q.tax_year {
-        if !ty.is_empty() {
-            if let Some((start, end)) = parse_tax_year(ty) {
-                filter_start = Some(start);
-                filter_end = Some(end);
-            } else {
-                return Err(AppError::bad_request(
+    let (filter_start, filter_end) = match q.tax_year.as_deref().filter(|s| !s.is_empty()) {
+        Some(ty) => parse_tax_year(ty)
+            .map(|(s, e)| (Some(s), Some(e)))
+            .ok_or_else(|| {
+                AppError::bad_request(
                     format!("invalid tax_year format: {ty} (expected YYYY-YY, e.g. 2024-25)"),
                     "invalid_tax_year",
-                ));
-            }
+                )
+            })?,
+        None => {
+            let start = q
+                .start_date
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(parse_date)
+                .transpose()?;
+            let end = q
+                .end_date
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(parse_date)
+                .transpose()?;
+            (start, end)
         }
-    }
-
-    if filter_start.is_none() {
-        if let Some(ref s) = q.start_date {
-            if !s.is_empty() {
-                filter_start = Some(parse_date(s)?);
-            }
-        }
-        if let Some(ref e) = q.end_date {
-            if !e.is_empty() {
-                filter_end = Some(parse_date(e)?);
-            }
-        }
-    }
+    };
 
     if let (Some(s), Some(e)) = (filter_start, filter_end) {
         validate_date_range(s, e)?;
@@ -326,7 +358,14 @@ pub async fn get_capital_gains(
     let fx = FxRateMap::new(currencies)?;
     let base_currency = fx.preferred().to_string();
 
-    let mut response = run_cgt_engine(events, &excluded_accounts, as_at, filter_start, filter_end);
+    let mut response = run_cgt_engine(
+        events,
+        &excluded_accounts,
+        as_at,
+        filter_start,
+        filter_end,
+        &fx,
+    );
 
     // Apply currency conversions to normalize summary totals to the preferred base currency
     let mut total_proceeds = Decimal::ZERO;
@@ -337,9 +376,9 @@ pub async fn get_capital_gains(
     let mut symbol_map: HashMap<String, SymbolSummary> = HashMap::new();
 
     for event in &response.realized_events {
-        let p_converted = fx.convert(event.proceeds, &event.original_currency);
-        let c_converted = fx.convert(event.cost_basis, &event.original_currency);
-        let g_converted = fx.convert(event.gain_loss, &event.original_currency);
+        let p_converted = event.proceeds;
+        let c_converted = event.cost_basis;
+        let g_converted = event.gain_loss;
 
         total_proceeds += p_converted;
         total_allowable_costs += c_converted;
@@ -402,6 +441,7 @@ fn run_cgt_engine(
     as_at: Option<NaiveDate>,
     filter_start: Option<NaiveDate>,
     filter_end: Option<NaiveDate>,
+    fx: &FxRateMap,
 ) -> CapitalGainsResponse {
     // 1. Filter out sheltered/excluded accounts and respect `as_at`
     let filtered_events: Vec<InvestmentEvent> = raw_events
@@ -439,47 +479,48 @@ fn run_cgt_engine(
         // -- Same-Day Rule matching --
         // Find Same-Day pairs: disposals matched against acquisitions on the same calendar date.
         // We group events of the day and match them FIFO.
-        let dates: HashSet<NaiveDate> = events.iter().map(|e| e.date.date()).collect();
-        let mut sorted_dates: Vec<NaiveDate> = dates.into_iter().collect();
-        sorted_dates.sort();
+        #[derive(Default)]
+        struct EventIndices {
+            incoming: Vec<usize>, // Buy/Vest
+            outgoing: Vec<usize>, // Sell/Withhold
+        }
 
-        for date in sorted_dates {
-            let mut acquisitions: Vec<usize> = Vec::new();
-            let mut disposals: Vec<usize> = Vec::new();
+        let mut daily_groups: BTreeMap<NaiveDate, EventIndices> = BTreeMap::new();
 
-            for (idx, e) in events.iter().enumerate() {
-                if e.date.date() == date {
-                    if matches!(
-                        e.event_type,
-                        InvestmentEventType::Buy | InvestmentEventType::Vest
-                    ) {
-                        acquisitions.push(idx);
-                    } else if matches!(
-                        e.event_type,
-                        InvestmentEventType::Sell | InvestmentEventType::Withhold
-                    ) {
-                        disposals.push(idx);
-                    }
-                }
+        for (idx, e) in events.iter().enumerate() {
+            let date = e.date.date();
+            let group = daily_groups.entry(date).or_default();
+            
+            match e.event_type {
+                InvestmentEventType::Buy | InvestmentEventType::Vest => group.incoming.push(idx),
+                // Sell and Withhold are both treated as disposals. Withhold (sell-to-cover or net settlement)
+                // represents shares immediately sold at vest to cover taxes, which is a disposal under UK CGT.
+                InvestmentEventType::Sell | InvestmentEventType::Withhold => group.outgoing.push(idx),
+                _ => {}
             }
+        }
 
-            // Match same-day FIFO
-            for &d_idx in &disposals {
-                for &a_idx in &acquisitions {
-                    let d_rem = events[d_idx].remaining_qty;
-                    let a_rem = events[a_idx].remaining_qty;
-                    if d_rem > Decimal::ZERO && a_rem > Decimal::ZERO {
-                        let matched = d_rem.min(a_rem);
-                        events[d_idx].remaining_qty -= matched;
-                        events[a_idx].remaining_qty -= matched;
+        for date in daily_groups.keys() {
+            if let Some(group) = daily_groups.get(date) {
+                // Match same-day FIFO
+                for &d_idx in &group.outgoing {
+                    for &a_idx in &group.incoming {
+                        let d_rem = events[d_idx].remaining_qty;
+                        let a_rem = events[a_idx].remaining_qty;
+                        if d_rem > Decimal::ZERO && a_rem > Decimal::ZERO {
+                            let matched = d_rem.min(a_rem);
+                            events[d_idx].remaining_qty -= matched;
+                            events[a_idx].remaining_qty -= matched;
 
-                        let match_detail = CgtMatchDetail {
-                            acquisition_id: Some(events[a_idx].id.clone()),
-                            acquisition_date: Some(events[a_idx].date.to_string()),
-                            quantity: matched,
-                            price: events[a_idx].price_per_share,
-                        };
-                        events[d_idx].same_day_matches.push(match_detail);
+                            let match_detail = InternalMatch {
+                                acquisition_id: Some(events[a_idx].id.clone()),
+                                acquisition_date: Some(events[a_idx].date),
+                                quantity: matched,
+                                price: events[a_idx].price_per_share,
+                                is_s104: false,
+                            };
+                            events[d_idx].same_day_matches.push(match_detail);
+                        }
                     }
                 }
             }
@@ -530,11 +571,12 @@ fn run_cgt_engine(
                     events[idx].remaining_qty -= matched;
                     events[acq_idx].remaining_qty -= matched;
 
-                    let match_detail = CgtMatchDetail {
+                    let match_detail = InternalMatch {
                         acquisition_id: Some(events[acq_idx].id.clone()),
-                        acquisition_date: Some(events[acq_idx].date.to_string()),
+                        acquisition_date: Some(events[acq_idx].date),
                         quantity: matched,
                         price: events[acq_idx].price_per_share,
+                        is_s104: false,
                     };
                     events[idx].thirty_day_matches.push(match_detail);
                 }
@@ -544,7 +586,7 @@ fn run_cgt_engine(
         // -- S104 Pool Replay --
         // Chronological replay to maintain S104 state and complete matches
         let mut pool_shares = Decimal::ZERO;
-        let mut pool_cost = Decimal::ZERO; // in original/native currency
+        let mut pool_cost = Decimal::ZERO; // in preferred base currency (GBP)
 
         for e in &mut events {
             match e.event_type {
@@ -557,7 +599,8 @@ fn run_cgt_engine(
                         } else {
                             Decimal::ZERO
                         };
-                        let acq_cost = entering * e.price_per_share + prop_fee;
+                        let acq_cost_raw = entering * e.price_per_share + prop_fee;
+                        let acq_cost = fx.convert_as_of(acq_cost_raw, &e.currency, e.date.date());
 
                         pool_shares += entering;
                         pool_cost += acq_cost;
@@ -578,11 +621,12 @@ fn run_cgt_engine(
 
                             let pool_cost_basis = matched * avg_cost;
 
-                            let match_detail = CgtMatchDetail {
+                            let match_detail = InternalMatch {
                                 acquisition_id: None,
-                                acquisition_date: Some("S104 Pool".to_string()),
+                                acquisition_date: None,
                                 quantity: matched,
                                 price: avg_cost,
+                                is_s104: true,
                             };
                             e.pool_matches.push(match_detail);
 
@@ -643,21 +687,17 @@ fn run_cgt_engine(
             }
 
             // We compile all matches for this disposal
-            let mut proceeds_raw = Decimal::ZERO;
-            let mut cost_basis_raw = Decimal::ZERO;
             let mut matches_list: Vec<CgtMatchDetail> = Vec::new();
 
-            // Proportional fee on disposal
-            let fee_prop = e.fee; // full disposal fee
-
             // Process same-day matches
-            for m in e.same_day_matches {
-                let m_proceeds = m.quantity * e.price_per_share;
-                let m_cost = m.quantity * m.price;
-                proceeds_raw += m_proceeds;
-                cost_basis_raw += m_cost;
+            for m in &e.same_day_matches {
+                let (m_proceeds, fee_prop_matched) = e.calculate_matched_finance(m.quantity, fx);
 
-                matches_list.push(m.clone());
+                let m_cost_raw = m.quantity * m.price;
+                let m_cost = fx.convert_as_of(m_cost_raw, &e.currency, e.date.date());
+
+                let api_match = m.to_cgt_match_detail();
+                matches_list.push(api_match.clone());
 
                 all_realized.push(CgtRealizedEvent {
                     symbol: symbol.clone(),
@@ -665,23 +705,29 @@ fn run_cgt_engine(
                     disposal_date: e.date.to_string(),
                     quantity: m.quantity,
                     disposal_price: e.price_per_share,
-                    proceeds: m_proceeds - (fee_prop * (m.quantity / e.quantity)),
+                    proceeds: m_proceeds - fee_prop_matched,
                     cost_basis: m_cost,
-                    gain_loss: (m_proceeds - (fee_prop * (m.quantity / e.quantity))) - m_cost,
+                    gain_loss: (m_proceeds - fee_prop_matched) - m_cost,
                     rule_applied: "Same-Day".to_string(),
                     original_currency: e.currency.clone(),
-                    matches: vec![m],
+                    matches: vec![api_match],
                 });
             }
 
             // Process 30-day matches
-            for m in e.thirty_day_matches {
-                let m_proceeds = m.quantity * e.price_per_share;
-                let m_cost = m.quantity * m.price;
-                proceeds_raw += m_proceeds;
-                cost_basis_raw += m_cost;
+            for m in &e.thirty_day_matches {
+                let (m_proceeds, fee_prop_matched) = e.calculate_matched_finance(m.quantity, fx);
 
-                matches_list.push(m.clone());
+                let acq_date = m
+                    .acquisition_date
+                    .map(|d| d.date())
+                    .unwrap_or_else(|| e.date.date());
+
+                let m_cost_raw = m.quantity * m.price;
+                let m_cost = fx.convert_as_of(m_cost_raw, &e.currency, acq_date);
+
+                let api_match = m.to_cgt_match_detail();
+                matches_list.push(api_match.clone());
 
                 all_realized.push(CgtRealizedEvent {
                     symbol: symbol.clone(),
@@ -689,23 +735,24 @@ fn run_cgt_engine(
                     disposal_date: e.date.to_string(),
                     quantity: m.quantity,
                     disposal_price: e.price_per_share,
-                    proceeds: m_proceeds - (fee_prop * (m.quantity / e.quantity)),
+                    proceeds: m_proceeds - fee_prop_matched,
                     cost_basis: m_cost,
-                    gain_loss: (m_proceeds - (fee_prop * (m.quantity / e.quantity))) - m_cost,
+                    gain_loss: (m_proceeds - fee_prop_matched) - m_cost,
                     rule_applied: "30-Day Rule".to_string(),
                     original_currency: e.currency.clone(),
-                    matches: vec![m],
+                    matches: vec![api_match],
                 });
             }
 
             // Process S104 pool matches
-            for m in e.pool_matches {
-                let m_proceeds = m.quantity * e.price_per_share;
-                let m_cost = m.quantity * m.price;
-                proceeds_raw += m_proceeds;
-                cost_basis_raw += m_cost;
+            for m in &e.pool_matches {
+                let (m_proceeds, fee_prop_matched) = e.calculate_matched_finance(m.quantity, fx);
 
-                matches_list.push(m.clone());
+                // m.price is avg_cost which is ALREADY in preferred base currency (GBP)
+                let m_cost = m.quantity * m.price;
+
+                let api_match = m.to_cgt_match_detail();
+                matches_list.push(api_match.clone());
 
                 all_realized.push(CgtRealizedEvent {
                     symbol: symbol.clone(),
@@ -713,12 +760,12 @@ fn run_cgt_engine(
                     disposal_date: e.date.to_string(),
                     quantity: m.quantity,
                     disposal_price: e.price_per_share,
-                    proceeds: m_proceeds - (fee_prop * (m.quantity / e.quantity)),
+                    proceeds: m_proceeds - fee_prop_matched,
                     cost_basis: m_cost,
-                    gain_loss: (m_proceeds - (fee_prop * (m.quantity / e.quantity))) - m_cost,
+                    gain_loss: (m_proceeds - fee_prop_matched) - m_cost,
                     rule_applied: "S104 Pool".to_string(),
                     original_currency: e.currency.clone(),
-                    matches: vec![m],
+                    matches: vec![api_match],
                 });
             }
 
@@ -726,8 +773,7 @@ fn run_cgt_engine(
             let total_matched: Decimal = matches_list.iter().map(|m| m.quantity).sum();
             if total_matched < e.quantity {
                 let unmatched_qty = e.quantity - total_matched;
-                let m_proceeds = unmatched_qty * e.price_per_share;
-                proceeds_raw += m_proceeds;
+                let (m_proceeds, fee_prop_matched) = e.calculate_matched_finance(unmatched_qty, fx);
 
                 all_realized.push(CgtRealizedEvent {
                     symbol: symbol.clone(),
@@ -735,9 +781,9 @@ fn run_cgt_engine(
                     disposal_date: e.date.to_string(),
                     quantity: unmatched_qty,
                     disposal_price: e.price_per_share,
-                    proceeds: m_proceeds - (fee_prop * (unmatched_qty / e.quantity)),
+                    proceeds: m_proceeds - fee_prop_matched,
                     cost_basis: Decimal::ZERO,
-                    gain_loss: m_proceeds - (fee_prop * (unmatched_qty / e.quantity)),
+                    gain_loss: m_proceeds - fee_prop_matched,
                     rule_applied: "Unmatched".to_string(),
                     original_currency: e.currency.clone(),
                     matches: vec![CgtMatchDetail {

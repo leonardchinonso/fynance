@@ -2,5 +2,6 @@
 import type { CgtRealizedEvent } from "./CgtRealizedEvent";
 import type { CgtSummary } from "./CgtSummary";
 import type { S104PoolState } from "./S104PoolState";
+import type { SymbolSummary } from "./SymbolSummary";
 
-export type CapitalGainsResponse = { summary: CgtSummary, realized_events: Array<CgtRealizedEvent>, pools: Array<S104PoolState>, };
+export type CapitalGainsResponse = { summary: CgtSummary, symbol_summaries: Array<SymbolSummary>, realized_events: Array<CgtRealizedEvent>, pools: Array<S104PoolState>, };

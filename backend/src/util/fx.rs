@@ -1,6 +1,7 @@
 //! Currency conversion helpers.
 
 use crate::model::{Currency, DisplayCurrency};
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use std::collections::{HashMap, HashSet};
 
@@ -41,6 +42,17 @@ impl FxRateMap {
             )
         });
         amount * rate
+    }
+
+    /// Convert an amount from `source_currency` to the preferred currency as of a specific date.
+    /// Currently, it falls back to the current/static rate, ignoring the date.
+    pub fn convert_as_of(
+        &self,
+        amount: Decimal,
+        source_currency: &str,
+        _date: NaiveDate,
+    ) -> Decimal {
+        self.convert(amount, source_currency)
     }
 
     pub fn preferred(&self) -> &str {
