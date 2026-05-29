@@ -4,11 +4,11 @@ This document covers everything you need to build, configure, and run the fynanc
 
 ## Prerequisites
 
-| Tool | Minimum version | Install |
-|---|---|---|
-| Rust toolchain | 1.85 (MSRV) | `curl https://sh.rustup.rs -sSf \| sh` |
-| `cargo` | ships with Rust | — |
-| `cargo-watch` (optional) | any | `cargo install cargo-watch` |
+| Tool                     | Minimum version | Install                                |
+| ------------------------ | --------------- | -------------------------------------- |
+| Rust toolchain           | 1.85 (MSRV)     | `curl https://sh.rustup.rs -sSf \| sh` |
+| `cargo`                  | ships with Rust | —                                      |
+| `cargo-watch` (optional) | any             | `cargo install cargo-watch`            |
 
 No other system dependencies are required. The SQLite library is bundled via the `rusqlite` `bundled` feature and compiled into the binary automatically. The React frontend is compiled and embedded in the binary via `include_dir!`.
 
@@ -82,26 +82,26 @@ cd backend && cargo build --release
 
 All runtime configuration is done via environment variables. The binary loads `.env` from the current working directory automatically on startup (via `dotenvy`). Every variable has a sensible default so you only need to set the ones you actually want to change.
 
-| Variable | Default | Description |
-|---|---|---|
-| `FYNANCE_DB_PATH` | OS data dir (see below) | Full path to the SQLite database file |
-| `FYNANCE_PORT` | `7433` | HTTP server port |
-| `FYNANCE_HOST` | `127.0.0.1` | HTTP bind address. Set to `0.0.0.0` in Docker |
-| `FYNANCE_LOG_LEVEL` | `info` | Log verbosity: `trace`, `debug`, `info`, `warn`, `error`. Also respected via `RUST_LOG` |
-| `FYNANCE_ANTHROPIC_API_KEY` | — | Required for `fynance import`. Anthropic API key for LLM-based CSV parsing |
-| `FYNANCE_IMPORT_LLM_MODEL` | `claude-haiku-4-5-20251001` | Claude model used by the CSV parser |
-| `FYNANCE_IMPORT_MIN_DETECT_CONF` | `0.80` | File-level confidence threshold. Import fails hard below this |
-| `FYNANCE_IMPORT_MIN_ROW_CONF` | `0.70` | Row-level confidence threshold. Rows below this are skipped with a warning |
+| Variable                         | Default                     | Description                                                                             |
+| -------------------------------- | --------------------------- | --------------------------------------------------------------------------------------- |
+| `FYNANCE_DB_PATH`                | OS data dir (see below)     | Full path to the SQLite database file                                                   |
+| `FYNANCE_PORT`                   | `7433`                      | HTTP server port                                                                        |
+| `FYNANCE_HOST`                   | `127.0.0.1`                 | HTTP bind address. Set to `0.0.0.0` in Docker                                           |
+| `FYNANCE_LOG_LEVEL`              | `info`                      | Log verbosity: `trace`, `debug`, `info`, `warn`, `error`. Also respected via `RUST_LOG` |
+| `FYNANCE_ANTHROPIC_API_KEY`      | —                           | Required for `fynance import`. Anthropic API key for LLM-based CSV parsing              |
+| `FYNANCE_IMPORT_LLM_MODEL`       | `claude-haiku-4-5-20251001` | Claude model used by the CSV parser                                                     |
+| `FYNANCE_IMPORT_MIN_DETECT_CONF` | `0.80`                      | File-level confidence threshold. Import fails hard below this                           |
+| `FYNANCE_IMPORT_MIN_ROW_CONF`    | `0.70`                      | Row-level confidence threshold. Rows below this are skipped with a warning              |
 
 ### Default database path
 
 The binary resolves the database path from the OS-native data directory:
 
-| OS | Default path |
-|---|---|
-| macOS | `~/Library/Application Support/fynance/fynance.db` |
-| Linux | `~/.local/share/fynance/fynance.db` |
-| Windows | `%APPDATA%\fynance\fynance.db` |
+| OS      | Default path                                       |
+| ------- | -------------------------------------------------- |
+| macOS   | `~/Library/Application Support/fynance/fynance.db` |
+| Linux   | `~/.local/share/fynance/fynance.db`                |
+| Windows | `%APPDATA%\fynance\fynance.db`                     |
 
 Override with `--db <path>` (CLI flag) or `FYNANCE_DB_PATH` (env var). The CLI flag takes precedence.
 
@@ -213,6 +213,7 @@ fynance import ~/Downloads/statements/ --account monzo-current
 ```
 
 The import pipeline:
+
 1. Reads the file to a string.
 2. Sends it to the Anthropic API using the system prompt in `backend/config/prompts/statement_parser.txt`.
 3. Receives a structured `ParsedStatement` (bank name, confidence, and one `UnifiedStatementRow` per transaction).
@@ -222,6 +223,7 @@ The import pipeline:
 5. Fingerprints each accepted row (`sha256(date|amount|description|account_id)`) and inserts it with `INSERT OR IGNORE`, so re-importing the same file is always idempotent.
 
 Output example:
+
 ```
 monzo-march.csv: 42 new, 0 duplicates [monzo (97%)]
 Totals: 42 new, 0 duplicates across 42 rows
@@ -236,6 +238,7 @@ fynance stats
 ```
 
 Output example:
+
 ```
 Total: 126 transactions (2026-01-01 to 2026-03-31)
   monzo-current: 84 (2026-01-01..2026-03-31) | uncategorized: 12
@@ -343,6 +346,7 @@ External agents access the API at `GET /api/docs`. The OpenAPI 3.1 schema includ
 Agents should read this schema on startup or at each session to stay in sync with the running server. The category taxonomy is embedded in the spec so agents always know the valid categories without a separate configuration request.
 
 Sample fetch:
+
 ```bash
 curl http://localhost:7433/api/docs | jq '.components.schemas.Category'
 ```
@@ -376,10 +380,12 @@ Get a key from [console.anthropic.com](https://console.anthropic.com/).
 ### `LLM detection confidence X.XX is below threshold 0.80`
 
 The file you are trying to import does not look like a bank statement to the LLM. Check that:
+
 - You are passing the right file (not a shopping list or an invoice).
 - The file is a plain CSV, not an OFX, PDF, or QFX.
 
 If you are testing with a real bank CSV and the threshold is too strict, lower it temporarily:
+
 ```bash
 FYNANCE_IMPORT_MIN_DETECT_CONF=0.60 fynance import file.csv --account my-account
 ```
