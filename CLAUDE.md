@@ -292,6 +292,7 @@ A reasonable rule of thumb: if you're about to type "I'll wait for X to finish b
 - Frontend fetches through `src/api/client.ts`, never direct `fetch()` in components
 - All API response types are auto-generated from Rust via `ts-rs` into `frontend/src/bindings/`. Never manually edit files in that directory.
 - Playwright screenshots and traces always go inside the `.playwright-mcp/` folder. Never write screenshots to the repo root or anywhere else.
+- When you add, modify, or remove an API endpoint, update `docs/api.html` to reflect the changes in the same PR. The HTML follows a consistent structure (see the existing endpoints for the pattern). Every endpoint is a `<section class="endpoint">` with `data-method` and `data-path` attributes. CI checks that every route in `mod.rs` has a matching `data-path` in the HTML.
 
 ### Code comments
 

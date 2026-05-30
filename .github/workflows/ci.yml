@@ -95,6 +95,27 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+  api-docs-coverage:
+    name: API docs route coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check all routes are documented
+        run: |
+          routes=$(perl -0777 -nE 'while (/\.route\(\s*"([^"]+)"/gs) { say "/api$1" }' backend/src/server/mod.rs | sort -u)
+          missing=0
+          while IFS= read -r route; do
+            if ! grep -q "data-path=\"${route}\"" docs/api.html; then
+              echo "::error::Route ${route} is not documented in docs/api.html"
+              missing=$((missing + 1))
+            fi
+          done <<< "$routes"
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::${missing} route(s) missing from API docs"
+            exit 1
+          fi
+          echo "All $(echo "$routes" | wc -l | tr -d ' ') routes are documented"
+
   docker-dry-run:
     name: Docker build (dry run)
     needs: [changes, backend]
