@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use ts_rs::TS;
 
-use crate::model::{AccountType, InvestmentEvent, InvestmentEventType};
+use crate::model::{Account, AccountType, InvestmentEvent, InvestmentEventType};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
-use crate::server::validation::{parse_date, validate_date_range};
+use crate::server::validation::{parse_date, split_csv_param, validate_date_range};
 use crate::util::fx::FxRateMap;
 
 // ── Query Parameters ─────────────────────────────────────────────────────────
@@ -28,11 +28,31 @@ pub struct CapitalGainsQuery {
     pub end_date: Option<String>,   // YYYY-MM-DD
     pub tax_year: Option<String>,   // e.g. "2024-25" -> 6 Apr 2024 to 5 Apr 2025
     pub as_at: Option<String>,      // YYYY-MM-DD (limit calculations to this date)
+    pub profile_ids: Option<String>, // comma-separated; scope to accounts whose profile_ids JSON intersects this set
 }
 
 #[derive(Debug, Deserialize)]
 pub struct S104PoolsQuery {
-    pub as_at: Option<String>, // YYYY-MM-DD
+    pub as_at: Option<String>,       // YYYY-MM-DD
+    pub profile_ids: Option<String>, // comma-separated; same semantics as on /capital-gains
+}
+
+/// Resolve a comma-separated `profile_ids` query param into the matching set
+/// of account IDs. Returns `None` when the filter is absent or empty, meaning
+/// "all accounts" (engine behaviour unchanged). Returns `Some([])` when the
+/// filter is set but matches no accounts (engine returns empty result).
+fn resolve_profile_ids_to_account_ids(
+    accounts: &[Account],
+    profile_ids: Option<&str>,
+) -> Option<Vec<String>> {
+    let ids = profile_ids.and_then(split_csv_param)?;
+    let pid_set: HashSet<String> = ids.into_iter().collect();
+    let scoped: Vec<String> = accounts
+        .iter()
+        .filter(|a| a.profile_ids.iter().any(|p| pid_set.contains(p)))
+        .map(|a| a.id.clone())
+        .collect();
+    Some(scoped)
 }
 
 // ── API Response Models ──────────────────────────────────────────────────────
@@ -265,21 +285,22 @@ pub async fn get_s104_pools(
 
     let db = state.db.lock().expect("db mutex poisoned");
 
-    // Fetch all accounts to build ISA/pension filter
+    // Fetch all accounts once; derive both the profile scope and the ISA/Pension exclusion from it.
     let accounts = db.get_accounts(None)?;
+    let included_account_ids =
+        resolve_profile_ids_to_account_ids(&accounts, q.profile_ids.as_deref());
     let excluded_accounts: HashSet<String> = accounts
-        .into_iter()
+        .iter()
         .filter(|a| {
             matches!(
                 a.account_type,
                 AccountType::InvestmentIsa | AccountType::Pension
             )
         })
-        .map(|a| a.id)
+        .map(|a| a.id.clone())
         .collect();
 
-    // Fetch all investment events
-    let events = db.list_investment_events(None, None, None)?;
+    let events = db.list_investment_events(None, None, None, included_account_ids.as_deref())?;
 
     // Compute pools
     let currencies = db.get_currencies()?;
@@ -335,23 +356,30 @@ pub async fn get_capital_gains(
 
     let db = state.db.lock().expect("db mutex poisoned");
 
-    // Fetch all accounts to build ISA/pension filter
+    // Fetch all accounts once; derive both the profile scope and the ISA/Pension exclusion from it.
     let accounts = db.get_accounts(None)?;
+    let included_account_ids =
+        resolve_profile_ids_to_account_ids(&accounts, q.profile_ids.as_deref());
     let excluded_accounts: HashSet<String> = accounts
-        .into_iter()
+        .iter()
         .filter(|a| {
             matches!(
                 a.account_type,
                 AccountType::InvestmentIsa | AccountType::Pension
             )
         })
-        .map(|a| a.id)
+        .map(|a| a.id.clone())
         .collect();
 
-    // Fetch investment events
-    // If a specific symbol was requested, we could theoretically filter here,
-    // but the global pools are per-symbol anyway, so we fetch all and calculate.
-    let events = db.list_investment_events(q.account_id.as_deref(), q.symbol.as_deref(), None)?;
+    // Fetch investment events. account_ids (when set) narrows the SQL scope.
+    // The global S104 pool is still per-symbol — the engine handles that — but its
+    // input is now scoped to the requested profile set.
+    let events = db.list_investment_events(
+        q.account_id.as_deref(),
+        q.symbol.as_deref(),
+        None,
+        included_account_ids.as_deref(),
+    )?;
 
     // Load currency exchange rates for final base-currency summary normalization
     let currencies = db.get_currencies()?;

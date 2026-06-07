@@ -33,7 +33,12 @@ import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
-import type { ApiService, HoldingsImportResponse } from "./service"
+import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
+import type { S104PoolState } from "@/bindings/S104PoolState"
+import type { SymbolSummary } from "@/bindings/SymbolSummary"
+import type { ApiService, CgtFilters, HoldingsImportResponse } from "./service"
+import { cgtFiltersToParams } from "./cgt_filter_params"
 import {
   MOCK_PROFILES,
   MOCK_ACCOUNTS,
@@ -1046,5 +1051,212 @@ export class MockApiService implements ApiService {
   async commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult> {
     await delay(DELAY_MS)
     return { total: payload.events.length, inserted: payload.events.length, duplicates: 0, errors: [] }
+  }
+
+  // ── Reports ───────────────────────────────────────────────────────
+
+  async getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse> {
+    await delay(DELAY_MS)
+    return mockCapitalGains(filters)
+  }
+}
+
+// ── Mock CGT data ─────────────────────────────────────────────────────────────
+//
+// Seed enough realized events to exercise the UI's edge-case styling without
+// reimplementing the HMRC engine here. Each event is stored already-converted
+// into GBP (the preferred currency) to match the real route's output shape.
+
+const MOCK_REALIZED_EVENTS: CgtRealizedEvent[] = [
+  // VUSA (GBP) — clean S104 disposal in 2024-25
+  {
+    symbol: "VUSA",
+    disposal_id: "mock_disp_vusa_1",
+    disposal_date: "2024-09-15T10:00:00",
+    quantity: "30",
+    disposal_price: "85.50",
+    proceeds: "2565.00",
+    cost_basis: "2160.00",
+    gain_loss: "405.00",
+    rule_applied: "S104 Pool",
+    original_currency: "GBP",
+    matches: [
+      { acquisition_id: null, acquisition_date: "S104 Pool", quantity: "30", price: "72.00" },
+    ],
+  },
+  // AAPL (USD) — same-day match in 2024-25
+  {
+    symbol: "AAPL",
+    disposal_id: "mock_disp_aapl_1",
+    disposal_date: "2024-11-02T14:30:00",
+    quantity: "20",
+    disposal_price: "182.40",
+    proceeds: "2881.92",
+    cost_basis: "2528.00",
+    gain_loss: "353.92",
+    rule_applied: "Same-Day",
+    original_currency: "USD",
+    matches: [
+      {
+        acquisition_id: "mock_acq_aapl_sameday",
+        acquisition_date: "2024-11-02T09:00:00",
+        quantity: "20",
+        price: "160.00",
+      },
+    ],
+  },
+  // AAPL (USD) — S104 disposal at a loss in 2024-25
+  {
+    symbol: "AAPL",
+    disposal_id: "mock_disp_aapl_2",
+    disposal_date: "2025-01-29T15:30:00",
+    quantity: "10",
+    disposal_price: "150.00",
+    proceeds: "1185.00",
+    cost_basis: "1264.00",
+    gain_loss: "-79.00",
+    rule_applied: "S104 Pool",
+    original_currency: "USD",
+    matches: [
+      { acquisition_id: null, acquisition_date: "S104 Pool", quantity: "10", price: "126.40" },
+    ],
+  },
+  // VUSA (GBP) — 30-day Bed & Breakfast match in 2025-26
+  {
+    symbol: "VUSA",
+    disposal_id: "mock_disp_vusa_2",
+    disposal_date: "2025-05-12T10:00:00",
+    quantity: "15",
+    disposal_price: "88.00",
+    proceeds: "1320.00",
+    cost_basis: "1335.00",
+    gain_loss: "-15.00",
+    rule_applied: "30-Day Rule",
+    original_currency: "GBP",
+    matches: [
+      {
+        acquisition_id: "mock_acq_vusa_30day",
+        acquisition_date: "2025-05-25T10:00:00",
+        quantity: "15",
+        price: "89.00",
+      },
+    ],
+  },
+  // AAPL (USD) — Unmatched disposal in 2025-26 (the edge-case styling)
+  {
+    symbol: "AAPL",
+    disposal_id: "mock_disp_aapl_unmatched",
+    disposal_date: "2025-07-10T11:00:00",
+    quantity: "5",
+    disposal_price: "210.00",
+    proceeds: "829.50",
+    cost_basis: "0",
+    gain_loss: "829.50",
+    rule_applied: "Unmatched",
+    original_currency: "USD",
+    matches: [
+      { acquisition_id: null, acquisition_date: null, quantity: "5", price: "0" },
+    ],
+  },
+  // VUSA (GBP) — clean S104 disposal in 2025-26
+  {
+    symbol: "VUSA",
+    disposal_id: "mock_disp_vusa_3",
+    disposal_date: "2026-02-04T10:00:00",
+    quantity: "25",
+    disposal_price: "92.00",
+    proceeds: "2300.00",
+    cost_basis: "1800.00",
+    gain_loss: "500.00",
+    rule_applied: "S104 Pool",
+    original_currency: "GBP",
+    matches: [
+      { acquisition_id: null, acquisition_date: "S104 Pool", quantity: "25", price: "72.00" },
+    ],
+  },
+]
+
+const MOCK_POOLS: S104PoolState[] = [
+  {
+    symbol: "VUSA",
+    current_shares: "120",
+    total_allowable_expenditure: "8640.00",
+    average_cost_per_share: "72.00",
+  },
+  {
+    symbol: "AAPL",
+    current_shares: "45",
+    total_allowable_expenditure: "5688.00",
+    average_cost_per_share: "126.40",
+  },
+]
+
+function mockCapitalGains(filters: CgtFilters): CapitalGainsResponse {
+  const params = cgtFiltersToParams(filters)
+  const start = params.start_date ?? null
+  const end = params.end_date ?? null
+
+  const events = MOCK_REALIZED_EVENTS.filter((e) => {
+    const date = e.disposal_date.slice(0, 10)
+    if (start && date < start) return false
+    if (end && date > end) return false
+    return true
+  })
+
+  let totalProceeds = 0
+  let totalCosts = 0
+  let totalGains = 0
+  let totalLosses = 0
+  const perSymbol: Record<string, SymbolSummary> = {}
+
+  for (const ev of events) {
+    const p = Number.parseFloat(ev.proceeds)
+    const c = Number.parseFloat(ev.cost_basis)
+    const g = Number.parseFloat(ev.gain_loss)
+    totalProceeds += p
+    totalCosts += c
+    if (g > 0) totalGains += g
+    else totalLosses += Math.abs(g)
+    if (!perSymbol[ev.symbol]) {
+      perSymbol[ev.symbol] = {
+        symbol: ev.symbol,
+        total_proceeds: "0",
+        total_allowable_costs: "0",
+        total_gains: "0",
+        total_losses: "0",
+        net_gain_loss: "0",
+        original_currency: ev.original_currency,
+      }
+    }
+    const sym = perSymbol[ev.symbol]
+    sym.total_proceeds = (Number.parseFloat(sym.total_proceeds) + p).toFixed(2)
+    sym.total_allowable_costs = (Number.parseFloat(sym.total_allowable_costs) + c).toFixed(2)
+    if (g > 0) {
+      sym.total_gains = (Number.parseFloat(sym.total_gains) + g).toFixed(2)
+    } else {
+      sym.total_losses = (Number.parseFloat(sym.total_losses) + Math.abs(g)).toFixed(2)
+    }
+  }
+
+  const symbol_summaries = Object.values(perSymbol).map((s) => ({
+    ...s,
+    net_gain_loss: (
+      Number.parseFloat(s.total_gains) - Number.parseFloat(s.total_losses)
+    ).toFixed(2),
+  }))
+  symbol_summaries.sort((a, b) => a.symbol.localeCompare(b.symbol))
+
+  return {
+    summary: {
+      total_proceeds: totalProceeds.toFixed(2),
+      total_allowable_costs: totalCosts.toFixed(2),
+      total_gains: totalGains.toFixed(2),
+      total_losses: totalLosses.toFixed(2),
+      net_gain_loss: (totalGains - totalLosses).toFixed(2),
+      base_currency: "GBP",
+    },
+    symbol_summaries,
+    realized_events: events,
+    pools: MOCK_POOLS,
   }
 }

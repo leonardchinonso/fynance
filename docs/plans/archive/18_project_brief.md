@@ -4,7 +4,7 @@
 Personal finance tracker. Ingest bank CSVs, categorize spending, track budgets and net worth, all via a local web UI.
 
 ## Status
-V0 shipped. Active work: multi-currency frontend ([22](../22_multi_currency.md)) and UK CGT engine V1 ([23](../23_capital_gains_v1.md)). See [20_post_v0_plans.md](../20_post_v0_plans.md) for the post-V0 roadmap.
+V0 shipped. Active work: multi-currency frontend ([22](../22_multi_currency.md)) and the UK CGT rolling tracker ([23](../23_capital_gains_post_v0.md)). See [20_post_v0_plans.md](../20_post_v0_plans.md) for the post-V0 roadmap.
 
 ## Key Decisions
 - React 19 + React Compiler for frontend (no manual memoization)

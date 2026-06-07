@@ -185,6 +185,37 @@ async function runView(browser, view) {
   }
   await shot(page, `preview_${label}_8_recent_imports_with_cost`)
 
+  // 10. Reports → CGT landing → generate → saved-report URL → history list.
+  await page.goto(`${BASE}/reports`, { waitUntil: "domcontentloaded" })
+  await page.getByRole("heading", { name: /^reports$/i }).waitFor({ timeout: 10000 })
+  await page.getByText(/capital gains tax report/i).waitFor({ timeout: 5000 })
+  await page.getByText(/more reports coming soon/i).waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_9_reports_landing`)
+
+  await page.getByRole("button", { name: /capital gains tax report/i }).click()
+  await page.waitForURL(/\/reports\/cgt$/, { timeout: 5000 })
+  await page.getByRole("heading", { name: /capital gains tax report/i }).waitFor({ timeout: 5000 })
+  await page.getByText(/^filters$/i).first().waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_9a_cgt_filter_default`)
+
+  await page.getByRole("button", { name: /^generate$/i }).click()
+  await page.waitForURL(/\/reports\/cgt\/[\w-]+$/, { timeout: 10000 })
+  await page.getByText(/disposal proceeds/i).waitFor({ timeout: 10000 })
+  await page.getByText(/disposal schedule/i).waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_9b_cgt_results`)
+
+  // The Generate PDF button is rendered but we never click it (would trigger
+  // a download). Just assert it's present and enabled.
+  const pdfButton = page.getByRole("button", { name: /generate pdf|preparing pdf/i })
+  await pdfButton.waitFor({ timeout: 5000 })
+
+  // Back to the listing — the just-saved report should appear in Recent reports.
+  await page.getByRole("button", { name: /all reports/i }).click()
+  await page.waitForURL(/\/reports\/cgt$/, { timeout: 5000 })
+  await page.getByText(/recent reports/i).waitFor({ timeout: 5000 })
+  await page.getByText(/tax year/i).first().waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_9c_cgt_history`)
+
   await ctx.close()
   console.log(`[${label}] OK`)
 }

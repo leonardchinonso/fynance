@@ -287,6 +287,12 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             "in": "query",
                             "schema": { "type": "string", "format": "date", "example": "2026-04-05" },
                             "description": "Replay only events up to and including this date. Omit for the current state."
+                        },
+                        {
+                            "name": "profile_ids",
+                            "in": "query",
+                            "schema": { "type": "string", "example": "personal,joint" },
+                            "description": "Comma-separated profile IDs. Engine includes events from accounts whose profile_ids intersect this set. Omit for all profiles."
                         }
                     ],
                     "responses": {
@@ -352,6 +358,12 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             "in": "query",
                             "schema": { "type": "string" },
                             "description": "Restrict fetched events to one symbol."
+                        },
+                        {
+                            "name": "profile_ids",
+                            "in": "query",
+                            "schema": { "type": "string", "example": "personal,joint" },
+                            "description": "Comma-separated profile IDs. Engine includes events from accounts whose profile_ids intersect this set. Omit for all profiles."
                         }
                     ],
                     "responses": {

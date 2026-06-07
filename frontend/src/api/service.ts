@@ -32,8 +32,29 @@ import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 
 export interface HoldingsImportResponse { inserted: number; updated: number; total: number }
+
+/**
+ * Period selector for a CGT query. Discriminated so it's impossible to mix
+ * conflicting date inputs from the UI. The wire format always collapses to
+ * `start_date` / `end_date`:
+ *  - `tax-year` resolves to 6 Apr → 5 Apr next year client-side
+ *  - `range` is sent as-is
+ *  - `as-at` sends only `end_date`; the backend treats absent start as "from time zero",
+ *    which is the same as the engine's `as_at` semantics for the report use case.
+ */
+export type CgtPeriod =
+  | { kind: "tax-year"; taxYear: string }
+  | { kind: "range"; startDate: string; endDate: string }
+  | { kind: "as-at"; asAt: string }
+
+export interface CgtFilters {
+  period: CgtPeriod
+  /** Empty means all profiles. */
+  profileIds: string[]
+}
 
 /**
  * ApiService defines the contract between the frontend and backend.
@@ -149,4 +170,11 @@ export interface ApiService {
   commitHoldings(payload: HoldingsImportPayload): Promise<HoldingsImportResponse>
   /** Stage 2: commit investment events via `/api/investments/import`. */
   commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult>
+
+  // ── Reports ───────────────────────────────────────────────────────
+  /**
+   * Fetch the UK CGT report for a period and profile set. Maps to
+   * `GET /api/investments/capital-gains`. See [CgtFilters] for input shape.
+   */
+  getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse>
 }

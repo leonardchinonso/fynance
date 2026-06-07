@@ -47,7 +47,9 @@ import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
-import type { ApiService, HoldingsImportResponse } from "./service"
+import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { ApiService, CgtFilters, HoldingsImportResponse } from "./service"
+import { cgtFiltersToParams } from "./cgt_filter_params"
 import { MockApiService } from "./mock_service"
 
 const BASE = "/api"
@@ -372,6 +374,13 @@ export class RealApiService implements ApiService {
 
   async commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult> {
     return post<InvestmentImportResult>(`${BASE}/investments/import`, payload)
+  }
+
+  // ── Reports ───────────────────────────────────────────────────────
+
+  async getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse> {
+    const params = cgtFiltersToParams(filters)
+    return get<CapitalGainsResponse>(`${BASE}/investments/capital-gains`, params)
   }
 
   // ── Currencies ────────────────────────────────────────────────────
