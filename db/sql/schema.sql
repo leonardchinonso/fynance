@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 -- ── profiles ──────────────────────────────────────────────────────────────────
 -- Represent people in a multi-person household. Accounts reference profiles
 -- via the `profile_ids` JSON array column. Seeded with a "default" row on
--- first startup. See docs/plans/11_frontend_backend_consolidation.md §Profile Semantics.
+-- first startup. See docs/plans/archive/12_frontend_backend_consolidation.md §Profile Semantics.
 CREATE TABLE IF NOT EXISTS profiles (
     id   TEXT PRIMARY KEY,
     name TEXT NOT NULL

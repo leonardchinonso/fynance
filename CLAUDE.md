@@ -1,6 +1,6 @@
 # fynance — Claude Context
 
-Before starting any work, read `docs/plans/18_project_brief.md` for project goals, the design docs in `docs/design/`, and the current plan at `docs/plans/08_mvp_phases_v2.md`.
+Before starting any work, read the design docs in `docs/design/` and the active plans in `docs/plans/` (post-V0 roadmap in `20_post_v0_plans.md`, plus any in-flight feature plans). Historical context, including the original project brief, lives in `docs/plans/archive/`.
 Also read `.claude/memory/MEMORY.md` if it exists, and any individual memory files it references for session-derived patterns and known pitfalls.
 Do not make any changes to the code until you have 95% confidence in what you need to build. Ask me follow-up questions until you reach that confidence.
 
@@ -12,7 +12,7 @@ https://github.com/leonardchinonso/fynance
 
 Personal finance tracker with a Rust backend and a local React web UI. Ingests bank CSV exports (Monzo, Revolut, Lloyds), stores everything in a per-user local SQLite database, and surfaces four views in the browser: Transactions, Budget, Portfolio, Reports. Categorization and data extraction are handled by external AI agents that push pre-categorized data through the REST API.
 
-Design documents live in `docs/design/`, research in `docs/research/`, implementation plans in `docs/plans/`. When picking up work, start at `docs/plans/08_mvp_phases_v2.md`. The older `docs/plans/07_phases.md` is superseded.
+Design documents live in `docs/design/`, research in `docs/research/`, implementation plans in `docs/plans/`. Active plans only live in `docs/plans/`; closed and superseded plans are archived under `docs/plans/archive/` for historical context.
 
 ## Architecture
 
@@ -176,6 +176,8 @@ GET    /api/investments                      # list investment events (?account_
 POST   /api/investments                      # create one investment event
 PATCH  /api/investments/:id                 # update an investment event
 DELETE /api/investments/:id                 # delete an investment event
+GET    /api/investments/pools?as_at=         # S104 average-cost pool snapshot per symbol
+GET    /api/investments/capital-gains        # UK CGT report (?tax_year=YYYY-YY | start_date=&end_date=, account_id, symbol, as_at)
 
 GET    /api/reports/:month
 GET    /api/export?year=&format=             # csv or md (Obsidian-compatible)
@@ -215,6 +217,7 @@ The `VERCEL_TOKEN` secret in the GitHub repo expires **2027-05-03**. To renew:
 
 - Always create a new branch before making any changes. Never commit directly to master.
 - Open a PR to merge the branch. No exceptions.
+- To review another branch when the current branch has uncommitted changes, do it in a throwaway git worktree (`git worktree add <path> origin/<branch> --detach`) so the working tree is left untouched. If the current branch is clean, a plain checkout is fine. Always remove the worktree (`git worktree remove`) once the review is done — never leave review worktrees lying around.
 
 ### Validate before you commit / push
 

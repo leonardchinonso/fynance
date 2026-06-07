@@ -1,6 +1,18 @@
 # Multi-Currency Support
 
-Centralized spec for all multi-currency work across backend and frontend. Referenced from `19_v0_burndown.md` (V0 items) and `20_post_v0_plans.md` (V2+ items).
+Centralized spec for all multi-currency work across backend and frontend. Referenced from `archive/19_v0_burndown.md` (V0 items) and `20_post_v0_plans.md` (V2+ items).
+
+**Status (2026-05-04):**
+- Backend V0: shipped — all 97 backend items complete across Phases 1–6.
+- Frontend V0: not yet implemented — Settings UI, display rule integration, and aggregation component updates pending.
+- V2+ (auto-fetch, historical rates, user-configurable provider): planning only.
+
+**Next steps (priority order):**
+1. Implement the Settings page Currency section: list, add/edit/delete, preferred-star, staleness label.
+2. Wire the frontend display rule into portfolio, budget, and transactions views (use `value` for sizing, `display_currency` for labels when present).
+3. Manual end-to-end testing of multi-currency workflows (add currency, change preferred, verify conversions across all 7 aggregation endpoints).
+4. Add unit tests for `FxRateMap` and `CurrencyAggregator`; integration tests for multi-currency aggregations.
+5. Begin V2: auto-fetch rates from frankfurter.app with staleness threshold and `pinned` field on `currencies`.
 
 ---
 

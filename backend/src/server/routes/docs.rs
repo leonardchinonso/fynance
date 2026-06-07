@@ -120,6 +120,96 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         "error": { "type": "string" },
                         "code": { "type": "string" }
                     }
+                },
+                "S104PoolState": {
+                    "type": "object",
+                    "required": ["symbol", "current_shares", "total_allowable_expenditure", "average_cost_per_share"],
+                    "properties": {
+                        "symbol": { "type": "string" },
+                        "current_shares": { "type": "string", "description": "Decimal as string." },
+                        "total_allowable_expenditure": { "type": "string", "description": "Decimal as string, in the symbol's native currency." },
+                        "average_cost_per_share": { "type": "string", "description": "Decimal as string, in the symbol's native currency." }
+                    }
+                },
+                "CgtSummary": {
+                    "type": "object",
+                    "required": ["total_proceeds", "total_allowable_costs", "total_gains", "total_losses", "net_gain_loss", "base_currency"],
+                    "properties": {
+                        "total_proceeds": { "type": "string", "description": "Decimal as string, in base_currency." },
+                        "total_allowable_costs": { "type": "string" },
+                        "total_gains": { "type": "string" },
+                        "total_losses": { "type": "string", "description": "Positive number (absolute losses)." },
+                        "net_gain_loss": { "type": "string" },
+                        "base_currency": { "type": "string", "example": "GBP", "description": "User's preferred currency." }
+                    }
+                },
+                "SymbolSummary": {
+                    "type": "object",
+                    "required": ["symbol", "total_proceeds", "total_allowable_costs", "total_gains", "total_losses", "net_gain_loss", "original_currency"],
+                    "properties": {
+                        "symbol": { "type": "string" },
+                        "total_proceeds": { "type": "string", "description": "Decimal in preferred currency." },
+                        "total_allowable_costs": { "type": "string" },
+                        "total_gains": { "type": "string" },
+                        "total_losses": { "type": "string" },
+                        "net_gain_loss": { "type": "string" },
+                        "original_currency": { "type": "string", "description": "The symbol's trading currency." }
+                    }
+                },
+                "CgtMatchDetail": {
+                    "type": "object",
+                    "required": ["quantity", "price"],
+                    "properties": {
+                        "acquisition_id": { "type": ["string", "null"] },
+                        "acquisition_date": {
+                            "type": ["string", "null"],
+                            "description": "ISO 8601 datetime, the literal string 'S104 Pool' for pool matches, or null for unmatched remainders."
+                        },
+                        "quantity": { "type": "string" },
+                        "price": { "type": "string", "description": "Per-share price in the symbol's native currency." }
+                    }
+                },
+                "CgtRealizedEvent": {
+                    "type": "object",
+                    "required": ["symbol", "disposal_id", "disposal_date", "quantity", "disposal_price", "proceeds", "cost_basis", "gain_loss", "rule_applied", "original_currency", "matches"],
+                    "properties": {
+                        "symbol": { "type": "string" },
+                        "disposal_id": { "type": "string" },
+                        "disposal_date": { "type": "string", "format": "date-time" },
+                        "quantity": { "type": "string", "description": "Matched quantity. A single disposal split across rules produces one event per rule." },
+                        "disposal_price": { "type": "string", "description": "Per share, native currency." },
+                        "proceeds": { "type": "string", "description": "Matched quantity * disposal price, net of proportional fee. Native currency." },
+                        "cost_basis": { "type": "string", "description": "Matched quantity * acquisition price. Native currency. Zero for Unmatched rule." },
+                        "gain_loss": { "type": "string", "description": "proceeds - cost_basis. Native currency." },
+                        "rule_applied": {
+                            "type": "string",
+                            "enum": ["Same-Day", "30-Day Rule", "S104 Pool", "Unmatched"]
+                        },
+                        "original_currency": { "type": "string" },
+                        "matches": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/CgtMatchDetail" }
+                        }
+                    }
+                },
+                "CapitalGainsResponse": {
+                    "type": "object",
+                    "required": ["summary", "symbol_summaries", "realized_events", "pools"],
+                    "properties": {
+                        "summary": { "$ref": "#/components/schemas/CgtSummary" },
+                        "symbol_summaries": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/SymbolSummary" }
+                        },
+                        "realized_events": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/CgtRealizedEvent" }
+                        },
+                        "pools": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/S104PoolState" }
+                        }
+                    }
                 }
             }
         },
@@ -177,6 +267,107 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             "content": {
                                 "application/json": {
                                     "schema": { "$ref": "#/components/schemas/ImportResult" }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/investments/pools": {
+                "get": {
+                    "summary": "S104 average-cost pool snapshot per symbol",
+                    "description": concat!(
+                        "Returns the current S104 pool state for every symbol with a non-empty history. ",
+                        "ISA and Pension accounts are excluded. ",
+                        "All values are in the symbol's native trading currency.",
+                    ),
+                    "parameters": [
+                        {
+                            "name": "as_at",
+                            "in": "query",
+                            "schema": { "type": "string", "format": "date", "example": "2026-04-05" },
+                            "description": "Replay only events up to and including this date. Omit for the current state."
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Array of S104 pool states, one per symbol.",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/S104PoolState" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/investments/capital-gains": {
+                "get": {
+                    "summary": "UK HMRC-compliant Capital Gains Tax report",
+                    "description": concat!(
+                        "Replays all investment events through HMRC's matching rules in strict order: ",
+                        "same-day FIFO, 30-day Bed & Breakfast, S104 pool, then any unmatched remainder. ",
+                        "ISA and Pension accounts are excluded. ",
+                        "Per-event fields stay in the trade's native currency; only `summary` and ",
+                        "`symbol_summaries` are converted into the user's preferred currency via the ",
+                        "`currencies` table. ",
+                        "If `tax_year` is provided it overrides `start_date` and `end_date`."
+                    ),
+                    "parameters": [
+                        {
+                            "name": "tax_year",
+                            "in": "query",
+                            "schema": { "type": "string", "example": "2024-25" },
+                            "description": "UK tax year in `YYYY-YY` or `YYYY-YYYY` form. Resolves to 6 Apr YYYY1 to 5 Apr YYYY2."
+                        },
+                        {
+                            "name": "start_date",
+                            "in": "query",
+                            "schema": { "type": "string", "format": "date" },
+                            "description": "Custom range start (used when tax_year is omitted)."
+                        },
+                        {
+                            "name": "end_date",
+                            "in": "query",
+                            "schema": { "type": "string", "format": "date" },
+                            "description": "Custom range end (used when tax_year is omitted)."
+                        },
+                        {
+                            "name": "as_at",
+                            "in": "query",
+                            "schema": { "type": "string", "format": "date" },
+                            "description": "Truncate the event replay at this date (point-in-time view)."
+                        },
+                        {
+                            "name": "account_id",
+                            "in": "query",
+                            "schema": { "type": "string" },
+                            "description": "Restrict fetched events to one account. Pool math remains symbol-global across all fetched accounts."
+                        },
+                        {
+                            "name": "symbol",
+                            "in": "query",
+                            "schema": { "type": "string" },
+                            "description": "Restrict fetched events to one symbol."
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Full CGT report: summary, per-symbol breakdown, realized disposals, and final pool states.",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/CapitalGainsResponse" }
+                                }
+                            }
+                        },
+                        "400": {
+                            "description": "Invalid tax_year format or invalid date range.",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/Error" }
                                 }
                             }
                         }

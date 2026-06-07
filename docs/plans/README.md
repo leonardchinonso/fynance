@@ -2,32 +2,42 @@
 
 A personal finance tracker written in Rust with a local React web UI. Ingests bank CSV statements, categorizes transactions, stores everything in a per-user SQLite database, and serves a browser UI via a loopback-only Axum server.
 
-**The scope changed after Prompt 1.1**: Obsidian integration is dropped in favor of a purpose-built UI, and portfolio tracking is added. See `../design/` for the updated architecture rationale. Current active work is tracked in `19_v0_burndown.md`.
+**The scope changed after Prompt 1.1**: Obsidian integration is dropped in favor of a purpose-built UI, and portfolio tracking is added. See `../design/` for the updated architecture rationale. V0 shipped; current work is on V1 features (CGT engine, multi-currency frontend) and the post-V0 roadmap.
 
-## Plan Documents
+## Active Plans
+
+| # | File | Contents |
+|---|---|---|
+| 20 | [20_post_v0_plans.md](20_post_v0_plans.md) | Post-V0 roadmap (V1, V2, V3+) and unversioned ideas. Start here. |
+| 22 | [22_multi_currency.md](22_multi_currency.md) | Multi-currency support spec. Backend shipped; frontend pending. |
+| 23 | [23_capital_gains_v1.md](23_capital_gains_v1.md) | UK CGT engine V1: backend shipped, V1 finishing work in progress. |
+
+## Archived Plans
+
+Closed, superseded, and dropped plans live in [`archive/`](archive/). They are kept for historical context and to preserve cross-references from in-flight work, but no new implementation should be derived from them.
 
 | # | File | Contents | Status |
 |---|---|---|---|
-| 01 | [01_architecture.md](01_architecture.md) | Axum + React system architecture, module graph, CLI surface | **Closed** (built) |
-| 02 | [02_data_model.md](02_data_model.md) | Rust types, full SQLite schema, queries | **Closed** (built, evolved via migrations) |
-| 03 | [03_importer.md](03_importer.md) | Monzo / Revolut / Lloyds CSV importer | **Superseded** by `10_llm_csv_import.md` |
-| 04 | [04_categorizer.md](04_categorizer.md) | Rules + Claude pipeline, taxonomy, data minimization | **Deferred** (external agents handle categorization for MVP) |
-| 05 | [05_obsidian_integration.md](05_obsidian_integration.md) | Obsidian setup | **Dropped** |
-| 06 | [06_budgeting.md](06_budgeting.md) | Budget engine, queries, API, UI layout | **Closed** (built: standing budgets, overrides, spending grid) |
-| 07 | [07_phases.md](07_phases.md) | Original CLI + Obsidian phased plan | **Superseded** by `08_mvp_phases_v2.md` |
-| 08 | [08_mvp_phases_v2.md](08_mvp_phases_v2.md) | Phased plan (Axum + React) | **Closed** (remaining items carried forward to 19) |
-| 09 | [09_backend_implementation_plan.md](09_backend_implementation_plan.md) | Backend MVP executable checklist | **Closed** (phases 1-2 built, 3-6 superseded by 12) |
-| 10 | [10_llm_csv_import.md](10_llm_csv_import.md) | LLM-based CSV import design | **Closed** (built, replaces bank-specific parsers) |
-| 11 | [11_frontend_backend_handover.md](11_frontend_backend_handover.md) | Full API and model contract between frontend and backend | **Closed** (audited into 13, remaining items in 19) |
-| 12 | [12_frontend_backend_consolidation.md](12_frontend_backend_consolidation.md) | Integrate frontend handover requirements into backend phases 3-6 | **Closed** (BE built, remaining items in 19 and 20) |
-| 13 | [13_frontend_backend_handover_unimplemented.md](13_frontend_backend_handover_unimplemented.md) | Audit of 11: which handover asks are not yet built | **Closed** (remaining items carried forward to 19) |
-| 14 | [14_holdings_consolidation_implementation.md](14_holdings_consolidation_implementation.md) | Consolidate portfolio_snapshots into holdings | **Closed** (built, portfolio_snapshots dropped) |
-| 15 | [15_portfolio_holdings_breakdown.md](15_portfolio_holdings_breakdown.md) | Deep-dive on portfolio and holdings architecture | Reference |
-| 16 | [16_fingerprint_and_snapshot_improvements.md](16_fingerprint_and_snapshot_improvements.md) | Datetime-level granularity for fingerprints and snapshots | **Closed** (built, migrations applied) |
-| 17 | [17_frontend_review.md](17_frontend_review.md) | Frontend review: UX bugs and missing flows | **Closed** (bug fixed, account creation UI in 19, CORS in 20) |
-| 18 | [18_project_brief.md](18_project_brief.md) | Project goals, key decisions, open questions | Reference |
-| 19 | [19_v0_burndown.md](19_v0_burndown.md) | V0 burndown: everything needed to ship | **Active** (start here) |
-| 20 | [20_post_v0_plans.md](20_post_v0_plans.md) | Post-V0 roadmap (V1, V2, V3+) and unversioned ideas | Reference |
+| 01 | [01_architecture.md](archive/01_architecture.md) | Axum + React system architecture, module graph, CLI surface | **Closed** (built) |
+| 02 | [02_data_model.md](archive/02_data_model.md) | Rust types, full SQLite schema, queries | **Closed** (built, evolved via migrations) |
+| 03 | [03_importer.md](archive/03_importer.md) | Monzo / Revolut / Lloyds CSV importer | **Superseded** by archive/10_llm_csv_import.md |
+| 04 | [04_categorizer.md](archive/04_categorizer.md) | Rules + Claude pipeline, taxonomy, data minimization | **Deferred** (external agents handle categorization for MVP) |
+| 05 | [05_obsidian_integration.md](archive/05_obsidian_integration.md) | Obsidian setup | **Dropped** |
+| 06 | [06_budgeting.md](archive/06_budgeting.md) | Budget engine, queries, API, UI layout | **Closed** (built) |
+| 07 | [07_phases.md](archive/07_phases.md) | Original CLI + Obsidian phased plan | **Superseded** by archive/08_mvp_phases_v2.md |
+| 08 | [08_mvp_phases_v2.md](archive/08_mvp_phases_v2.md) | MVP phased plan (Axum + React) | **Closed** (MVP shipped; remaining items carried forward to 19 → 22, 23) |
+| 09 | [09_backend_implementation_plan.md](archive/09_backend_implementation_plan.md) | Backend MVP executable checklist | **Closed** (phases 1-2 built, 3-6 superseded by 12) |
+| 10 | [10_llm_csv_import.md](archive/10_llm_csv_import.md) | LLM-based CSV import design | **Closed** (built, replaces bank-specific parsers) |
+| 11 | [11_frontend_backend_handover.md](archive/11_frontend_backend_handover.md) | Full API and model contract between frontend and backend | **Closed** (audited into 13) |
+| 12 | [12_frontend_backend_consolidation.md](archive/12_frontend_backend_consolidation.md) | Integrate frontend handover requirements into backend phases 3-6 | **Closed** (BE built) |
+| 13 | [13_frontend_backend_handover_unimplemented.md](archive/13_frontend_backend_handover_unimplemented.md) | Audit of 11: which handover asks are not yet built | **Closed** (remaining items in 19 → 22) |
+| 14 | [14_holdings_consolidation_implementation.md](archive/14_holdings_consolidation_implementation.md) | Consolidate portfolio_snapshots into holdings | **Closed** (built, portfolio_snapshots dropped) |
+| 15 | [15_portfolio_holdings_breakdown.md](archive/15_portfolio_holdings_breakdown.md) | Deep-dive on portfolio and holdings architecture | Reference |
+| 16 | [16_fingerprint_and_snapshot_improvements.md](archive/16_fingerprint_and_snapshot_improvements.md) | Datetime-level granularity for fingerprints and snapshots | **Closed** (built, migrations applied) |
+| 17 | [17_frontend_review.md](archive/17_frontend_review.md) | Frontend review: UX bugs and missing flows | **Closed** (bug fixed, account creation UI in 19, CORS in 20) |
+| 18 | [18_project_brief.md](archive/18_project_brief.md) | Project goals, key decisions, open questions | **Closed** (V0 shipped; remaining open questions superseded by 20) |
+| 19 | [19_v0_burndown.md](archive/19_v0_burndown.md) | V0 burndown: everything needed to ship | **Closed** (V0 shipped) |
+| 21 | [21_capital_gains_tax.md](archive/21_capital_gains_tax.md) | UK CGT design rationale and HMRC background | **Closed** (V1 engine shipped; superseded by 23 for implementation tracking) |
 
 ## Tech Stack
 
