@@ -33,6 +33,12 @@ Output rules:
 - row_confidence: 0.90+ if balance was explicitly stated in document;
   0.70-0.90 if computed from transactions with a known anchor;
   0.50-0.70 if computed without an anchor (relative only).
+- derived: `false` ONLY when the document explicitly states the balance for
+  this exact period boundary (case 3a above). `true` whenever you computed
+  the value — by accumulating transactions, working back from an anchor, or
+  any other inference. This is a hard boolean, not a confidence band:
+  if the value isn't a verbatim read from the document at that date, set
+  `derived: true`.
 - detection_confidence: 0.90+ if transactions clearly span the period and computation
   is reliable; lower if data is sparse or ambiguous.
 

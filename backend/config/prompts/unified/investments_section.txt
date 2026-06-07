@@ -1,0 +1,22 @@
+INVESTMENTS (requested)
+An investment event is one transactional action on a security: a buy, a sell, a dividend, a stock split, or a transfer in/out.
+
+Each entry has this shape:
+```
+{
+  "event_type": "buy",
+  "symbol": "VUSA",
+  "date": "2026-03-15T00:00:00",
+  "quantity": "10",
+  "price_per_share": "76.32",
+  "total_value": "763.20",
+  "fee": "0",
+  "currency": "GBP",
+  "notes": null,
+  "row_confidence": 0.97
+}
+```
+
+`event_type` is one of: `buy`, `sell`, `dividend`, `split`, `transfer_in`, `transfer_out`.
+
+Dates use ISO 8601 datetime (`YYYY-MM-DDTHH:MM:SS`); use `T00:00:00` if only the date is given. `fee` may be `"0"` if none.

@@ -11,7 +11,7 @@ use crate::server::state::AppState;
 use crate::server::validation::{
     parse_date, split_csv_param, validate_date_range, validate_pagination,
 };
-use crate::storage::TransactionFilters;
+use crate::storage::{SortDir, TransactionFilters, TransactionSort};
 use crate::util::fx::FxRateMap;
 
 // ── GET /api/transactions ─────────────────────────────────────────────────────
@@ -26,6 +26,10 @@ pub struct ListTransactionsQuery {
     pub profile_id: Option<String>,
     /// Filter by category source: "rule" | "agent" | "manual"
     pub category_source: Option<String>,
+    /// Sort column: "date" | "amount" | "category". Default is newest-first by date.
+    pub sort: Option<String>,
+    /// Sort direction: "asc" | "desc". Default is "desc".
+    pub sort_dir: Option<String>,
     #[serde(default = "default_page")]
     pub page: u32,
     #[serde(default = "default_limit")]
@@ -68,6 +72,22 @@ pub async fn list_transactions(
         })?),
     };
 
+    let sort = match q.sort.as_deref() {
+        None | Some("") => None,
+        Some(raw) => Some(TransactionSort::parse(raw).ok_or_else(|| {
+            AppError::bad_request(
+                "sort must be one of: date, amount, category",
+                "invalid_sort",
+            )
+        })?),
+    };
+    let sort_dir = match q.sort_dir.as_deref() {
+        None | Some("") => SortDir::Desc,
+        Some(raw) => SortDir::parse(raw).ok_or_else(|| {
+            AppError::bad_request("sort_dir must be 'asc' or 'desc'", "invalid_sort_dir")
+        })?,
+    };
+
     let filters = TransactionFilters {
         start,
         end,
@@ -76,6 +96,8 @@ pub async fn list_transactions(
         search: q.search.filter(|s| !s.is_empty()),
         profile_id: q.profile_id.filter(|s| !s.is_empty()),
         category_source,
+        sort,
+        sort_dir,
         page: q.page,
         limit: q.limit,
     };

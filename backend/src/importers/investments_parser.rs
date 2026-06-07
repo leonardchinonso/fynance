@@ -4,7 +4,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::provider::{LlmProvider, ModelTier};
+use super::provider::{LlmProvider, ModelTier, ProviderCallResult};
+use crate::model::Agent;
 
 const INVESTMENTS_PROMPT: &str = include_str!("../../config/prompts/investments_parser.txt");
 const MAX_CSV_BYTES: usize = 200_000;
@@ -120,7 +121,8 @@ impl LlmInvestmentsParser {
         raw: &str,
         filename: &str,
         user_hint: Option<&str>,
-    ) -> Result<ParsedInvestments> {
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedInvestments, ProviderCallResult)> {
         let content = if raw.len() > MAX_CSV_BYTES {
             tracing::warn!(
                 filename,
@@ -140,7 +142,7 @@ impl LlmInvestmentsParser {
             user_msg = format!("User instructions: {hint}\n\n{user_msg}");
         }
 
-        let tool_input = self
+        let call = self
             .provider
             .chat_with_tools(
                 INVESTMENTS_PROMPT,
@@ -148,11 +150,12 @@ impl LlmInvestmentsParser {
                 "parse_investments",
                 tool_schema,
                 ModelTier::Standard,
+                agent_override,
             )
             .await?;
 
         let parsed: ParsedInvestments = super::deserialize_tool_use(
-            tool_input,
+            call.value.clone(),
             "investments parser",
             filename,
             "parse_investments",
@@ -165,7 +168,7 @@ impl LlmInvestmentsParser {
             "LLM parsed investment events"
         );
 
-        Ok(parsed)
+        Ok((parsed, call))
     }
 }
 
@@ -183,8 +186,18 @@ impl MockInvestmentsParser {
         _raw: &str,
         _filename: &str,
         _user_hint: Option<&str>,
-    ) -> Result<ParsedInvestments> {
-        Ok(self.result.clone())
+        _agent_override: Option<Agent>,
+    ) -> Result<(ParsedInvestments, ProviderCallResult)> {
+        Ok((
+            self.result.clone(),
+            ProviderCallResult {
+                value: Value::Null,
+                usage: super::provider::TokenUsage::default(),
+                model: "mock".to_string(),
+                duration_ms: 0,
+                stop_reason: None,
+            },
+        ))
     }
 }
 
@@ -215,8 +228,8 @@ mod tests {
         let mock = MockInvestmentsParser {
             result: parsed.clone(),
         };
-        let result = mock
-            .extract_investments("anything", "test.csv", None)
+        let (result, _call) = mock
+            .extract_investments("anything", "test.csv", None, None)
             .await
             .unwrap();
         assert_eq!(result.rows.len(), 1);

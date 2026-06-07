@@ -65,6 +65,8 @@ export interface ApiService {
     filters: CategoryTotalFilters
   ): Promise<CategoryTotal[]>
   getCategories(): Promise<string[]>
+  /** Leaf categories as `{id, name}` where name is `"Parent: Child"`. */
+  getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>>
   getAccounts(profileId?: string): Promise<Account[]>
 
   // Budget
@@ -101,7 +103,8 @@ export interface ApiService {
     start: string,
     end: string,
     granularity?: Granularity,
-    profileId?: string
+    profileId?: string,
+    excludeCategoryIds?: string[]
   ): Promise<CashFlowMonth[]>
 
   // Account balances (per-account monthly balances for delta calculations)

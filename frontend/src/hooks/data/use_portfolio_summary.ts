@@ -19,21 +19,26 @@ export interface PortfolioSummaryData {
  * Fetches portfolio summary, history, cash flow, and holdings in parallel.
  * Used by the Overview and Charts views.
  *
+ * `excludeCategoryIds` filters the cash-flow income/spending totals only.
+ * Caller is responsible for expanding parent categories to their leaves.
+ *
  * - Hard dep: `profileId`
- * - Soft deps: `start`, `end`, `granularity`
+ * - Soft deps: `start`, `end`, `granularity`, `excludeCategoryIds`
  */
 export function usePortfolioSummary(
   start: string,
   end: string,
   granularity: Granularity,
   profileId: string | undefined,
+  excludeCategoryIds: string[] = [],
 ): RemoteData<PortfolioSummaryData> {
+  const excludeKey = excludeCategoryIds.join(",")
   const [data] = useRemoteData(
     async () => {
       const [portfolio, history, cashFlow, currencies] = await Promise.all([
         api.getPortfolio(profileId),
         api.getPortfolioHistory(start, end, granularity, profileId),
-        api.getCashFlow(start, end, granularity, profileId),
+        api.getCashFlow(start, end, granularity, profileId, excludeCategoryIds),
         api.getCurrencies(),
       ])
 
@@ -44,7 +49,7 @@ export function usePortfolioSummary(
 
       return { portfolio, history, cashFlow, allHoldings, currencies }
     },
-    { hard: [profileId], soft: [start, end, granularity] },
+    { hard: [profileId], soft: [start, end, granularity, excludeKey] },
   )
   return data
 }

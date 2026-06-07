@@ -13,9 +13,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::provider::{LlmProvider, ModelTier};
+use super::provider::{LlmProvider, ModelTier, ProviderCallResult};
 use super::unified::UnifiedStatementRow;
-use crate::model::BankFormat;
+use crate::model::{Agent, BankFormat};
 
 // The system prompt is pinned in the repo so it can be reviewed in git and
 // diffed like any other source file.
@@ -47,7 +47,8 @@ pub trait StatementParser: Send + Sync {
         raw: &str,
         filename: &str,
         user_hint: Option<&str>,
-    ) -> Result<ParsedStatement>;
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedStatement, ProviderCallResult)>;
 }
 
 // ── LLM implementation ────────────────────────────────────────────────────────
@@ -90,7 +91,8 @@ impl StatementParser for LlmStatementParser {
         raw: &str,
         filename: &str,
         user_hint: Option<&str>,
-    ) -> Result<ParsedStatement> {
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedStatement, ProviderCallResult)> {
         let content = if raw.len() > MAX_CSV_BYTES {
             tracing::warn!(
                 filename,
@@ -117,7 +119,7 @@ impl StatementParser for LlmStatementParser {
             "parsing statement"
         );
 
-        let tool_input = self
+        let call = self
             .provider
             .chat_with_tools(
                 SYSTEM_PROMPT,
@@ -125,11 +127,12 @@ impl StatementParser for LlmStatementParser {
                 "parse_bank_statement",
                 tool_schema,
                 ModelTier::Standard,
+                agent_override,
             )
             .await?;
 
         let parsed: ParsedStatement = super::deserialize_tool_use(
-            tool_input,
+            call.value.clone(),
             "bank statement parser",
             filename,
             "parse_bank_statement",
@@ -143,7 +146,7 @@ impl StatementParser for LlmStatementParser {
             "LLM parsed statement"
         );
 
-        Ok(parsed)
+        Ok((parsed, call))
     }
 }
 
@@ -259,8 +262,18 @@ impl StatementParser for MockStatementParser {
         _raw: &str,
         _filename: &str,
         _user_hint: Option<&str>,
-    ) -> Result<ParsedStatement> {
-        Ok(self.result.clone())
+        _agent_override: Option<Agent>,
+    ) -> Result<(ParsedStatement, ProviderCallResult)> {
+        Ok((
+            self.result.clone(),
+            ProviderCallResult {
+                value: serde_json::Value::Null,
+                usage: super::provider::TokenUsage::default(),
+                model: "mock".to_string(),
+                duration_ms: 0,
+                stop_reason: None,
+            },
+        ))
     }
 }
 
@@ -293,8 +306,8 @@ mod provider_tests {
 
         let provider = MockProvider::new(mock_input);
         let parser = LlmStatementParser::new(provider as Arc<_>);
-        let result = parser
-            .parse("some csv content", "test.csv", None)
+        let (result, _call) = parser
+            .parse("some csv content", "test.csv", None, None)
             .await
             .unwrap();
 
@@ -335,6 +348,8 @@ mod tests {
             notes: None,
             reference: None,
             row_confidence: confidence,
+            category_id: None,
+            category_confidence: None,
         }
     }
 
@@ -375,7 +390,7 @@ mod tests {
             rows: vec![make_row("2026-03-10", "Test", "-1.00", 0.9)],
         };
         let mock = MockStatementParser { result: stmt };
-        let parsed = mock.parse("anything", "test.csv", None).await.unwrap();
+        let (parsed, _call) = mock.parse("anything", "test.csv", None, None).await.unwrap();
         assert_eq!(parsed.detected_bank, BankFormat::Unknown);
         assert_eq!(parsed.rows.len(), 1);
     }

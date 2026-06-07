@@ -20,6 +20,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 2,
@@ -35,6 +36,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 3,
@@ -50,6 +52,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 4,
@@ -65,6 +68,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 5,
@@ -80,6 +84,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 6,
@@ -95,6 +100,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   // Sam's T212 ISA
   {
@@ -111,6 +117,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 8,
@@ -126,6 +133,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 9,
@@ -141,6 +149,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 10,
@@ -156,6 +165,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-20",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   // Alex's pension holdings
   {
@@ -172,6 +182,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-01",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 12,
@@ -187,6 +198,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-01",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   // Sam's pension holdings
   {
@@ -203,6 +215,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-01",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
   {
     id: 14,
@@ -218,5 +231,6 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     as_of: "2026-03-01",
     sub_account: null,
     is_closed: false,
+    derived: false,
   },
 ]

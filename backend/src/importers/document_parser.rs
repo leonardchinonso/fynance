@@ -16,13 +16,13 @@ use crate::importers::llm_parser::StatementParser;
 use crate::importers::pdf_parser::{
     PdfHoldingsParser, PdfInvestmentsParser, PdfPeriodicHoldingsParser, PdfStatementParser,
 };
-use crate::importers::provider::LlmProvider;
+use crate::importers::provider::{LlmProvider, ProgressTx};
 use crate::importers::unified::UnifiedStatementRow;
 use crate::model::{
-    BankFormat, CategorySource, CreateInvestmentEventBody, Holding, HoldingType,
+    Agent, BankFormat, CategorySource, CreateInvestmentEventBody, Holding, HoldingType,
     HoldingsImportPayload, HoldingsIngestionResult, ImportPayload, ImportTransaction,
     IngestionMetadata, IngestionPreview, IngestionStatus, InvestmentIngestionResult,
-    InvestmentsImportPayload, TransactionIngestionResult,
+    InvestmentsImportPayload, KnownHolding, TransactionIngestionResult,
     TransactionPreviewStatus,
 };
 use crate::storage::Db;
@@ -58,12 +58,48 @@ pub enum ContentType {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "lowercase")]
+pub enum ParseMode {
+    #[default]
+    Split,
+    Unified,
+}
+
+/// **EXPERIMENTAL.** Opt-in knobs for trying alternative parsing strategies
+/// and model agents. May be renamed or removed once the unified-mode
+/// prototype is promoted or dropped.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ExperimentalParseOptions {
+    #[serde(default)]
+    pub mode: ParseMode,
+    /// Override every LLM call's model. `None` uses per-parser defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Agent>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct ParseHints {
     pub return_type: ReturnType,
+    /// **EXPERIMENTAL.** Opt-in. See [`ExperimentalParseOptions`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experimental: Option<ExperimentalParseOptions>,
+    /// Free-text hint surfaced to every parser's prompt verbatim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+}
+
+impl ParseHints {
+    pub fn mode(&self) -> ParseMode {
+        self.experimental.map(|e| e.mode).unwrap_or_default()
+    }
+
+    pub fn agent(&self) -> Option<Agent> {
+        self.experimental.and_then(|e| e.agent)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
@@ -125,6 +161,7 @@ pub struct ExtractionResult {
     pub investments: Vec<ParsedInvestmentRow>,
     pub detected_bank: BankFormat,
     pub detection_confidence: f32,
+    pub calls: Vec<crate::model::ParserCallCost>,
 }
 
 #[derive(Debug)]
@@ -143,9 +180,11 @@ pub async fn run_multi_file_pipeline(
     hints: &ParseHints,
     _account_institution: &str,
     provider: Arc<dyn LlmProvider>,
+    progress_tx: Option<ProgressTx>,
 ) -> Result<PipelineOutcome> {
     let content_types = hints.return_type.to_content_types();
-    let extraction = extract_all_parallel(documents, &content_types, hints, provider).await?;
+    let extraction =
+        extract_all_parallel(documents, &content_types, hints, provider, progress_tx).await?;
     Ok(PipelineOutcome::Success { extraction })
 }
 
@@ -166,6 +205,7 @@ pub fn build_multi_preview(
 
     let institution_detected = Some(account_institution.to_string());
     let detection_confidence = extraction.detection_confidence;
+    let estimated_price = crate::importers::pricing::estimated_price(extraction.calls.clone());
     let notes: Vec<String> = vec![];
 
     // ── Transaction deduplication ────────────────────────────────────────────
@@ -177,26 +217,42 @@ pub fn build_multi_preview(
             min_row_confidence,
         )?;
 
+        // API contract is id-only: resolve legacy name-only categories
+        // (Monzo CSV) to ids; ImportTransaction.category stays None.
         let import_transactions: Vec<ImportTransaction> = extraction
             .transactions
             .iter()
             .filter(|r| r.row_confidence >= min_row_confidence)
-            .map(|r| ImportTransaction {
-                date: r.date,
-                description: r
-                    .merchant
-                    .as_deref()
-                    .filter(|m| !m.is_empty())
-                    .unwrap_or(&r.description)
-                    .to_string(),
-                amount: r.amount,
-                currency: Some(r.currency.clone()),
-                category: r.category.clone(),
-                category_id: None,
-                category_source: r.category.as_ref().map(|_| CategorySource::Rule),
-                notes: r.notes.clone(),
-                is_recurring: None,
-                exclude_from_summary: None,
+            .map(|r| {
+                let (category_id, category_source) = if let Some(ref id) = r.category_id {
+                    (Some(id.clone()), Some(CategorySource::Agent))
+                } else if let Some(ref name) = r.category {
+                    match db.resolve_category_by_name(name).ok().flatten() {
+                        Some(cat) if cat.parent_id.is_some() => {
+                            (Some(cat.id), Some(CategorySource::Rule))
+                        }
+                        _ => (None, None),
+                    }
+                } else {
+                    (None, None)
+                };
+                ImportTransaction {
+                    date: r.date,
+                    description: r
+                        .merchant
+                        .as_deref()
+                        .filter(|m| !m.is_empty())
+                        .unwrap_or(&r.description)
+                        .to_string(),
+                    amount: r.amount,
+                    currency: Some(r.currency.clone()),
+                    category: None, // id-only contract; backend resolves at insert time
+                    category_id,
+                    category_source,
+                    notes: r.notes.clone(),
+                    is_recurring: None,
+                    exclude_from_summary: None,
+                }
             })
             .collect();
 
@@ -237,6 +293,8 @@ pub fn build_multi_preview(
 
     // ── Holdings deduplication ───────────────────────────────────────────────
 
+    let known_holdings = load_known_holdings(db, account_id);
+
     let holdings_result = if !extraction.holdings.is_empty() {
         let holdings_with_account: Vec<Holding> = extraction
             .holdings
@@ -261,6 +319,7 @@ pub fn build_multi_preview(
                 account_id: account_id.to_string(),
                 holdings: holdings_with_account,
             }),
+            known_holdings,
         }
     } else {
         HoldingsIngestionResult {
@@ -269,6 +328,7 @@ pub fn build_multi_preview(
             modify: 0,
             rows: vec![],
             payload: None,
+            known_holdings,
         }
     };
 
@@ -335,6 +395,7 @@ pub fn build_multi_preview(
             processing_time_ms,
             notes,
             relationships_found: vec![],
+            estimated_price,
         },
         transactions: tx_result,
         holdings: holdings_result,
@@ -350,11 +411,13 @@ async fn extract_all_parallel(
     content_types: &[ContentType],
     hints: &ParseHints,
     provider: Arc<dyn LlmProvider>,
+    progress_tx: Option<ProgressTx>,
 ) -> Result<ExtractionResult> {
     let mut join_set: JoinSet<(String, ContentType, Result<ExtractionResult>)> = JoinSet::new();
 
     let user_hint = hints.hint.clone();
     let period = hints.return_type.holdings.period.clone();
+    let agent_override = hints.agent();
 
     let active_content_types: Vec<&ContentType> = content_types
         .iter()
@@ -385,13 +448,22 @@ async fn extract_all_parallel(
             let period_clone = period.clone();
             let provider_clone = provider.clone();
 
+            let task_id = format!("{}:{:?}", doc.filename, ct).to_lowercase();
+            let task_provider = match &progress_tx {
+                Some(tx) => provider_clone
+                    .with_progress(tx.clone(), Some(task_id))
+                    .unwrap_or(provider_clone),
+                None => provider_clone,
+            };
+
             join_set.spawn(async move {
                 let res = extract_single_file(
                     &doc_clone,
                     &ct_clone,
                     hint_clone.as_deref(),
                     period_clone.as_ref(),
-                    provider_clone,
+                    task_provider,
+                    agent_override,
                 )
                 .await;
                 (filename, ct_clone, res)
@@ -405,6 +477,7 @@ async fn extract_all_parallel(
         investments: vec![],
         detected_bank: BankFormat::Unknown,
         detection_confidence: 0.0,
+        calls: vec![],
     };
 
     let mut max_confidence: f32 = 0.0;
@@ -428,6 +501,7 @@ async fn extract_all_parallel(
                 merged.transactions.extend(extraction.transactions);
                 merged.holdings.extend(extraction.holdings);
                 merged.investments.extend(extraction.investments);
+                merged.calls.extend(extraction.calls);
                 if extraction.detection_confidence > max_confidence {
                     max_confidence = extraction.detection_confidence;
                     merged.detected_bank = extraction.detected_bank;
@@ -467,33 +541,39 @@ async fn extract_single_file(
     user_hint: Option<&str>,
     period: Option<&SnapshotPeriod>,
     provider: Arc<dyn LlmProvider>,
+    agent_override: Option<Agent>,
 ) -> Result<ExtractionResult> {
+    use crate::importers::pricing::parser_call_cost;
     match content_type {
         ContentType::Transactions => match doc.format {
             FileFormat::Pdf => {
                 let parser = PdfStatementParser::new(provider);
-                let parsed = parser
-                    .parse(&doc.raw_bytes, &doc.filename, user_hint)
+                let (parsed, call) = parser
+                    .parse(&doc.raw_bytes, &doc.filename, user_hint, agent_override)
                     .await?;
+                let cost = parser_call_cost("pdf_transactions", &call);
                 Ok(ExtractionResult {
                     transactions: parsed.rows,
                     holdings: vec![],
                     investments: vec![],
                     detected_bank: parsed.detected_bank,
                     detection_confidence: parsed.detection_confidence,
+                    calls: vec![cost],
                 })
             }
             FileFormat::Csv | FileFormat::Excel => {
                 let parser = crate::importers::llm_parser::LlmStatementParser::new(provider);
-                let parsed = parser
-                    .parse(&doc.text_content, &doc.filename, user_hint)
+                let (parsed, call) = parser
+                    .parse(&doc.text_content, &doc.filename, user_hint, agent_override)
                     .await?;
+                let cost = parser_call_cost("csv_transactions", &call);
                 Ok(ExtractionResult {
                     transactions: parsed.rows,
                     holdings: vec![],
                     investments: vec![],
                     detected_bank: parsed.detected_bank,
                     detection_confidence: parsed.detection_confidence,
+                    calls: vec![cost],
                 })
             }
         },
@@ -501,9 +581,10 @@ async fn extract_single_file(
             FileFormat::Pdf => match period {
                 Some(p) => {
                     let parser = PdfPeriodicHoldingsParser::new(provider);
-                    let parsed = parser
-                        .extract(&doc.raw_bytes, &doc.filename, p, user_hint)
+                    let (parsed, call) = parser
+                        .extract(&doc.raw_bytes, &doc.filename, p, user_hint, agent_override)
                         .await?;
+                    let cost = parser_call_cost("pdf_periodic_holdings", &call);
                     let holdings = convert_parsed_holdings(&parsed)?;
                     Ok(ExtractionResult {
                         transactions: vec![],
@@ -511,13 +592,15 @@ async fn extract_single_file(
                         investments: vec![],
                         detected_bank: BankFormat::Unknown,
                         detection_confidence: parsed.detection_confidence,
+                        calls: vec![cost],
                     })
                 }
                 None => {
                     let parser = PdfHoldingsParser::new(provider);
-                    let parsed = parser
-                        .extract(&doc.raw_bytes, &doc.filename, user_hint)
+                    let (parsed, call) = parser
+                        .extract(&doc.raw_bytes, &doc.filename, user_hint, agent_override)
                         .await?;
+                    let cost = parser_call_cost("pdf_holdings", &call);
                     let holdings = convert_parsed_holdings(&parsed)?;
                     Ok(ExtractionResult {
                         transactions: vec![],
@@ -525,15 +608,23 @@ async fn extract_single_file(
                         investments: vec![],
                         detected_bank: BankFormat::Unknown,
                         detection_confidence: parsed.detection_confidence,
+                        calls: vec![cost],
                     })
                 }
             },
             FileFormat::Csv | FileFormat::Excel => match period {
                 Some(p) => {
                     let parser = LlmPeriodicHoldingsParser::new(provider);
-                    let parsed = parser
-                        .extract_periodic_holdings(&doc.text_content, &doc.filename, p, user_hint)
+                    let (parsed, call) = parser
+                        .extract_periodic_holdings(
+                            &doc.text_content,
+                            &doc.filename,
+                            p,
+                            user_hint,
+                            agent_override,
+                        )
                         .await?;
+                    let cost = parser_call_cost("csv_periodic_holdings", &call);
                     let holdings = convert_parsed_holdings(&parsed)?;
                     Ok(ExtractionResult {
                         transactions: vec![],
@@ -541,13 +632,20 @@ async fn extract_single_file(
                         investments: vec![],
                         detected_bank: BankFormat::Unknown,
                         detection_confidence: parsed.detection_confidence,
+                        calls: vec![cost],
                     })
                 }
                 None => {
                     let parser = LlmHoldingsParser::new(provider);
-                    let parsed = parser
-                        .extract_holdings(&doc.text_content, &doc.filename, user_hint)
+                    let (parsed, call) = parser
+                        .extract_holdings(
+                            &doc.text_content,
+                            &doc.filename,
+                            user_hint,
+                            agent_override,
+                        )
                         .await?;
+                    let cost = parser_call_cost("csv_holdings", &call);
                     let holdings = convert_parsed_holdings(&parsed)?;
                     Ok(ExtractionResult {
                         transactions: vec![],
@@ -555,6 +653,7 @@ async fn extract_single_file(
                         investments: vec![],
                         detected_bank: BankFormat::Unknown,
                         detection_confidence: parsed.detection_confidence,
+                        calls: vec![cost],
                     })
                 }
             },
@@ -562,26 +661,37 @@ async fn extract_single_file(
         ContentType::Investments => match doc.format {
             FileFormat::Pdf => {
                 let parser = PdfInvestmentsParser::new(provider);
-                let parsed = parser.extract(&doc.raw_bytes, &doc.filename, user_hint).await?;
+                let (parsed, call) = parser
+                    .extract(&doc.raw_bytes, &doc.filename, user_hint, agent_override)
+                    .await?;
+                let cost = parser_call_cost("pdf_investments", &call);
                 Ok(ExtractionResult {
                     transactions: vec![],
                     holdings: vec![],
                     investments: parsed.rows,
                     detected_bank: BankFormat::Unknown,
                     detection_confidence: parsed.detection_confidence,
+                    calls: vec![cost],
                 })
             }
             FileFormat::Csv | FileFormat::Excel => {
                 let parser = LlmInvestmentsParser::new(provider);
-                let parsed = parser
-                    .extract_investments(&doc.text_content, &doc.filename, user_hint)
+                let (parsed, call) = parser
+                    .extract_investments(
+                        &doc.text_content,
+                        &doc.filename,
+                        user_hint,
+                        agent_override,
+                    )
                     .await?;
+                let cost = parser_call_cost("csv_investments", &call);
                 Ok(ExtractionResult {
                     transactions: vec![],
                     holdings: vec![],
                     investments: parsed.rows,
                     detected_bank: BankFormat::Unknown,
                     detection_confidence: parsed.detection_confidence,
+                    calls: vec![cost],
                 })
             }
         },
@@ -589,9 +699,34 @@ async fn extract_single_file(
     }
 }
 
+// ── Known-holdings lookup ──────────────────────────────────────────────────
+
+/// Latest open snapshot per distinct (symbol, sub_account) for one account,
+/// shaped for the holdings preview's symbol picker and diff column. Silent on
+/// errors: an empty list just means the picker falls back to free-text.
+fn load_known_holdings(db: &Db, account_id: &str) -> Vec<KnownHolding> {
+    let today = chrono::Local::now().date_naive();
+    db.get_holdings_for_summary(today, None)
+        .map(|rows| {
+            rows.into_iter()
+                .filter(|r| r.holding.account_id == account_id && !r.holding.is_closed)
+                .map(|r| KnownHolding {
+                    symbol: r.holding.symbol,
+                    name: r.holding.name,
+                    holding_type: r.holding.holding_type,
+                    currency: r.holding.currency,
+                    sub_account: r.holding.sub_account,
+                    last_value: r.holding.value.to_string(),
+                    last_as_of: r.holding.as_of.format("%Y-%m-%d").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 // ── Holdings conversion ─────────────────────────────────────────────────────
 
-fn convert_parsed_holdings(parsed: &ParsedHoldings) -> Result<Vec<Holding>> {
+pub(crate) fn convert_parsed_holdings(parsed: &ParsedHoldings) -> Result<Vec<Holding>> {
     let now = Local::now().naive_local();
     let mut holdings = Vec::new();
 
@@ -648,6 +783,7 @@ fn convert_parsed_holdings(parsed: &ParsedHoldings) -> Result<Vec<Holding>> {
             short_name: Some(row.symbol.clone()),
             sub_account: row.sub_account.clone(),
             is_closed: false,
+            derived: row.derived,
         });
     }
 
@@ -683,6 +819,7 @@ mod tests {
             investments: vec![],
             detected_bank: BankFormat::Unknown,
             detection_confidence: 0.0,
+            calls: vec![],
         };
         assert!(result.investments.is_empty());
     }
@@ -836,6 +973,7 @@ mod tests {
                 },
                 investments: false,
             },
+            experimental: None,
             hint: None,
         };
         // is_valid() passes (holdings.enabled=true) but the route rejects period without transactions
@@ -860,6 +998,7 @@ mod tests {
                     sub_account: None,
                     as_of: None,
                     row_confidence: 0.95,
+                    derived: false,
                 },
                 super::super::holdings_parser::ParsedHoldingRow {
                     symbol: "BAD".to_string(),
@@ -872,6 +1011,7 @@ mod tests {
                     sub_account: None,
                     as_of: None,
                     row_confidence: 0.50,
+                    derived: false,
                 },
             ],
         };
@@ -896,6 +1036,7 @@ mod tests {
                 sub_account: None,
                 as_of: None,
                 row_confidence: 0.90,
+                derived: false,
             }],
         };
 
@@ -920,6 +1061,7 @@ mod tests {
                 sub_account: None,
                 as_of: None,
                 row_confidence: 0.85,
+                derived: false,
             }],
         };
 

@@ -1,5 +1,5 @@
 import { api } from "@/api/client"
-import type { CategoryTotal, CategoryTotalFilters, PaginatedResponse, Transaction, TransactionFilters } from "@/types"
+import type { CategoryTotal, CategoryTotalFilters, PaginatedResponse, SortDir, Transaction, TransactionFilters, TransactionSortColumn } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { useRemoteData } from "@/hooks/use_remote_data"
 
@@ -13,7 +13,7 @@ export interface TransactionsData {
  * Fetches paginated transaction rows and an account name map in parallel.
  *
  * - Hard dep: `profileId`
- * - Soft deps: all filter values (date range, accounts, categories, search, pagination)
+ * - Soft deps: all filter values (date range, accounts, categories, search, pagination, sort)
  */
 export function useTransactions(
   start: string,
@@ -24,6 +24,8 @@ export function useTransactions(
   page: number,
   pageSize: number,
   profileId: string | undefined,
+  sort: TransactionSortColumn | undefined,
+  sortDir: SortDir,
 ): RemoteData<TransactionsData> {
   const accountsKey = selectedAccounts.join(",")
   const categoriesKey = selectedCategories.join(",")
@@ -39,6 +41,8 @@ export function useTransactions(
         page,
         limit: pageSize,
         profile_id: profileId,
+        sort,
+        sort_dir: sort ? sortDir : undefined,
       }
       const [result, accounts] = await Promise.all([
         api.getTransactions(filters),
@@ -48,7 +52,10 @@ export function useTransactions(
       for (const a of accounts) accountNameMap[a.id] = a.name
       return { result, accountNameMap }
     },
-    { hard: [profileId], soft: [start, end, accountsKey, categoriesKey, search, page, pageSize] },
+    {
+      hard: [profileId],
+      soft: [start, end, accountsKey, categoriesKey, search, page, pageSize, sort ?? "", sortDir],
+    },
   )
   return data
 }

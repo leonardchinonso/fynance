@@ -1,0 +1,12 @@
+OUTPUT SHAPE
+You MUST call the `extract_unified` tool exactly once. Its input is an object with three required arrays:
+
+```
+{
+  "transactions": [...],
+  "holdings": [...],
+  "investments": [...]
+}
+```
+
+All three arrays MUST always be present in the tool input. Use `[]` for any section that is not requested or has no entries.

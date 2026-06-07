@@ -534,6 +534,13 @@ pub struct Holding {
     pub sub_account: Option<String>,
     #[serde(default)]
     pub is_closed: bool,
+    /// Import-time provenance: `true` when this snapshot was computed/inferred
+    /// from other data (e.g. interpolated from transactions or neighbouring
+    /// period balances), `false` when read directly from the source document.
+    /// Not persisted to SQLite; surfaces in the import preview only and
+    /// defaults to `false` when round-tripped through the API or read back.
+    #[serde(default)]
+    pub derived: bool,
 }
 
 /// Internal row type used only by `get_holdings_for_summary` -- not serialized.
@@ -558,6 +565,12 @@ pub struct HoldingPreview {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_value: Option<String>,
+    /// True when the underlying snapshot was computed/inferred rather than
+    /// read directly from the source document. Drives the "Source" badge in
+    /// the import preview. Always `false` for previews that did not come from
+    /// the LLM extraction pipeline (e.g. the user-driven /api/holdings preview).
+    #[serde(default)]
+    pub derived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -960,6 +973,12 @@ pub struct TransactionPreviewRow {
     pub existing_description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_reason: Option<String>,
+    /// FK to categories.id (leaf). Frontend resolves the display name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<String>,
+    /// LLM confidence in the category assignment, [0.0, 1.0]. Unified mode only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_confidence: Option<f32>,
 }
 
 /// Full response from a transaction import dryrun.
@@ -977,6 +996,56 @@ pub struct TransactionImportPreview {
     pub rows_error: u64,
     /// Parsed payload ready for confirmation via `POST /api/import`.
     pub payload: ImportPayload,
+}
+
+// ── Parse cost / agent selection ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "lowercase")]
+pub enum Agent {
+    Haiku,
+    Sonnet,
+    Opus,
+}
+
+/// Cost of a single LLM call made during a parse run.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ParserCallCost {
+    /// Parser id, e.g. "csv_transactions", "pdf_holdings", "unified".
+    pub parser: String,
+    pub agent: Agent,
+    pub model: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub duration_ms: u64,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    /// Always "USD". Frontend converts for display.
+    pub currency: String,
+}
+
+/// Per-call breakdown plus total for a parse run.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct EstimatedPrice {
+    pub calls: Vec<ParserCallCost>,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total: Decimal,
+    pub currency: String,
+}
+
+impl Default for EstimatedPrice {
+    fn default() -> Self {
+        Self {
+            calls: Vec::new(),
+            total: Decimal::ZERO,
+            currency: "USD".to_string(),
+        }
+    }
 }
 
 // ── Ingestion (2-stage import redesign) ──────────────────────────────────────
@@ -1014,6 +1083,8 @@ pub struct IngestionMetadata {
     pub notes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relationships_found: Vec<String>,
+    #[serde(default)]
+    pub estimated_price: EstimatedPrice,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1035,6 +1106,31 @@ pub struct HoldingsIngestionResult {
     pub modify: usize,
     pub rows: Vec<HoldingPreview>,
     pub payload: Option<HoldingsImportPayload>,
+    /// Latest open snapshot per distinct (symbol, sub_account) already on this
+    /// account in the DB. Drives the Holdings preview's symbol picker
+    /// (autocomplete vs free-text) and the "vs prev" diff column on each row.
+    /// Empty when the account has no holdings yet.
+    #[serde(default)]
+    pub known_holdings: Vec<KnownHolding>,
+}
+
+/// Compact summary of an account's most recent open snapshot for a given
+/// `(symbol, sub_account)`. Sent on the holdings preview response so the
+/// frontend can offer existing symbols as suggestions and show diff-from-prev
+/// without a second round-trip.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct KnownHolding {
+    pub symbol: String,
+    pub name: String,
+    pub holding_type: HoldingType,
+    pub currency: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_account: Option<String>,
+    /// Last value for this holding as a decimal string.
+    pub last_value: String,
+    /// ISO date of the last snapshot (`YYYY-MM-DD`).
+    pub last_as_of: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

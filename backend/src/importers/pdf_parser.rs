@@ -6,7 +6,8 @@ use super::document_parser::SnapshotPeriod;
 use super::holdings_parser::ParsedHoldings;
 use super::investments_parser::{ParsedInvestments, build_investments_tool_schema};
 use super::llm_parser::ParsedStatement;
-use super::provider::LlmProvider;
+use super::provider::{LlmProvider, ProviderCallResult};
+use crate::model::Agent;
 
 const STATEMENT_PROMPT: &str = include_str!("../../config/prompts/statement_parser.txt");
 const HOLDINGS_PROMPT: &str = include_str!("../../config/prompts/holdings_parser.txt");
@@ -30,7 +31,8 @@ impl PdfStatementParser {
         pdf_bytes: &[u8],
         filename: &str,
         user_hint: Option<&str>,
-    ) -> Result<ParsedStatement> {
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedStatement, ProviderCallResult)> {
         let tool_schema = super::llm_parser::build_tool_schema();
 
         let mut text_supplement = format!("filename: {filename}");
@@ -45,7 +47,7 @@ impl PdfStatementParser {
             "sending PDF for transaction extraction"
         );
 
-        let tool_input = self
+        let call = self
             .provider
             .chat_with_pdf_and_tools(
                 STATEMENT_PROMPT,
@@ -53,12 +55,13 @@ impl PdfStatementParser {
                 &text_supplement,
                 "parse_bank_statement",
                 tool_schema,
+                agent_override,
             )
             .await?;
 
 
         let parsed: ParsedStatement = super::deserialize_tool_use(
-            tool_input,
+            call.value.clone(),
             "pdf bank statement parser",
             filename,
             "parse_bank_statement",
@@ -73,7 +76,7 @@ impl PdfStatementParser {
             ));
         }
 
-        Ok(parsed)
+        Ok((parsed, call))
     }
 }
 
@@ -93,7 +96,8 @@ impl PdfHoldingsParser {
         pdf_bytes: &[u8],
         filename: &str,
         user_hint: Option<&str>,
-    ) -> Result<ParsedHoldings> {
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedHoldings, ProviderCallResult)> {
         let tool_schema = super::holdings_parser::build_holdings_tool_schema();
 
         let mut text_supplement = format!("filename: {filename}");
@@ -101,7 +105,7 @@ impl PdfHoldingsParser {
             text_supplement = format!("User instructions: {hint}\n\n{text_supplement}");
         }
 
-        let tool_input = self
+        let call = self
             .provider
             .chat_with_pdf_and_tools(
                 HOLDINGS_PROMPT,
@@ -109,12 +113,13 @@ impl PdfHoldingsParser {
                 &text_supplement,
                 "parse_holdings",
                 tool_schema,
+                agent_override,
             )
             .await?;
 
 
         let parsed: ParsedHoldings = super::deserialize_tool_use(
-            tool_input,
+            call.value.clone(),
             "pdf holdings parser",
             filename,
             "parse_holdings",
@@ -128,7 +133,7 @@ impl PdfHoldingsParser {
             ));
         }
 
-        Ok(parsed)
+        Ok((parsed, call))
     }
 }
 
@@ -149,7 +154,8 @@ impl PdfPeriodicHoldingsParser {
         filename: &str,
         period: &SnapshotPeriod,
         user_hint: Option<&str>,
-    ) -> Result<ParsedHoldings> {
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedHoldings, ProviderCallResult)> {
         let tool_schema = super::periodic_holdings_parser::build_periodic_holdings_tool_schema();
 
         let period_str = match period {
@@ -164,7 +170,7 @@ impl PdfPeriodicHoldingsParser {
             text_supplement = format!("User instructions: {hint}\n\n{text_supplement}");
         }
 
-        let tool_input = self
+        let call = self
             .provider
             .chat_with_pdf_and_tools(
                 PERIODIC_HOLDINGS_PROMPT,
@@ -172,18 +178,19 @@ impl PdfPeriodicHoldingsParser {
                 &text_supplement,
                 "extract_periodic_holdings",
                 tool_schema,
+                agent_override,
             )
             .await?;
 
 
         let parsed: ParsedHoldings = super::deserialize_tool_use(
-            tool_input,
+            call.value.clone(),
             "pdf periodic holdings parser",
             filename,
             "extract_periodic_holdings",
         )?;
 
-        Ok(parsed)
+        Ok((parsed, call))
     }
 }
 
@@ -203,7 +210,8 @@ impl PdfInvestmentsParser {
         pdf_bytes: &[u8],
         filename: &str,
         user_hint: Option<&str>,
-    ) -> Result<ParsedInvestments> {
+        agent_override: Option<Agent>,
+    ) -> Result<(ParsedInvestments, ProviderCallResult)> {
         let tool_schema = build_investments_tool_schema();
 
         let mut text_supplement = format!("filename: {filename}");
@@ -218,7 +226,7 @@ impl PdfInvestmentsParser {
             "sending PDF for investment event extraction"
         );
 
-        let tool_input = self
+        let call = self
             .provider
             .chat_with_pdf_and_tools(
                 INVESTMENTS_PROMPT,
@@ -226,12 +234,13 @@ impl PdfInvestmentsParser {
                 &text_supplement,
                 "parse_investments",
                 tool_schema,
+                agent_override,
             )
             .await?;
 
 
         let parsed: ParsedInvestments = super::deserialize_tool_use(
-            tool_input,
+            call.value.clone(),
             "pdf investments parser",
             filename,
             "parse_investments",
@@ -245,6 +254,6 @@ impl PdfInvestmentsParser {
             ));
         }
 
-        Ok(parsed)
+        Ok((parsed, call))
     }
 }

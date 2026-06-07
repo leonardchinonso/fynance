@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge"
 import type { IngestionMetadata } from "@/bindings/IngestionMetadata"
+import { CostTag } from "./cost_tag"
 
 export function MetadataHeader({ metadata, fileCount }: { metadata: IngestionMetadata; fileCount: number }) {
   const confidence = Math.round(metadata.detection_confidence * 100)
@@ -30,6 +31,7 @@ export function MetadataHeader({ metadata, fileCount }: { metadata: IngestionMet
             <span className="text-xs text-muted-foreground tabular-nums">{(ms / 1000).toFixed(1)}s</span>
           </>
         )}
+        <CostTag price={metadata.estimated_price} className="ml-auto" />
       </div>
 
       {notes.length > 0 && (

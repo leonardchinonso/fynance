@@ -10,13 +10,24 @@ import {
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Input } from "@/components/ui/input"
-import { Trash2, RotateCcw } from "lucide-react"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { Trash2, RotateCcw, ChevronDown, Plus } from "lucide-react"
 import { cn, formatDate } from "@/lib/utils"
 import type { HoldingsIngestionResult } from "@/bindings/HoldingsIngestionResult"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { Holding } from "@/bindings/Holding"
 import type { HoldingType } from "@/bindings/HoldingType"
+import type { KnownHolding } from "@/bindings/KnownHolding"
 import type { Currency } from "@/types"
+import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { StatusBadge } from "./status_badge"
 import { DateCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
@@ -39,7 +50,7 @@ const STATUS_RANK: Record<string, number> = {
 }
 
 interface HldEntryShape {
-  row: { symbol: string; sub_account: string | null; value: string; currency: string; as_of: string; status: string }
+  row: { symbol: string; sub_account: string | null; value: string; currency: string; as_of: string; status: string; derived: boolean }
   payloadIdx: number | null
 }
 
@@ -69,9 +80,272 @@ function hldSortValue(
       const n = parseFloat(raw)
       return Number.isFinite(n) ? n : 0
     }
+    case "source":
+      return entry.row.derived ? 1 : 0
     default:
       return 0
   }
+}
+
+function holdingKey(symbol: string, subAccount: string | null | undefined): string {
+  return `${symbol}::${subAccount ?? ""}`
+}
+
+interface PrevRef {
+  value: string
+  /** ISO date or full ISO datetime — caller normalizes for display. */
+  as_of: string
+  /** Whether the previous snapshot lives in the DB (true) or earlier in the same batch (false). */
+  fromDb: boolean
+}
+
+/**
+ * For each preview row, find the most recent "previous" snapshot to diff
+ * against. Search order: earlier rows in the SAME batch (sorted by as_of),
+ * then the latest open snapshot in the DB. Returns null when no previous
+ * exists — that's a brand-new position.
+ */
+function buildPrevRefs(
+  rows: { symbol: string; sub_account: string | null; value: string; as_of: string }[],
+  knownHoldings: KnownHolding[]
+): (PrevRef | null)[] {
+  const knownByKey = new Map<string, KnownHolding>()
+  for (const k of knownHoldings) {
+    knownByKey.set(holdingKey(k.symbol, k.sub_account ?? null), k)
+  }
+  // Group every batch row by holding key, indexed for "earlier in batch" lookups.
+  const indexed = rows.map((r, i) => ({ ...r, _i: i }))
+  return rows.map((r, i) => {
+    const key = holdingKey(r.symbol, r.sub_account)
+    let best: { value: string; as_of: string; fromDb: boolean } | null = null
+    for (const other of indexed) {
+      if (other._i === i) continue
+      if (holdingKey(other.symbol, other.sub_account) !== key) continue
+      if (other.as_of >= r.as_of) continue
+      if (!best || other.as_of > best.as_of) {
+        best = { value: other.value, as_of: other.as_of, fromDb: false }
+      }
+    }
+    if (!best) {
+      const dbMatch = knownByKey.get(key)
+      if (dbMatch && dbMatch.last_as_of < (r.as_of.split("T")[0] ?? r.as_of)) {
+        best = { value: dbMatch.last_value, as_of: dbMatch.last_as_of, fromDb: true }
+      }
+    }
+    return best
+  })
+}
+
+function diffStr(curr: string, prev: string): { text: string; positive: boolean | null } {
+  const c = parseFloat(curr)
+  const p = parseFloat(prev)
+  if (!Number.isFinite(c) || !Number.isFinite(p)) return { text: "—", positive: null }
+  const d = c - p
+  if (d === 0) return { text: "±0.00", positive: null }
+  const sign = d > 0 ? "+" : ""
+  return { text: `${sign}${d.toFixed(2)}`, positive: d > 0 }
+}
+
+function PrevDiffCell({
+  currentValue,
+  prev,
+  currency,
+}: {
+  currentValue: string
+  prev: PrevRef | null
+  currency: string
+}) {
+  if (!prev) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Badge
+              variant="outline"
+              className={cn(
+                "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-400 hover:bg-violet-500/10 cursor-help"
+              )}
+            >
+              New position
+            </Badge>
+          }
+        />
+        <TooltipContent>
+          First time we've seen this symbol on this account. Double-check the symbol before committing.
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+  const { text, positive } = diffStr(currentValue, prev.value)
+  const dateStr = prev.as_of.split("T")[0] ?? prev.as_of
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn(
+              "text-xs tabular-nums cursor-help",
+              positive === true && "text-emerald-600 dark:text-emerald-400",
+              positive === false && "text-rose-600 dark:text-rose-400",
+              positive === null && "text-muted-foreground"
+            )}
+          >
+            {text}
+          </span>
+        }
+      />
+      <TooltipContent>
+        Previous: {prev.value} {currency} on {formatDate(dateStr)}{" "}
+        {prev.fromDb ? "(in DB)" : "(earlier row in this import)"}.
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/**
+ * Symbol picker for an editable holding row. Lists existing open symbols on
+ * the account first; final option lets the user fall through to free-text for
+ * a genuinely new position. Picking an existing symbol fills name / type /
+ * currency / sub_account from the known snapshot.
+ */
+function SymbolCombobox({
+  value,
+  knownHoldings,
+  onPickExisting,
+  onPickCustom,
+}: {
+  value: string
+  knownHoldings: KnownHolding[]
+  onPickExisting: (kh: KnownHolding) => void
+  onPickCustom: (symbol: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const sorted = useMemo(
+    () => [...knownHoldings].sort((a, b) => a.symbol.localeCompare(b.symbol)),
+    [knownHoldings]
+  )
+  const trimmed = query.trim()
+  const knownMatchesQuery = trimmed
+    ? sorted.some((k) => k.symbol.toLowerCase() === trimmed.toLowerCase())
+    : false
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o)
+        if (!o) setQuery("")
+      }}
+    >
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            className={cn(
+              "inline-flex w-full items-center justify-between gap-1.5",
+              "h-7 px-1.5 py-0.5 text-xs font-mono rounded-md border bg-transparent",
+              "hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            )}
+          >
+            <span className="truncate">{value || "—"}</span>
+            <ChevronDown className="h-3 w-3 text-muted-foreground" />
+          </button>
+        }
+      />
+      <PopoverContent className="w-[260px] p-0" align="start">
+        <Command>
+          <CommandInput
+            placeholder="Search or type a new symbol…"
+            value={query}
+            onValueChange={setQuery}
+            className="h-9 text-xs"
+          />
+          <CommandList>
+            {sorted.length === 0 && (
+              <CommandEmpty>No existing holdings on this account.</CommandEmpty>
+            )}
+            {sorted.length > 0 && (
+              <CommandGroup heading="Existing on this account">
+                {sorted.map((k) => (
+                  <CommandItem
+                    key={holdingKey(k.symbol, k.sub_account ?? null)}
+                    value={`${k.symbol} ${k.name}`}
+                    onSelect={() => {
+                      onPickExisting(k)
+                      setOpen(false)
+                      setQuery("")
+                    }}
+                  >
+                    <span className="font-mono text-xs">{k.symbol}</span>
+                    <span className="ml-2 truncate text-xs text-muted-foreground">{k.name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            {trimmed && !knownMatchesQuery && (
+              <CommandGroup heading="New">
+                <CommandItem
+                  value={`__new__${trimmed}`}
+                  onSelect={() => {
+                    onPickCustom(trimmed)
+                    setOpen(false)
+                    setQuery("")
+                  }}
+                >
+                  <Plus className="mr-2 h-3 w-3" />
+                  Add new symbol "{trimmed}"
+                </CommandItem>
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function SourceBadge({ derived }: { derived: boolean }) {
+  if (derived) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Badge
+              variant="outline"
+              className={cn(
+                "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400 hover:bg-sky-500/10 cursor-help"
+              )}
+            >
+              Derived
+            </Badge>
+          }
+        />
+        <TooltipContent>
+          Computed by the agent from other data (e.g. interpolated from neighbouring snapshots or rolled up from transactions).
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Badge
+            variant="outline"
+            className={cn(
+              "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-help"
+            )}
+          >
+            From doc
+          </Badge>
+        }
+      />
+      <TooltipContent>
+        Read directly from the source document for this exact date.
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 const HOLDING_TYPES: HoldingType[] = [
@@ -333,6 +607,14 @@ export function HoldingsSection({
   const start = (ctrls.page - 1) * ctrls.pageSize
   const pageEntries = filteredEntries.slice(start, start + ctrls.pageSize)
 
+  // Map each displayIdx → its previous-snapshot reference. Computed once
+  // against the unfiltered batch so chaining works even when the user has
+  // filtered the visible rows.
+  const prevRefsByDisplayIdx = useMemo(
+    () => buildPrevRefs(result.rows, result.known_holdings),
+    [result.rows, result.known_holdings]
+  )
+
   function updatePayloadAt(idx: number, patch: Partial<Holding>) {
     if (!payload) return
     const next: Holding[] = payload.holdings.map((h, i) => (i === idx ? { ...h, ...patch } : h))
@@ -407,10 +689,12 @@ export function HoldingsSection({
         <TableHeader>
           <TableRow>
             <SortHeader label="Action" columnId="action" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("action")} className="w-24" />
+            <SortHeader label="Source" columnId="source" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("source")} className="w-24" />
             <SortHeader label="Symbol" columnId="symbol" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("symbol")} className="w-28" />
             <TableHead>Name</TableHead>
             <TableHead className="w-28">Type</TableHead>
             <SortHeader label="Value" columnId="value" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("value")} className="w-32" align="right" />
+            <TableHead className="w-28 text-right">vs prev</TableHead>
             <SortHeader label="Currency" columnId="currency" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("currency")} className="w-20" />
             <SortHeader label="As of" columnId="as_of" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("as_of")} className="w-36" />
             <TableHead className="w-10" />
@@ -419,7 +703,7 @@ export function HoldingsSection({
         <TableBody>
           {pageEntries.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} className="text-center text-xs text-muted-foreground py-6">
+              <TableCell colSpan={10} className="text-center text-xs text-muted-foreground py-6">
                 No rows match
               </TableCell>
             </TableRow>
@@ -440,8 +724,24 @@ export function HoldingsSection({
                   <StatusBadge status={marked ? "removed" : row.status} />
                 </TableCell>
                 <TableCell>
+                  <SourceBadge derived={row.derived} />
+                </TableCell>
+                <TableCell>
                   {editable && h && !marked ? (
-                    <TextCell value={h.symbol} onChange={(v) => updatePayloadAt(payloadIdx, { symbol: v })} />
+                    <SymbolCombobox
+                      value={h.symbol}
+                      knownHoldings={result.known_holdings}
+                      onPickExisting={(kh) =>
+                        updatePayloadAt(payloadIdx, {
+                          symbol: kh.symbol,
+                          name: kh.name,
+                          holding_type: kh.holding_type,
+                          currency: kh.currency,
+                          sub_account: kh.sub_account ?? null,
+                        })
+                      }
+                      onPickCustom={(sym) => updatePayloadAt(payloadIdx, { symbol: sym })}
+                    />
                   ) : (
                     <span className="text-xs font-mono">{row.symbol}</span>
                   )}
@@ -487,6 +787,13 @@ export function HoldingsSection({
                       )}
                     </span>
                   )}
+                </TableCell>
+                <TableCell className="text-right">
+                  <PrevDiffCell
+                    currentValue={editable && h && !marked ? h.value : row.value}
+                    prev={prevRefsByDisplayIdx[displayIdx] ?? null}
+                    currency={editable && h && !marked ? h.currency : row.currency}
+                  />
                 </TableCell>
                 <TableCell>
                   {editable && h && !marked ? (

@@ -70,8 +70,54 @@ pub struct TransactionFilters {
     pub search: Option<String>,
     pub profile_id: Option<String>,
     pub category_source: Option<CategorySource>,
+    /// Sort column. `None` keeps the default newest-first ordering.
+    pub sort: Option<TransactionSort>,
+    pub sort_dir: SortDir,
     pub page: u32,
     pub limit: u32,
+}
+
+/// Columns the transactions list can be sorted by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionSort {
+    Date,
+    Amount,
+    Category,
+}
+
+impl TransactionSort {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "date" => Some(Self::Date),
+            "amount" => Some(Self::Amount),
+            "category" => Some(Self::Category),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortDir {
+    Asc,
+    #[default]
+    Desc,
+}
+
+impl SortDir {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "asc" => Some(Self::Asc),
+            "desc" => Some(Self::Desc),
+            _ => None,
+        }
+    }
+
+    fn sql(self) -> &'static str {
+        match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        }
+    }
 }
 
 impl Default for TransactionFilters {
@@ -84,6 +130,8 @@ impl Default for TransactionFilters {
             search: None,
             profile_id: None,
             category_source: None,
+            sort: None,
+            sort_dir: SortDir::Desc,
             page: 1,
             limit: 25,
         }
@@ -1054,6 +1102,8 @@ impl Db {
                 existing_id,
                 existing_description,
                 error_reason: None,
+                category_id: t.category_id.clone(),
+                category_confidence: None,
             });
         }
 
@@ -1089,6 +1139,8 @@ impl Db {
                         "row confidence {:.2} below threshold {:.2}",
                         row.row_confidence, min_row_confidence
                     )),
+                    category_id: row.category_id.clone(),
+                    category_confidence: row.category_confidence,
                 });
                 continue;
             }
@@ -1123,6 +1175,8 @@ impl Db {
                 existing_id,
                 existing_description,
                 error_reason: None,
+                category_id: row.category_id.clone(),
+                category_confidence: row.category_confidence,
             });
         }
 
@@ -1160,18 +1214,44 @@ impl Db {
                 conditions.push(format!("t.account_id IN ({})", placeholders.join(",")));
             }
         }
-        // Category filter: match on category_id OR legacy category column
+        // Category filter: match on category_id OR legacy category column.
+        // The "__uncategorized__" sentinel is OR-combined so users can filter
+        // to uncategorised rows alongside specific categories in one go.
         if let Some(cats) = &filters.categories {
             if !cats.is_empty() {
-                let placeholders: Vec<String> = cats
+                let mut want_uncategorized = false;
+                let real_cats: Vec<&String> = cats
                     .iter()
-                    .map(|v| {
-                        args.push(Box::new(v.clone()));
-                        format!("?{}", args.len())
+                    .filter(|v| {
+                        if v.as_str() == "__uncategorized__" {
+                            want_uncategorized = true;
+                            false
+                        } else {
+                            true
+                        }
                     })
                     .collect();
-                let ph = placeholders.join(",");
-                conditions.push(format!("(t.category_id IN ({ph}) OR t.category IN ({ph}))"));
+
+                let mut clauses: Vec<String> = Vec::new();
+                if !real_cats.is_empty() {
+                    let placeholders: Vec<String> = real_cats
+                        .iter()
+                        .map(|v| {
+                            args.push(Box::new((*v).clone()));
+                            format!("?{}", args.len())
+                        })
+                        .collect();
+                    let ph = placeholders.join(",");
+                    clauses.push(format!("t.category_id IN ({ph}) OR t.category IN ({ph})"));
+                }
+                if want_uncategorized {
+                    clauses.push(
+                        "(t.category_id IS NULL AND t.category IS NULL)".to_string(),
+                    );
+                }
+                if !clauses.is_empty() {
+                    conditions.push(format!("({})", clauses.join(" OR ")));
+                }
             }
         }
         if let Some(ref source) = filters.category_source {
@@ -1216,6 +1296,23 @@ impl Db {
         args.push(Box::new(offset));
         let offset_idx = args.len();
 
+        // Order: dynamic by requested column with a stable id tiebreak, so
+        // pagination is deterministic across pages even when many rows share
+        // the same date / amount / category. Identifiers come from a closed
+        // enum, never user input — safe to interpolate.
+        let dir = filters.sort_dir.sql();
+        let order_by = match filters.sort {
+            None => "t.date DESC, t.id DESC".to_string(),
+            Some(TransactionSort::Date) => format!("t.date {dir}, t.id DESC"),
+            Some(TransactionSort::Amount) => {
+                format!("CAST(t.amount AS REAL) {dir}, t.id DESC")
+            }
+            // Push uncategorized rows to the bottom regardless of direction.
+            Some(TransactionSort::Category) => format!(
+                "(category_display IS NULL) ASC, category_display {dir}, t.date DESC, t.id DESC"
+            ),
+        };
+
         // LEFT JOIN categories to resolve display name from category_id
         let data_sql = format!(
             r"SELECT t.id, t.date, t.description, t.normalized, t.amount, t.currency,
@@ -1234,7 +1331,7 @@ impl Db {
               LEFT JOIN categories pc ON pc.id = c.parent_id
               {join}
               WHERE {where_clause}
-              ORDER BY t.date DESC, t.id DESC
+              ORDER BY {order_by}
               LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
         );
 
@@ -2537,12 +2634,17 @@ impl Db {
     }
 
     /// Returns income and spending aggregated by period.
+    ///
+    /// `exclude_category_ids` filters out transactions whose `category_id` is
+    /// in the list. Only leaf IDs are meaningful since parents are never
+    /// assigned to transactions; pass parents pre-expanded to their leaves.
     pub fn get_cash_flow(
         &self,
         start: NaiveDate,
         end: NaiveDate,
         profile_id: Option<&str>,
         granularity: &Granularity,
+        exclude_category_ids: &[String],
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<HoldingsCashFlowMonth>> {
         use crate::util::fx::CurrencyAggregator;
@@ -2575,6 +2677,20 @@ impl Db {
         } else {
             ""
         };
+
+        if !exclude_category_ids.is_empty() {
+            let start_idx = 2 + extra_args.len() + 1;
+            let placeholders: Vec<String> = (0..exclude_category_ids.len())
+                .map(|i| format!("?{}", start_idx + i))
+                .collect();
+            conditions.push(format!(
+                "t.category_id NOT IN ({})",
+                placeholders.join(", ")
+            ));
+            for id in exclude_category_ids {
+                extra_args.push(Box::new(id.clone()));
+            }
+        }
 
         let where_clause = conditions.join(" AND ");
 
@@ -3149,6 +3265,7 @@ impl Db {
                     "new".to_string()
                 },
                 existing_value,
+                derived: h.derived,
             });
         }
         Ok(previews)
@@ -3411,6 +3528,7 @@ fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
         short_name: row.get(9)?,
         sub_account: row.get(10)?,
         is_closed: is_closed_int != 0,
+        derived: false,
     })
 }
 
@@ -4109,6 +4227,7 @@ mod consolidation_tests {
             short_name: None,
             sub_account: None,
             is_closed: false,
+            derived: false,
         }
     }
 
@@ -4133,6 +4252,7 @@ mod consolidation_tests {
             short_name: None,
             sub_account: sub_account.map(|s| s.to_string()),
             is_closed: false,
+            derived: false,
         }
     }
 

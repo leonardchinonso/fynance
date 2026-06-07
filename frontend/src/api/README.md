@@ -180,11 +180,11 @@ Holdings for an investment account. Used in the holdings drill-down sheet.
 
 ---
 
-### `getCashFlow(start?, end?): Promise<CashFlowMonth[]>`
+### `getCashFlow(start, end, granularity?, profileId?, excludeCategoryIds?): Promise<CashFlowMonth[]>`
 
-**Backend endpoint**: `GET /api/cash-flow?start=&end=`
+**Backend endpoint**: `GET /api/holdings/cash-flow?start=&end=&granularity=&profile_id=&exclude_category_ids=`
 
-Monthly income vs spending. Derived from transactions.
+Income vs spending bucketed by `granularity` (defaults to `monthly`). Derived from transactions. `excludeCategoryIds` is a comma-joined list of leaf category IDs to drop from the income/spending totals — used by the portfolio overview's "exclude categories" picker.
 
 ---
 

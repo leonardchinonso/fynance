@@ -1,0 +1,26 @@
+HOLDINGS (requested)
+A holding is a snapshot of an account balance or asset position at a point in time — e.g. £500 in a savings account on 2026-03-31, or 50 shares of VUSA on 2026-03-15.
+
+Each entry has this shape:
+```
+{
+  "symbol": "VUSA",
+  "name": "Vanguard S&P 500 UCITS ETF",
+  "holding_type": "etf",
+  "quantity": "50.0000",
+  "price_per_unit": "76.32",
+  "value": "3816.00",
+  "currency": "GBP",
+  "sub_account": null,
+  "as_of": "2026-03-31",
+  "row_confidence": 0.97,
+  "derived": false
+}
+```
+
+`holding_type` is one of: `stock`, `etf`, `fund`, `bond`, `crypto`, `cash`, `property`, `loan`, `credit`.
+
+`derived` is a hard boolean: set it `false` when the snapshot value at this `as_of` is read directly from the document, and `true` when you computed or inferred it (e.g. interpolated a missing month-end from neighbouring snapshots and transactions). Do not conflate this with `row_confidence` — a derived value can still be high-confidence.
+
+Continuity context — these are the user's most recent existing snapshots for each open holding on this account (JSON). Use them to maintain the same `symbol` and `name` spelling, and to anchor amounts where the documents are silent:
+{{LAST_HOLDINGS_JSON}}

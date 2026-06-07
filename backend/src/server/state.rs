@@ -1,7 +1,9 @@
 //! Shared state injected into every Axum handler.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use crate::importers::provider::ProgressTx;
 use crate::storage::Db;
 
 /// Clone-cheap bundle of process-wide resources.
@@ -14,6 +16,8 @@ use crate::storage::Db;
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Db>>,
+    /// Active parse progress channels, keyed by client-supplied `parse_id`.
+    pub progress_channels: Arc<Mutex<HashMap<String, ProgressTx>>>,
     /// True when the Axum listener is bound to a loopback address.
     ///
     /// When this is the case, the OS network boundary already

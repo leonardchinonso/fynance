@@ -258,6 +258,7 @@ If you have the Playwright MCP tools available, use them to navigate, click, scr
 - Always capture screenshots to `.playwright-mcp/` (already enforced by `.gitignore`-style conventions; never write to the repo root or `frontend/`).
 - Watch the page console output. `Maximum update depth exceeded`, uncontrolled-to-controlled warnings, and silent JSON serialization failures are all real bugs that only show up in the browser.
 - If a smoke run uncovers a new bug class, extend the script so future changes are caught automatically.
+- **When you change the UI, update the smoke script in the same PR.** It locates elements by visible text, role, and `data-slot` attributes — renames, removed flow steps, and reshaped layouts all break it silently (you'll see `waitFor: Timeout` rather than a useful error). Concretely: if you rename a button label the script references, change a route segment it navigates to, remove a step in the wizard, or add a new UI surface worth a regression check, edit `frontend/scripts/smoke_preview.mjs` alongside the UI change. Selectors live there are: heading text on each step, the "Parsing strategy" card and its Mode/Agent labels, the file `<input type=file>`, the **Confidence** column header, the CostTag `<button.tabular-nums>` with a currency symbol, the tooltip table at `[data-slot=tooltip-content] table`, and the Recent imports section.
 
 `tsc --noEmit` + `npm run build` are necessary but not sufficient for frontend work. They tell you the code compiles; they don't tell you the feature works.
 
@@ -291,6 +292,7 @@ A reasonable rule of thumb: if you're about to type "I'll wait for X to finish b
 - Frontend fetches through `src/api/client.ts`, never direct `fetch()` in components
 - All API response types are auto-generated from Rust via `ts-rs` into `frontend/src/bindings/`. Never manually edit files in that directory.
 - Playwright screenshots and traces always go inside the `.playwright-mcp/` folder. Never write screenshots to the repo root or anywhere else.
+- When you add, modify, or remove an API endpoint, update `docs/api.html` to reflect the changes in the same PR. The HTML follows a consistent structure (see the existing endpoints for the pattern). Every endpoint is a `<section class="endpoint">` with `data-method` and `data-path` attributes. CI checks that every route in `mod.rs` has a matching `data-path` in the HTML.
 
 ### Code comments
 

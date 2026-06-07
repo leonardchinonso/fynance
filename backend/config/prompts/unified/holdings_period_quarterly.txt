@@ -1,0 +1,8 @@
+HOLDINGS PERIOD: quarterly
+For every calendar quarter covered by the documents, emit an end-of-quarter snapshot per distinct holding (`as_of` = last day of the quarter: 31 Mar, 30 Jun, 30 Sep, 31 Dec).
+
+If the documents only give one snapshot in a quarter, work forwards or backwards using the transactions in that quarter to derive the other quarter-ends. Example: if a quarter ends with £500 and there were ten outflow transactions of £20 each (£200 total) during that quarter, the previous quarter ended with £700. Reverse the sign for inflows.
+
+Mark each derived snapshot with `row_confidence`: 0.95+ for explicit values, 0.75–0.95 for derived, below 0.75 for gappy.
+
+Set `derived: false` ONLY for quarter-ends the document states explicitly. Every snapshot you computed from transactions or neighbouring quarters is `derived: true`, even if `row_confidence` is high.

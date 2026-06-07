@@ -162,6 +162,8 @@ export class RealApiService implements ApiService {
     if (filters.profile_id) params.profile_id = filters.profile_id
     if (filters.page) params.page = String(filters.page)
     if (filters.limit) params.limit = String(filters.limit)
+    if (filters.sort) params.sort = filters.sort
+    if (filters.sort_dir) params.sort_dir = filters.sort_dir
     return get<PaginatedResponse<Transaction>>(`${BASE}/transactions`, params)
   }
 
@@ -186,6 +188,15 @@ export class RealApiService implements ApiService {
       const children = node.children ?? []
       if (children.length === 0) return [node.name]
       return children.map(c => `${node.name}: ${c.name}`)
+    })
+  }
+
+  async getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>> {
+    const grouped = await get<Record<string, { id: string; name: string; children?: { id: string; name: string }[] }[]>>(`${BASE}/transactions/categories`)
+    return Object.values(grouped).flat().flatMap(node => {
+      const children = node.children ?? []
+      if (children.length === 0) return [{ id: node.id, name: node.name }]
+      return children.map(c => ({ id: c.id, name: `${node.name}: ${c.name}` }))
     })
   }
 
@@ -252,10 +263,14 @@ export class RealApiService implements ApiService {
     start: string,
     end: string,
     granularity: Granularity = "monthly",
-    profileId?: string
+    profileId?: string,
+    excludeCategoryIds?: string[]
   ): Promise<CashFlowMonth[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
+    if (excludeCategoryIds && excludeCategoryIds.length > 0) {
+      params.exclude_category_ids = excludeCategoryIds.join(",")
+    }
     const res = await get<{ preferred_currency: string; rows: CashFlowMonth[] }>(`${BASE}/holdings/cash-flow`, params)
     return res.rows
   }
