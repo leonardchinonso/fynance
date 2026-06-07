@@ -1,6 +1,6 @@
 # 10. LLM-Based CSV Import (Phase 1 Iteration)
 
-> Supersedes the bank-specific dispatch in `03_importer.md` and the
+> Supersedes the bank-specific dispatch in `archive/03_importer.md` and the
 > `BankFormat`-gated code path in Phase 1 of `09_backend_implementation_plan.md`.
 > No code has been written for this document yet, it is a design/plan only.
 
@@ -543,7 +543,7 @@ Everything outside §1.5 stays as it is.
 This plan is the source of truth; the following existing docs get a
 short note pointing here so nobody implements the old path by accident:
 
-- `docs/plans/03_importer.md` — top-of-file note: "Superseded for CSV
+- `docs/plans/archive/03_importer.md` — top-of-file note: "Superseded for CSV
   by `10_llm_csv_import.md`. The bank-mapping tables below are kept for
   historical context only."
 - `docs/plans/09_backend_implementation_plan.md` — §1.5 gains a note:

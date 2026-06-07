@@ -108,8 +108,7 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         // uploads aren't rejected at the body layer.
         .route(
             "/parse",
-            post(routes::parse::parse_documents)
-                .layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+            post(routes::parse::parse_documents).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
         )
         .route(
             "/parse/progress/:parse_id",
@@ -181,6 +180,14 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route(
             "/investments/import",
             post(routes::investments::import_investments),
+        )
+        .route(
+            "/investments/pools",
+            get(routes::capital_gains::get_s104_pools),
+        )
+        .route(
+            "/investments/capital-gains",
+            get(routes::capital_gains::get_capital_gains),
         )
         .route(
             "/investments/:id",

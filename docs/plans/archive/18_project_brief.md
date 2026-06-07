@@ -4,7 +4,7 @@
 Personal finance tracker. Ingest bank CSVs, categorize spending, track budgets and net worth, all via a local web UI.
 
 ## Status
-Active -- planning phase, no implementation yet.
+V0 shipped. Active work: multi-currency frontend ([22](../22_multi_currency.md)) and UK CGT engine V1 ([23](../23_capital_gains_v1.md)). See [20_post_v0_plans.md](../20_post_v0_plans.md) for the post-V0 roadmap.
 
 ## Key Decisions
 - React 19 + React Compiler for frontend (no manual memoization)
@@ -25,13 +25,13 @@ Active -- planning phase, no implementation yet.
 - **Docker for MVP: needed now?** Nonso questioned whether Docker is needed at this stage, since the app runs locally and SQLite is just a file. Docker adds complexity; could defer to post-MVP. Currently documented in README and plan. (PR #1)
 - **API-first vs internal AI**: Original plan (on master) had internal Claude API calls for categorization, screenshot extraction, and report generation. New proposal: defer all internal AI to post-MVP. The binary makes zero outbound calls. External AI agents handle categorization and data extraction, pushing results through the REST API. API docs at `/api/docs` are designed as an agent-readable system prompt. Internal AI becomes an optional V1 convenience layer. Needs Nonso's buy-in since this changes the Phase 5 architecture. (PR #1)
 
-- **RSU / stock-denominated income**: Vested RSUs are income valued in shares, not currency. Options: (a) Transaction with category "Income: RSU Vesting" + a `unit` field (currency vs shares), or (b) separate `stock_income` table. Implications for the Transaction model. Currently RSUs are tracked as holdings snapshots only.
+- ~~**RSU / stock-denominated income**~~: **Resolved** — superseded by the `investments` table. RSU vests are recorded as `vest` events in `investments` (with the vest-date market value as the cost basis), not as transactions. No `Income: RSU Vesting` category or `stock_income` table is needed.
 - **Liability account types**: Mortgage balance and credit card balance as negative-balance accounts. AccountType may need 'mortgage' or a general 'liability' type. Home equity = home value holding - mortgage account - HTB loan account. HoldingType may need 'property' for home value tracking.
-- **Tax calcs for RSU forecasting**: Employer NI rate, tax rate, NI charge applied to gross RSU vesting to project net shares/value. Future forecasting endpoint.
+- ~~**Tax calcs for RSU forecasting**~~: **Superseded** by [20_post_v0_plans.md](../20_post_v0_plans.md) V6 Forecasting. RSU vesting forecasting (employer NI, tax rate, NI charge → net shares / value) is tracked there as part of the broader forecasting feature.
 - **Multi-profile data model**: Frontend currently adds a `profile_id` to Account. Need to decide if this is a first-class DB concept or handled in the application layer.
 - **Pension holdings**: Pensions are accounts that can hold investments (ETFs, funds). The current Holding model already supports this (`account_id` references any account). The frontend shows holdings drill-down for both investment and pension accounts. The portfolio "By Stock" card aggregates holdings across all accounts including pensions, with a potential future filter to include/exclude pension holdings.
 - **Property as account type**: Home value is currently tracked as a savings account. Consider adding `AccountType: "property"` for proper categorization. Home equity = home value account balance - mortgage account balance.
-- **Custom tags/labels on accounts**: Consider adding a `tags: string[]` field to Account for custom categorization (e.g., "available", "locked", "property", "liability"). This would allow flexible filtering beyond the fixed type-based available/unavailable split.
+- ~~**Custom tags/labels on accounts**~~: **Superseded** by [20_post_v0_plans.md](../20_post_v0_plans.md) V1 Features. Tracked there as a `tags: string[]` field on accounts for free-form user labels.
 - **Joint accounts**: Some accounts are owned jointly (e.g. a joint bank account, shared savings). A joint account should appear when filtering to either owner's profile, and should display in a separate "Joint" section in the accounts grid. Model change: `Account.profile_id` becomes `Account.profile_ids: string[]` (array of profile IDs), or a separate `account_owners` join table mapping account IDs to profile IDs. The frontend filters accounts by checking if the selected profile is in the owner list. A "Joint" section groups accounts with more than one owner.
 
 ## Contributors
@@ -40,7 +40,7 @@ Active -- planning phase, no implementation yet.
 
 ## Links
 - Repo: this repo (fynance-be)
-- Plans: docs/plans/08_mvp_phases_v2.md
+- Plans: docs/plans/ (active) and docs/plans/archive/ (closed). MVP plan archived at docs/plans/archive/08_mvp_phases_v2.md.
 - Design docs: docs/design/
 
 ## Future Roadmap (Post-MVP)

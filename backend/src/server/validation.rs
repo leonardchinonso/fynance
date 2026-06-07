@@ -2,7 +2,7 @@
 //!
 //! These functions parse and validate common query / body parameters and
 //! return `AppError` with the specific machine-readable codes defined in
-//! docs/plans/11_frontend_backend_consolidation.md §Validation & Error Handling.
+//! docs/plans/archive/12_frontend_backend_consolidation.md §Validation & Error Handling.
 
 use chrono::{NaiveDate, NaiveDateTime};
 use rust_decimal::Decimal;

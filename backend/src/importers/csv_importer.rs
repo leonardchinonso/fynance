@@ -3,7 +3,7 @@
 //! The previous version of this file contained `detect_format`, `ColumnIndex`,
 //! `map_row`, and a hard-coded dispatch per bank dialect. All of that logic has
 //! been replaced by `LlmStatementParser`, which handles any CSV that a bank
-//! could export. See `docs/plans/10_llm_csv_import.md` for the design.
+//! could export. See `docs/plans/archive/10_llm_csv_import.md` for the design.
 //!
 //! `CsvImporter` now just:
 //! 1. Reads the file to a string.

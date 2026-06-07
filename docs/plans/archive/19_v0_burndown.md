@@ -53,7 +53,7 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
   - Includes as_str() and parse() methods for serialization
 
 
-- [x] ✅ **Multi-currency: fulfill all backend asks** — currencies table, FX conversion at query time, display_currency on all 6 aggregating endpoints. Full spec: [docs/plans/22_multi_currency.md](22_multi_currency.md).
+- [x] ✅ **Multi-currency: fulfill all backend asks** — currencies table, FX conversion at query time, display_currency on all 6 aggregating endpoints. Full spec: [docs/plans/22_multi_currency.md](../22_multi_currency.md).
 
 ### Budget
 
@@ -217,7 +217,7 @@ CSV is supported. PDFs and images deferred to V1.
 - [x] ✅ **Tests for profile/account creation.** Test infrastructure ready, tests not yet written
 - ⚠️ **tests for CSV import.** Test infrastructure ready, tests not yet written
 - ⚠️ **Edit/delete buttons.** Disabled with "Coming soon" tooltips (backend PATCH/DELETE not yet added)
-- ⚠️ **Multi-currency: fulfill all frontend asks** — Settings currency section, preferred currency picker, exchange rate inputs, portfolio page display using `preferred_currency` and `display_currency`, unconverted holdings warning banner. Full spec: [docs/plans/22_multi_currency.md](22_multi_currency.md) (frontend section).
+- ⚠️ **Multi-currency: fulfill all frontend asks** — Settings currency section, preferred currency picker, exchange rate inputs, portfolio page display using `preferred_currency` and `display_currency`, unconverted holdings warning banner. Full spec: [docs/plans/22_multi_currency.md](../22_multi_currency.md) (frontend section).
 
 ### Build: Fix Pre-existing TypeScript Errors
 

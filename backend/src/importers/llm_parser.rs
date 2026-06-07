@@ -24,7 +24,7 @@ const SYSTEM_PROMPT: &str = include_str!("../../config/prompts/statement_parser.
 // Truncate CSV input at this byte limit before sending to the LLM.
 // A yearly Monzo export is ~150 KB; this leaves headroom while keeping
 // costs bounded. Chunking for very large files is tracked as an open
-// question in docs/plans/10_llm_csv_import.md §11.
+// question in docs/plans/archive/10_llm_csv_import.md §11.
 const MAX_CSV_BYTES: usize = 200_000;
 
 // ── Result of a single parse call ────────────────────────────────────────────

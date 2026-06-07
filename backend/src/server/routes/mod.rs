@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod budget;
+pub mod capital_gains;
 pub mod categories;
 pub mod currencies;
 pub mod docs;

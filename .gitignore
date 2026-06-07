@@ -2,6 +2,7 @@
 backend/target/
 /.claude/
 .env
+.antigravitycli/
 
 # Backend
 backend/workings/
@@ -21,3 +22,6 @@ frontend/.vite/
 .vercel
 .attachments/*
 !.attachments/CLAUDE.md
+
+# Local Capital Gains real data verification test
+backend/tests/capital_gains_real_data.rs
