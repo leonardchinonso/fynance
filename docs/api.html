@@ -339,6 +339,8 @@ td code { font-size: 12px; }
     <a href="#post-api-investments-import" class="nav-endpoint"><span class="method-badge method-post">POST</span>/investments/import</a>
     <a href="#patch-api-investments-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/investments/:id</a>
     <a href="#delete-api-investments-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/investments/:id</a>
+    <a href="#get-api-investments-pools" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/pools</a>
+    <a href="#get-api-investments-capital-gains" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/capital-gains</a>
 
     <a href="#changelog" class="nav-section-link" style="margin-top:16px;">Changelog</a>
   </div>
@@ -3055,6 +3057,123 @@ data: {"total_ms":3200}</code></pre>
   </table>
 </section>
 
+<section class="endpoint" id="get-api-investments-pools" data-method="GET" data-path="/api/investments/pools">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/investments/pools</code>
+  </div>
+  <p class="endpoint-summary">S104 average-cost pool snapshot per symbol. ISA and pension accounts are excluded as CGT-sheltered.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>as_at</code></td><td>query</td><td>string</td><td>No</td><td>Limit pooling to events on or before this date (YYYY-MM-DD)</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/pools?as_at=2026-04-05"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "symbol": "VWRL",
+    "current_shares": "20.000",
+    "total_allowable_expenditure": "1900.00",
+    "average_cost_per_share": "95.00"
+  }
+]</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_date</code></td><td>as_at is not a valid YYYY-MM-DD date</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-investments-capital-gains" data-method="GET" data-path="/api/investments/capital-gains">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/investments/capital-gains</code>
+  </div>
+  <p class="endpoint-summary">UK Capital Gains Tax report. Applies HMRC same-day, 30-day (bed &amp; breakfast), and S104 pool matching across all non-sheltered accounts; totals are normalized to the preferred base currency.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>No</td><td>UK tax year as <code>YYYY-YY</code> (e.g. <code>2024-25</code> = 6 Apr 2024 to 5 Apr 2025). Overrides start_date/end_date.</td></tr>
+      <tr><td><code>start_date</code></td><td>query</td><td>string</td><td>No</td><td>Custom range start (YYYY-MM-DD); used when tax_year is omitted</td></tr>
+      <tr><td><code>end_date</code></td><td>query</td><td>string</td><td>No</td><td>Custom range end (YYYY-MM-DD); used when tax_year is omitted</td></tr>
+      <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter disposals by account</td></tr>
+      <tr><td><code>symbol</code></td><td>query</td><td>string</td><td>No</td><td>Filter by ticker symbol</td></tr>
+      <tr><td><code>as_at</code></td><td>query</td><td>string</td><td>No</td><td>Limit calculations to events on or before this date (YYYY-MM-DD)</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/capital-gains?tax_year=2025-26"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "summary": {
+    "total_proceeds": "1200.00",
+    "total_allowable_costs": "950.00",
+    "total_gains": "250.00",
+    "total_losses": "0.00",
+    "net_gain_loss": "250.00",
+    "base_currency": "GBP"
+  },
+  "symbol_summaries": [
+    {
+      "symbol": "VWRL",
+      "total_proceeds": "1200.00",
+      "total_allowable_costs": "950.00",
+      "total_gains": "250.00",
+      "total_losses": "0.00",
+      "net_gain_loss": "250.00",
+      "original_currency": "GBP"
+    }
+  ],
+  "realized_events": [
+    {
+      "symbol": "VWRL",
+      "disposal_id": "inv-050",
+      "disposal_date": "2026-02-10T00:00:00",
+      "quantity": "10.000",
+      "disposal_price": "120.00",
+      "proceeds": "1200.00",
+      "cost_basis": "950.00",
+      "gain_loss": "250.00",
+      "rule_applied": "S104 Pool",
+      "original_currency": "GBP",
+      "matches": [
+        {
+          "acquisition_id": "inv-001",
+          "acquisition_date": "2026-01-15T00:00:00",
+          "quantity": "10.000",
+          "price": "95.00"
+        }
+      ]
+    }
+  ],
+  "pools": [
+    {
+      "symbol": "VWRL",
+      "current_shares": "20.000",
+      "total_allowable_expenditure": "1900.00",
+      "average_cost_per_share": "95.00"
+    }
+  ]
+}</code></pre>
+  <p><code>rule_applied</code> is one of <code>Same-Day</code>, <code>30-Day Rule</code>, <code>S104 Pool</code>, or <code>Unmatched</code>.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in YYYY-YY format</td></tr>
+      <tr><td>400</td><td><code>invalid_date</code></td><td>start_date, end_date, or as_at is not a valid date</td></tr>
+      <tr><td>400</td><td><code>invalid_date_range</code></td><td>start_date is after end_date</td></tr>
+    </tbody>
+  </table>
+</section>
+
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════════ -->
@@ -3066,6 +3185,7 @@ data: {"total_ms":3200}</code></pre>
   <thead><tr><th>Date</th><th>Change</th></tr></thead>
   <tbody>
     <tr><td>2026-05-30</td><td>Initial API reference: 45 endpoints across 13 groups, 39 models documented.</td></tr>
+    <tr><td>2026-06-07</td><td>Added Capital Gains endpoints: <code>GET /api/investments/pools</code> (S104 pools) and <code>GET /api/investments/capital-gains</code> (UK CGT report).</td></tr>
   </tbody>
 </table>
 
