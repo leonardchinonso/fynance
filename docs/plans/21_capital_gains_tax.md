@@ -1,7 +1,7 @@
 # Plan 21: Capital Gains Tax (CGT) Tracking
 
-**Date:** 2026-04-26
-**Status:** RFC — open for review and discussion before implementation begins.
+**Date:** 2026-05-25 (Updated)
+**Status:** Implemented (V1 Complete)
 **Target version:** V1
 
 ---
@@ -92,19 +92,18 @@ The importer architecture should be broker-agnostic so new brokers (Vanguard, Fr
 
 ## 5. Backend
 
-A dedicated CGT calculation module (separate from routes) handles:
-- S104 pool state: computed by replaying all acquisition events up to a given date (`SELECT SUM` over `investments`)
-- CGT disposals: computed by replaying all events in order and applying matching rules — no pre-stored results
-- Point-in-time queries: filtering events by date gives pool state and CGT position as it stood at any past date
+The CGT engine and API routes are implemented in the [`capital_gains.rs`](file:///home/timi/apps/fynance/backend/src/server/routes/capital_gains.rs) module:
+- **S104 pool state**: Computed by chronological replay of all acquisition events up to a given date.
+- **CGT disposals**: Computed by replaying all events in chronological order and applying HMRC matching rules (Same-Day FIFO, 30-Day B&B, S104 Pool, and Unmatched Short-Sale remainder) on-the-fly.
+- **Internal Domain Matching**: Uses a strongly-typed internal `InternalMatch` domain model to keep dates (`NaiveDateTime`) and arithmetic operations completely type-safe in the engine loops, converting to the API JSON response model `CgtMatchDetail` at the final endpoint payload assembly.
+- **Optimized Day Grouping**: Uses a structural `BTreeMap` and a named `EventIndices` struct to achieve $O(E)$ linear time complexity when grouping Same-Day acquisitions and disposals, avoiding suboptimal nested loops.
 
-New API endpoints:
-- `POST /api/investments` — record an investment event
-- `GET /api/investments` — list events with filters (account, symbol, event_type, date range)
-- `PATCH /api/investments/:id` — correct a mistaken event
-- `DELETE /api/investments/:id` — remove a mistaken event
-- `GET /api/investments/pools` — current S104 pool state (and at a past date via `?as_at=`)
-- `GET /api/cgt/:tax_year` — CGT summary for a tax year (and at a past date via `?as_at=`)
-- `GET /api/export?format=cgt&tax_year=` — structured export driving document generation
+API endpoints:
+- `GET /api/investments/pools` — current S104 pool state per symbol, supports point-in-time queries via `?as_at=YYYY-MM-DD`
+- `GET /api/investments/capital-gains` — realized disposal events and normalized sterling tax summaries. Supports flexible filtering parameters:
+  - `?tax_year=YYYY-YY` (e.g. `2024-25` automatically resolves to the UK tax year date range)
+  - `?start_date=YYYY-MM-DD` & `?end_date=YYYY-MM-DD` (for arbitrary date ranges)
+  - `?as_at=YYYY-MM-DD` (for point-in-time CGT calculation limits)
 
 ---
 
@@ -130,16 +129,10 @@ Exported as PDF (browser-side) or CSV. No server-side document generation.
 
 ---
 
-## 7. Open Questions
+## 7. Resolved Design Decisions
 
-These need input before implementation begins:
-
-1. **Transfer disposal treatment** — HMRC treats a transfer between your own separate brokerage accounts as a disposal (unless it is a nominee-to-beneficial-owner transfer, which is not). A `transfer` event therefore needs to be recorded as both a disposal (out of the source account) and an acquisition (into the destination account). Should this be two separate rows in `investments`, or one row with a `destination_account_id` field? Two rows is simpler for the CGT engine; one row makes the transfer intent explicit.
-
-2. **Shareworks CSV format** — a sample export is needed to confirm field names and structure before building the importer.
-
-3. **T212 activity export** — T212 offers multiple export types. Which contains the per-share acquisition/disposal detail needed for CGT?
-
-4. **UTR field on profile** — the HMRC document needs the user's Unique Taxpayer Reference. Should this be added to the profile model, or is it out of scope and left to the user to fill in manually on the generated document?
-
-5. **Annual exempt amount** — currently £3,000 from 2024-25 onwards (reduced from £6,000 in 2023-24 and £12,300 in 2022-23). Should past-year amounts be hardcoded per tax year in the codebase, or user-configurable?
+1. **ISA & Pension Sheltering**: ISA (`investment_isa`) and Pension (`pension`) accounts are fully excluded from S104 average cost pooling and CGT realized gain calculations.
+2. **Date range parsing**: Tax years are dynamically parsed (e.g., `2024-25` is resolved to `6 Apr 2024` to `5 Apr 2025`), alongside support for custom start and end dates.
+3. **Type-Safe Domain Matchers**: Core engine loops use `InternalMatch` (with type-safe native `NaiveDateTime` and `Decimal` fields) to avoid redundant string formatting and parsing.
+4. **Optimized $O(E)$ Same-Day Matching**: Uses `BTreeMap` and `EventIndices` to group transaction indices chronologically, preventing $O(D \times E)$ nested loops.
+5. **Currency Normalization**: Integrated with `FxRateMap::convert_as_of` in `fx.rs` to allow future-proof historical rate conversions for proceeds and cost basis during ledger replays.
