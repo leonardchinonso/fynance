@@ -2,14 +2,21 @@
 //! Accepts uploaded documents (1-5 CSV files), invokes the LLM pipeline to
 //! extract data, runs dedup checks, and returns a structured IngestionPreview.
 
+use std::convert::Infallible;
+
 use axum::Json;
-use axum::extract::{Multipart, State};
+use axum::extract::{Multipart, Path, State};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use futures_util::Stream;
+use tokio_stream::StreamExt;
 
 use crate::importers::document_parser::{
     DocumentInput, ParseHints, ParseMode, PipelineOutcome, build_multi_preview,
     run_multi_file_pipeline,
 };
-use crate::importers::provider::create_provider;
+use crate::importers::provider::{
+    self, ProgressEvent, ProgressTx, ParsePhase, ProviderError, create_provider, emit_progress,
+};
 use crate::importers::unified_parser::{
     CategorySummary, HoldingSummary, UnifiedContext, extract_all as unified_extract_all,
 };
@@ -32,6 +39,7 @@ pub async fn parse_documents(
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut account_id: Option<String> = None;
     let mut hints: Option<ParseHints> = None;
+    let mut parse_id: Option<String> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -106,6 +114,17 @@ pub async fn parse_documents(
                     })?);
                 }
             }
+            "parse_id" => {
+                let bytes = field.bytes().await.map_err(|e| {
+                    AppError::bad_request(format!("failed to read parse_id: {e}"), "field_error")
+                })?;
+                let val = String::from_utf8(bytes.to_vec()).map_err(|_| {
+                    AppError::bad_request("parse_id is not valid UTF-8", "field_error")
+                })?;
+                if !val.is_empty() {
+                    parse_id = Some(val);
+                }
+            }
             _ => {
                 let _ = field.bytes().await;
             }
@@ -116,6 +135,7 @@ pub async fn parse_documents(
         files = files.len(),
         has_account_id = account_id.is_some(),
         has_hints = hints.is_some(),
+        has_parse_id = parse_id.is_some(),
         "parse: multipart loop complete"
     );
 
@@ -176,6 +196,50 @@ pub async fn parse_documents(
         "parse: hints validated, starting pipeline"
     );
 
+    // ── Progress channel setup ─────────────────────────────────────────────
+    let progress_tx: Option<ProgressTx> = parse_id.as_ref().map(|pid| {
+        let (tx, _rx) = tokio::sync::broadcast::channel::<ProgressEvent>(64);
+        state
+            .progress_channels
+            .lock()
+            .expect("progress_channels mutex poisoned")
+            .insert(pid.clone(), tx.clone());
+
+        let channels = state.progress_channels.clone();
+        let pid_clone = pid.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            channels
+                .lock()
+                .expect("progress_channels mutex poisoned")
+                .remove(&pid_clone);
+        });
+
+        tx
+    });
+
+    let cleanup_progress = {
+        let channels = state.progress_channels.clone();
+        let pid = parse_id.clone();
+        move || {
+            if let Some(pid) = &pid {
+                channels
+                    .lock()
+                    .expect("progress_channels mutex poisoned")
+                    .remove(pid);
+            }
+        }
+    };
+
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Phase {
+            phase: ParsePhase::Preprocessing,
+            message: format!("Processing {} uploaded file(s)", files.len()),
+            task_id: None,
+        },
+    );
+
     // Build DocumentInputs (detect format, preprocess Excel/PDF)
     let mut documents: Vec<DocumentInput> = Vec::new();
     for (filename, raw_bytes) in files {
@@ -215,23 +279,66 @@ pub async fn parse_documents(
 
     let start = std::time::Instant::now();
 
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Phase {
+            phase: ParsePhase::SendingToLlm,
+            message: format!("Sending {} file(s) to AI model", documents.len()),
+            task_id: None,
+        },
+    );
+
     // ── Unified mode dispatch ───────────────────────────────────────────────
     if hints.mode() == ParseMode::Unified {
-        return run_unified_path(state, hints, documents, account_id, account.institution, provider, start)
-            .await
-            .map(Json);
+        let result = run_unified_path(
+            state,
+            hints,
+            documents,
+            account_id,
+            account.institution,
+            provider,
+            start,
+            progress_tx.clone(),
+        )
+        .await;
+        match result {
+            Ok(preview) => {
+                cleanup_progress();
+                return Ok(Json(preview));
+            }
+            Err(e) => {
+                cleanup_progress();
+                return Err(e);
+            }
+        }
     }
 
     // Run the multi-file LLM pipeline (split mode)
-    let pipeline_result =
-        run_multi_file_pipeline(&documents, &hints, &account.institution, provider)
-            .await
-            .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
+    let pipeline_result = run_multi_file_pipeline(
+        &documents,
+        &hints,
+        &account.institution,
+        provider,
+        progress_tx.clone(),
+    )
+    .await
+    .map_err(|e| {
+        emit_progress(
+            &progress_tx,
+            ProgressEvent::Error {
+                code: "parse_error".to_string(),
+                message: e.to_string(),
+            },
+        );
+        cleanup_progress();
+        provider_err_to_app_error(e)
+    })?;
     let elapsed = start.elapsed().as_millis() as u64;
 
     // If clarification needed, return early
     if let PipelineOutcome::NeedsClarification(mut preview) = pipeline_result {
         preview.metadata.processing_time_ms = elapsed;
+        cleanup_progress();
         return Ok(Json(*preview));
     }
 
@@ -240,6 +347,15 @@ pub async fn parse_documents(
         PipelineOutcome::Success { extraction } => extraction,
         PipelineOutcome::NeedsClarification(_) => unreachable!(),
     };
+
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Phase {
+            phase: ParsePhase::PostProcessing,
+            message: "Checking for duplicates".to_string(),
+            task_id: None,
+        },
+    );
 
     // Run deduplication (needs DB, synchronous)
     let preview = {
@@ -255,6 +371,14 @@ pub async fn parse_documents(
     }
     .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
 
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Done {
+            total_ms: route_started.elapsed().as_millis() as u64,
+        },
+    );
+    cleanup_progress();
+
     tracing::info!(
         elapsed_ms = route_started.elapsed().as_millis() as u64,
         tx_rows = preview.transactions.count,
@@ -269,6 +393,7 @@ pub async fn parse_documents(
 
 // ── Unified-mode dispatch ────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn run_unified_path(
     state: AppState,
     hints: ParseHints,
@@ -277,10 +402,20 @@ async fn run_unified_path(
     account_institution: String,
     provider: std::sync::Arc<dyn crate::importers::provider::LlmProvider>,
     start: std::time::Instant,
+    progress_tx: Option<ProgressTx>,
 ) -> Result<IngestionPreview, AppError> {
     use crate::importers::document_parser::ExtractionResult;
     use crate::importers::pricing::parser_call_cost;
     use crate::model::BankFormat;
+
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Phase {
+            phase: ParsePhase::BuildingContext,
+            message: "Loading categories and holdings".to_string(),
+            task_id: None,
+        },
+    );
 
     // Build UnifiedContext: active leaf categories + last open holdings.
     let ctx = {
@@ -328,8 +463,16 @@ async fn run_unified_path(
         .map(|d| (d.filename.clone(), infer_mime(&d.filename), d.raw_bytes.clone()))
         .collect();
 
+    // Wrap provider with progress if channel is available.
+    let provider_for_call: std::sync::Arc<dyn provider::LlmProvider> = match &progress_tx {
+        Some(tx) => provider
+            .with_progress(tx.clone(), Some("unified".to_string()))
+            .unwrap_or_else(|| provider.clone()),
+        None => provider,
+    };
+
     let llm_started = std::time::Instant::now();
-    let unified = unified_extract_all(&files, &hints, &account_id, provider.as_ref(), &ctx)
+    let unified = unified_extract_all(&files, &hints, &account_id, provider_for_call.as_ref(), &ctx)
         .await
         .map_err(|e| {
             tracing::error!(
@@ -337,7 +480,14 @@ async fn run_unified_path(
                 elapsed_ms = llm_started.elapsed().as_millis() as u64,
                 "parse: unified LLM call failed"
             );
-            AppError::bad_request(e.to_string(), "parse_error")
+            emit_progress(
+                &progress_tx,
+                ProgressEvent::Error {
+                    code: "parse_error".to_string(),
+                    message: e.to_string(),
+                },
+            );
+            provider_err_to_app_error(e)
         })?;
 
     tracing::info!(
@@ -351,6 +501,15 @@ async fn run_unified_path(
         investments_extracted = unified.investments.len(),
         post_validate_notes = unified.notes.len(),
         "parse: unified LLM call complete"
+    );
+
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Phase {
+            phase: ParsePhase::PostProcessing,
+            message: "Checking for duplicates".to_string(),
+            task_id: None,
+        },
     );
 
     let elapsed = start.elapsed().as_millis() as u64;
@@ -389,6 +548,13 @@ async fn run_unified_path(
     // Attach any unified-parser notes (e.g. "dropped N unsolicited entries").
     preview.metadata.notes.extend(unified_notes);
 
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Done {
+            total_ms: start.elapsed().as_millis() as u64,
+        },
+    );
+
     tracing::info!(
         elapsed_ms = elapsed,
         tx_rows = preview.transactions.count,
@@ -400,6 +566,96 @@ async fn run_unified_path(
     );
     Ok(preview)
 }
+
+// ── SSE progress endpoint ─────────────────────────────────────────────────────
+
+pub async fn parse_progress(
+    State(state): State<AppState>,
+    Path(parse_id): Path<String>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state
+        .progress_channels
+        .lock()
+        .expect("progress_channels mutex poisoned")
+        .get(&parse_id)
+        .map(|tx| tx.subscribe());
+
+    let stream = match rx {
+        Some(rx) => {
+            let broadcast_stream = tokio_stream::wrappers::BroadcastStream::new(rx);
+            let mapped = broadcast_stream.filter_map(|item| {
+                let Ok(event) = item else { return None };
+                let data = serde_json::to_string(&event).unwrap_or_default();
+                let event_name = match &event {
+                    ProgressEvent::Phase { .. } => "phase",
+                    ProgressEvent::LlmStart { .. } => "llm_start",
+                    ProgressEvent::LlmProgress { .. } => "llm_progress",
+                    ProgressEvent::Done { .. } => "done",
+                    ProgressEvent::Error { .. } => "error",
+                };
+                Some(Ok::<_, Infallible>(
+                    Event::default().event(event_name).data(data),
+                ))
+            });
+            futures_util::future::Either::Left(mapped)
+        }
+        None => {
+            let once = futures_util::stream::once(async {
+                Ok::<_, Infallible>(
+                    Event::default()
+                        .event("error")
+                        .data(r#"{"code":"not_found","message":"No active parse with this ID"}"#),
+                )
+            });
+            futures_util::future::Either::Right(once)
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+// ── ProviderError → AppError mapping ─────────────────────────────────────────
+
+fn provider_err_to_app_error(e: anyhow::Error) -> AppError {
+    if let Some(pe) = e.downcast_ref::<ProviderError>() {
+        return match pe {
+            ProviderError::Timeout(msg) => {
+                AppError::gateway_timeout(msg.clone(), "upstream_timeout")
+            }
+            ProviderError::Unreachable(msg) => {
+                AppError::bad_gateway(msg.clone(), "upstream_unreachable")
+            }
+            ProviderError::RateLimit { detail, .. } => {
+                AppError::too_many_requests(detail.clone(), "upstream_rate_limit")
+            }
+            ProviderError::AuthRejected(msg) => {
+                AppError::bad_gateway(msg.clone(), "upstream_auth")
+            }
+            ProviderError::UpstreamServerError { body, .. } => {
+                AppError::bad_gateway(body.clone(), "upstream_error")
+            }
+            ProviderError::UpstreamClientError { body, .. } => {
+                AppError::bad_request(body.clone(), "upstream_rejected")
+            }
+            ProviderError::ResponseUnreadable(msg) => {
+                AppError::bad_gateway(msg.clone(), "upstream_garbled")
+            }
+            ProviderError::NoToolUse { tool_name } => AppError::bad_gateway(
+                format!("AI service did not return structured data (expected {tool_name} tool)"),
+                "upstream_no_tool_use",
+            ),
+            ProviderError::StreamInterrupted(msg) => {
+                AppError::bad_gateway(msg.clone(), "upstream_stream_interrupted")
+            }
+            ProviderError::NotSupported(msg) => {
+                AppError::bad_request(msg.clone(), "provider_not_supported")
+            }
+        };
+    }
+    AppError::bad_request(e.to_string(), "parse_error")
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn flatten_categories(nodes: &[crate::model::CategoryNode]) -> Vec<CategorySummary> {
     let mut out = Vec::new();
@@ -451,4 +707,3 @@ fn infer_mime(filename: &str) -> String {
     }
     .to_string()
 }
-

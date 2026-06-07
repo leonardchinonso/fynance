@@ -21,6 +21,12 @@ pub enum AppError {
     Conflict { message: String, code: &'static str },
     /// 401: missing or invalid bearer token. code = "unauthorized"
     Unauthorized(String),
+    /// 502: upstream service error with a specific machine-readable code.
+    BadGateway { message: String, code: &'static str },
+    /// 504: upstream service timed out.
+    GatewayTimeout { message: String, code: &'static str },
+    /// 429: rate limited by upstream service.
+    TooManyRequests { message: String, code: &'static str },
     /// 500: unexpected internal failure. Message is NOT forwarded to clients.
     Internal(anyhow::Error),
 }
@@ -43,12 +49,36 @@ impl AppError {
         }
     }
 
+    pub fn bad_gateway(message: impl Into<String>, code: &'static str) -> Self {
+        Self::BadGateway {
+            message: message.into(),
+            code,
+        }
+    }
+
+    pub fn gateway_timeout(message: impl Into<String>, code: &'static str) -> Self {
+        Self::GatewayTimeout {
+            message: message.into(),
+            code,
+        }
+    }
+
+    pub fn too_many_requests(message: impl Into<String>, code: &'static str) -> Self {
+        Self::TooManyRequests {
+            message: message.into(),
+            code,
+        }
+    }
+
     fn status_code(&self) -> StatusCode {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest { .. } => StatusCode::BAD_REQUEST,
             Self::Conflict { .. } => StatusCode::CONFLICT,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Self::BadGateway { .. } => StatusCode::BAD_GATEWAY,
+            Self::GatewayTimeout { .. } => StatusCode::GATEWAY_TIMEOUT,
+            Self::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -59,6 +89,9 @@ impl AppError {
             Self::BadRequest { code, .. } => code,
             Self::Conflict { code, .. } => code,
             Self::Unauthorized(_) => "unauthorized",
+            Self::BadGateway { code, .. } => code,
+            Self::GatewayTimeout { code, .. } => code,
+            Self::TooManyRequests { code, .. } => code,
             Self::Internal(_) => "internal",
         }
     }
@@ -66,7 +99,11 @@ impl AppError {
     fn message(&self) -> String {
         match self {
             Self::NotFound(m) | Self::Unauthorized(m) => m.clone(),
-            Self::BadRequest { message, .. } | Self::Conflict { message, .. } => message.clone(),
+            Self::BadRequest { message, .. }
+            | Self::Conflict { message, .. }
+            | Self::BadGateway { message, .. }
+            | Self::GatewayTimeout { message, .. }
+            | Self::TooManyRequests { message, .. } => message.clone(),
             // Never leak low-level error chains to the network.
             Self::Internal(_) => "internal server error".to_string(),
         }
