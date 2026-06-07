@@ -1,4 +1,4 @@
-# 23: Streaming, Progress Reporting, and Error Classification
+# 24: Streaming, Progress Reporting, and Error Classification
 
 **Design doc:** `docs/design/08_streaming_and_error_classification.md`
 **Status:** Ready for implementation

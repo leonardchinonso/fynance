@@ -11,6 +11,7 @@ A personal finance tracker written in Rust with a local React web UI. Ingests ba
 | 20 | [20_post_v0_plans.md](20_post_v0_plans.md) | Post-V0 roadmap (V1, V2, V3+) and unversioned ideas. Start here. |
 | 22 | [22_multi_currency.md](22_multi_currency.md) | Multi-currency support spec. Backend shipped; frontend pending. |
 | 23 | [23_capital_gains_v1.md](23_capital_gains_v1.md) | UK CGT engine V1: backend shipped, V1 finishing work in progress. |
+| 24 | [24_streaming_progress_errors.md](24_streaming_progress_errors.md) | Streaming Anthropic API, SSE parse progress, and classified provider errors. |
 
 ## Archived Plans
 
