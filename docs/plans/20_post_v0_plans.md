@@ -7,6 +7,7 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 ## V1 (Immediate next steps after V0)
 
 ### Features
+- [ ] **Custom tags/labels on accounts:** Add a `tags: string[]` field to `accounts` for user-defined free-form labels (e.g. "locked-until-2027", "joint-expenses", "rewards-card"). Sits alongside the fixed `account_type` enum and `profile_ids` array to allow softer categorisation that doesn't fit a type. Surfaced as filter chips on the accounts grid and as optional groupings in summary breakdowns. Originally raised in `archive/18_project_brief.md` Open Questions.
 - [ ] **ISA allowance tracking:** Per-account annual allowance cap (e.g. £20,000 for a Stocks ISA). Track how much has been deposited in the current tax year vs. the limit. Show a progress bar + remaining allowance in the account detail sheet. Tax year resets on 6 April. Allowance is per-account-type (S&S ISA, Cash ISA, LISA each have separate rules). UI: a small "ISA" badge on the account card that turns amber/red as the limit approaches.
 - [ ] **Mortgage overpayment allowance tracking:** Per-account annual overpayment cap (typically 10% of outstanding balance, but user-configurable). Track total overpayments made in the current mortgage year vs. the cap. Show remaining headroom in the account sheet. Trigger: a holding or account-level `overpayment_limit` field (absolute amount or % of balance, with a year-start date). UI: shown only on accounts of type `mortgage` or where the field is set.
 - [ ] **Per-holding custom metadata fields:** A flexible `JSONB`-style (or separate key-value table) `metadata` field on holdings for user-defined annotations. Examples: purchase price / cost basis for CGT tracking, vesting date for RSUs, sector tag, broker reference. API: `PATCH /api/holdings/:account_id/:symbol` extended to accept `metadata: Record<string, string>`. UI: an expandable "Details" row in the holdings sheet showing key-value pairs, editable inline. This is also the natural foundation for the ISA and mortgage features above.
@@ -63,7 +64,7 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ## V2
 
-![alternative history networth visualization](alternative_history_networth_visualization.png)
+![alternative history networth visualization](assets/alternative_history_networth_visualization.png)
 
 ### Multi-Currency: Automatic Rate Fetching
 
@@ -190,6 +191,7 @@ GET  /api/import/history               -- import_log rows with document_id joine
     - [ ]  amortized payments such as mortgage should be able to input formulas to figure out how the monthly payment will be split between interest and principal over time.
 - [ ] could be used for planning for big purchases like saving for a house, or preparing for lifestyle changes like having a new child.  
 - [ ] could maybe also be used for retirement planning, estimatign reduced or no income and seeing how long a portfolio will last spending vs investment growth.  
+- [ ] **RSU vesting forecasting (UK tax-aware):** projection endpoint that takes `{gross_qty, vest_price, marginal_rate, employee_ni_rate, employer_ni_passthrough_rate}` and returns the net shares + net cash value after PAYE + employee NI + employer NI passthrough. Useful before a known vest date and as a sanity check on the broker's withhold maths after vest. Needs a user-configured profile for tax / NI rates (doesn't exist yet). Originally raised in [archive/18_project_brief.md](archive/18_project_brief.md) Open Questions.
 
 ## Unversioned (Nice-to-Have)
 
