@@ -228,7 +228,12 @@ function SavedReportView({
           fileName={filename}
         >
           {({ loading }) => (
-            <Button disabled={loading}>{loading ? "Preparing PDF…" : "Generate PDF"}</Button>
+            <Button
+              disabled={loading}
+              className="cursor-pointer disabled:cursor-not-allowed"
+            >
+              {loading ? "Preparing PDF…" : "Generate PDF"}
+            </Button>
           )}
         </PDFDownloadLink>
       </div>

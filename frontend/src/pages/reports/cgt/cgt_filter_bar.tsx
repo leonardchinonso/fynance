@@ -58,7 +58,7 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
         </div>
       )}
 
-      <Select value={profileId} onValueChange={setProfileId}>
+      <Select value={profileId} onValueChange={(v) => v && setProfileId(v)}>
         <SelectTrigger className="w-[160px]">
           <span className="truncate">
             {profiles.find((p) => p.id === profileId)?.name ?? "Select profile"}

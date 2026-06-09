@@ -40,7 +40,7 @@ export function CgtPoolWorkings({
               <div key={p.symbol} className="rounded-md border bg-card p-4">
                 <h3 className="text-sm font-semibold">{p.symbol}</h3>
                 <dl className="mt-2 space-y-1 text-sm">
-                  <Pair label="Current shares" value={p.current_shares} />
+                  <Pair label="Current shares" value={fmtShares(p.current_shares)} />
                   <Pair
                     label="Total allowable expenditure"
                     value={formatCurrency(p.total_allowable_expenditure, cur)}
@@ -57,6 +57,12 @@ export function CgtPoolWorkings({
       )}
     </Card>
   )
+}
+
+function fmtShares(qty: string): string {
+  const n = Number.parseFloat(qty)
+  if (!Number.isFinite(n)) return "—"
+  return n.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 4 })
 }
 
 function Pair({ label, value }: { label: string; value: string }) {

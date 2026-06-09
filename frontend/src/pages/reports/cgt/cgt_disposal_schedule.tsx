@@ -84,7 +84,7 @@ function DisposalRow({ event }: { event: CgtRealizedEvent }) {
       </TableCell>
       <TableCell className="tabular-nums">{event.disposal_date.slice(0, 10)}</TableCell>
       <TableCell className="tabular-nums">{acquisitionLabel}</TableCell>
-      <TableCell className="text-right tabular-nums">{event.quantity}</TableCell>
+      <TableCell className="text-right tabular-nums">{fmtShares(event.quantity)}</TableCell>
       <TableCell className="text-right tabular-nums">
         {formatCurrency(event.disposal_price, event.original_currency)}
       </TableCell>
@@ -109,6 +109,12 @@ function DisposalRow({ event }: { event: CgtRealizedEvent }) {
       </TableCell>
     </TableRow>
   )
+}
+
+function fmtShares(qty: string): string {
+  const n = Number.parseFloat(qty)
+  if (!Number.isFinite(n)) return "—"
+  return n.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 4 })
 }
 
 function formatAcquisition(event: CgtRealizedEvent): string {
