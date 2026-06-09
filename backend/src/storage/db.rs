@@ -806,6 +806,7 @@ impl Db {
         account_id: Option<&str>,
         symbol: Option<&str>,
         event_type: Option<&str>,
+        account_ids: Option<&[String]>,
     ) -> Result<Vec<InvestmentEvent>> {
         let mut conditions = vec!["1=1"];
         let mut sql = String::from(
@@ -817,6 +818,7 @@ impl Db {
         let account_clause;
         let symbol_clause;
         let event_type_clause;
+        let account_ids_clause;
 
         if let Some(a) = account_id {
             account_clause = format!("account_id = '{}'", a.replace('\'', "''"));
@@ -829,6 +831,18 @@ impl Db {
         if let Some(e) = event_type {
             event_type_clause = format!("event_type = '{}'", e.replace('\'', "''"));
             conditions.push(&event_type_clause);
+        }
+        if let Some(ids) = account_ids {
+            if ids.is_empty() {
+                // Scope explicitly empty (e.g. profile filter matched no accounts)
+                return Ok(vec![]);
+            }
+            let escaped: Vec<String> = ids
+                .iter()
+                .map(|id| format!("'{}'", id.replace('\'', "''")))
+                .collect();
+            account_ids_clause = format!("account_id IN ({})", escaped.join(", "));
+            conditions.push(&account_ids_clause);
         }
 
         sql.push_str(&conditions.join(" AND "));

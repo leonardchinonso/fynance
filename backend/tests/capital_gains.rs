@@ -852,3 +852,248 @@ async fn test_cgt_point_in_time_filtering() {
     assert_eq!(event_range["gain_loss"], "1000.00");
     assert_eq!(event_range["rule_applied"], "S104 Pool");
 }
+
+/// Two GIA accounts on different profiles, each with its own AAPL disposal.
+/// `?profile_ids=alice` must return only Alice's disposal; the S104 pool is
+/// scoped to her events too (the engine should not see Bob's at all).
+#[tokio::test]
+async fn test_cgt_profile_ids_filter() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+
+        let alice = Account {
+            id: "gia_alice".to_string(),
+            name: "Alice GIA".to_string(),
+            institution: "Trading 212".to_string(),
+            account_type: AccountType::Investment,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["alice".to_string()],
+            is_stale: None,
+            is_available: true,
+        };
+        let bob = Account {
+            id: "gia_bob".to_string(),
+            name: "Bob GIA".to_string(),
+            institution: "Freetrade".to_string(),
+            account_type: AccountType::Investment,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["bob".to_string()],
+            is_stale: None,
+            is_available: true,
+        };
+        db_lock.create_account(&alice).unwrap();
+        db_lock.create_account(&bob).unwrap();
+
+        // Alice: Buy 100 @ 10, Sell 100 @ 20 → £1,000 gain on AAPL
+        insert_event(
+            &db_lock,
+            "gia_alice",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia_alice",
+            "sell",
+            "AAPL",
+            "2026-06-01T10:00:00",
+            "100",
+            "20.00",
+            None,
+        );
+
+        // Bob: Buy 50 @ 30, Sell 50 @ 25 → £250 loss on AAPL
+        insert_event(
+            &db_lock,
+            "gia_bob",
+            "buy",
+            "AAPL",
+            "2026-05-02T10:00:00",
+            "50",
+            "30.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia_bob",
+            "sell",
+            "AAPL",
+            "2026-06-02T10:00:00",
+            "50",
+            "25.00",
+            None,
+        );
+    }
+
+    // Filter to Alice only.
+    let resp_alice = app
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27&profile_ids=alice",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp_alice.status(), StatusCode::OK);
+    let body_alice = to_bytes(resp_alice.into_body(), usize::MAX).await.unwrap();
+    let res_alice: serde_json::Value = serde_json::from_slice(&body_alice).unwrap();
+
+    let realized_alice = res_alice["realized_events"].as_array().unwrap();
+    assert_eq!(realized_alice.len(), 1, "alice scope returns one disposal");
+    assert!(!realized_alice[0]["disposal_id"].as_str().unwrap().is_empty());
+    assert_eq!(realized_alice[0]["proceeds"], "2000.00");
+    assert_eq!(realized_alice[0]["cost_basis"], "1000.00");
+    assert_eq!(realized_alice[0]["gain_loss"], "1000.00");
+
+    let pools_alice = res_alice["pools"].as_array().unwrap();
+    assert_eq!(pools_alice.len(), 1, "alice pool count");
+    assert_eq!(pools_alice[0]["symbol"], "AAPL");
+    assert_eq!(
+        pools_alice[0]["current_shares"], "0",
+        "alice's AAPL pool is empty after the sell"
+    );
+
+    // Filter to Bob only.
+    let resp_bob = app
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27&profile_ids=bob",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp_bob.status(), StatusCode::OK);
+    let body_bob = to_bytes(resp_bob.into_body(), usize::MAX).await.unwrap();
+    let res_bob: serde_json::Value = serde_json::from_slice(&body_bob).unwrap();
+    let realized_bob = res_bob["realized_events"].as_array().unwrap();
+    assert_eq!(realized_bob.len(), 1, "bob scope returns one disposal");
+    assert_eq!(realized_bob[0]["proceeds"], "1250.00");
+    assert_eq!(realized_bob[0]["cost_basis"], "1500.00");
+    assert_eq!(realized_bob[0]["gain_loss"], "-250.00");
+
+    // No filter: both disposals appear.
+    let resp_all = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp_all.status(), StatusCode::OK);
+    let body_all = to_bytes(resp_all.into_body(), usize::MAX).await.unwrap();
+    let res_all: serde_json::Value = serde_json::from_slice(&body_all).unwrap();
+    assert_eq!(
+        res_all["realized_events"].as_array().unwrap().len(),
+        2,
+        "unscoped query returns both disposals"
+    );
+}
+
+/// An event priced in a currency that isn't configured under
+/// Settings → Currencies must produce a structured 400 the frontend can show,
+/// not a panic that poisons the DB mutex.
+#[tokio::test]
+async fn test_cgt_missing_currency_returns_400() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // Same-day buy + sell, both priced in ZAR (not seeded).
+        let body_buy = CreateInvestmentEventBody {
+            account_id: "gia".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "AAPL".to_string(),
+            date: "2026-05-25T10:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "100".to_string(),
+            fee: None,
+            currency: "ZAR".to_string(),
+            notes: None,
+        };
+        let body_sell = CreateInvestmentEventBody {
+            account_id: "gia".to_string(),
+            event_type: "sell".to_string(),
+            symbol: "AAPL".to_string(),
+            date: "2026-05-25T15:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "150".to_string(),
+            fee: None,
+            currency: "ZAR".to_string(),
+            notes: None,
+        };
+        db_lock.create_investment_event(&body_buy).unwrap();
+        db_lock.create_investment_event(&body_sell).unwrap();
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "missing_currencies");
+    assert!(
+        res["error"].as_str().unwrap().contains("ZAR"),
+        "error message should name the missing currency"
+    );
+}
+
+/// `profile_ids` matching no accounts is a hard scope: zero events, zero pools.
+#[tokio::test]
+async fn test_cgt_profile_ids_no_match() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-06-01T10:00:00",
+            "100",
+            "15.00",
+            None,
+        );
+    }
+
+    let resp = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27&profile_ids=ghost",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(res["realized_events"].as_array().unwrap().is_empty());
+    assert!(res["pools"].as_array().unwrap().is_empty());
+}

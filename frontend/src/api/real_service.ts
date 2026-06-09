@@ -13,6 +13,31 @@ export class AuthError extends Error {
   }
 }
 
+/** Structured error thrown for non-2xx API responses. Carries the backend's
+ * machine-readable `code` so callers can match on it without parsing strings. */
+export class ApiError extends Error {
+  status: number
+  code: string
+  constructor(status: number, code: string, message: string) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+    this.code = code
+  }
+}
+
+async function parseError(res: Response): Promise<ApiError> {
+  const text = await res.text()
+  try {
+    const body = JSON.parse(text) as { error?: unknown; code?: unknown }
+    const message = typeof body.error === "string" ? body.error : text
+    const code = typeof body.code === "string" ? body.code : "unknown"
+    return new ApiError(res.status, code, message)
+  } catch {
+    return new ApiError(res.status, "unknown", text || `${res.status} ${res.statusText}`)
+  }
+}
+
 import type {
   Account,
   AccountSnapshot,
@@ -47,7 +72,9 @@ import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
-import type { ApiService, HoldingsImportResponse } from "./service"
+import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { ApiService, CgtFilters, HoldingsImportResponse } from "./service"
+import { cgtFiltersToParams } from "./cgt_filter_params"
 import { MockApiService } from "./mock_service"
 
 const BASE = "/api"
@@ -64,10 +91,7 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
   if (token) headers["Authorization"] = `Bearer ${token}`
   const res = await fetch(url.toString(), { headers })
   if (res.status === 401) throw new AuthError(!!token)
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`${res.status} ${res.statusText}: ${body}`)
-  }
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
@@ -81,10 +105,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   })
   if (res.status === 401) throw new AuthError(!!token)
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`${res.status} ${res.statusText}: ${text}`)
-  }
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
@@ -98,10 +119,7 @@ async function postMultipart<T>(path: string, formData: FormData): Promise<T> {
     body: formData,
   })
   if (res.status === 401) throw new AuthError(!!token)
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`${res.status} ${res.statusText}: ${text}`)
-  }
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
@@ -115,10 +133,7 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   })
   if (res.status === 401) throw new AuthError(!!token)
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`${res.status} ${res.statusText}: ${text}`)
-  }
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
@@ -128,10 +143,7 @@ async function del(path: string): Promise<void> {
   if (token) headers["Authorization"] = `Bearer ${token}`
   const res = await fetch(`${window.location.origin}${path}`, { method: "DELETE", headers })
   if (res.status === 401) throw new AuthError(!!token)
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`${res.status} ${res.statusText}: ${text}`)
-  }
+  if (!res.ok) throw await parseError(res)
 }
 
 // Mock fallback for endpoints the backend doesn't have yet
@@ -372,6 +384,13 @@ export class RealApiService implements ApiService {
 
   async commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult> {
     return post<InvestmentImportResult>(`${BASE}/investments/import`, payload)
+  }
+
+  // ── Reports ───────────────────────────────────────────────────────
+
+  async getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse> {
+    const params = cgtFiltersToParams(filters)
+    return get<CapitalGainsResponse>(`${BASE}/investments/capital-gains`, params)
   }
 
   // ── Currencies ────────────────────────────────────────────────────

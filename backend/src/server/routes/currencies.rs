@@ -13,7 +13,11 @@ use crate::model::{CreateCurrencyPayload, Currency, PatchCurrencyPayload};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 
-/// Subset of ISO 4217 codes accepted by POST /api/currencies.
+/// Subset of ISO 4217 codes accepted by POST /api/currencies. Also includes a
+/// short list of non-ISO sub-unit codes that brokers use as line-item currencies
+/// (e.g. GBX = British pence on the LSE, ZAC = South African cent). Investment
+/// statements regularly arrive denominated in these, so rejecting them at write
+/// time means the CGT engine later sees events it can't convert.
 const VALID_ISO_CODES: &[&str] = &[
     "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT",
     "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD",
@@ -27,6 +31,8 @@ const VALID_ISO_CODES: &[&str] = &[
     "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SYP", "SZL", "THB", "TJS",
     "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD", "UYU", "UZS", "VES",
     "VND", "VUV", "WST", "XAF", "XCD", "XOF", "XPF", "YER", "ZAR", "ZMW", "ZWL",
+    // Non-ISO sub-units widely quoted by brokers.
+    "GBX", "ZAC",
 ];
 
 fn is_valid_iso_code(code: &str) -> bool {

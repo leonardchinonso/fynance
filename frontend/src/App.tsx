@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react"
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { ProfileProvider } from "@/context/profile_context"
 import { PreferredCurrencyProvider } from "@/context/preferred_currency_context"
@@ -9,7 +10,7 @@ import { Navbar } from "@/components/navbar"
 import { TransactionsPage } from "@/pages/transactions"
 import { BudgetPage } from "@/pages/budget"
 import { PortfolioPage } from "@/pages/portfolio"
-import { ReportsPage } from "@/pages/reports"
+import { ReportsLanding } from "@/pages/reports/reports_landing"
 import {
   SettingsPage,
   SettingsGeneralPage,
@@ -18,6 +19,12 @@ import {
   SettingsAuthPage,
 } from "@/pages/settings"
 import { ImportPage } from "@/pages/import"
+
+// CGT report page pulls in @react-pdf/renderer (~250 KB gzipped); code-split
+// so users who never open Reports don't pay for it.
+const CgtReportPage = lazy(() =>
+  import("@/pages/reports/cgt/cgt_report_page").then((m) => ({ default: m.CgtReportPage })),
+)
 
 function getHomepage(): string {
   try {
@@ -40,7 +47,23 @@ function Layout() {
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/budget" element={<BudgetPage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
-          <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/reports" element={<ReportsLanding />} />
+          <Route
+            path="/reports/cgt"
+            element={
+              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading report…</div>}>
+                <CgtReportPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/reports/cgt/:reportId"
+            element={
+              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading report…</div>}>
+                <CgtReportPage />
+              </Suspense>
+            }
+          />
           <Route path="/settings" element={<SettingsPage />}>
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<SettingsGeneralPage />} />

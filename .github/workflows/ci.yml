@@ -62,7 +62,17 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      # Using `npm install` (not `npm ci`) deliberately: the lockfile is
+      # generated on Windows dev boxes where npm doesn't serialise the same
+      # set of platform-conditional optional deps Linux CI expects (e.g.
+      # @tailwindcss/oxide-wasm32-wasi → @emnapi/*), which makes the strict
+      # sync check in `npm ci` fail on every Tailwind transitive bump. We
+      # already tried `--omit=optional`; the sync check runs before install
+      # so the flag has no effect.
+      # `npm install` honours the lockfile but tolerates the platform
+      # mismatch. `--no-audit --no-fund --prefer-offline` keeps it close in
+      # behaviour and speed to `npm ci` for the cache-warmed case.
+      - run: npm install --no-audit --no-fund --prefer-offline
       - run: npx tsc --noEmit
       - run: npm run build
       - name: Upload frontend build

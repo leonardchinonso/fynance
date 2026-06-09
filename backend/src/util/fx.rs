@@ -30,17 +30,23 @@ impl FxRateMap {
     }
 
     /// Convert an amount from `source_currency` to the preferred currency.
-    /// Panics if the currency is not in the map (should never happen due to
-    /// write-time validation).
+    /// When the source currency is missing from the FX table — which should not
+    /// happen for transactions/holdings/accounts since they go through write-time
+    /// validation, but can happen for investment events that pre-date that
+    /// validation — log a warning and return the amount unchanged. Poisoning the
+    /// DB mutex with a panic here brings down the whole server for a single bad
+    /// row; that trade-off is not worth it.
     pub fn convert(&self, amount: Decimal, source_currency: &str) -> Decimal {
         if source_currency == self.preferred {
             return amount;
         }
-        let rate = self.rates.get(source_currency).unwrap_or_else(|| {
-            panic!(
-                "currency {source_currency} missing from FxRateMap; write-time validation failed"
-            )
-        });
+        let Some(rate) = self.rates.get(source_currency) else {
+            tracing::warn!(
+                source_currency,
+                "currency missing from FxRateMap; returning amount unchanged. Add it under Settings → Currencies to fix aggregates."
+            );
+            return amount;
+        };
         amount * rate
     }
 
@@ -57,6 +63,12 @@ impl FxRateMap {
 
     pub fn preferred(&self) -> &str {
         &self.preferred
+    }
+
+    /// Look up the stored conversion rate for a currency, if any. Used by callers
+    /// that need to validate their inputs before invoking `convert`.
+    pub fn rate(&self, source_currency: &str) -> Option<&Decimal> {
+        self.rates.get(source_currency)
     }
 }
 

@@ -57,6 +57,7 @@ pub async fn list_investments(
             q.account_id.as_deref(),
             q.symbol.as_deref(),
             q.event_type.as_deref(),
+            None,
         )?
     };
     Ok(Json(serde_json::to_value(events)?))
