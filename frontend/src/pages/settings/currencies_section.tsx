@@ -18,6 +18,7 @@ import { useRefreshPreferredCurrency } from "@/context/preferred_currency_contex
 
 const ISO_CURRENCY_NAMES: Record<string, string> = {
   GBP: "British Pound",
+  GBX: "British Pence",
   USD: "US Dollar",
   EUR: "Euro",
   NGN: "Nigerian Naira",
@@ -30,10 +31,18 @@ const ISO_CURRENCY_NAMES: Record<string, string> = {
   BRL: "Brazilian Real",
   MXN: "Mexican Peso",
   ZAR: "South African Rand",
+  ZAC: "South African Cent",
   KES: "Kenyan Shilling",
   GHS: "Ghanaian Cedi",
   EGP: "Egyptian Pound",
   MAD: "Moroccan Dirham",
+}
+
+/** Long-form hints rendered as muted text alongside the title. Used for
+ * non-ISO sub-unit codes where the rate-to-parent isn't obvious. */
+const CURRENCY_NOTES: Record<string, string> = {
+  GBX: "LSE sub-unit, 1 GBX = 0.01 GBP",
+  ZAC: "Sub-unit, 1 ZAC = 0.01 ZAR",
 }
 
 const COMMON_CURRENCY_CODES = Object.keys(ISO_CURRENCY_NAMES)
@@ -318,7 +327,14 @@ function AddCurrencyDialog({
                         }}
                       >
                         <Check className={cn("mr-2 h-4 w-4", code === c ? "opacity-100" : "opacity-0")} />
-                        {c} — {ISO_CURRENCY_NAMES[c]}
+                        <div className="flex min-w-0 flex-col">
+                          <span>{c} — {ISO_CURRENCY_NAMES[c]}</span>
+                          {CURRENCY_NOTES[c] && (
+                            <span className="text-xs text-muted-foreground">
+                              {CURRENCY_NOTES[c]}
+                            </span>
+                          )}
+                        </div>
                       </CommandItem>
                     ))}
                   </CommandGroup>

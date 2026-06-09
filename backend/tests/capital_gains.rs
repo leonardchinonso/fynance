@@ -1002,6 +1002,59 @@ async fn test_cgt_profile_ids_filter() {
     );
 }
 
+/// An event priced in a currency that isn't configured under
+/// Settings → Currencies must produce a structured 400 the frontend can show,
+/// not a panic that poisons the DB mutex.
+#[tokio::test]
+async fn test_cgt_missing_currency_returns_400() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // Same-day buy + sell, both priced in ZAR (not seeded).
+        let body_buy = CreateInvestmentEventBody {
+            account_id: "gia".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "AAPL".to_string(),
+            date: "2026-05-25T10:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "100".to_string(),
+            fee: None,
+            currency: "ZAR".to_string(),
+            notes: None,
+        };
+        let body_sell = CreateInvestmentEventBody {
+            account_id: "gia".to_string(),
+            event_type: "sell".to_string(),
+            symbol: "AAPL".to_string(),
+            date: "2026-05-25T15:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "150".to_string(),
+            fee: None,
+            currency: "ZAR".to_string(),
+            notes: None,
+        };
+        db_lock.create_investment_event(&body_buy).unwrap();
+        db_lock.create_investment_event(&body_sell).unwrap();
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "missing_currencies");
+    assert!(
+        res["error"].as_str().unwrap().contains("ZAR"),
+        "error message should name the missing currency"
+    );
+}
+
 /// `profile_ids` matching no accounts is a hard scope: zero events, zero pools.
 #[tokio::test]
 async fn test_cgt_profile_ids_no_match() {

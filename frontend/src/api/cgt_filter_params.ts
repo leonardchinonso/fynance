@@ -2,11 +2,8 @@ import type { CgtFilters, CgtPeriod } from "./service"
 
 /** Convert UI `CgtFilters` into the wire-format query params for `/api/investments/capital-gains`. */
 export function cgtFiltersToParams(filters: CgtFilters): Record<string, string> {
-  const params: Record<string, string> = {}
+  const params: Record<string, string> = { profile_ids: filters.profileId }
   Object.assign(params, periodToParams(filters.period))
-  if (filters.profileIds.length > 0) {
-    params.profile_ids = filters.profileIds.join(",")
-  }
   return params
 }
 

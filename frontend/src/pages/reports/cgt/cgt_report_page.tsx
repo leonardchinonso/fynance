@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { PDFDownloadLink } from "@react-pdf/renderer"
-import { Receipt } from "lucide-react"
+import { AlertTriangle, Receipt } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { ApiError } from "@/api/real_service"
 import { useProfiles } from "@/context/profile_context"
+import { useUrlFilters } from "@/hooks/use_url_filters"
 import type { CgtFilters } from "@/api/service"
 import { previousUkTaxYearForDate, periodSlug } from "@/api/cgt_filter_params"
 import { useCapitalGains } from "@/hooks/data/use_capital_gains"
@@ -29,16 +31,20 @@ export function CgtReportPage() {
   const navigate = useNavigate()
   const { profilesData } = useProfiles()
   const profiles = profilesData.status === "succeeded" ? profilesData.value : []
-  const { state, generate } = useCapitalGains()
+  const { profileId: activeProfileId } = useUrlFilters()
+  const { state, error: generateError, generate } = useCapitalGains()
   const [reports, setReports] = useState<StoredCgtReport[]>(() => listStoredReports())
 
-  const defaultFilters = useMemo<CgtFilters>(
-    () => ({
+  const defaultFilters = useMemo<CgtFilters>(() => {
+    const preselected =
+      activeProfileId && profiles.some((p) => p.id === activeProfileId)
+        ? activeProfileId
+        : (profiles[0]?.id ?? "")
+    return {
       period: { kind: "tax-year", taxYear: previousUkTaxYearForDate(new Date()) },
-      profileIds: [],
-    }),
-    [],
-  )
+      profileId: preselected,
+    }
+  }, [activeProfileId, profiles])
 
   const stored = reportId ? getStoredReport(reportId) : undefined
 
@@ -113,18 +119,44 @@ export function CgtReportPage() {
         </Card>
       )}
 
-      {state.status === "failed" && (
-        <Card>
-          <CardContent className="py-6">
-            <p className="text-sm text-red-600 dark:text-red-400">
-              Failed to generate report: {state.error}
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      {state.status === "failed" && <GenerateError error={generateError} />}
 
       <CgtHistoryList reports={reports} onDelete={handleDelete} />
     </div>
+  )
+}
+
+function GenerateError({ error }: { error: Error | null }) {
+  const navigate = useNavigate()
+  const apiError = error instanceof ApiError ? error : null
+  const isMissingCurrencies = apiError?.code === "missing_currencies"
+
+  return (
+    <Card className="border-amber-400/50 bg-amber-50 dark:bg-amber-950/30">
+      <CardContent className="py-5">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="flex-1 space-y-2">
+            <h3 className="text-sm font-semibold">
+              {isMissingCurrencies
+                ? "Configure currencies before generating"
+                : "Failed to generate report"}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {error?.message ?? "Unknown error"}
+            </p>
+            {isMissingCurrencies && (
+              <Button
+                size="sm"
+                onClick={() => navigate("/settings/general")}
+              >
+                Go to Settings → Currencies
+              </Button>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

@@ -1,20 +1,9 @@
 import { useState } from "react"
 import { format, parse } from "date-fns"
-import { Check, ChevronsUpDown } from "lucide-react"
-import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command"
 import type { Profile } from "@/types"
 import type { CgtFilters, CgtPeriod } from "@/api/service"
 import { ukTaxYearToDates } from "@/api/cgt_filter_params"
@@ -36,9 +25,10 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
   const [preset, setPreset] = useState<PresetValue>(initialPreset(initial.period))
   const [startDate, setStartDate] = useState(initialStart(initial.period))
   const [endDate, setEndDate] = useState(initialEnd(initial.period))
-  const [profileIds, setProfileIds] = useState<string[]>(initial.profileIds)
+  const [profileId, setProfileId] = useState(initial.profileId)
 
   const period: CgtPeriod = buildPeriod(preset, startDate, endDate)
+  const canGenerate = !loading && profileId !== ""
 
   return (
     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
@@ -68,16 +58,23 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
         </div>
       )}
 
-      <ProfileMultiSelect
-        profiles={profiles}
-        selected={profileIds}
-        onChange={setProfileIds}
-      />
+      <Select value={profileId} onValueChange={setProfileId}>
+        <SelectTrigger className="w-[160px]">
+          <span className="truncate">
+            {profiles.find((p) => p.id === profileId)?.name ?? "Select profile"}
+          </span>
+        </SelectTrigger>
+        <SelectContent>
+          {profiles.map((p) => (
+            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       <Button
         className="ml-auto"
-        onClick={() => onGenerate({ period, profileIds })}
-        disabled={loading}
+        onClick={() => onGenerate({ period, profileId })}
+        disabled={!canGenerate}
       >
         {loading ? "Generating…" : "Generate"}
       </Button>
@@ -114,61 +111,6 @@ function DatePicker({ value, onChange }: { value: string; onChange: (s: string) 
           }}
           defaultMonth={date}
         />
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-function ProfileMultiSelect({
-  profiles,
-  selected,
-  onChange,
-}: {
-  profiles: Profile[]
-  selected: string[]
-  onChange: (ids: string[]) => void
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger className="inline-flex shrink-0 items-center justify-center gap-1 rounded-md border bg-background px-3 py-1 text-sm font-medium shadow-xs hover:bg-accent hover:text-accent-foreground h-9">
-        Profiles
-        {selected.length > 0 && (
-          <Badge variant="secondary" className="ml-1">
-            {selected.length}
-          </Badge>
-        )}
-        <ChevronsUpDown className="ml-1 h-3 w-3 opacity-50" />
-      </PopoverTrigger>
-      <PopoverContent className="w-[250px] p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Search profiles…" />
-          <CommandList>
-            <CommandEmpty>No profiles.</CommandEmpty>
-            <CommandGroup>
-              {profiles.map((p) => (
-                <CommandItem
-                  key={p.id}
-                  onSelect={() =>
-                    onChange(
-                      selected.includes(p.id)
-                        ? selected.filter((id) => id !== p.id)
-                        : [...selected, p.id],
-                    )
-                  }
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      selected.includes(p.id) ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  {p.name}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
       </PopoverContent>
     </Popover>
   )

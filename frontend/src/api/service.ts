@@ -52,8 +52,8 @@ export type CgtPeriod =
 
 export interface CgtFilters {
   period: CgtPeriod
-  /** Empty means all profiles. */
-  profileIds: string[]
+  /** Exactly one profile — the report has no "all profiles" mode. */
+  profileId: string
 }
 
 /**

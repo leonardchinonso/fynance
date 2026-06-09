@@ -55,6 +55,37 @@ fn resolve_profile_ids_to_account_ids(
     Some(scoped)
 }
 
+/// Reject the request up-front if any in-scope investment event references a
+/// currency that isn't configured. Without this check the engine still runs,
+/// `FxRateMap::convert` returns the amount unchanged, and totals quietly skew —
+/// surfacing it as an actionable 400 lets the user add the missing rows under
+/// Settings → Currencies before they look at numbers that pretend to be correct.
+fn check_required_currencies(
+    events: &[InvestmentEvent],
+    fx: &FxRateMap,
+) -> Result<(), AppError> {
+    let preferred = fx.preferred();
+    let mut missing: Vec<String> = events
+        .iter()
+        .map(|e| e.currency.as_str())
+        .filter(|c| *c != preferred && fx.rate(c).is_none())
+        .map(|c| c.to_string())
+        .collect();
+    missing.sort();
+    missing.dedup();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let list = missing.join(", ");
+    Err(AppError::bad_request(
+        format!(
+            "Some investment events use currencies not yet configured: {list}. \
+             Add them under Settings → Currencies before generating this report."
+        ),
+        "missing_currencies",
+    ))
+}
+
 // ── API Response Models ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -305,6 +336,7 @@ pub async fn get_s104_pools(
     // Compute pools
     let currencies = db.get_currencies()?;
     let fx = FxRateMap::new(currencies)?;
+    check_required_currencies(&events, &fx)?;
     let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None, &fx);
 
     Ok(Json(pools.pools))
@@ -385,6 +417,8 @@ pub async fn get_capital_gains(
     let currencies = db.get_currencies()?;
     let fx = FxRateMap::new(currencies)?;
     let base_currency = fx.preferred().to_string();
+
+    check_required_currencies(&events, &fx)?;
 
     let mut response = run_cgt_engine(
         events,
