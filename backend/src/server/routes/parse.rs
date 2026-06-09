@@ -701,6 +701,14 @@ fn walk_categories(
     }
 }
 
+/// `(filename -> document id, distinct document ids, document summaries)`
+/// returned by [`store_parse_documents`].
+type StoredParseDocuments = (
+    std::collections::HashMap<String, String>,
+    Vec<String>,
+    Vec<crate::model::DocumentSummary>,
+);
+
 /// Persist each uploaded file as a document (deduped by content hash) and
 /// return a `filename -> document_id` map plus the de-duplicated list of all
 /// document ids in this parse call. Used to attribute extracted rows back to
@@ -709,11 +717,7 @@ fn store_parse_documents(
     db: &crate::storage::Db,
     documents: &[DocumentInput],
     account_id: &str,
-) -> anyhow::Result<(
-    std::collections::HashMap<String, String>,
-    Vec<String>,
-    Vec<crate::model::DocumentSummary>,
-)> {
+) -> anyhow::Result<StoredParseDocuments> {
     let mut by_filename = std::collections::HashMap::new();
     let mut all_ids: Vec<String> = Vec::new();
     let mut summaries: Vec<crate::model::DocumentSummary> = Vec::new();

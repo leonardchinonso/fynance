@@ -190,6 +190,7 @@ pub async fn run_multi_file_pipeline(
 
 /// Run deduplication checks and assemble the final IngestionPreview.
 /// Requires DB access. Called synchronously after the LLM pipeline completes.
+#[allow(clippy::too_many_arguments)]
 pub fn build_multi_preview(
     extraction: ExtractionResult,
     account_id: &str,
