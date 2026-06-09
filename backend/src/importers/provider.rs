@@ -553,15 +553,15 @@ impl AnthropicProvider {
                     task_id: task_id.clone(),
                 });
             }
-            "content_block_delta" => {
-                if last_emit.elapsed() >= std::time::Duration::from_secs(1) {
-                    let _ = tx.send(ProgressEvent::LlmProgress {
-                        output_tokens: acc.output_tokens(),
-                        elapsed_ms: 0,
-                        task_id: task_id.clone(),
-                    });
-                    *last_emit = std::time::Instant::now();
-                }
+            "content_block_delta"
+                if last_emit.elapsed() >= std::time::Duration::from_secs(1) =>
+            {
+                let _ = tx.send(ProgressEvent::LlmProgress {
+                    output_tokens: acc.output_tokens(),
+                    elapsed_ms: 0,
+                    task_id: task_id.clone(),
+                });
+                *last_emit = std::time::Instant::now();
             }
             _ => {}
         }
