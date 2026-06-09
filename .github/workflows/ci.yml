@@ -62,7 +62,15 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      # `--omit=optional` skips platform-conditional native fallbacks (e.g.
+      # @tailwindcss/oxide-wasm32-wasi → @emnapi/*). They're WASI shims for
+      # platforms without the native module; Linux CI uses the native build
+      # so they're never loaded here. Without this flag, an `npm install` on
+      # Windows produces a lockfile that npm ci on Linux deems out of sync,
+      # because Windows skips Linux-only optionals and vice versa. Dropping
+      # optionals here keeps the lockfile tight without us re-syncing every
+      # time tailwind bumps a transitive.
+      - run: npm ci --omit=optional
       - run: npx tsc --noEmit
       - run: npm run build
       - name: Upload frontend build
