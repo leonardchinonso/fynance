@@ -33,6 +33,8 @@ import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { DocumentSummary } from "@/bindings/DocumentSummary"
+import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 
 export interface HoldingsImportResponse { inserted: number; updated: number; total: number }
 
@@ -177,4 +179,31 @@ export interface ApiService {
    * `GET /api/investments/capital-gains`. See [CgtFilters] for input shape.
    */
   getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse>
+
+  // ── Documents ─────────────────────────────────────────────────────
+  /** List all stored source documents with reference count + orphan flag. */
+  listDocuments(): Promise<DocumentSummary[]>
+  /** Upload one or more standalone documents (origin = "manual"). */
+  uploadDocuments(files: File[], accountId?: string): Promise<DocumentSummary[]>
+  /**
+   * Delete a document. Without `force`, a referenced document throws a
+   * {@link DocumentReferencedError} carrying the per-entity breakdown so the UI
+   * can confirm before retrying with `force = true`.
+   */
+  deleteDocument(id: string, force?: boolean): Promise<DocumentDeleteResult>
+  /** Browser URL to download a stored document's bytes. */
+  documentDownloadUrl(id: string): string
+}
+
+/**
+ * Thrown by {@link ApiService.deleteDocument} when the document is still linked
+ * to rows and `force` was not set. Carries the per-entity reference breakdown.
+ */
+export class DocumentReferencedError extends Error {
+  readonly references: { transactions: number; holdings: number; investments: number }
+  constructor(references: { transactions: number; holdings: number; investments: number }) {
+    super("document is still referenced")
+    this.name = "DocumentReferencedError"
+    this.references = references
+  }
 }

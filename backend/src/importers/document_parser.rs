@@ -197,6 +197,8 @@ pub fn build_multi_preview(
     num_files: usize,
     db: &Db,
     processing_time_ms: u64,
+    doc_ids_by_filename: &std::collections::HashMap<String, String>,
+    all_doc_ids: &[String],
 ) -> Result<IngestionPreview> {
     let min_row_confidence: f32 = std::env::var("FYNANCE_IMPORT_MIN_ROW_CONF")
         .ok()
@@ -206,24 +208,46 @@ pub fn build_multi_preview(
     let institution_detected = Some(account_institution.to_string());
     let detection_confidence = extraction.detection_confidence;
     let estimated_price = crate::importers::pricing::estimated_price(extraction.calls.clone());
-    let notes: Vec<String> = vec![];
+    let mut notes: Vec<String> = vec![];
+    // Counts rows that could not be attributed to a single source document and
+    // fell back to all of the call's documents. Surfaced as a note below.
+    let attribution_fallbacks = std::cell::Cell::new(0usize);
 
     // ── Transaction deduplication ────────────────────────────────────────────
 
     let tx_result = if !extraction.transactions.is_empty() {
-        let preview_rows = db.dry_run_transactions_from_parsed(
+        // Resolve each row's source documents once; reused for the preview rows
+        // and the (filtered) commit payload so attribution stays consistent.
+        let tx_source_ids: Vec<Vec<String>> = extraction
+            .transactions
+            .iter()
+            .map(|r| {
+                resolve_source_ids(
+                    r.source_file.as_deref(),
+                    doc_ids_by_filename,
+                    all_doc_ids,
+                    &attribution_fallbacks,
+                )
+            })
+            .collect();
+
+        let mut preview_rows = db.dry_run_transactions_from_parsed(
             account_id,
             &extraction.transactions,
             min_row_confidence,
         )?;
+        for (row, ids) in preview_rows.iter_mut().zip(tx_source_ids.iter()) {
+            row.source_document_ids = ids.clone();
+        }
 
         // API contract is id-only: resolve legacy name-only categories
         // (Monzo CSV) to ids; ImportTransaction.category stays None.
         let import_transactions: Vec<ImportTransaction> = extraction
             .transactions
             .iter()
-            .filter(|r| r.row_confidence >= min_row_confidence)
-            .map(|r| {
+            .enumerate()
+            .filter(|(_, r)| r.row_confidence >= min_row_confidence)
+            .map(|(i, r)| {
                 let (category_id, category_source) = if let Some(ref id) = r.category_id {
                     (Some(id.clone()), Some(CategorySource::Agent))
                 } else if let Some(ref name) = r.category {
@@ -252,6 +276,7 @@ pub fn build_multi_preview(
                     notes: r.notes.clone(),
                     is_recurring: None,
                     exclude_from_summary: None,
+                    source_document_ids: tx_source_ids[i].clone(),
                 }
             })
             .collect();
@@ -301,11 +326,20 @@ pub fn build_multi_preview(
             .into_iter()
             .map(|mut h| {
                 h.account_id = account_id.to_string();
+                h.source_document_ids = resolve_source_ids(
+                    h.source_file.as_deref(),
+                    doc_ids_by_filename,
+                    all_doc_ids,
+                    &attribution_fallbacks,
+                );
                 h
             })
             .collect();
 
-        let previews = db.dry_run_holdings(account_id, &holdings_with_account)?;
+        let mut previews = db.dry_run_holdings(account_id, &holdings_with_account)?;
+        for (p, h) in previews.iter_mut().zip(holdings_with_account.iter()) {
+            p.source_document_ids = h.source_document_ids.clone();
+        }
 
         let rows_new = previews.iter().filter(|p| p.status == "new").count();
         let rows_modify = previews.iter().filter(|p| p.status == "modify").count();
@@ -335,8 +369,24 @@ pub fn build_multi_preview(
     // ── Investment deduplication ─────────────────────────────────────────────
 
     let investments_result = if !extraction.investments.is_empty() {
-        let preview_rows =
+        let inv_source_ids: Vec<Vec<String>> = extraction
+            .investments
+            .iter()
+            .map(|r| {
+                resolve_source_ids(
+                    r.source_file.as_deref(),
+                    doc_ids_by_filename,
+                    all_doc_ids,
+                    &attribution_fallbacks,
+                )
+            })
+            .collect();
+
+        let mut preview_rows =
             db.dry_run_investments(account_id, &extraction.investments, min_row_confidence)?;
+        for (row, ids) in preview_rows.iter_mut().zip(inv_source_ids.iter()) {
+            row.source_document_ids = ids.clone();
+        }
 
         let rows_new = preview_rows
             .iter()
@@ -350,8 +400,9 @@ pub fn build_multi_preview(
         let payload_events: Vec<CreateInvestmentEventBody> = extraction
             .investments
             .iter()
-            .filter(|r| r.row_confidence >= min_row_confidence)
-            .map(|r| CreateInvestmentEventBody {
+            .enumerate()
+            .filter(|(_, r)| r.row_confidence >= min_row_confidence)
+            .map(|(i, r)| CreateInvestmentEventBody {
                 account_id: account_id.to_string(),
                 event_type: r.event_type.clone(),
                 symbol: r.symbol.clone(),
@@ -361,6 +412,7 @@ pub fn build_multi_preview(
                 fee: Some(r.fee.clone()),
                 currency: r.currency.clone(),
                 notes: r.notes.clone(),
+                source_document_ids: inv_source_ids[i].clone(),
             })
             .collect();
 
@@ -386,6 +438,15 @@ pub fn build_multi_preview(
 
     // ── Assemble ────────────────────────────────────────────────────────────
 
+    let fallbacks = attribution_fallbacks.get();
+    if fallbacks > 0 {
+        notes.push(format!(
+            "{fallbacks} row(s) could not be matched to a single source file and were \
+             linked to all {} uploaded documents.",
+            all_doc_ids.len()
+        ));
+    }
+
     Ok(IngestionPreview {
         status: IngestionStatus::Success,
         metadata: IngestionMetadata {
@@ -401,7 +462,36 @@ pub fn build_multi_preview(
         holdings: holdings_result,
         investments: investments_result,
         clarifications_needed: vec![],
+        documents: vec![],
     })
+}
+
+/// Resolve a row's `source_file` to the document id(s) it should be linked to.
+///
+/// - No documents in the call: empty (manual/no-document path).
+/// - Exactly one document: that document (the filename is unambiguous).
+/// - `source_file` matches an uploaded filename: just that document.
+/// - Otherwise (missing or unmatched, with multiple documents): fall back to
+///   all of the call's documents and bump `fallbacks` so a note can be shown.
+fn resolve_source_ids(
+    source_file: Option<&str>,
+    by_filename: &std::collections::HashMap<String, String>,
+    all_ids: &[String],
+    fallbacks: &std::cell::Cell<usize>,
+) -> Vec<String> {
+    if all_ids.is_empty() {
+        return Vec::new();
+    }
+    if all_ids.len() == 1 {
+        return all_ids.to_vec();
+    }
+    if let Some(file) = source_file {
+        if let Some(id) = by_filename.get(file) {
+            return vec![id.clone()];
+        }
+    }
+    fallbacks.set(fallbacks.get() + 1);
+    all_ids.to_vec()
 }
 
 // ── Parallel extraction ─────────────────────────────────────────────────────
@@ -487,7 +577,7 @@ async fn extract_all_parallel(
         let (filename, ct, res) =
             joined.map_err(|e| anyhow!("extraction task panicked: {e}"))?;
         match res {
-            Ok(extraction) => {
+            Ok(mut extraction) => {
                 completed += 1;
                 tracing::info!(
                     filename = %filename,
@@ -498,6 +588,17 @@ async fn extract_all_parallel(
                     detection_confidence = extraction.detection_confidence,
                     "parse: extraction OK"
                 );
+                // Split mode extracts per file, so attribution is exact: every
+                // row from this task came from `filename`.
+                for t in &mut extraction.transactions {
+                    t.source_file = Some(filename.clone());
+                }
+                for h in &mut extraction.holdings {
+                    h.source_file = Some(filename.clone());
+                }
+                for inv in &mut extraction.investments {
+                    inv.source_file = Some(filename.clone());
+                }
                 merged.transactions.extend(extraction.transactions);
                 merged.holdings.extend(extraction.holdings);
                 merged.investments.extend(extraction.investments);
@@ -784,6 +885,8 @@ pub(crate) fn convert_parsed_holdings(parsed: &ParsedHoldings) -> Result<Vec<Hol
             sub_account: row.sub_account.clone(),
             is_closed: false,
             derived: row.derived,
+            source_document_ids: Vec::new(),
+            source_file: row.source_file.clone(),
         });
     }
 
@@ -999,6 +1102,7 @@ mod tests {
                     as_of: None,
                     row_confidence: 0.95,
                     derived: false,
+                    source_file: None,
                 },
                 super::super::holdings_parser::ParsedHoldingRow {
                     symbol: "BAD".to_string(),
@@ -1012,6 +1116,7 @@ mod tests {
                     as_of: None,
                     row_confidence: 0.50,
                     derived: false,
+                    source_file: None,
                 },
             ],
         };
@@ -1037,6 +1142,7 @@ mod tests {
                 as_of: None,
                 row_confidence: 0.90,
                 derived: false,
+                source_file: None,
             }],
         };
 
@@ -1062,6 +1168,7 @@ mod tests {
                 as_of: None,
                 row_confidence: 0.85,
                 derived: false,
+                source_file: None,
             }],
         };
 

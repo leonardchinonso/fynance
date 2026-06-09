@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom"
-import { Receipt, FileText, ArrowRight } from "lucide-react"
+import { Receipt, FileText, FolderArchive, ArrowRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface CardOption {
@@ -17,6 +17,13 @@ const OPTIONS: CardOption[] = [
     title: "Capital Gains Tax report",
     description:
       "Generate a UK HMRC-style report of your disposals, gains, and S104 pool workings for any tax year.",
+  },
+  {
+    to: "/reports/documents",
+    icon: <FolderArchive className="h-6 w-6" />,
+    title: "Documents",
+    description:
+      "Browse every uploaded source file, download or delete them, and spot orphaned imports that were never committed.",
   },
   {
     to: null,

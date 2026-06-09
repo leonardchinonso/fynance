@@ -146,6 +146,7 @@ pub async fn import_investments(
                 fee: event.fee.clone(),
                 currency: event.currency.clone(),
                 notes: event.notes.clone(),
+                source_document_ids: event.source_document_ids.clone(),
             };
 
             match db.create_investment_event(&body) {

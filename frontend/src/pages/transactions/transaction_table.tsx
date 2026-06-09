@@ -43,6 +43,7 @@ import {
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
+import { SourceChips, type SourceDocMeta } from "@/components/source_chips"
 import type { SortDir, TransactionSortColumn } from "@/types"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
@@ -277,10 +278,24 @@ function TransactionTableInternal({
   const totalPages = Math.ceil(total / limit)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
   const [transactions, setTransactions] = useState(initialTransactions)
+  // id -> {filename, uploaded_at} for the per-row "Source" document chips.
+  const [docsMap, setDocsMap] = useState<Map<string, SourceDocMeta>>(new Map())
 
   useEffect(() => {
     setTransactions(initialTransactions)
   }, [initialTransactions])
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .listDocuments()
+      .then((docs) => {
+        if (cancelled) return
+        setDocsMap(new Map(docs.map((d) => [d.id, { filename: d.filename, uploaded_at: d.uploaded_at }])))
+      })
+      .catch(() => { /* documents are optional context; ignore */ })
+    return () => { cancelled = true }
+  }, [])
 
   async function toggleExclude(id: string, current: boolean) {
     setTransactions(prev => prev.map(t => t.id === id ? { ...t, exclude_from_summary: !current } : t))
@@ -389,16 +404,19 @@ function TransactionTableInternal({
               )}
               {isVisible("source") && (
                 <TableCell>
-                  {t.category_source === "agent" && t.confidence && (
-                    <Badge variant="outline" className="text-xs">
-                      AI {Math.round(t.confidence * 100)}%
-                    </Badge>
-                  )}
-                  {t.category_source === "manual" && (
-                    <Badge variant="outline" className="text-xs">
-                      Manual
-                    </Badge>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {t.category_source === "agent" && t.confidence && (
+                      <Badge variant="outline" className="text-xs">
+                        AI {Math.round(t.confidence * 100)}%
+                      </Badge>
+                    )}
+                    {t.category_source === "manual" && (
+                      <Badge variant="outline" className="text-xs">
+                        Manual
+                      </Badge>
+                    )}
+                    <SourceChips documentIds={t.source_document_ids} docs={docsMap} />
+                  </div>
                 </TableCell>
               )}
               {isVisible("exclude") && (

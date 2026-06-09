@@ -3,6 +3,7 @@ backend/target/
 /.claude/
 .env
 .antigravitycli/
+.mcp.json
 
 # Backend
 backend/workings/

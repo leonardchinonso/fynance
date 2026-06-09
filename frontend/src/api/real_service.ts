@@ -73,7 +73,10 @@ import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { DocumentSummary } from "@/bindings/DocumentSummary"
+import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { ApiService, CgtFilters, HoldingsImportResponse } from "./service"
+import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
 import { MockApiService } from "./mock_service"
 
@@ -409,6 +412,45 @@ export class RealApiService implements ApiService {
 
   async deleteCurrency(code: string): Promise<void> {
     return del(`${BASE}/currencies/${code}`)
+  }
+
+  // ── Documents ─────────────────────────────────────────────────────
+
+  async listDocuments(): Promise<DocumentSummary[]> {
+    return get<DocumentSummary[]>(`${BASE}/documents`)
+  }
+
+  async uploadDocuments(files: File[], accountId?: string): Promise<DocumentSummary[]> {
+    const formData = new FormData()
+    files.forEach((f) => formData.append("files[]", f, f.name))
+    if (accountId) formData.append("account_id", accountId)
+    return postMultipart<DocumentSummary[]>(`${BASE}/documents`, formData)
+  }
+
+  async deleteDocument(id: string, force = false): Promise<DocumentDeleteResult> {
+    const token = getAuthToken()
+    const headers: Record<string, string> = {}
+    if (token) headers["Authorization"] = `Bearer ${token}`
+    const url = `${BASE}/documents/${encodeURIComponent(id)}${force ? "?force=true" : ""}`
+    const res = await fetch(`${window.location.origin}${url}`, { method: "DELETE", headers })
+    if (res.status === 401) throw new AuthError(!!token)
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => ({}))) as {
+        references?: { transactions?: number; holdings?: number; investments?: number }
+      }
+      const r = body.references ?? {}
+      throw new DocumentReferencedError({
+        transactions: r.transactions ?? 0,
+        holdings: r.holdings ?? 0,
+        investments: r.investments ?? 0,
+      })
+    }
+    if (!res.ok) throw await parseError(res)
+    return res.json()
+  }
+
+  documentDownloadUrl(id: string): string {
+    return `${BASE}/documents/${encodeURIComponent(id)}/download`
   }
 
   // ── Mock fallback (backend endpoint doesn't exist yet) ──────────

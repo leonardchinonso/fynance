@@ -11,7 +11,7 @@ import { chromium } from "playwright"
 import { mkdirSync, existsSync } from "node:fs"
 import { resolve } from "node:path"
 
-const BASE = "http://localhost:5173"
+const BASE = process.env.SMOKE_BASE || "http://localhost:5173"
 const OUT = resolve(process.cwd(), "..", ".playwright-mcp")
 if (!existsSync(OUT)) mkdirSync(OUT, { recursive: true })
 
@@ -189,6 +189,7 @@ async function runView(browser, view) {
   await page.goto(`${BASE}/reports`, { waitUntil: "domcontentloaded" })
   await page.getByRole("heading", { name: /^reports$/i }).waitFor({ timeout: 10000 })
   await page.getByText(/capital gains tax report/i).waitFor({ timeout: 5000 })
+  await page.getByText(/^documents$/i).first().waitFor({ timeout: 5000 })
   await page.getByText(/more reports coming soon/i).waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9_reports_landing`)
 
@@ -215,6 +216,20 @@ async function runView(browser, view) {
   await page.getByText(/recent reports/i).waitFor({ timeout: 5000 })
   await page.getByText(/tax year/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9c_cgt_history`)
+
+  // 11. Reports → Documents page. Verify the table renders and the mock's
+  //     orphaned document shows the "Orphaned" badge.
+  await page.goto(`${BASE}/reports`, { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: /documents/i }).first().click()
+  await page.waitForURL(/\/reports\/documents$/, { timeout: 5000 })
+  await page.getByRole("heading", { name: /^documents$/i }).waitFor({ timeout: 5000 })
+  await page.getByText(/monzo_may_2026\.csv/i).waitFor({ timeout: 5000 })
+  const orphanBadge = page.getByText(/^orphaned$/i).first()
+  await orphanBadge.waitFor({ timeout: 5000 })
+  if ((await orphanBadge.count()) === 0) {
+    throw new Error("Orphaned badge missing on the Documents page")
+  }
+  await shot(page, `preview_${label}_10_documents`)
 
   await ctx.close()
   console.log(`[${label}] OK`)

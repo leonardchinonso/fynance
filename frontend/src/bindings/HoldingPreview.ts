@@ -7,4 +7,9 @@ export type HoldingPreview = { account_id: string, symbol: string, sub_account: 
  * the import preview. Always `false` for previews that did not come from
  * the LLM extraction pipeline (e.g. the user-driven /api/holdings preview).
  */
-derived: boolean, };
+derived: boolean, 
+/**
+ * IDs of the source documents this snapshot was extracted from (resolve
+ * names via `IngestionPreview.documents`).
+ */
+source_document_ids: Array<string>, };

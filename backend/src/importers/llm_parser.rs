@@ -350,6 +350,7 @@ mod tests {
             row_confidence: confidence,
             category_id: None,
             category_confidence: None,
+            source_file: None,
         }
     }
 

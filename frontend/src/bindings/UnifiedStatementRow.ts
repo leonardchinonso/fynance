@@ -53,4 +53,10 @@ category_id: string | null,
  * LLM's confidence in the category assignment, in `[0.0, 1.0]`. `None`
  * for split-mode rows.
  */
-category_confidence: number | null, };
+category_confidence: number | null, 
+/**
+ * Filename this row was attributed to during a parse. Set deterministically
+ * in split mode (per-file extraction) or by the model in unified mode.
+ * Resolved to `source_document_ids` once documents are stored.
+ */
+source_file: string | null, };

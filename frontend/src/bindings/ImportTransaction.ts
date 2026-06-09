@@ -12,4 +12,9 @@ category: string | null,
 /**
  * Preferred: FK to categories.id (leaf node)
  */
-category_id: string | null, category_source: CategorySource | null, notes: string | null, is_recurring: boolean | null, exclude_from_summary: boolean | null, };
+category_id: string | null, category_source: CategorySource | null, notes: string | null, is_recurring: boolean | null, exclude_from_summary: boolean | null, 
+/**
+ * IDs of the source documents this row was extracted from (`documents.id`).
+ * The parse endpoint fills these in per row; manual rows leave it empty.
+ */
+source_document_ids: Array<string>, };

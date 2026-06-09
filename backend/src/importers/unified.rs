@@ -67,6 +67,11 @@ pub struct UnifiedStatementRow {
     /// for split-mode rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category_confidence: Option<f32>,
+    /// Filename this row was attributed to during a parse. Set deterministically
+    /// in split mode (per-file extraction) or by the model in unified mode.
+    /// Resolved to `source_document_ids` once documents are stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
 }
 
 impl Transaction {
@@ -109,6 +114,7 @@ impl Transaction {
             exclude_from_summary: false,
             fingerprint: fp,
             fitid: row.fitid,
+            source_document_ids: Vec::new(),
         }
     }
 }

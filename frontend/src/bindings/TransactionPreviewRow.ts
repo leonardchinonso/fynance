@@ -12,4 +12,9 @@ category_id: string | null,
 /**
  * LLM confidence in the category assignment, [0.0, 1.0]. Unified mode only.
  */
-category_confidence: number | null, };
+category_confidence: number | null, 
+/**
+ * IDs of the source documents this row was extracted from (resolve names
+ * via `IngestionPreview.documents`). Empty for the user-driven JSON dryrun.
+ */
+source_document_ids: Array<string>, };

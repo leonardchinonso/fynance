@@ -191,6 +191,7 @@ function generateFromTemplates(
           exclude_from_summary: false,
           fingerprint: makeFingerprint(counter),
           fitid: null,
+          source_document_ids: [],
         })
         counter++
       }

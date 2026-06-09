@@ -37,7 +37,10 @@ import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { SymbolSummary } from "@/bindings/SymbolSummary"
+import type { DocumentSummary } from "@/bindings/DocumentSummary"
+import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { ApiService, CgtFilters, HoldingsImportResponse } from "./service"
+import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
 import {
   MOCK_PROFILES,
@@ -80,6 +83,33 @@ function classifyBalance(
 }
 
 export class MockApiService implements ApiService {
+  // In-memory document store so the Documents page renders in mock mode. One
+  // referenced (orphaned = false) and one orphaned entry to exercise the badge.
+  private documents: DocumentSummary[] = [
+    {
+      id: "mock_doc_monzo_may",
+      filename: "monzo_may_2026.csv",
+      mime_type: "text/csv",
+      size_bytes: 18234,
+      origin: "parse",
+      account_id: "monzo-alex",
+      uploaded_at: "2026-05-31T09:14:02Z",
+      reference_count: 47,
+      orphaned: false,
+    },
+    {
+      id: "mock_doc_orphan",
+      filename: "t212_positions_draft.csv",
+      mime_type: "text/csv",
+      size_bytes: 4096,
+      origin: "parse",
+      account_id: "t212-isa",
+      uploaded_at: "2026-06-02T18:40:00Z",
+      reference_count: 0,
+      orphaned: true,
+    },
+  ]
+
   async getProfiles(): Promise<Profile[]> {
     await delay(DELAY_MS)
     return MOCK_PROFILES
@@ -864,50 +894,50 @@ export class MockApiService implements ApiService {
     const isUnified = hints.experimental?.mode === "unified"
     const txRows = wantTx
       ? [
-          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-transport" : null, category_confidence: isUnified ? 0.95 : null },
-          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null, category_id: isUnified ? "cat-groceries" : null, category_confidence: isUnified ? 0.97 : null },
-          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-eating-out" : null, category_confidence: isUnified ? 0.78 : null },
-          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-subscriptions" : null, category_confidence: isUnified ? 0.45 : null },
+          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-transport" : null, category_confidence: isUnified ? 0.95 : null, source_document_ids: [] },
+          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null, category_id: isUnified ? "cat-groceries" : null, category_confidence: isUnified ? 0.97 : null, source_document_ids: [] },
+          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-eating-out" : null, category_confidence: isUnified ? 0.78 : null, source_document_ids: [] },
+          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-subscriptions" : null, category_confidence: isUnified ? 0.45 : null, source_document_ids: [] },
         ]
       : []
     const txPayload: ImportPayload | null = wantTx
       ? {
           account_id: accountId,
           transactions: [
-            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category: null, category_id: isUnified ? "cat-transport" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: null, exclude_from_summary: null },
-            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category: null, category_id: isUnified ? "cat-eating-out" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: null, exclude_from_summary: null },
-            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category: null, category_id: isUnified ? "cat-subscriptions" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: true, exclude_from_summary: null },
+            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category: null, category_id: isUnified ? "cat-transport" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category: null, category_id: isUnified ? "cat-eating-out" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category: null, category_id: isUnified ? "cat-subscriptions" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: true, exclude_from_summary: null, source_document_ids: [] },
           ],
         }
       : null
 
     const holdingRows = wantHoldings
       ? [
-          { account_id: accountId, symbol: "VUSA", sub_account: null, value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", status: "modify", existing_value: "3654.00", derived: false },
-          { account_id: accountId, symbol: "AAPL", sub_account: null, value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", status: "new", existing_value: null, derived: true },
+          { account_id: accountId, symbol: "VUSA", sub_account: null, value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", status: "modify", existing_value: "3654.00", derived: false, source_document_ids: [] },
+          { account_id: accountId, symbol: "AAPL", sub_account: null, value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", status: "new", existing_value: null, derived: true, source_document_ids: [] },
         ]
       : []
     const holdingsPayload: HoldingsImportPayload | null = wantHoldings
       ? {
           account_id: accountId,
           holdings: [
-            { account_id: accountId, symbol: "VUSA", name: "Vanguard S&P 500 UCITS ETF", holding_type: "etf", quantity: "50.0000", price_per_unit: "76.32", value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", short_name: "VUSA", sub_account: null, is_closed: false, derived: false },
-            { account_id: accountId, symbol: "AAPL", name: "Apple Inc", holding_type: "stock", quantity: "10.0000", price_per_unit: "198.45", value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", short_name: "AAPL", sub_account: null, is_closed: false, derived: true },
+            { account_id: accountId, symbol: "VUSA", name: "Vanguard S&P 500 UCITS ETF", holding_type: "etf", quantity: "50.0000", price_per_unit: "76.32", value: "3816.00", currency: "GBP", as_of: "2026-05-17T00:00:00", short_name: "VUSA", sub_account: null, is_closed: false, derived: false, source_document_ids: [] },
+            { account_id: accountId, symbol: "AAPL", name: "Apple Inc", holding_type: "stock", quantity: "10.0000", price_per_unit: "198.45", value: "1984.50", currency: "USD", as_of: "2026-05-17T00:00:00", short_name: "AAPL", sub_account: null, is_closed: false, derived: true, source_document_ids: [] },
           ],
         }
       : null
 
     const invRows = wantInv
       ? [
-          { index: 0, event_type: "buy", symbol: "AAPL", date: "2026-04-10T14:30:00", quantity: "10.0000", price_per_share: "185.20", currency: "USD", status: "new" as const, existing_id: null },
-          { index: 1, event_type: "buy", symbol: "VUSA", date: "2026-01-15T09:00:00", quantity: "5.0000", price_per_share: "72.10", currency: "GBP", status: "duplicate" as const, existing_id: "inv_xyz789" },
+          { index: 0, event_type: "buy", symbol: "AAPL", date: "2026-04-10T14:30:00", quantity: "10.0000", price_per_share: "185.20", currency: "USD", status: "new" as const, existing_id: null, source_document_ids: [] },
+          { index: 1, event_type: "buy", symbol: "VUSA", date: "2026-01-15T09:00:00", quantity: "5.0000", price_per_share: "72.10", currency: "GBP", status: "duplicate" as const, existing_id: "inv_xyz789", source_document_ids: [] },
         ]
       : []
     const invPayload: InvestmentsImportPayload | null = wantInv
       ? {
           account_id: accountId,
           events: [
-            { account_id: accountId, event_type: "buy", symbol: "AAPL", date: "2026-04-10T14:30:00", quantity: "10.0000", price_per_share: "185.20", fee: "0.00", currency: "USD", notes: null },
+            { account_id: accountId, event_type: "buy", symbol: "AAPL", date: "2026-04-10T14:30:00", quantity: "10.0000", price_per_share: "185.20", fee: "0.00", currency: "USD", notes: null, source_document_ids: [] },
           ],
         }
       : null
@@ -985,6 +1015,7 @@ export class MockApiService implements ApiService {
 
     return {
       status: "success",
+      documents: [],
       metadata: {
         files_processed: files.length,
         institution_detected: "monzo",
@@ -1058,6 +1089,55 @@ export class MockApiService implements ApiService {
   async getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse> {
     await delay(DELAY_MS)
     return mockCapitalGains(filters)
+  }
+
+  // ── Documents ─────────────────────────────────────────────────────
+
+  async listDocuments(): Promise<DocumentSummary[]> {
+    await delay(DELAY_MS)
+    return [...this.documents]
+  }
+
+  async uploadDocuments(files: File[], accountId?: string): Promise<DocumentSummary[]> {
+    await delay(DELAY_MS)
+    const created = files.map((f) => {
+      const doc: DocumentSummary = {
+        id: `mock_doc_${Math.random().toString(36).slice(2, 10)}`,
+        filename: f.name,
+        mime_type: f.type || "application/octet-stream",
+        size_bytes: f.size,
+        origin: "manual",
+        account_id: accountId ?? null,
+        uploaded_at: new Date().toISOString(),
+        reference_count: 0,
+        orphaned: true,
+      }
+      this.documents.unshift(doc)
+      return doc
+    })
+    return created
+  }
+
+  async deleteDocument(id: string, force = false): Promise<DocumentDeleteResult> {
+    await delay(DELAY_MS)
+    const doc = this.documents.find((d) => d.id === id)
+    if (doc && doc.reference_count > 0 && !force) {
+      // Synthesize a plausible breakdown for the confirm dialog.
+      throw new DocumentReferencedError({
+        transactions: doc.reference_count,
+        holdings: 0,
+        investments: 0,
+      })
+    }
+    this.documents = this.documents.filter((d) => d.id !== id)
+    return {
+      deleted: true,
+      unlinked: { transactions: doc?.reference_count ?? 0, holdings: 0, investments: 0 },
+    }
+  }
+
+  documentDownloadUrl(id: string): string {
+    return `/api/documents/${encodeURIComponent(id)}/download`
   }
 }
 

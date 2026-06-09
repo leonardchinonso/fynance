@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     exclude_from_summary INTEGER NOT NULL DEFAULT 0,
     fingerprint          TEXT NOT NULL UNIQUE,
     fitid                TEXT,
+    source_document_ids  TEXT NOT NULL DEFAULT '[]',  -- JSON array of documents.id; provenance back to source files
     created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (category_id) REFERENCES categories(id)
 );
@@ -113,6 +114,7 @@ CREATE TABLE IF NOT EXISTS holdings (
     short_name      TEXT,
     sub_account     TEXT,
     is_closed       INTEGER NOT NULL DEFAULT 0,
+    source_document_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array of documents.id
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
@@ -144,6 +146,7 @@ CREATE TABLE IF NOT EXISTS investments (
     currency         TEXT NOT NULL,    -- native currency of price and fee (e.g. 'USD', 'GBP')
     notes            TEXT,
     fingerprint      TEXT NOT NULL UNIQUE,
+    source_document_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array of documents.id
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
@@ -222,6 +225,29 @@ CREATE TABLE IF NOT EXISTS budget_overrides (
     UNIQUE(month, category_id),
     FOREIGN KEY (category_id) REFERENCES categories(id)
 );
+
+-- ── documents ─────────────────────────────────────────────────────────────
+-- First-class store for every uploaded source file. The bytes live on disk in
+-- a `documents/` subdirectory beside the DB; this table holds the metadata and
+-- the path. `content_hash` is unique so re-uploading or re-parsing the same
+-- bytes reuses the existing row instead of creating a duplicate (the main
+-- defence against orphaned files piling up across a session). Provenance back
+-- to individual rows lives in the `source_document_ids` JSON array on
+-- transactions / holdings / investments, not here.
+CREATE TABLE IF NOT EXISTS documents (
+    id           TEXT PRIMARY KEY,              -- UUID v4
+    filename     TEXT NOT NULL,                 -- original uploaded filename
+    file_path    TEXT NOT NULL,                 -- absolute path on disk
+    mime_type    TEXT NOT NULL,                 -- e.g. text/csv, application/pdf, image/png
+    size_bytes   INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,                 -- sha256 of the bytes, for dedup
+    origin       TEXT NOT NULL DEFAULT 'parse', -- 'parse' | 'manual' (informational only)
+    account_id   TEXT,                          -- best-effort link to the import account; nullable
+    uploaded_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_hash ON documents(content_hash);
+CREATE INDEX IF NOT EXISTS idx_documents_account ON documents(account_id);
 
 -- ── currencies ────────────────────────────────────────────────────────────
 -- App-level list of supported currencies. Code is the PK (ISO 4217).

@@ -273,6 +273,46 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     }
                 }
             },
+            "/api/documents": {
+                "get": {
+                    "summary": "List stored source documents with reference count and orphan flag",
+                    "responses": { "200": { "description": "Array of DocumentSummary" } }
+                },
+                "post": {
+                    "summary": "Upload one or more standalone documents (origin=manual, deduped by content hash)",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": { "multipart/form-data": { "schema": { "type": "object" } } }
+                    },
+                    "responses": { "200": { "description": "Array of created DocumentSummary" } }
+                }
+            },
+            "/api/documents/{id}": {
+                "get": {
+                    "summary": "Document metadata (with reference count and orphan flag)",
+                    "responses": { "200": { "description": "DocumentSummary" }, "404": { "description": "Not found" } }
+                },
+                "delete": {
+                    "summary": "Delete a document; 409 unless ?force=true unlinks referencing rows first",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "force", "in": "query", "schema": { "type": "boolean", "default": false },
+                          "description": "Strip the id from every referencing row, then delete." }
+                    ],
+                    "responses": {
+                        "200": { "description": "DocumentDeleteResult" },
+                        "404": { "description": "Not found" },
+                        "409": { "description": "Referenced and force not set; body includes a references breakdown" }
+                    }
+                }
+            },
+            "/api/documents/{id}/download": {
+                "get": {
+                    "summary": "Stream the raw stored file bytes back as an attachment",
+                    "responses": { "200": { "description": "File bytes" }, "404": { "description": "Not found or missing on disk" } }
+                }
+            },
             "/api/investments/pools": {
                 "get": {
                     "summary": "S104 average-cost pool snapshot per symbol",

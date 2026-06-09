@@ -16,7 +16,8 @@ use rust_decimal::Decimal;
 use crate::model::{
     Account, AccountSnapshot, AccountType, AssetClass, BalanceDelta, BudgetRow, Category,
     CategoryNode, CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus,
-    CreateCategoryPayload, CreateInvestmentEventBody, Currency, Granularity, Holding,
+    CreateCategoryPayload, CreateInvestmentEventBody, Currency, Document, DocumentReferences,
+    DocumentSummary, Granularity, Holding,
     HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
     ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentEvent,
     InvestmentEventType, InvestmentMetrics, PatchCategoryPayload, PatchInvestmentEventBody,
@@ -138,8 +139,23 @@ impl Default for TransactionFilters {
     }
 }
 
+/// Result of [`Db::delete_document`]. The route maps these to HTTP statuses.
+#[derive(Debug, Clone)]
+pub enum DeleteDocumentOutcome {
+    /// No document with that id.
+    NotFound,
+    /// Referenced by at least one row and `force` was not set; nothing changed.
+    Referenced(DocumentReferences),
+    /// Row + file removed. The references are what was unlinked (zero if the
+    /// document was already unreferenced).
+    Deleted(DocumentReferences),
+}
+
 pub struct Db {
     conn: Connection,
+    /// Directory holding stored source documents, a `documents/` subdir beside
+    /// the DB file. Created 0700 on Unix at open() time.
+    documents_dir: PathBuf,
 }
 
 impl Db {
@@ -173,7 +189,25 @@ impl Db {
             set_file_mode_600(path)?;
         }
 
-        Ok(Self { conn })
+        let documents_dir = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("documents");
+        if !documents_dir.exists() {
+            std::fs::create_dir_all(&documents_dir)
+                .with_context(|| format!("creating documents dir {documents_dir:?}"))?;
+            set_dir_mode_700(&documents_dir)?;
+        }
+
+        Ok(Self {
+            conn,
+            documents_dir,
+        })
+    }
+
+    /// Absolute path to the directory holding stored source documents.
+    pub fn documents_dir(&self) -> &Path {
+        &self.documents_dir
     }
 
     // ── Currencies ───────────────────────────────────────────────────────────
@@ -771,11 +805,13 @@ impl Db {
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let source_ids_json =
+            serde_json::to_string(&body.source_document_ids).unwrap_or_else(|_| "[]".to_string());
 
         self.conn.execute(
             "INSERT OR IGNORE INTO investments
-             (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 body.account_id,
@@ -789,11 +825,18 @@ impl Db {
                 body.notes,
                 fingerprint,
                 now,
+                source_ids_json,
             ],
         )?;
 
+        // On a duplicate (INSERT ignored) the row already exists; union any new
+        // source documents into it so re-imports keep the audit trail complete.
+        if !body.source_document_ids.is_empty() {
+            merge_source_documents(&self.conn, "investments", "fingerprint", &fingerprint, &source_ids_json)?;
+        }
+
         let event = self.conn.query_row(
-            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids
              FROM investments WHERE fingerprint = ?1",
             params![fingerprint],
             row_to_investment_event,
@@ -810,7 +853,7 @@ impl Db {
     ) -> Result<Vec<InvestmentEvent>> {
         let mut conditions = vec!["1=1"];
         let mut sql = String::from(
-            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids
              FROM investments WHERE ",
         );
 
@@ -932,7 +975,7 @@ impl Db {
         }
 
         let event = self.conn.query_row(
-            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids
              FROM investments WHERE id = ?1",
             params![id],
             row_to_investment_event,
@@ -952,12 +995,14 @@ impl Db {
     /// Insert one transaction. `INSERT OR IGNORE` on the unique fingerprint
     /// makes the import idempotent.
     pub fn insert_transaction(&self, tx: &Transaction) -> Result<InsertOutcome> {
+        let source_ids_json =
+            serde_json::to_string(&tx.source_document_ids).unwrap_or_else(|_| "[]".to_string());
         let rows = self.conn.execute(
             r"INSERT OR IGNORE INTO transactions (
                 id, date, description, normalized, amount, currency,
                 account_id, category, category_id, category_source, confidence, notes,
-                is_recurring, exclude_from_summary, fingerprint, fitid
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                is_recurring, exclude_from_summary, fingerprint, fitid, source_document_ids
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 tx.id,
                 tx.date.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -975,13 +1020,20 @@ impl Db {
                 tx.exclude_from_summary as i64,
                 tx.fingerprint,
                 tx.fitid,
+                source_ids_json,
             ],
         )?;
-        Ok(if rows == 1 {
-            InsertOutcome::Inserted
+        if rows == 1 {
+            Ok(InsertOutcome::Inserted)
         } else {
-            InsertOutcome::Duplicate
-        })
+            // Duplicate (same fingerprint). Merge any new source documents into
+            // the existing row so the audit trail stays complete across
+            // re-imports of overlapping statements.
+            if !tx.source_document_ids.is_empty() {
+                merge_source_documents(&self.conn, "transactions", "fingerprint", &tx.fingerprint, &source_ids_json)?;
+            }
+            Ok(InsertOutcome::Duplicate)
+        }
     }
 
     /// Batch-insert a slice of `ImportTransaction`s from the JSON API.
@@ -1060,6 +1112,7 @@ impl Db {
                 exclude_from_summary: t.exclude_from_summary.unwrap_or(false),
                 fingerprint: fp,
                 fitid: None,
+                source_document_ids: t.source_document_ids.clone(),
             };
 
             match self.insert_transaction(&tx) {
@@ -1118,6 +1171,7 @@ impl Db {
                 error_reason: None,
                 category_id: t.category_id.clone(),
                 category_confidence: None,
+                source_document_ids: Vec::new(),
             });
         }
 
@@ -1155,6 +1209,7 @@ impl Db {
                     )),
                     category_id: row.category_id.clone(),
                     category_confidence: row.category_confidence,
+                    source_document_ids: Vec::new(),
                 });
                 continue;
             }
@@ -1191,6 +1246,7 @@ impl Db {
                 error_reason: None,
                 category_id: row.category_id.clone(),
                 category_confidence: row.category_confidence,
+                source_document_ids: Vec::new(),
             });
         }
 
@@ -1339,7 +1395,8 @@ impl Db {
                      ) AS category_display,
                      t.category_id,
                      t.category_source, t.confidence, t.notes,
-                     t.is_recurring, t.exclude_from_summary, t.fingerprint, t.fitid
+                     t.is_recurring, t.exclude_from_summary, t.fingerprint, t.fitid,
+                     t.source_document_ids
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
               LEFT JOIN categories pc ON pc.id = c.parent_id
@@ -1565,7 +1622,8 @@ impl Db {
                      ) AS category_display,
                      t.category_id,
                      t.category_source, t.confidence, t.notes,
-                     t.is_recurring, t.exclude_from_summary, t.fingerprint, t.fitid
+                     t.is_recurring, t.exclude_from_summary, t.fingerprint, t.fitid,
+                     t.source_document_ids
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
               LEFT JOIN categories pc ON pc.id = c.parent_id
@@ -2275,6 +2333,8 @@ impl Db {
         for h in holdings {
             let sub = h.sub_account.as_deref().unwrap_or("");
             let as_of_str = h.as_of.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let source_ids_json =
+                serde_json::to_string(&h.source_document_ids).unwrap_or_else(|_| "[]".to_string());
 
             let exists: bool = tx.query_row(
                 "SELECT COUNT(*) > 0 FROM holdings
@@ -2285,12 +2345,22 @@ impl Db {
             )?;
 
             if exists {
+                // Union the incoming source documents into the existing row so a
+                // re-import keeps every contributing document linked. An empty
+                // incoming list leaves the existing list untouched.
                 tx.execute(
                     "UPDATE holdings SET name = ?1, holding_type = ?2, quantity = ?3,
                      price_per_unit = ?4, value = ?5, currency = ?6, short_name = ?7,
-                     is_closed = ?8
-                     WHERE account_id = ?9 AND symbol = ?10
-                     AND COALESCE(sub_account, '') = ?11 AND as_of = ?12",
+                     is_closed = ?8,
+                     source_document_ids = (
+                        SELECT json_group_array(value) FROM (
+                          SELECT value FROM json_each(holdings.source_document_ids)
+                          UNION
+                          SELECT value FROM json_each(?9)
+                        )
+                     )
+                     WHERE account_id = ?10 AND symbol = ?11
+                     AND COALESCE(sub_account, '') = ?12 AND as_of = ?13",
                     params![
                         h.name,
                         h.holding_type.as_str(),
@@ -2300,6 +2370,7 @@ impl Db {
                         h.currency,
                         h.short_name,
                         h.is_closed as i64,
+                        source_ids_json,
                         account_id,
                         h.symbol,
                         sub,
@@ -2309,8 +2380,9 @@ impl Db {
             } else {
                 tx.execute(
                     "INSERT INTO holdings (account_id, symbol, name, holding_type, quantity,
-                     price_per_unit, value, currency, as_of, short_name, sub_account, is_closed)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                     price_per_unit, value, currency, as_of, short_name, sub_account, is_closed,
+                     source_document_ids)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         account_id,
                         h.symbol,
@@ -2323,7 +2395,8 @@ impl Db {
                         as_of_str,
                         h.short_name,
                         h.sub_account,
-                        h.is_closed as i64
+                        h.is_closed as i64,
+                        source_ids_json
                     ],
                 )?;
             }
@@ -2399,6 +2472,187 @@ impl Db {
             ],
         )?;
         Ok(())
+    }
+
+    // ── Documents (source-file storage & provenance) ──────────────────────────
+
+    /// Store an uploaded file. Deduplicated by content hash: if a document with
+    /// the same bytes already exists, returns it untouched (no new row, no new
+    /// file). Returns `(document, deduped)` where `deduped` is true when an
+    /// existing row was reused.
+    pub fn store_document(
+        &self,
+        filename: &str,
+        mime_type: &str,
+        bytes: &[u8],
+        origin: &str,
+        account_id: Option<&str>,
+    ) -> Result<(Document, bool)> {
+        let content_hash = sha256_hex_bytes(bytes);
+
+        if let Some(existing) = self.find_document_by_hash(&content_hash)? {
+            return Ok((existing, true));
+        }
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let on_disk = format!("{id}_{}", sanitize_filename(filename));
+        let file_path = self.documents_dir.join(&on_disk);
+        std::fs::write(&file_path, bytes)
+            .with_context(|| format!("writing document file {file_path:?}"))?;
+        #[cfg(unix)]
+        set_file_mode_600(&file_path)?;
+
+        let file_path_str = file_path.to_string_lossy().to_string();
+        self.conn.execute(
+            r"INSERT INTO documents (
+                id, filename, file_path, mime_type, size_bytes, content_hash, origin, account_id
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                filename,
+                file_path_str,
+                mime_type,
+                bytes.len() as i64,
+                content_hash,
+                origin,
+                account_id,
+            ],
+        )?;
+
+        let doc = self
+            .get_document(&id)?
+            .ok_or_else(|| anyhow!("document {id} vanished immediately after insert"))?;
+        Ok((doc, false))
+    }
+
+    fn find_document_by_hash(&self, content_hash: &str) -> Result<Option<Document>> {
+        self.conn
+            .query_row(
+                "SELECT id, filename, file_path, mime_type, size_bytes, content_hash, origin, \
+                 account_id, uploaded_at FROM documents WHERE content_hash = ?1",
+                params![content_hash],
+                row_to_document,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn get_document(&self, id: &str) -> Result<Option<Document>> {
+        self.conn
+            .query_row(
+                "SELECT id, filename, file_path, mime_type, size_bytes, content_hash, origin, \
+                 account_id, uploaded_at FROM documents WHERE id = ?1",
+                params![id],
+                row_to_document,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// List every stored document with its computed reference count and orphan
+    /// flag. Orphaned means zero referencing rows, regardless of origin.
+    pub fn list_documents(&self) -> Result<Vec<DocumentSummary>> {
+        let mut stmt = self.conn.prepare(
+            r"SELECT d.id, d.filename, d.mime_type, d.size_bytes, d.origin, d.account_id,
+                     d.uploaded_at,
+                       (SELECT COUNT(*) FROM transactions t, json_each(t.source_document_ids) j WHERE j.value = d.id)
+                     + (SELECT COUNT(*) FROM holdings h, json_each(h.source_document_ids) j WHERE j.value = d.id)
+                     + (SELECT COUNT(*) FROM investments i, json_each(i.source_document_ids) j WHERE j.value = d.id)
+                       AS reference_count
+              FROM documents d
+              ORDER BY d.uploaded_at DESC, d.filename",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let reference_count: i64 = row.get(7)?;
+                Ok(DocumentSummary {
+                    id: row.get(0)?,
+                    filename: row.get(1)?,
+                    mime_type: row.get(2)?,
+                    size_bytes: row.get::<_, i64>(3)? as usize,
+                    origin: row.get(4)?,
+                    account_id: row.get(5)?,
+                    uploaded_at: row.get(6)?,
+                    reference_count: reference_count as usize,
+                    orphaned: reference_count == 0,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Count rows referencing this document, split by entity type.
+    pub fn document_references(&self, id: &str) -> Result<DocumentReferences> {
+        self.conn
+            .query_row(
+                r"SELECT
+                    (SELECT COUNT(*) FROM transactions t, json_each(t.source_document_ids) j WHERE j.value = ?1),
+                    (SELECT COUNT(*) FROM holdings h, json_each(h.source_document_ids) j WHERE j.value = ?1),
+                    (SELECT COUNT(*) FROM investments i, json_each(i.source_document_ids) j WHERE j.value = ?1)",
+                params![id],
+                |row| {
+                    Ok(DocumentReferences {
+                        transactions: row.get::<_, i64>(0)? as usize,
+                        holdings: row.get::<_, i64>(1)? as usize,
+                        investments: row.get::<_, i64>(2)? as usize,
+                    })
+                },
+            )
+            .map_err(Into::into)
+    }
+
+    /// Delete a document. With `force = false`, a referenced document is left
+    /// untouched and `Referenced` is returned. With `force = true`, the id is
+    /// stripped from every referencing row first, then the row and file are
+    /// removed. The DB mutations (unlink + row delete) run in one transaction;
+    /// the file is removed best-effort afterwards.
+    pub fn delete_document(&self, id: &str, force: bool) -> Result<DeleteDocumentOutcome> {
+        let doc = match self.get_document(id)? {
+            Some(d) => d,
+            None => return Ok(DeleteDocumentOutcome::NotFound),
+        };
+        let refs = self.document_references(id)?;
+        if refs.total() > 0 && !force {
+            return Ok(DeleteDocumentOutcome::Referenced(refs));
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        let unlinked = if refs.total() > 0 {
+            let mut counts = DocumentReferences::default();
+            for table in ["transactions", "holdings", "investments"] {
+                let n = tx.execute(
+                    &format!(
+                        "UPDATE {table} SET source_document_ids = (
+                            SELECT COALESCE(json_group_array(value), '[]')
+                            FROM json_each({table}.source_document_ids) WHERE value <> ?1
+                         )
+                         WHERE id IN (
+                            SELECT x.id FROM {table} x, json_each(x.source_document_ids) j
+                            WHERE j.value = ?1
+                         )"
+                    ),
+                    params![id],
+                )?;
+                match table {
+                    "transactions" => counts.transactions = n,
+                    "holdings" => counts.holdings = n,
+                    _ => counts.investments = n,
+                }
+            }
+            counts
+        } else {
+            DocumentReferences::default()
+        };
+        tx.execute("DELETE FROM documents WHERE id = ?1", params![id])?;
+        tx.commit()?;
+
+        if let Err(e) = std::fs::remove_file(&doc.file_path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(path = %doc.file_path, error = %e, "failed to remove document file on disk");
+            }
+        }
+
+        Ok(DeleteDocumentOutcome::Deleted(unlinked))
     }
 
     // ── API tokens ────────────────────────────────────────────────────────────
@@ -2796,7 +3050,8 @@ impl Db {
             r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
                      h.quantity, h.price_per_unit, h.value, h.currency,
                      h.as_of, h.short_name, h.sub_account, h.is_closed,
-                     a.type AS account_type, a.institution, a.profile_ids
+                     a.type AS account_type, a.institution, a.profile_ids,
+                     h.source_document_ids
               FROM holdings h
               JOIN accounts a ON a.id = h.account_id
               WHERE a.is_active = 1
@@ -2949,7 +3204,8 @@ impl Db {
         let sql = format!(
             r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
                      h.quantity, h.price_per_unit, h.value, h.currency,
-                     h.as_of, h.short_name, h.sub_account, h.is_closed
+                     h.as_of, h.short_name, h.sub_account, h.is_closed,
+                     h.source_document_ids
               FROM holdings h
               WHERE h.account_id IN ({placeholders})
                 AND h.as_of = (
@@ -3213,7 +3469,8 @@ impl Db {
     pub fn get_holding_snapshots(&self, account_id: &str, symbol: &str) -> Result<Vec<Holding>> {
         let mut stmt = self.conn.prepare(
             "SELECT account_id, symbol, name, holding_type, quantity, price_per_unit,
-                    value, currency, as_of, short_name, sub_account, is_closed
+                    value, currency, as_of, short_name, sub_account, is_closed,
+                    source_document_ids
              FROM holdings
              WHERE account_id = ?1 AND symbol = ?2
              ORDER BY as_of ASC",
@@ -3280,6 +3537,7 @@ impl Db {
                 },
                 existing_value,
                 derived: h.derived,
+                source_document_ids: Vec::new(),
             });
         }
         Ok(previews)
@@ -3313,6 +3571,7 @@ impl Db {
                     currency: row.currency.clone(),
                     status: TransactionPreviewStatus::Error,
                     existing_id: None,
+                    source_document_ids: Vec::new(),
                 });
                 continue;
             }
@@ -3335,6 +3594,7 @@ impl Db {
                         currency: row.currency.clone(),
                         status: TransactionPreviewStatus::Error,
                         existing_id: None,
+                        source_document_ids: Vec::new(),
                     });
                     continue;
                 }
@@ -3354,6 +3614,7 @@ impl Db {
                         currency: row.currency.clone(),
                         status: TransactionPreviewStatus::Error,
                         existing_id: None,
+                        source_document_ids: Vec::new(),
                     });
                     continue;
                 }
@@ -3373,6 +3634,7 @@ impl Db {
                         currency: row.currency.clone(),
                         status: TransactionPreviewStatus::Error,
                         existing_id: None,
+                        source_document_ids: Vec::new(),
                     });
                     continue;
                 }
@@ -3408,6 +3670,7 @@ impl Db {
                 currency: row.currency.clone(),
                 status,
                 existing_id,
+                source_document_ids: Vec::new(),
             });
         }
 
@@ -3543,6 +3806,13 @@ fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
         sub_account: row.get(10)?,
         is_closed: is_closed_int != 0,
         derived: false,
+        // Read by column name so SELECTs that don't include it (e.g. the
+        // index-based summary query) still map cleanly; those fall back to empty.
+        source_document_ids: row
+            .get::<_, String>("source_document_ids")
+            .map(|s| parse_id_array(&s))
+            .unwrap_or_default(),
+        source_file: None,
     })
 }
 
@@ -3573,6 +3843,7 @@ fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> 
         exclude_from_summary: row.get::<_, i64>(13)? != 0,
         fingerprint: row.get(14)?,
         fitid: row.get(15)?,
+        source_document_ids: parse_id_array(&row.get::<_, String>(16)?),
     })
 }
 
@@ -3626,6 +3897,11 @@ fn row_to_investment_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Investme
         fingerprint: row.get(10)?,
         created_at: parse_transaction_datetime(&created_at_str)
             .unwrap_or_else(|| chrono::Utc::now().naive_utc()),
+        // Read by column name so SELECTs that omit it fall back to empty.
+        source_document_ids: row
+            .get::<_, String>("source_document_ids")
+            .map(|s| parse_id_array(&s))
+            .unwrap_or_default(),
     })
 }
 
@@ -3780,10 +4056,85 @@ fn generate_raw_token() -> String {
 }
 
 fn sha256_hex(s: &str) -> String {
+    sha256_hex_bytes(s.as_bytes())
+}
+
+fn sha256_hex_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(s.as_bytes());
+    hasher.update(bytes);
     hex::encode(hasher.finalize())
+}
+
+/// Make an uploaded filename safe to use as a path component: keep ASCII
+/// alphanumerics, dot, dash, and underscore; replace anything else (including
+/// path separators) with `_`. The `<uuid>_` prefix already guarantees
+/// uniqueness, so this only needs to neutralise traversal and odd characters.
+fn sanitize_filename(filename: &str) -> String {
+    let cleaned: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('.');
+    if trimmed.is_empty() {
+        "upload".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Parse a JSON array of strings (as stored in `source_document_ids`) into a
+/// `Vec<String>`, treating any malformed value as empty.
+fn parse_id_array(json: &str) -> Vec<String> {
+    serde_json::from_str(json).unwrap_or_default()
+}
+
+/// Union `incoming_ids_json` (a JSON array string) into the `source_document_ids`
+/// of the row(s) in `table` where `key_col = key_val`. Used to keep the source
+/// document audit trail complete when a re-import hits an existing row.
+/// `table` and `key_col` are caller-controlled constants, never user input.
+fn merge_source_documents(
+    conn: &Connection,
+    table: &str,
+    key_col: &str,
+    key_val: &str,
+    incoming_ids_json: &str,
+) -> Result<()> {
+    conn.execute(
+        &format!(
+            r"UPDATE {table}
+              SET source_document_ids = (
+                SELECT json_group_array(value) FROM (
+                  SELECT value FROM json_each({table}.source_document_ids)
+                  UNION
+                  SELECT value FROM json_each(?2)
+                )
+              )
+              WHERE {key_col} = ?1"
+        ),
+        params![key_val, incoming_ids_json],
+    )?;
+    Ok(())
+}
+
+fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
+    Ok(Document {
+        id: row.get(0)?,
+        filename: row.get(1)?,
+        file_path: row.get(2)?,
+        mime_type: row.get(3)?,
+        size_bytes: row.get(4)?,
+        content_hash: row.get(5)?,
+        origin: row.get(6)?,
+        account_id: row.get(7)?,
+        uploaded_at: row.get(8)?,
+    })
 }
 
 // ── Seed helpers ─────────────────────────────────────────────────────────────
@@ -4163,6 +4514,18 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE categories ADD COLUMN description TEXT")?;
     }
 
+    // ── 11. Add source_document_ids to transactions / holdings / investments ──
+    // JSON array of documents.id; provenance back to the source file(s) an item
+    // was extracted from. Existing rows default to '[]'.
+    for table in ["transactions", "holdings", "investments"] {
+        let probe = format!("SELECT source_document_ids FROM {table} LIMIT 0");
+        if conn.prepare(&probe).is_err() {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN source_document_ids TEXT NOT NULL DEFAULT '[]'"
+            ))?;
+        }
+    }
+
     Ok(())
 }
 
@@ -4242,6 +4605,8 @@ mod consolidation_tests {
             sub_account: None,
             is_closed: false,
             derived: false,
+            source_document_ids: Vec::new(),
+            source_file: None,
         }
     }
 
@@ -4267,6 +4632,8 @@ mod consolidation_tests {
             sub_account: sub_account.map(|s| s.to_string()),
             is_closed: false,
             derived: false,
+            source_document_ids: Vec::new(),
+            source_file: None,
         }
     }
 
@@ -5233,6 +5600,7 @@ mod investment_dedup_tests {
             currency: "GBP".to_string(),
             notes: None,
             row_confidence: 0.95,
+            source_file: None,
         }
     }
 
@@ -5282,6 +5650,7 @@ mod investment_dedup_tests {
             fee: Some("0".to_string()),
             currency: "GBP".to_string(),
             notes: None,
+            source_document_ids: Vec::new(),
         };
         db.create_investment_event(&body).unwrap();
 
@@ -5308,5 +5677,162 @@ mod investment_dedup_tests {
         row.date = "not-a-date".to_string();
         let previews = db.dry_run_investments("acct-1", &[row], 0.70).unwrap();
         assert_eq!(previews[0].status, TransactionPreviewStatus::Error);
+    }
+}
+
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn make_account(db: &Db, id: &str) {
+        db.create_account(&crate::model::Account {
+            id: id.to_string(),
+            name: "Test".to_string(),
+            institution: "Test Bank".to_string(),
+            account_type: crate::model::AccountType::Investment,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn store_document_dedups_by_content_hash() {
+        let (db, _f) = test_db();
+        let (d1, dup1) = db
+            .store_document("a.csv", "text/csv", b"hello", "parse", None)
+            .unwrap();
+        assert!(!dup1);
+        let (d2, dup2) = db
+            .store_document("renamed.csv", "text/csv", b"hello", "parse", None)
+            .unwrap();
+        assert!(dup2, "identical bytes should dedup");
+        assert_eq!(d1.id, d2.id);
+        assert_eq!(db.list_documents().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn store_document_distinct_bytes_create_rows() {
+        let (db, _f) = test_db();
+        db.store_document("a.csv", "text/csv", b"aaa", "parse", None)
+            .unwrap();
+        db.store_document("b.csv", "text/csv", b"bbb", "parse", None)
+            .unwrap();
+        assert_eq!(db.list_documents().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn stored_file_written_and_removed_on_delete() {
+        let (db, _f) = test_db();
+        let (doc, _) = db
+            .store_document("a.csv", "text/csv", b"hello", "manual", None)
+            .unwrap();
+        assert!(Path::new(&doc.file_path).exists());
+        let outcome = db.delete_document(&doc.id, false).unwrap();
+        assert!(matches!(outcome, DeleteDocumentOutcome::Deleted(_)));
+        assert!(!Path::new(&doc.file_path).exists());
+        assert!(db.get_document(&doc.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn orphan_flag_is_reference_based_for_any_origin() {
+        let (db, _f) = test_db();
+        let (manual, _) = db
+            .store_document("ref.pdf", "application/pdf", b"x", "manual", None)
+            .unwrap();
+        let summaries = db.list_documents().unwrap();
+        let s = summaries.iter().find(|s| s.id == manual.id).unwrap();
+        assert_eq!(s.reference_count, 0);
+        assert!(s.orphaned, "manual upload with zero refs is still orphaned");
+    }
+
+    #[test]
+    fn references_counted_across_tables_and_force_unlinks() {
+        let (db, _f) = test_db();
+        make_account(&db, "acct-1");
+
+        let (doc, _) = db
+            .store_document("s.csv", "text/csv", b"data", "parse", Some("acct-1"))
+            .unwrap();
+        let ids = format!("[\"{}\"]", doc.id);
+
+        db.conn
+            .execute(
+                "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
+                 account_id, fingerprint, source_document_ids) \
+                 VALUES ('tx1','2026-01-01T00:00:00','x','x','-1','GBP','acct-1','fp1', ?1)",
+                rusqlite::params![ids],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO holdings (account_id, symbol, name, holding_type, quantity, value, \
+                 currency, as_of, source_document_ids) \
+                 VALUES ('acct-1','VUSA','Vanguard','etf','1','10','GBP','2026-01-01T00:00:00', ?1)",
+                rusqlite::params![ids],
+            )
+            .unwrap();
+
+        let refs = db.document_references(&doc.id).unwrap();
+        assert_eq!(refs.transactions, 1);
+        assert_eq!(refs.holdings, 1);
+        assert_eq!(refs.investments, 0);
+        assert_eq!(refs.total(), 2);
+
+        let summary = db
+            .list_documents()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == doc.id)
+            .unwrap();
+        assert_eq!(summary.reference_count, 2);
+        assert!(!summary.orphaned);
+
+        match db.delete_document(&doc.id, false).unwrap() {
+            DeleteDocumentOutcome::Referenced(r) => assert_eq!(r.total(), 2),
+            other => panic!("expected Referenced, got {other:?}"),
+        }
+        assert!(db.get_document(&doc.id).unwrap().is_some());
+
+        match db.delete_document(&doc.id, true).unwrap() {
+            DeleteDocumentOutcome::Deleted(r) => {
+                assert_eq!(r.transactions, 1);
+                assert_eq!(r.holdings, 1);
+            }
+            other => panic!("expected Deleted, got {other:?}"),
+        }
+        assert!(db.get_document(&doc.id).unwrap().is_none());
+
+        let tx_ids: String = db
+            .conn
+            .query_row(
+                "SELECT source_document_ids FROM transactions WHERE id='tx1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tx_ids, "[]");
+        let h_ids: String = db
+            .conn
+            .query_row(
+                "SELECT source_document_ids FROM holdings WHERE symbol='VUSA'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(h_ids, "[]");
     }
 }

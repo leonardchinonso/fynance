@@ -357,19 +357,26 @@ pub async fn parse_documents(
         },
     );
 
-    // Run deduplication (needs DB, synchronous)
+    // Store the source documents and run deduplication (needs DB, synchronous).
     let preview = {
         let db = state.db.lock().expect("db mutex poisoned");
-        build_multi_preview(
+        let (doc_map, all_doc_ids, doc_summaries) =
+            store_parse_documents(&db, &documents, &account_id)
+                .map_err(|e| AppError::bad_request(e.to_string(), "document_store_error"))?;
+        let mut preview = build_multi_preview(
             merged_extraction,
             &account_id,
             &account.institution,
             documents.len(),
             &db,
             elapsed,
+            &doc_map,
+            &all_doc_ids,
         )
-    }
-    .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
+        .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
+        preview.documents = doc_summaries;
+        preview
+    };
 
     emit_progress(
         &progress_tx,
@@ -534,16 +541,23 @@ async fn run_unified_path(
 
     let mut preview = {
         let db = state.db.lock().expect("db mutex poisoned");
-        build_multi_preview(
+        let (doc_map, all_doc_ids, doc_summaries) =
+            store_parse_documents(&db, &documents, &account_id)
+                .map_err(|e| AppError::bad_request(e.to_string(), "document_store_error"))?;
+        let mut preview = build_multi_preview(
             extraction,
             &account_id,
             &account_institution,
             documents.len(),
             &db,
             elapsed,
+            &doc_map,
+            &all_doc_ids,
         )
-    }
-    .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
+        .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
+        preview.documents = doc_summaries;
+        preview
+    };
 
     // Attach any unified-parser notes (e.g. "dropped N unsolicited entries").
     preview.metadata.notes.extend(unified_notes);
@@ -685,6 +699,55 @@ fn walk_categories(
             walk_categories(&node.children, Some(&node.name), out);
         }
     }
+}
+
+/// Persist each uploaded file as a document (deduped by content hash) and
+/// return a `filename -> document_id` map plus the de-duplicated list of all
+/// document ids in this parse call. Used to attribute extracted rows back to
+/// their source file.
+fn store_parse_documents(
+    db: &crate::storage::Db,
+    documents: &[DocumentInput],
+    account_id: &str,
+) -> anyhow::Result<(
+    std::collections::HashMap<String, String>,
+    Vec<String>,
+    Vec<crate::model::DocumentSummary>,
+)> {
+    let mut by_filename = std::collections::HashMap::new();
+    let mut all_ids: Vec<String> = Vec::new();
+    let mut summaries: Vec<crate::model::DocumentSummary> = Vec::new();
+    for doc in documents {
+        let mime = infer_mime(&doc.filename);
+        // CSV/Excel keep their content in `text_content` (raw_bytes is empty);
+        // PDFs/images keep the original bytes in `raw_bytes`. Store whichever is
+        // populated so the document isn't written as a 0-byte file. For valid
+        // CSV, `text_content.as_bytes()` is the original upload byte-for-byte.
+        let bytes: &[u8] = if doc.raw_bytes.is_empty() {
+            doc.text_content.as_bytes()
+        } else {
+            &doc.raw_bytes
+        };
+        let (stored, _deduped) =
+            db.store_document(&doc.filename, &mime, bytes, "parse", Some(account_id))?;
+        by_filename.insert(doc.filename.clone(), stored.id.clone());
+        if !all_ids.contains(&stored.id) {
+            all_ids.push(stored.id.clone());
+            let refs = db.document_references(&stored.id)?;
+            summaries.push(crate::model::DocumentSummary {
+                id: stored.id,
+                filename: stored.filename,
+                mime_type: stored.mime_type,
+                size_bytes: stored.size_bytes as usize,
+                origin: stored.origin,
+                account_id: stored.account_id,
+                uploaded_at: stored.uploaded_at,
+                reference_count: refs.total(),
+                orphaned: refs.total() == 0,
+            });
+        }
+    }
+    Ok((by_filename, all_ids, summaries))
 }
 
 fn infer_mime(filename: &str) -> String {

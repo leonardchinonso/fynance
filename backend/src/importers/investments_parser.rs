@@ -30,6 +30,10 @@ pub struct ParsedInvestmentRow {
     pub currency: String,
     pub notes: Option<String>,
     pub row_confidence: f32,
+    /// Filename this row was attributed to during a parse. Set per-file in split
+    /// mode or by the model in unified mode; resolved to `source_document_ids`.
+    #[serde(default)]
+    pub source_file: Option<String>,
 }
 
 // ── Tool schema ──────────────────────────────────────────────────────────────
@@ -222,6 +226,7 @@ mod tests {
                 currency: "GBP".to_string(),
                 notes: None,
                 row_confidence: 0.97,
+                source_file: None,
             }],
         };
 
