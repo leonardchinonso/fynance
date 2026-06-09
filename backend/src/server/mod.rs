@@ -25,7 +25,13 @@ pub use state::AppState;
 
 /// Build the Axum router for `fynance serve`.
 pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
-    let state = AppState { db, loopback_only };
+    let state = AppState {
+        db,
+        loopback_only,
+        progress_channels: std::sync::Arc::new(std::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
+    };
 
     let api_routes = Router::new()
         // ── Always-public ──────────────────────────────────────────────────
@@ -103,6 +109,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route(
             "/parse",
             post(routes::parse::parse_documents).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
+        .route(
+            "/parse/progress/:parse_id",
+            get(routes::parse::parse_progress),
         )
         // ── Budget ─────────────────────────────────────────────────────────
         .route(

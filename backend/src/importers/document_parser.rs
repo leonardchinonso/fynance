@@ -16,7 +16,7 @@ use crate::importers::llm_parser::StatementParser;
 use crate::importers::pdf_parser::{
     PdfHoldingsParser, PdfInvestmentsParser, PdfPeriodicHoldingsParser, PdfStatementParser,
 };
-use crate::importers::provider::LlmProvider;
+use crate::importers::provider::{LlmProvider, ProgressTx};
 use crate::importers::unified::UnifiedStatementRow;
 use crate::model::{
     Agent, BankFormat, CategorySource, CreateInvestmentEventBody, Holding, HoldingType,
@@ -180,9 +180,11 @@ pub async fn run_multi_file_pipeline(
     hints: &ParseHints,
     _account_institution: &str,
     provider: Arc<dyn LlmProvider>,
+    progress_tx: Option<ProgressTx>,
 ) -> Result<PipelineOutcome> {
     let content_types = hints.return_type.to_content_types();
-    let extraction = extract_all_parallel(documents, &content_types, hints, provider).await?;
+    let extraction =
+        extract_all_parallel(documents, &content_types, hints, provider, progress_tx).await?;
     Ok(PipelineOutcome::Success { extraction })
 }
 
@@ -409,6 +411,7 @@ async fn extract_all_parallel(
     content_types: &[ContentType],
     hints: &ParseHints,
     provider: Arc<dyn LlmProvider>,
+    progress_tx: Option<ProgressTx>,
 ) -> Result<ExtractionResult> {
     let mut join_set: JoinSet<(String, ContentType, Result<ExtractionResult>)> = JoinSet::new();
 
@@ -445,13 +448,21 @@ async fn extract_all_parallel(
             let period_clone = period.clone();
             let provider_clone = provider.clone();
 
+            let task_id = format!("{}:{:?}", doc.filename, ct).to_lowercase();
+            let task_provider = match &progress_tx {
+                Some(tx) => provider_clone
+                    .with_progress(tx.clone(), Some(task_id))
+                    .unwrap_or(provider_clone),
+                None => provider_clone,
+            };
+
             join_set.spawn(async move {
                 let res = extract_single_file(
                     &doc_clone,
                     &ct_clone,
                     hint_clone.as_deref(),
                     period_clone.as_ref(),
-                    provider_clone,
+                    task_provider,
                     agent_override,
                 )
                 .await;

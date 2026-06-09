@@ -1,0 +1,3266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fynance API Reference</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-sidebar: #f6f8fa;
+  --bg-code: #f6f8fa;
+  --bg-card: #ffffff;
+  --text: #24292e;
+  --text-muted: #586069;
+  --border: #e1e4e8;
+  --link: #0366d6;
+  --badge-get: #22863a;
+  --badge-post: #0366d6;
+  --badge-patch: #e36209;
+  --badge-put: #6f42c1;
+  --badge-delete: #cb2431;
+  --deprecated-bg: #fffbdd;
+  --deprecated-border: #f9c513;
+  --json-key: #005cc5;
+  --json-string: #032f62;
+  --json-number: #005cc5;
+  --json-bool: #d73a49;
+  --json-null: #6a737d;
+  --sidebar-width: 260px;
+}
+
+[data-theme="dark"] {
+  --bg: #0d1117;
+  --bg-sidebar: #161b22;
+  --bg-code: #161b22;
+  --bg-card: #161b22;
+  --text: #c9d1d9;
+  --text-muted: #8b949e;
+  --border: #30363d;
+  --link: #58a6ff;
+  --badge-get: #3fb950;
+  --badge-post: #58a6ff;
+  --badge-patch: #d29922;
+  --badge-put: #bc8cff;
+  --badge-delete: #f85149;
+  --deprecated-bg: #2d2000;
+  --deprecated-border: #9e6a03;
+  --json-key: #79c0ff;
+  --json-string: #a5d6ff;
+  --json-number: #79c0ff;
+  --json-bool: #ff7b72;
+  --json-null: #8b949e;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* Sidebar */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  height: 100vh;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 16px;
+  z-index: 100;
+}
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-header h2 { font-size: 16px; font-weight: 600; }
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 14px;
+}
+.search-box {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.sidebar-nav a {
+  display: block;
+  padding: 3px 8px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-nav a:hover { background: var(--border); }
+.sidebar-nav .nav-group { font-weight: 600; margin-top: 12px; margin-bottom: 4px; font-size: 13px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px; }
+.sidebar-nav .nav-endpoint { padding-left: 16px; }
+.sidebar-nav .nav-section-link { color: var(--text-muted); }
+
+/* Hamburger */
+.hamburger { display: none; position: fixed; top: 12px; left: 12px; z-index: 200; background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; color: var(--text); font-size: 18px; }
+
+/* Main content */
+.main { margin-left: var(--sidebar-width); padding: 32px 48px; max-width: 960px; }
+
+h1 { font-size: 28px; margin-bottom: 8px; }
+h2 { font-size: 22px; margin-top: 40px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h3 { font-size: 18px; margin-top: 24px; margin-bottom: 12px; }
+h4 { font-size: 14px; margin-top: 16px; margin-bottom: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+p { margin-bottom: 12px; }
+code { background: var(--bg-code); padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+pre { background: var(--bg-code); border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+pre code { background: none; padding: 0; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
+th { background: var(--bg-code); text-align: left; padding: 8px 12px; border: 1px solid var(--border); font-weight: 600; }
+td { padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+td code { font-size: 12px; }
+
+/* Method badges */
+.method-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.method-get { background: var(--badge-get); }
+.method-post { background: var(--badge-post); }
+.method-patch { background: var(--badge-patch); }
+.method-put { background: var(--badge-put); }
+.method-delete { background: var(--badge-delete); }
+
+/* Endpoint card */
+.endpoint {
+  margin-bottom: 32px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+.endpoint-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.endpoint-path { font-size: 16px; font-weight: 600; }
+.endpoint-summary { color: var(--text-muted); margin-bottom: 12px; }
+
+.status-code {
+  display: inline-block;
+  background: var(--badge-get);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+.content-type {
+  display: inline-block;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+/* Deprecated */
+.deprecated { border-color: var(--deprecated-border); background: var(--deprecated-bg); }
+.deprecated-badge {
+  display: inline-block;
+  background: var(--deprecated-border);
+  color: #000;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 8px;
+  text-transform: uppercase;
+}
+
+/* Model card */
+.model { margin-bottom: 24px; }
+
+/* Endpoint group */
+.endpoint-group { margin-bottom: 48px; }
+
+/* JSON highlighting */
+.json-key { color: var(--json-key); }
+.json-string { color: var(--json-string); }
+.json-number { color: var(--json-number); }
+.json-bool { color: var(--json-bool); }
+.json-null { color: var(--json-null); }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); transition: transform 0.2s; }
+  .sidebar.open { transform: translateX(0); }
+  .hamburger { display: block; }
+  .main { margin-left: 0; padding: 16px; }
+  .main h1 { margin-top: 40px; }
+}
+
+/* Print */
+@media print {
+  .sidebar, .hamburger, .theme-toggle { display: none !important; }
+  .main { margin-left: 0; max-width: 100%; }
+  .endpoint { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<button class="hamburger" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle navigation">&#9776;</button>
+
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <h2>fynance API</h2>
+    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light mode">&#9681;</button>
+  </div>
+  <input class="search-box" type="text" placeholder="Search endpoints..." oninput="filterEndpoints(this.value)">
+  <div class="sidebar-nav">
+    <a href="#overview" class="nav-section-link">Overview</a>
+    <a href="#authentication" class="nav-section-link">Authentication</a>
+    <a href="#conventions" class="nav-section-link">Conventions</a>
+    <a href="#errors" class="nav-section-link">Error Handling</a>
+    <a href="#enums" class="nav-section-link">Enums</a>
+    <a href="#models" class="nav-section-link">Models</a>
+
+    <div class="nav-group">Health &amp; Docs</div>
+    <a href="#get-api-health" class="nav-endpoint"><span class="method-badge method-get">GET</span>/health</a>
+    <a href="#get-api-docs" class="nav-endpoint"><span class="method-badge method-get">GET</span>/docs</a>
+
+    <div class="nav-group">Accounts</div>
+    <a href="#get-api-accounts" class="nav-endpoint"><span class="method-badge method-get">GET</span>/accounts</a>
+    <a href="#post-api-accounts" class="nav-endpoint"><span class="method-badge method-post">POST</span>/accounts</a>
+    <a href="#patch-api-accounts-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/accounts/:id</a>
+    <a href="#delete-api-accounts-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/accounts/:id</a>
+    <a href="#patch-api-accounts-id-balance" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/accounts/:id/balance</a>
+
+    <div class="nav-group">Profiles</div>
+    <a href="#get-api-profiles" class="nav-endpoint"><span class="method-badge method-get">GET</span>/profiles</a>
+    <a href="#post-api-profiles" class="nav-endpoint"><span class="method-badge method-post">POST</span>/profiles</a>
+    <a href="#patch-api-profiles-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/profiles/:id</a>
+    <a href="#delete-api-profiles-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/profiles/:id</a>
+
+    <div class="nav-group">Categories</div>
+    <a href="#get-api-categories" class="nav-endpoint"><span class="method-badge method-get">GET</span>/categories</a>
+    <a href="#post-api-categories" class="nav-endpoint"><span class="method-badge method-post">POST</span>/categories</a>
+    <a href="#get-api-categories-resolve" class="nav-endpoint"><span class="method-badge method-get">GET</span>/categories/resolve</a>
+    <a href="#get-api-categories-id" class="nav-endpoint"><span class="method-badge method-get">GET</span>/categories/:id</a>
+    <a href="#patch-api-categories-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/categories/:id</a>
+    <a href="#delete-api-categories-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/categories/:id</a>
+
+    <div class="nav-group">Sections</div>
+    <a href="#get-api-sections" class="nav-endpoint"><span class="method-badge method-get">GET</span>/sections</a>
+    <a href="#put-api-sections" class="nav-endpoint"><span class="method-badge method-put">PUT</span>/sections</a>
+
+    <div class="nav-group">Transactions</div>
+    <a href="#get-api-transactions" class="nav-endpoint"><span class="method-badge method-get">GET</span>/transactions</a>
+    <a href="#get-api-transactions-by-category" class="nav-endpoint"><span class="method-badge method-get">GET</span>/by-category</a>
+    <a href="#get-api-transactions-categories" class="nav-endpoint"><span class="method-badge method-get">GET</span>/categories (legacy)</a>
+    <a href="#get-api-transactions-accounts" class="nav-endpoint"><span class="method-badge method-get">GET</span>/accounts (legacy)</a>
+    <a href="#patch-api-transactions-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/transactions/:id</a>
+
+    <div class="nav-group">Import</div>
+    <a href="#post-api-transactions-import" class="nav-endpoint"><span class="method-badge method-post">POST</span>/transactions/import</a>
+    <a href="#post-api-import" class="nav-endpoint"><span class="method-badge method-post">POST</span>/import (deprecated)</a>
+    <a href="#post-api-import-csv" class="nav-endpoint"><span class="method-badge method-post">POST</span>/import/csv</a>
+    <a href="#post-api-import-bulk" class="nav-endpoint"><span class="method-badge method-post">POST</span>/import/bulk</a>
+
+    <div class="nav-group">Parse</div>
+    <a href="#post-api-parse" class="nav-endpoint"><span class="method-badge method-post">POST</span>/parse</a>
+    <a href="#get-api-parse-progress-parse_id" class="nav-endpoint"><span class="method-badge method-get">GET</span>/parse/progress/:id</a>
+
+    <div class="nav-group">Budget</div>
+    <a href="#get-api-budget-spending-grid" class="nav-endpoint"><span class="method-badge method-get">GET</span>/spending-grid</a>
+    <a href="#get-api-budget-month" class="nav-endpoint"><span class="method-badge method-get">GET</span>/budget/:month</a>
+    <a href="#post-api-budget" class="nav-endpoint"><span class="method-badge method-post">POST</span>/budget</a>
+    <a href="#post-api-budget-override" class="nav-endpoint"><span class="method-badge method-post">POST</span>/budget/override</a>
+
+    <div class="nav-group">Holdings</div>
+    <a href="#get-api-holdings" class="nav-endpoint"><span class="method-badge method-get">GET</span>/holdings</a>
+    <a href="#get-api-holdings-summary" class="nav-endpoint"><span class="method-badge method-get">GET</span>/holdings/summary</a>
+    <a href="#get-api-holdings-history" class="nav-endpoint"><span class="method-badge method-get">GET</span>/holdings/history</a>
+    <a href="#get-api-holdings-balances" class="nav-endpoint"><span class="method-badge method-get">GET</span>/holdings/balances</a>
+    <a href="#get-api-holdings-cash-flow" class="nav-endpoint"><span class="method-badge method-get">GET</span>/holdings/cash-flow</a>
+    <a href="#post-api-holdings-import" class="nav-endpoint"><span class="method-badge method-post">POST</span>/holdings/import</a>
+    <a href="#post-api-holdings-account_id" class="nav-endpoint"><span class="method-badge method-post">POST</span>/holdings/:account_id</a>
+    <a href="#get-api-holdings-account_id-symbol" class="nav-endpoint"><span class="method-badge method-get">GET</span>/:account_id/:symbol</a>
+    <a href="#patch-api-holdings-account_id-symbol" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/:account_id/:symbol</a>
+    <a href="#delete-api-holdings-account_id-symbol" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/:account_id/:symbol</a>
+
+    <div class="nav-group">Ingestion</div>
+    <a href="#get-api-ingestion-checklist-month" class="nav-endpoint"><span class="method-badge method-get">GET</span>/checklist/:month</a>
+    <a href="#post-api-ingestion-checklist-month-account_id" class="nav-endpoint"><span class="method-badge method-post">POST</span>/checklist/:month/:id</a>
+
+    <div class="nav-group">Currencies</div>
+    <a href="#get-api-currencies" class="nav-endpoint"><span class="method-badge method-get">GET</span>/currencies</a>
+    <a href="#post-api-currencies" class="nav-endpoint"><span class="method-badge method-post">POST</span>/currencies</a>
+    <a href="#patch-api-currencies-code" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/currencies/:code</a>
+    <a href="#delete-api-currencies-code" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/currencies/:code</a>
+
+    <div class="nav-group">Investments</div>
+    <a href="#get-api-investments" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments</a>
+    <a href="#post-api-investments" class="nav-endpoint"><span class="method-badge method-post">POST</span>/investments</a>
+    <a href="#post-api-investments-import" class="nav-endpoint"><span class="method-badge method-post">POST</span>/investments/import</a>
+    <a href="#patch-api-investments-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/investments/:id</a>
+    <a href="#delete-api-investments-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/investments/:id</a>
+    <a href="#get-api-investments-pools" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/pools</a>
+    <a href="#get-api-investments-capital-gains" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/capital-gains</a>
+
+    <a href="#changelog" class="nav-section-link" style="margin-top:16px;">Changelog</a>
+  </div>
+</nav>
+
+<div class="main">
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- OVERVIEW                                                                -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<h1 id="overview">fynance API Reference</h1>
+<p>Base URL: <code>http://localhost:7433</code></p>
+<p>All endpoints are prefixed with <code>/api</code>. The server is a local, single-user Axum application. The API is used by the browser UI and by external agents (LLM-powered categorization, data extraction).</p>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- AUTHENTICATION                                                          -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<h2 id="authentication">Authentication</h2>
+<p>Browser requests from <code>127.0.0.1</code> (loopback) need no authentication. All requests pass through to handlers without a token.</p>
+<p>Programmatic clients (scripts, agents, anything not on loopback) must supply a bearer token:</p>
+<pre><code>Authorization: Bearer fyn_&lt;hex&gt;</code></pre>
+<p>Tokens are created via the CLI: <code>fynance token create --name my-agent</code></p>
+<p><strong>Docker note:</strong> In Docker, <code>FYNANCE_HOST=0.0.0.0</code> is required for port mapping. This makes all connections non-loopback inside the container, so bearer token auth is required for all API calls.</p>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- CONVENTIONS                                                             -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<h2 id="conventions">Conventions</h2>
+<table>
+  <thead><tr><th>Topic</th><th>Convention</th></tr></thead>
+  <tbody>
+    <tr><td>Money</td><td>Decimal strings (<code>"123.45"</code>), never floats. Negative = money out, positive = money in.</td></tr>
+    <tr><td>Dates</td><td>ISO 8601: <code>YYYY-MM-DDTHH:MM:SS</code> for datetimes, <code>YYYY-MM-DD</code> for dates, <code>YYYY-MM</code> for months.</td></tr>
+    <tr><td>Pagination</td><td><code>page</code> (default 1) + <code>limit</code> (default 25). Response includes <code>total</code>, <code>page</code>, <code>limit</code>.</td></tr>
+    <tr><td>Currency</td><td>ISO 4217 codes (<code>GBP</code>, <code>USD</code>, <code>EUR</code>).</td></tr>
+    <tr><td>IDs</td><td>UUIDs for transactions, categories, investments. User-chosen slugs for accounts, profiles.</td></tr>
+    <tr><td>Content-Type</td><td><code>application/json</code> unless noted (multipart endpoints use <code>multipart/form-data</code>).</td></tr>
+    <tr><td>Multi-value params</td><td>Comma-separated in a single query param: <code>accounts=monzo-alex,revolut-alex</code>.</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- ERROR HANDLING                                                          -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<h2 id="errors">Error Handling</h2>
+<p>All errors return a JSON body with a consistent shape:</p>
+<pre class="example-response"><code>{
+  "error": "human-readable message",
+  "code": "machine_readable_slug"
+}</code></pre>
+
+<h4>Status Codes</h4>
+<table>
+  <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>200</td><td>Success</td></tr>
+    <tr><td>201</td><td>Created (POST /api/currencies)</td></tr>
+    <tr><td>204</td><td>No Content (DELETE /api/currencies/:code)</td></tr>
+    <tr><td>400</td><td>Bad Request: invalid input, missing params</td></tr>
+    <tr><td>401</td><td>Unauthorized: missing or invalid bearer token</td></tr>
+    <tr><td>404</td><td>Not Found: resource does not exist</td></tr>
+    <tr><td>409</td><td>Conflict: duplicate ID or resource in use</td></tr>
+    <tr><td>429</td><td>Too Many Requests: upstream LLM rate limit</td></tr>
+    <tr><td>500</td><td>Internal Server Error</td></tr>
+    <tr><td>502</td><td>Bad Gateway: upstream LLM service error</td></tr>
+    <tr><td>504</td><td>Gateway Timeout: upstream LLM timed out</td></tr>
+  </tbody>
+</table>
+
+<h4>Common Error Codes</h4>
+<table>
+  <thead><tr><th>Code</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td><code>not_found</code></td><td>Resource does not exist (404)</td></tr>
+    <tr><td><code>empty_body</code></td><td>PATCH with no fields to update</td></tr>
+    <tr><td><code>missing_parameter</code></td><td>Required query parameter missing</td></tr>
+    <tr><td><code>invalid_date</code></td><td>Unparseable date string</td></tr>
+    <tr><td><code>invalid_decimal</code></td><td>Unparseable money value</td></tr>
+    <tr><td><code>invalid_category</code></td><td>Category not found or is a parent (not leaf)</td></tr>
+    <tr><td><code>account_not_found</code></td><td>Account ID does not exist</td></tr>
+    <tr><td><code>account_exists</code></td><td>Account ID already taken (409)</td></tr>
+    <tr><td><code>account_in_use</code></td><td>Account has transactions/holdings, cannot delete (409)</td></tr>
+    <tr><td><code>profile_exists</code></td><td>Profile ID already taken (409)</td></tr>
+    <tr><td><code>profile_in_use</code></td><td>Profile referenced by accounts, cannot delete (409)</td></tr>
+    <tr><td><code>currency_exists</code></td><td>Currency code already exists (409)</td></tr>
+    <tr><td><code>currency_in_use</code></td><td>Currency referenced by accounts/transactions (409)</td></tr>
+    <tr><td><code>invalid_currency_code</code></td><td>Not a valid ISO 4217 code</td></tr>
+    <tr><td><code>unauthorized</code></td><td>Missing or invalid bearer token (401)</td></tr>
+    <tr><td><code>upstream_timeout</code></td><td>LLM provider timed out (504)</td></tr>
+    <tr><td><code>upstream_rate_limit</code></td><td>LLM provider rate limited (429)</td></tr>
+    <tr><td><code>upstream_unreachable</code></td><td>LLM provider unreachable (502)</td></tr>
+    <tr><td><code>parse_error</code></td><td>LLM parse pipeline failed</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- ENUMS                                                                   -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<h2 id="enums">Enum Reference</h2>
+<table>
+  <thead><tr><th>Enum</th><th>Values</th><th>Used in</th></tr></thead>
+  <tbody>
+    <tr><td>AccountType</td><td><code>checking</code>, <code>savings</code>, <code>investment</code>, <code>investment_isa</code>, <code>credit</code>, <code>cash</code>, <code>pension</code>, <code>property</code></td><td>Account.type</td></tr>
+    <tr><td>HoldingType</td><td><code>stock</code>, <code>etf</code>, <code>fund</code>, <code>bond</code>, <code>crypto</code>, <code>cash</code>, <code>property</code>, <code>loan</code>, <code>credit</code></td><td>Holding.holding_type</td></tr>
+    <tr><td>CategorySource</td><td><code>rule</code>, <code>agent</code>, <code>manual</code></td><td>Transaction.category_source</td></tr>
+    <tr><td>InvestmentEventType</td><td><code>vest</code>, <code>buy</code>, <code>sell</code>, <code>transfer</code>, <code>withhold</code>, <code>split</code></td><td>InvestmentEvent.event_type</td></tr>
+    <tr><td>Granularity</td><td><code>monthly</code>, <code>quarterly</code>, <code>yearly</code></td><td>spending-grid, holdings/history, cash-flow</td></tr>
+    <tr><td>ChecklistStatus</td><td><code>pending</code>, <code>complete</code></td><td>ChecklistItem.status</td></tr>
+    <tr><td>IngestionStatus</td><td><code>success</code>, <code>needs_clarification</code>, <code>error</code></td><td>IngestionPreview.status</td></tr>
+    <tr><td>BankFormat</td><td><code>monzo</code>, <code>revolut</code>, <code>lloyds</code>, <code>unknown</code></td><td>ImportResult.detected_bank</td></tr>
+    <tr><td>Section</td><td><code>Income</code>, <code>Bills</code>, <code>Spending</code>, <code>Irregular</code>, <code>Transfers</code></td><td>SectionMapping.section</td></tr>
+    <tr><td>TransactionSort</td><td><code>date</code>, <code>amount</code>, <code>category</code></td><td>GET /api/transactions sort param</td></tr>
+    <tr><td>SortDir</td><td><code>asc</code>, <code>desc</code></td><td>GET /api/transactions sort_dir param</td></tr>
+    <tr><td>TransactionDirection</td><td><code>outflow</code>, <code>income</code></td><td>GET /api/transactions/by-category direction param</td></tr>
+    <tr><td>TransactionPreviewStatus</td><td><code>new</code>, <code>duplicate</code>, <code>error</code></td><td>TransactionPreviewRow.status, InvestmentPreviewRow.status</td></tr>
+    <tr><td>Agent</td><td><code>haiku</code>, <code>sonnet</code>, <code>opus</code></td><td>ParserCallCost.agent</td></tr>
+    <tr><td>ParseMode</td><td><code>split</code>, <code>unified</code></td><td>ParseHints.experimental.mode</td></tr>
+    <tr><td>ParsePhase</td><td><code>preprocessing</code>, <code>building_context</code>, <code>sending_to_llm</code>, <code>waiting_for_llm</code>, <code>post_processing</code></td><td>SSE phase events</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- MODELS                                                                  -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<h2 id="models">Models</h2>
+
+<section class="model" id="model-Transaction">
+  <h3>Transaction</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>string</td><td>UUID</td></tr>
+      <tr><td><code>date</code></td><td>string</td><td>ISO 8601 datetime</td></tr>
+      <tr><td><code>description</code></td><td>string</td><td>Original transaction description</td></tr>
+      <tr><td><code>normalized</code></td><td>string</td><td>Normalized/cleaned description</td></tr>
+      <tr><td><code>amount</code></td><td>string</td><td>Decimal string. Negative = money out, positive = money in.</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 currency code</td></tr>
+      <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
+      <tr><td><code>category</code></td><td>string | null</td><td>Display name "Parent: Child"</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id (leaf)</td></tr>
+      <tr><td><code>category_source</code></td><td>string | null</td><td>One of: rule, agent, manual</td></tr>
+      <tr><td><code>confidence</code></td><td>number | null</td><td>Categorization confidence [0.0, 1.0]</td></tr>
+      <tr><td><code>notes</code></td><td>string | null</td><td>User notes</td></tr>
+      <tr><td><code>is_recurring</code></td><td>boolean</td><td>Recurring transaction flag</td></tr>
+      <tr><td><code>exclude_from_summary</code></td><td>boolean</td><td>Excluded from budget summaries</td></tr>
+      <tr><td><code>fingerprint</code></td><td>string</td><td>SHA-256 dedup hash</td></tr>
+      <tr><td><code>fitid</code></td><td>string | null</td><td>Financial institution transaction ID</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-Account">
+  <h3>Account</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>string</td><td>User-chosen slug (e.g. "monzo-alex")</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>Display name</td></tr>
+      <tr><td><code>institution</code></td><td>string</td><td>Bank/provider name</td></tr>
+      <tr><td><code>type</code></td><td>string</td><td>AccountType enum value</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code (default: GBP)</td></tr>
+      <tr><td><code>balance</code></td><td>string | null</td><td>Last known balance (decimal string)</td></tr>
+      <tr><td><code>balance_date</code></td><td>string | null</td><td>Date of last balance</td></tr>
+      <tr><td><code>is_active</code></td><td>boolean</td><td>Active account flag</td></tr>
+      <tr><td><code>notes</code></td><td>string | null</td><td>Free-text notes</td></tr>
+      <tr><td><code>profile_ids</code></td><td>string[]</td><td>Profiles this account belongs to (default: ["default"])</td></tr>
+      <tr><td><code>is_stale</code></td><td>boolean</td><td>Balance snapshot older than 45 days (portfolio context only)</td></tr>
+      <tr><td><code>is_available</code></td><td>boolean</td><td>Counts toward available (liquid) wealth</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-Holding">
+  <h3>Holding</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
+      <tr><td><code>symbol</code></td><td>string</td><td>Ticker or asset identifier</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>Full holding name</td></tr>
+      <tr><td><code>holding_type</code></td><td>string</td><td>HoldingType enum value</td></tr>
+      <tr><td><code>quantity</code></td><td>string</td><td>Decimal string</td></tr>
+      <tr><td><code>price_per_unit</code></td><td>string | null</td><td>Decimal string</td></tr>
+      <tr><td><code>value</code></td><td>string</td><td>Decimal string (quantity * price or direct)</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>as_of</code></td><td>string</td><td>Snapshot date (ISO 8601)</td></tr>
+      <tr><td><code>short_name</code></td><td>string | null</td><td>Abbreviated name</td></tr>
+      <tr><td><code>sub_account</code></td><td>string | null</td><td>Sub-account label (e.g. "ISA", "SIPP")</td></tr>
+      <tr><td><code>is_closed</code></td><td>boolean</td><td>Position has been closed</td></tr>
+      <tr><td><code>derived</code></td><td>boolean</td><td>Snapshot was computed/inferred, not from source</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-Category">
+  <h3>Category</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>string</td><td>UUID</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>Category name</td></tr>
+      <tr><td><code>parent_id</code></td><td>string | null</td><td>FK to parent category (null for top-level)</td></tr>
+      <tr><td><code>display_order</code></td><td>integer</td><td>Sort order within siblings</td></tr>
+      <tr><td><code>is_active</code></td><td>boolean</td><td>Soft-delete flag</td></tr>
+      <tr><td><code>description</code></td><td>string | null</td><td>Free-text description for LLM disambiguation</td></tr>
+      <tr><td><code>created_at</code></td><td>string</td><td>ISO 8601 datetime</td></tr>
+      <tr><td><code>updated_at</code></td><td>string</td><td>ISO 8601 datetime</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-CategoryNode">
+  <h3>CategoryNode</h3>
+  <p>Tree node used in the <code>GET /api/categories</code> response.</p>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>string</td><td>UUID</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>Category name</td></tr>
+      <tr><td><code>description</code></td><td>string | null</td><td>Free-text description</td></tr>
+      <tr><td><code>children</code></td><td>CategoryNode[]</td><td>Child categories</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-Currency">
+  <h3>Currency</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>code</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>is_preferred</code></td><td>boolean</td><td>Whether this is the preferred display currency</td></tr>
+      <tr><td><code>fx_rate</code></td><td>string</td><td>Exchange rate relative to preferred currency (preferred currency always 1.0)</td></tr>
+      <tr><td><code>updated_at</code></td><td>string | null</td><td>Last update timestamp</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-Profile">
+  <h3>Profile</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>string</td><td>User-chosen slug (e.g. "alex")</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>Display name</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-InvestmentEvent">
+  <h3>InvestmentEvent</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>string</td><td>UUID</td></tr>
+      <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
+      <tr><td><code>event_type</code></td><td>string</td><td>InvestmentEventType enum value</td></tr>
+      <tr><td><code>symbol</code></td><td>string</td><td>Ticker symbol</td></tr>
+      <tr><td><code>date</code></td><td>string</td><td>ISO 8601 datetime</td></tr>
+      <tr><td><code>quantity</code></td><td>string</td><td>Decimal string</td></tr>
+      <tr><td><code>price_per_share</code></td><td>string</td><td>Decimal string</td></tr>
+      <tr><td><code>fee</code></td><td>string | null</td><td>Transaction fee (decimal string)</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>notes</code></td><td>string | null</td><td>Free-text notes</td></tr>
+      <tr><td><code>fingerprint</code></td><td>string</td><td>Dedup hash</td></tr>
+      <tr><td><code>created_at</code></td><td>string</td><td>ISO 8601 datetime</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-SectionMapping">
+  <h3>SectionMapping</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>section</code></td><td>string</td><td>One of: Income, Bills, Spending, Irregular, Transfers</td></tr>
+      <tr><td><code>category</code></td><td>string | null</td><td>Legacy category name</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to parent categories.id</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-ImportTransaction">
+  <h3>ImportTransaction</h3>
+  <p>Input record for <code>POST /api/transactions/import</code>.</p>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>date</code></td><td>string</td><td>Yes</td><td>ISO 8601 datetime</td></tr>
+      <tr><td><code>description</code></td><td>string</td><td>Yes</td><td>Transaction description</td></tr>
+      <tr><td><code>amount</code></td><td>string</td><td>Yes</td><td>Decimal string</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>No</td><td>Default: GBP</td></tr>
+      <tr><td><code>category</code></td><td>string</td><td>No</td><td>Legacy category name</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>No</td><td>FK to categories.id (preferred)</td></tr>
+      <tr><td><code>category_source</code></td><td>string</td><td>No</td><td>rule, agent, or manual</td></tr>
+      <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
+      <tr><td><code>is_recurring</code></td><td>boolean</td><td>No</td><td>Recurring flag</td></tr>
+      <tr><td><code>exclude_from_summary</code></td><td>boolean</td><td>No</td><td>Exclude from budget summaries</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-ImportPayload">
+  <h3>ImportPayload</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>Target account</td></tr>
+      <tr><td><code>transactions</code></td><td>ImportTransaction[]</td><td>Array of transactions to import</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-ImportResult">
+  <h3>ImportResult</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>rows_total</code></td><td>integer</td><td>Total rows processed</td></tr>
+      <tr><td><code>rows_inserted</code></td><td>integer</td><td>New rows inserted</td></tr>
+      <tr><td><code>rows_duplicate</code></td><td>integer</td><td>Rows skipped (duplicate fingerprint)</td></tr>
+      <tr><td><code>filename</code></td><td>string</td><td>Source filename</td></tr>
+      <tr><td><code>account_id</code></td><td>string</td><td>Target account</td></tr>
+      <tr><td><code>detected_bank</code></td><td>string</td><td>BankFormat enum value</td></tr>
+      <tr><td><code>detection_confidence</code></td><td>number</td><td>[0.0, 1.0]</td></tr>
+      <tr><td><code>errors</code></td><td>ImportRowError[]</td><td>Per-row errors (partial success)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-TransactionImportPreview">
+  <h3>TransactionImportPreview</h3>
+  <p>Returned by import endpoints when <code>dry_run=true</code>.</p>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>Target account</td></tr>
+      <tr><td><code>filename</code></td><td>string</td><td>Source filename</td></tr>
+      <tr><td><code>detected_bank</code></td><td>string</td><td>BankFormat enum value</td></tr>
+      <tr><td><code>detection_confidence</code></td><td>number</td><td>[0.0, 1.0]</td></tr>
+      <tr><td><code>rows</code></td><td>TransactionPreviewRow[]</td><td>Per-row preview</td></tr>
+      <tr><td><code>rows_total</code></td><td>integer</td><td>Total rows</td></tr>
+      <tr><td><code>rows_new</code></td><td>integer</td><td>New rows</td></tr>
+      <tr><td><code>rows_duplicate</code></td><td>integer</td><td>Duplicate rows</td></tr>
+      <tr><td><code>rows_error</code></td><td>integer</td><td>Error rows</td></tr>
+      <tr><td><code>payload</code></td><td>ImportPayload</td><td>Payload ready for confirmation</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-TransactionPreviewRow">
+  <h3>TransactionPreviewRow</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>index</code></td><td>integer</td><td>Zero-based row index</td></tr>
+      <tr><td><code>date</code></td><td>string</td><td>ISO 8601 datetime</td></tr>
+      <tr><td><code>description</code></td><td>string</td><td>Transaction description</td></tr>
+      <tr><td><code>amount</code></td><td>string</td><td>Decimal string</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>status</code></td><td>string</td><td>new, duplicate, or error</td></tr>
+      <tr><td><code>existing_id</code></td><td>string | null</td><td>UUID of matching existing transaction</td></tr>
+      <tr><td><code>existing_description</code></td><td>string | null</td><td>Description of matching transaction</td></tr>
+      <tr><td><code>error_reason</code></td><td>string | null</td><td>Reason for error status</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>LLM-assigned category (unified mode)</td></tr>
+      <tr><td><code>category_confidence</code></td><td>number | null</td><td>LLM confidence [0.0, 1.0] (unified mode)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-IngestionPreview">
+  <h3>IngestionPreview</h3>
+  <p>Top-level response from <code>POST /api/parse</code> (Stage 1).</p>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>status</code></td><td>string</td><td>success, needs_clarification, or error</td></tr>
+      <tr><td><code>metadata</code></td><td>IngestionMetadata</td><td>Processing metadata</td></tr>
+      <tr><td><code>transactions</code></td><td>TransactionIngestionResult</td><td>Extracted transactions</td></tr>
+      <tr><td><code>holdings</code></td><td>HoldingsIngestionResult</td><td>Extracted holdings</td></tr>
+      <tr><td><code>investments</code></td><td>InvestmentIngestionResult</td><td>Extracted investment events</td></tr>
+      <tr><td><code>clarifications_needed</code></td><td>ClarificationRequest[]</td><td>Questions requiring user input</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-IngestionMetadata">
+  <h3>IngestionMetadata</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>files_processed</code></td><td>integer</td><td>Number of files processed</td></tr>
+      <tr><td><code>institution_detected</code></td><td>string | null</td><td>Detected bank/institution</td></tr>
+      <tr><td><code>detection_confidence</code></td><td>number</td><td>[0.0, 1.0]</td></tr>
+      <tr><td><code>processing_time_ms</code></td><td>integer</td><td>Total processing time in milliseconds</td></tr>
+      <tr><td><code>notes</code></td><td>string[]</td><td>Processing notes and warnings</td></tr>
+      <tr><td><code>relationships_found</code></td><td>string[]</td><td>Cross-file relationships detected</td></tr>
+      <tr><td><code>estimated_price</code></td><td>EstimatedPrice</td><td>LLM cost breakdown</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-TransactionIngestionResult">
+  <h3>TransactionIngestionResult</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>count</code></td><td>integer</td><td>Total transactions extracted</td></tr>
+      <tr><td><code>new</code></td><td>integer</td><td>New (not duplicate)</td></tr>
+      <tr><td><code>duplicate</code></td><td>integer</td><td>Already in DB</td></tr>
+      <tr><td><code>errors</code></td><td>integer</td><td>Failed rows</td></tr>
+      <tr><td><code>rows</code></td><td>TransactionPreviewRow[]</td><td>Per-row preview</td></tr>
+      <tr><td><code>payload</code></td><td>ImportPayload | null</td><td>Ready for confirmation import</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-HoldingsIngestionResult">
+  <h3>HoldingsIngestionResult</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>count</code></td><td>integer</td><td>Total holdings extracted</td></tr>
+      <tr><td><code>new</code></td><td>integer</td><td>New holdings</td></tr>
+      <tr><td><code>modify</code></td><td>integer</td><td>Existing holdings to update</td></tr>
+      <tr><td><code>rows</code></td><td>HoldingPreview[]</td><td>Per-row preview</td></tr>
+      <tr><td><code>payload</code></td><td>HoldingsImportPayload | null</td><td>Ready for confirmation import</td></tr>
+      <tr><td><code>known_holdings</code></td><td>KnownHolding[]</td><td>Existing holdings on this account for autocomplete</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-InvestmentIngestionResult">
+  <h3>InvestmentIngestionResult</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>count</code></td><td>integer</td><td>Total events extracted</td></tr>
+      <tr><td><code>new</code></td><td>integer</td><td>New events</td></tr>
+      <tr><td><code>duplicate</code></td><td>integer</td><td>Duplicate events</td></tr>
+      <tr><td><code>rows</code></td><td>InvestmentPreviewRow[]</td><td>Per-row preview</td></tr>
+      <tr><td><code>payload</code></td><td>InvestmentsImportPayload | null</td><td>Ready for confirmation import</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-HoldingPreview">
+  <h3>HoldingPreview</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
+      <tr><td><code>symbol</code></td><td>string</td><td>Ticker symbol</td></tr>
+      <tr><td><code>sub_account</code></td><td>string | null</td><td>Sub-account label</td></tr>
+      <tr><td><code>value</code></td><td>string</td><td>Decimal string</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>as_of</code></td><td>string</td><td>Snapshot date</td></tr>
+      <tr><td><code>status</code></td><td>string</td><td>new, duplicate, or error</td></tr>
+      <tr><td><code>existing_value</code></td><td>string | null</td><td>Previous value for comparison</td></tr>
+      <tr><td><code>derived</code></td><td>boolean</td><td>Computed/inferred rather than from source</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-KnownHolding">
+  <h3>KnownHolding</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>symbol</code></td><td>string</td><td>Ticker symbol</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>Holding name</td></tr>
+      <tr><td><code>holding_type</code></td><td>string</td><td>HoldingType enum value</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>sub_account</code></td><td>string | null</td><td>Sub-account label</td></tr>
+      <tr><td><code>last_value</code></td><td>string</td><td>Last known value (decimal string)</td></tr>
+      <tr><td><code>last_as_of</code></td><td>string</td><td>Date of last snapshot (YYYY-MM-DD)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-InvestmentPreviewRow">
+  <h3>InvestmentPreviewRow</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>index</code></td><td>integer</td><td>Zero-based row index</td></tr>
+      <tr><td><code>event_type</code></td><td>string</td><td>InvestmentEventType value</td></tr>
+      <tr><td><code>symbol</code></td><td>string</td><td>Ticker symbol</td></tr>
+      <tr><td><code>date</code></td><td>string</td><td>ISO 8601 date</td></tr>
+      <tr><td><code>quantity</code></td><td>string</td><td>Decimal string</td></tr>
+      <tr><td><code>price_per_share</code></td><td>string</td><td>Decimal string</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>status</code></td><td>string</td><td>new, duplicate, or error</td></tr>
+      <tr><td><code>existing_id</code></td><td>string | null</td><td>UUID of matching existing event</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-EstimatedPrice">
+  <h3>EstimatedPrice</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>calls</code></td><td>ParserCallCost[]</td><td>Per-call cost breakdown</td></tr>
+      <tr><td><code>total</code></td><td>string</td><td>Total cost (decimal string, USD)</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>Always "USD"</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-ParserCallCost">
+  <h3>ParserCallCost</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>parser</code></td><td>string</td><td>Parser ID (e.g. "csv_transactions", "unified")</td></tr>
+      <tr><td><code>agent</code></td><td>string</td><td>Agent enum value (haiku, sonnet, opus)</td></tr>
+      <tr><td><code>model</code></td><td>string</td><td>Full model ID</td></tr>
+      <tr><td><code>input_tokens</code></td><td>integer</td><td>Input token count</td></tr>
+      <tr><td><code>output_tokens</code></td><td>integer</td><td>Output token count</td></tr>
+      <tr><td><code>duration_ms</code></td><td>integer</td><td>Call duration in milliseconds</td></tr>
+      <tr><td><code>amount</code></td><td>string</td><td>Cost for this call (decimal string, USD)</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>Always "USD"</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-HoldingsImportPayload">
+  <h3>HoldingsImportPayload</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>Target account</td></tr>
+      <tr><td><code>holdings</code></td><td>Holding[]</td><td>Holdings to import</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-HoldingsSummaryResponse">
+  <h3>HoldingsSummaryResponse</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>net_worth</code></td><td>string</td><td>Total net worth (decimal string)</td></tr>
+      <tr><td><code>preferred_currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>as_of</code></td><td>string</td><td>Computation date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>total_assets</code></td><td>string</td><td>Sum of positive-value holdings</td></tr>
+      <tr><td><code>total_liabilities</code></td><td>string</td><td>Sum of negative-value holdings</td></tr>
+      <tr><td><code>available_wealth</code></td><td>string</td><td>Liquid wealth (checking, savings, investment, cash, credit)</td></tr>
+      <tr><td><code>unavailable_wealth</code></td><td>string</td><td>Illiquid wealth (pension, property)</td></tr>
+      <tr><td><code>accounts</code></td><td>Account[]</td><td>All accounts with carry-forward balances</td></tr>
+      <tr><td><code>by_type</code></td><td>BreakdownItem[]</td><td>Breakdown by account type</td></tr>
+      <tr><td><code>by_institution</code></td><td>BreakdownItem[]</td><td>Breakdown by institution</td></tr>
+      <tr><td><code>by_asset_class</code></td><td>BreakdownItem[]</td><td>Breakdown by asset class</td></tr>
+      <tr><td><code>investment_metrics</code></td><td>InvestmentMetrics</td><td>Investment performance over trailing 12 months</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-InvestmentMetrics">
+  <h3>InvestmentMetrics</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>start_value</code></td><td>string</td><td>Value at period start</td></tr>
+      <tr><td><code>end_value</code></td><td>string</td><td>Value at period end</td></tr>
+      <tr><td><code>total_growth</code></td><td>string</td><td>end_value - start_value</td></tr>
+      <tr><td><code>new_cash_invested</code></td><td>string</td><td>Net cash moved into investment accounts</td></tr>
+      <tr><td><code>market_growth</code></td><td>string</td><td>total_growth - new_cash_invested (pure price appreciation)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-BreakdownItem">
+  <h3>BreakdownItem</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>label</code></td><td>string</td><td>Group label (type, institution, or asset class name)</td></tr>
+      <tr><td><code>value</code></td><td>string</td><td>Decimal string in preferred currency</td></tr>
+      <tr><td><code>percentage</code></td><td>number</td><td>Percentage of net worth</td></tr>
+      <tr><td><code>display_currency</code></td><td>DisplayCurrency | null</td><td>Original currency value when all sources share one non-preferred currency</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-DisplayCurrency">
+  <h3>DisplayCurrency</h3>
+  <p>Attached to aggregated monetary values when all source amounts share the same non-preferred currency.</p>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>value</code></td><td>string</td><td>Amount in the original currency (decimal string)</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code of the original currency</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-HoldingsHistoryRow">
+  <h3>HoldingsHistoryRow</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>month</code></td><td>string</td><td>Period label: "YYYY-MM", "YYYY-Qn", or "YYYY"</td></tr>
+      <tr><td><code>available_wealth</code></td><td>string</td><td>Liquid wealth (decimal string)</td></tr>
+      <tr><td><code>available_wealth_display</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
+      <tr><td><code>unavailable_wealth</code></td><td>string</td><td>Illiquid wealth (decimal string)</td></tr>
+      <tr><td><code>unavailable_wealth_display</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
+      <tr><td><code>total_wealth</code></td><td>string</td><td>Total wealth (decimal string)</td></tr>
+      <tr><td><code>total_wealth_display</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-HoldingsCashFlowMonth">
+  <h3>HoldingsCashFlowMonth</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>month</code></td><td>string</td><td>Period label: "YYYY-MM", "YYYY-Qn", or "YYYY"</td></tr>
+      <tr><td><code>income</code></td><td>string</td><td>Total income (decimal string)</td></tr>
+      <tr><td><code>income_display</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
+      <tr><td><code>spending</code></td><td>string</td><td>Total spending (decimal string)</td></tr>
+      <tr><td><code>spending_display</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-AccountSnapshot">
+  <h3>AccountSnapshot</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>as_of</code></td><td>string</td><td>Snapshot date (ISO 8601)</td></tr>
+      <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
+      <tr><td><code>balance</code></td><td>string</td><td>Decimal string (SUM of holdings.value)</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-BalanceDelta">
+  <h3>BalanceDelta</h3>
+  <p>Returned by <code>GET /api/holdings/balances?summary=true</code>.</p>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
+      <tr><td><code>start_balance</code></td><td>string | null</td><td>Balance at period start</td></tr>
+      <tr><td><code>end_balance</code></td><td>string | null</td><td>Balance at period end</td></tr>
+      <tr><td><code>delta</code></td><td>string | null</td><td>end_balance - start_balance</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-BudgetRow">
+  <h3>BudgetRow</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>category</code></td><td>string</td><td>Category display name</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id</td></tr>
+      <tr><td><code>budgeted</code></td><td>string | null</td><td>Effective budget (standing or override). Null if not set.</td></tr>
+      <tr><td><code>actual</code></td><td>string</td><td>Actual spend (absolute value)</td></tr>
+      <tr><td><code>actual_display</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
+      <tr><td><code>percent</code></td><td>number | null</td><td>actual / budgeted * 100. Null when budgeted is null or zero.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-SpendingGridRow">
+  <h3>SpendingGridRow</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>category</code></td><td>string</td><td>Category display name</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id</td></tr>
+      <tr><td><code>section</code></td><td>string</td><td>Section name (Income, Bills, etc.)</td></tr>
+      <tr><td><code>periods</code></td><td>Record&lt;string, string | null&gt;</td><td>Period key to decimal string (negative = expense)</td></tr>
+      <tr><td><code>periods_display</code></td><td>Record&lt;string, DisplayCurrency&gt;</td><td>Original currency for each period</td></tr>
+      <tr><td><code>average</code></td><td>string | null</td><td>Average spend per non-empty period</td></tr>
+      <tr><td><code>budget</code></td><td>string | null</td><td>Standing budget (decimal string)</td></tr>
+      <tr><td><code>total</code></td><td>string | null</td><td>Sum across all periods</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-CategoryTotal">
+  <h3>CategoryTotal</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>category</code></td><td>string</td><td>Category display name</td></tr>
+      <tr><td><code>total</code></td><td>string</td><td>Sum of transaction amounts (signed net or absolute, depending on direction param)</td></tr>
+      <tr><td><code>display_currency</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-ChecklistItem">
+  <h3>ChecklistItem</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
+      <tr><td><code>account_name</code></td><td>string</td><td>Account display name</td></tr>
+      <tr><td><code>status</code></td><td>string</td><td>pending or complete</td></tr>
+      <tr><td><code>completed_at</code></td><td>string | null</td><td>ISO 8601 datetime of completion</td></tr>
+      <tr><td><code>notes</code></td><td>string | null</td><td>Free-text notes</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-InvestmentsImportPayload">
+  <h3>InvestmentsImportPayload</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>Target account</td></tr>
+      <tr><td><code>events</code></td><td>CreateInvestmentEventBody[]</td><td>Events to import</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="model" id="model-InvestmentImportResult">
+  <h3>InvestmentImportResult</h3>
+  <table class="model-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>total</code></td><td>integer</td><td>Total events in payload</td></tr>
+      <tr><td><code>inserted</code></td><td>integer</td><td>Successfully inserted</td></tr>
+      <tr><td><code>duplicates</code></td><td>integer</td><td>Skipped (duplicate fingerprint)</td></tr>
+      <tr><td><code>errors</code></td><td>InvestmentImportError[]</td><td>Per-event errors</td></tr>
+    </tbody>
+  </table>
+</section>
+
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 1: HEALTH & DOCS                                                  -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-health-docs">
+<h2>Health &amp; Docs</h2>
+
+<section class="endpoint" id="get-api-health" data-method="GET" data-path="/api/health">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/health</code>
+  </div>
+  <p class="endpoint-summary">Readiness probe.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/health</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "status": "ok",
+  "service": "fynance"
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-docs" data-method="GET" data-path="/api/docs">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/docs</code>
+  </div>
+  <p class="endpoint-summary">OpenAPI 3.1 specification (JSON).</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/docs</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "openapi": "3.1.0",
+  "info": { "title": "fynance", "version": "0.1.0" },
+  "paths": { ... }
+}</code></pre>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 2: ACCOUNTS                                                       -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-accounts">
+<h2>Accounts</h2>
+
+<section class="endpoint" id="get-api-accounts" data-method="GET" data-path="/api/accounts">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/accounts</code>
+  </div>
+  <p class="endpoint-summary">List all accounts, optionally filtered by profile.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter accounts by profile</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/accounts?profile_id=alex</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "id": "monzo-alex",
+    "name": "Monzo Current",
+    "institution": "monzo",
+    "type": "checking",
+    "currency": "GBP",
+    "balance": "1234.56",
+    "balance_date": "2026-05-01T00:00:00",
+    "is_active": true,
+    "notes": null,
+    "profile_ids": ["alex"],
+    "is_available": true
+  }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-accounts" data-method="POST" data-path="/api/accounts">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/accounts</code>
+  </div>
+  <p class="endpoint-summary">Create a new account.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>string</td><td>Yes</td><td>Unique slug</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>Yes</td><td>Display name</td></tr>
+      <tr><td><code>institution</code></td><td>string</td><td>Yes</td><td>Bank/provider</td></tr>
+      <tr><td><code>type</code></td><td>string</td><td>Yes</td><td>AccountType enum value</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>No</td><td>Default: GBP</td></tr>
+      <tr><td><code>profile_ids</code></td><td>string[]</td><td>No</td><td>Default: ["default"]</td></tr>
+      <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/accounts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "monzo-alex",
+    "name": "Monzo Current",
+    "institution": "monzo",
+    "type": "checking",
+    "currency": "GBP",
+    "profile_ids": ["alex"]
+  }'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "monzo-alex",
+  "name": "Monzo Current",
+  "institution": "monzo",
+  "type": "checking",
+  "currency": "GBP",
+  "balance": null,
+  "balance_date": null,
+  "is_active": true,
+  "notes": null,
+  "profile_ids": ["alex"],
+  "is_available": true
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_account_id</code></td><td>id is empty</td></tr>
+      <tr><td>400</td><td><code>invalid_account_type</code></td><td>type is not a valid AccountType</td></tr>
+      <tr><td>409</td><td><code>account_exists</code></td><td>Account with this id already exists</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="patch-api-accounts-id" data-method="PATCH" data-path="/api/accounts/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/accounts/:id</code>
+  </div>
+  <p class="endpoint-summary">Update account fields.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>string</td><td>No</td><td>Display name</td></tr>
+      <tr><td><code>institution</code></td><td>string</td><td>No</td><td>Bank/provider</td></tr>
+      <tr><td><code>type</code></td><td>string</td><td>No</td><td>AccountType value</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>No</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>is_active</code></td><td>boolean</td><td>No</td><td>Active flag</td></tr>
+      <tr><td><code>profile_ids</code></td><td>string[]</td><td>No</td><td>Profile membership</td></tr>
+      <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/accounts/monzo-alex \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Monzo Main Account"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "monzo-alex",
+  "name": "Monzo Main Account",
+  "institution": "monzo",
+  "type": "checking",
+  "currency": "GBP",
+  "balance": "1234.56",
+  "balance_date": "2026-05-01T00:00:00",
+  "is_active": true,
+  "notes": null,
+  "profile_ids": ["alex"],
+  "is_available": true
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_body</code></td><td>No fields provided</td></tr>
+      <tr><td>404</td><td><code>not_found</code></td><td>Account does not exist</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-accounts-id" data-method="DELETE" data-path="/api/accounts/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/accounts/:id</code>
+  </div>
+  <p class="endpoint-summary">Delete an account. Fails if referenced by transactions or holdings.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/accounts/monzo-alex</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>Account does not exist</td></tr>
+      <tr><td>409</td><td><code>account_in_use</code></td><td>Account has transactions or holdings</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="patch-api-accounts-id-balance" data-method="PATCH" data-path="/api/accounts/:id/balance">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/accounts/:id/balance</code>
+  </div>
+  <p class="endpoint-summary">Set account balance and date.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>balance</code></td><td>string</td><td>Yes</td><td>Decimal string</td></tr>
+      <tr><td><code>date</code></td><td>string</td><td>Yes</td><td>ISO 8601 date or datetime</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/accounts/monzo-alex/balance \
+  -H "Content-Type: application/json" \
+  -d '{"balance": "1500.00", "date": "2026-05-15"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 3: PROFILES                                                       -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-profiles">
+<h2>Profiles</h2>
+
+<section class="endpoint" id="get-api-profiles" data-method="GET" data-path="/api/profiles">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/profiles</code>
+  </div>
+  <p class="endpoint-summary">List all profiles.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/profiles</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  { "id": "alex", "name": "Alex" },
+  { "id": "sam", "name": "Sam" }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-profiles" data-method="POST" data-path="/api/profiles">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/profiles</code>
+  </div>
+  <p class="endpoint-summary">Create a profile.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>string</td><td>Yes</td><td>Slug (lowercase, no spaces)</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>Yes</td><td>Display name</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/profiles \
+  -H "Content-Type: application/json" \
+  -d '{"id": "alex", "name": "Alex"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "alex",
+  "name": "Alex"
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>409</td><td><code>profile_exists</code></td><td>Profile with this id already exists</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="patch-api-profiles-id" data-method="PATCH" data-path="/api/profiles/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/profiles/:id</code>
+  </div>
+  <p class="endpoint-summary">Rename a profile.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>string</td><td>Yes</td><td>New display name</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/profiles/alex \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alexander"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "alex",
+  "name": "Alexander"
+}</code></pre>
+</section>
+
+<section class="endpoint" id="delete-api-profiles-id" data-method="DELETE" data-path="/api/profiles/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/profiles/:id</code>
+  </div>
+  <p class="endpoint-summary">Delete a profile. Fails if accounts reference it.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/profiles/sam</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>Profile does not exist</td></tr>
+      <tr><td>409</td><td><code>profile_in_use</code></td><td>Accounts still reference this profile</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 4: CATEGORIES                                                     -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-categories">
+<h2>Categories</h2>
+
+<section class="endpoint" id="get-api-categories" data-method="GET" data-path="/api/categories">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/categories</code>
+  </div>
+  <p class="endpoint-summary">List category tree grouped by section.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/categories</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "Food": [
+    {
+      "id": "c-food",
+      "name": "Food",
+      "description": null,
+      "children": [
+        { "id": "c-groceries", "name": "Groceries", "description": null, "children": [] },
+        { "id": "c-restaurants", "name": "Restaurants", "description": null, "children": [] }
+      ]
+    }
+  ],
+  "Transport": [
+    {
+      "id": "c-transport",
+      "name": "Transport",
+      "description": null,
+      "children": [
+        { "id": "c-tube", "name": "Tube & Rail", "description": null, "children": [] }
+      ]
+    }
+  ]
+}</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-categories" data-method="POST" data-path="/api/categories">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/categories</code>
+  </div>
+  <p class="endpoint-summary">Create a category.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>string</td><td>Yes</td><td>Category name</td></tr>
+      <tr><td><code>parent_id</code></td><td>string</td><td>No</td><td>FK to parent category (null for top-level)</td></tr>
+      <tr><td><code>display_order</code></td><td>integer</td><td>No</td><td>Sort order</td></tr>
+      <tr><td><code>description</code></td><td>string</td><td>No</td><td>Free-text description for LLM disambiguation</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/categories \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Groceries", "parent_id": "c-food"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "c-groceries",
+  "name": "Groceries",
+  "parent_id": "c-food",
+  "display_order": 0,
+  "is_active": true,
+  "description": null,
+  "created_at": "2026-05-30T12:00:00",
+  "updated_at": "2026-05-30T12:00:00"
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-categories-resolve" data-method="GET" data-path="/api/categories/resolve">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/categories/resolve</code>
+  </div>
+  <p class="endpoint-summary">Resolve a category by display name.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>query</td><td>string</td><td>Yes</td><td>Category display name (e.g. "Food: Groceries")</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/categories/resolve?name=Food%3A%20Groceries"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "c-groceries",
+  "name": "Groceries",
+  "parent_id": "c-food",
+  "display_order": 0,
+  "is_active": true,
+  "description": null,
+  "created_at": "2026-05-30T12:00:00",
+  "updated_at": "2026-05-30T12:00:00"
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-categories-id" data-method="GET" data-path="/api/categories/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/categories/:id</code>
+  </div>
+  <p class="endpoint-summary">Get a single category by ID.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/categories/c-groceries</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "c-groceries",
+  "name": "Groceries",
+  "parent_id": "c-food",
+  "display_order": 0,
+  "is_active": true,
+  "description": null,
+  "created_at": "2026-05-30T12:00:00",
+  "updated_at": "2026-05-30T12:00:00"
+}</code></pre>
+</section>
+
+<section class="endpoint" id="patch-api-categories-id" data-method="PATCH" data-path="/api/categories/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/categories/:id</code>
+  </div>
+  <p class="endpoint-summary">Update category fields.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>string</td><td>No</td><td>New name</td></tr>
+      <tr><td><code>parent_id</code></td><td>string</td><td>No</td><td>New parent</td></tr>
+      <tr><td><code>display_order</code></td><td>integer</td><td>No</td><td>New sort order</td></tr>
+      <tr><td><code>is_active</code></td><td>boolean</td><td>No</td><td>Active flag</td></tr>
+      <tr><td><code>description</code></td><td>string</td><td>No</td><td>Free-text description</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/categories/c-groceries \
+  -H "Content-Type: application/json" \
+  -d '{"description": "Supermarkets and food shops"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "c-groceries",
+  "name": "Groceries",
+  "parent_id": "c-food",
+  "display_order": 0,
+  "is_active": true,
+  "description": "Supermarkets and food shops",
+  "created_at": "2026-05-30T12:00:00",
+  "updated_at": "2026-05-30T14:00:00"
+}</code></pre>
+</section>
+
+<section class="endpoint" id="delete-api-categories-id" data-method="DELETE" data-path="/api/categories/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/categories/:id</code>
+  </div>
+  <p class="endpoint-summary">Soft-delete a category (sets is_active=false).</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/categories/c-groceries</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 5: SECTIONS                                                       -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-sections">
+<h2>Section Mappings</h2>
+
+<section class="endpoint" id="get-api-sections" data-method="GET" data-path="/api/sections">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/sections</code>
+  </div>
+  <p class="endpoint-summary">List all section mappings.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/sections</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  { "section": "Income", "category": "Income", "category_id": "c-income" },
+  { "section": "Bills", "category": "Bills", "category_id": "c-bills" },
+  { "section": "Spending", "category": "Food", "category_id": "c-food" },
+  { "section": "Spending", "category": "Transport", "category_id": "c-transport" }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="put-api-sections" data-method="PUT" data-path="/api/sections">
+  <div class="endpoint-header">
+    <span class="method-badge method-put">PUT</span>
+    <code class="endpoint-path">/api/sections</code>
+  </div>
+  <p class="endpoint-summary">Replace all section mappings.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <p>Array of SectionMapping objects. Valid sections: Income, Bills, Spending, Irregular, Transfers.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PUT http://localhost:7433/api/sections \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"section": "Income", "category_id": "c-income"},
+    {"section": "Bills", "category_id": "c-bills"},
+    {"section": "Spending", "category_id": "c-food"}
+  ]'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 6: TRANSACTIONS                                                   -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-transactions">
+<h2>Transactions</h2>
+
+<section class="endpoint" id="get-api-transactions" data-method="GET" data-path="/api/transactions">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/transactions</code>
+  </div>
+  <p class="endpoint-summary">List transactions with filters, pagination, and sorting.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>query</td><td>string</td><td>No</td><td>-</td><td>Start date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>end</code></td><td>query</td><td>string</td><td>No</td><td>-</td><td>End date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>accounts</code></td><td>query</td><td>string</td><td>No</td><td>-</td><td>Comma-separated account IDs</td></tr>
+      <tr><td><code>categories</code></td><td>query</td><td>string</td><td>No</td><td>-</td><td>Comma-separated category IDs</td></tr>
+      <tr><td><code>search</code></td><td>query</td><td>string</td><td>No</td><td>-</td><td>Text search in description</td></tr>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>-</td><td>Filter by profile</td></tr>
+      <tr><td><code>category_source</code></td><td>query</td><td>string</td><td>No</td><td>-</td><td>rule, agent, or manual</td></tr>
+      <tr><td><code>sort</code></td><td>query</td><td>string</td><td>No</td><td>date</td><td>date, amount, or category</td></tr>
+      <tr><td><code>sort_dir</code></td><td>query</td><td>string</td><td>No</td><td>desc</td><td>asc or desc</td></tr>
+      <tr><td><code>page</code></td><td>query</td><td>integer</td><td>No</td><td>1</td><td>Page number</td></tr>
+      <tr><td><code>limit</code></td><td>query</td><td>integer</td><td>No</td><td>25</td><td>Rows per page</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/transactions?start=2026-05-01&end=2026-05-31&accounts=monzo-alex&page=1&limit=10"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "data": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "date": "2026-05-15T10:30:00",
+      "description": "Tesco Express",
+      "normalized": "tesco express",
+      "amount": "-45.20",
+      "currency": "GBP",
+      "account_id": "monzo-alex",
+      "category": "Food: Groceries",
+      "category_id": "c-groceries",
+      "category_source": "agent",
+      "confidence": 0.95,
+      "notes": null,
+      "is_recurring": false,
+      "exclude_from_summary": false,
+      "fingerprint": "abc123...",
+      "fitid": null
+    }
+  ],
+  "total": 42,
+  "page": 1,
+  "limit": 10
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-transactions-by-category" data-method="GET" data-path="/api/transactions/by-category">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/transactions/by-category</code>
+  </div>
+  <p class="endpoint-summary">Aggregated spending totals grouped by category.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>query</td><td>string</td><td>No</td><td>Start date</td></tr>
+      <tr><td><code>end</code></td><td>query</td><td>string</td><td>No</td><td>End date</td></tr>
+      <tr><td><code>accounts</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated account IDs</td></tr>
+      <tr><td><code>categories</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated category IDs</td></tr>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter by profile</td></tr>
+      <tr><td><code>direction</code></td><td>query</td><td>string</td><td>No</td><td>outflow or income. Omit for signed net sums.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/transactions/by-category?start=2026-05-01&end=2026-05-31&direction=outflow"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "preferred_currency": "GBP",
+  "rows": [
+    { "category": "Food: Groceries", "total": "245.80", "display_currency": null },
+    { "category": "Transport: Tube & Rail", "total": "56.00", "display_currency": null }
+  ]
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-transactions-categories" data-method="GET" data-path="/api/transactions/categories">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/transactions/categories</code>
+    <span class="deprecated-badge">Legacy</span>
+  </div>
+  <p class="endpoint-summary">List all categories. Use <code>GET /api/categories</code> instead.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/transactions/categories</code></pre>
+  <p>Response: same as <code>GET /api/categories</code>.</p>
+</section>
+
+<section class="endpoint" id="get-api-transactions-accounts" data-method="GET" data-path="/api/transactions/accounts">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/transactions/accounts</code>
+    <span class="deprecated-badge">Legacy</span>
+  </div>
+  <p class="endpoint-summary">List accounts. Use <code>GET /api/accounts</code> instead.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/transactions/accounts</code></pre>
+  <p>Response: same as <code>GET /api/accounts</code>.</p>
+</section>
+
+<section class="endpoint" id="patch-api-transactions-id" data-method="PATCH" data-path="/api/transactions/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/transactions/:id</code>
+  </div>
+  <p class="endpoint-summary">Edit transaction category, notes, or exclude_from_summary.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>category</code></td><td>string</td><td>No</td><td>Legacy category name (still accepted)</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>No</td><td>FK to categories.id (preferred, must be leaf)</td></tr>
+      <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
+      <tr><td><code>exclude_from_summary</code></td><td>boolean</td><td>No</td><td>Exclude from budget summaries</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/transactions/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "Content-Type: application/json" \
+  -d '{"category_id": "c-restaurants", "notes": "Birthday dinner"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "date": "2026-05-15T10:30:00",
+  "description": "Tesco Express",
+  "normalized": "tesco express",
+  "amount": "-45.20",
+  "currency": "GBP",
+  "account_id": "monzo-alex",
+  "category": "Food: Restaurants",
+  "category_id": "c-restaurants",
+  "category_source": "manual",
+  "confidence": null,
+  "notes": "Birthday dinner",
+  "is_recurring": false,
+  "exclude_from_summary": false,
+  "fingerprint": "abc123...",
+  "fitid": null
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_body</code></td><td>No fields provided</td></tr>
+      <tr><td>400</td><td><code>invalid_category</code></td><td>Category not found or is a parent</td></tr>
+      <tr><td>404</td><td><code>not_found</code></td><td>Transaction does not exist</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 7: IMPORT                                                         -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-import">
+<h2>Import (Transactions)</h2>
+
+<section class="endpoint" id="post-api-transactions-import" data-method="POST" data-path="/api/transactions/import">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/transactions/import</code>
+  </div>
+  <p class="endpoint-summary">Import structured transaction JSON. Supports dry_run for preview.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>dry_run</code></td><td>query</td><td>boolean</td><td>No</td><td>Preview without committing (returns TransactionImportPreview)</td></tr>
+    </tbody>
+  </table>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <p>ImportPayload object (see Models).</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST "http://localhost:7433/api/transactions/import?dry_run=true" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_id": "monzo-alex",
+    "transactions": [
+      {
+        "date": "2026-05-15T10:30:00",
+        "description": "Tesco Express",
+        "amount": "-45.20",
+        "currency": "GBP",
+        "category_id": "c-groceries",
+        "category_source": "agent"
+      }
+    ]
+  }'</code></pre>
+  <h4>Example Response (dry_run=true) <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "account_id": "monzo-alex",
+  "filename": "&lt;api&gt;",
+  "detected_bank": "unknown",
+  "detection_confidence": 0.0,
+  "rows_total": 1,
+  "rows_new": 1,
+  "rows_duplicate": 0,
+  "rows_error": 0,
+  "rows": [
+    {
+      "index": 0,
+      "date": "2026-05-15T10:30:00",
+      "description": "Tesco Express",
+      "amount": "-45.20",
+      "currency": "GBP",
+      "status": "new"
+    }
+  ],
+  "payload": { "account_id": "monzo-alex", "transactions": [...] }
+}</code></pre>
+  <h4>Example Response (commit) <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "rows_total": 1,
+  "rows_inserted": 1,
+  "rows_duplicate": 0,
+  "filename": "&lt;api&gt;",
+  "account_id": "monzo-alex",
+  "detected_bank": "unknown",
+  "detection_confidence": 0.0
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_transactions</code></td><td>transactions array is empty</td></tr>
+      <tr><td>400</td><td><code>account_not_found</code></td><td>account_id does not exist</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint deprecated" id="post-api-import" data-method="POST" data-path="/api/import">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/import</code>
+    <span class="deprecated-badge">Deprecated</span>
+  </div>
+  <p class="endpoint-summary">Legacy alias for <code>POST /api/transactions/import</code>. Returns <code>Deprecation: true</code> and <code>Link: &lt;/api/transactions/import&gt;; rel="successor-version"</code> headers.</p>
+  <p>Request and response are identical to <code>POST /api/transactions/import</code>.</p>
+</section>
+
+<section class="endpoint" id="post-api-import-csv" data-method="POST" data-path="/api/import/csv">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/import/csv</code>
+  </div>
+  <p class="endpoint-summary">Import a single CSV file via multipart upload. Uses LLM parsing.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account</code></td><td>query</td><td>string</td><td>Yes</td><td>Target account ID</td></tr>
+      <tr><td><code>dry_run</code></td><td>query</td><td>boolean</td><td>No</td><td>Preview without committing</td></tr>
+    </tbody>
+  </table>
+  <h4>Request Body <span class="content-type">multipart/form-data</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Kind</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>file</code></td><td>file</td><td>binary</td><td>Yes</td><td>CSV file</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST "http://localhost:7433/api/import/csv?account=monzo-alex" \
+  -F "file=@statement.csv"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "rows_total": 25,
+  "rows_inserted": 22,
+  "rows_duplicate": 3,
+  "filename": "statement.csv",
+  "account_id": "monzo-alex",
+  "detected_bank": "monzo",
+  "detection_confidence": 0.98
+}</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-import-bulk" data-method="POST" data-path="/api/import/bulk">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/import/bulk</code>
+  </div>
+  <p class="endpoint-summary">Import multiple CSV files via multipart upload.</p>
+  <h4>Request Body <span class="content-type">multipart/form-data</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Kind</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>files[]</code></td><td>file</td><td>binary</td><td>Yes</td><td>CSV files (one per account)</td></tr>
+      <tr><td><code>accounts[]</code></td><td>text</td><td>string</td><td>Yes</td><td>Account ID per file (paired by order)</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/import/bulk \
+  -F "files[]=@monzo.csv" \
+  -F "accounts[]=monzo-alex" \
+  -F "files[]=@revolut.csv" \
+  -F "accounts[]=revolut-alex"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "rows_total": 25,
+    "rows_inserted": 22,
+    "rows_duplicate": 3,
+    "filename": "monzo.csv",
+    "account_id": "monzo-alex",
+    "detected_bank": "monzo",
+    "detection_confidence": 0.98
+  },
+  {
+    "rows_total": 18,
+    "rows_inserted": 18,
+    "rows_duplicate": 0,
+    "filename": "revolut.csv",
+    "account_id": "revolut-alex",
+    "detected_bank": "revolut",
+    "detection_confidence": 0.95
+  }
+]</code></pre>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 8: PARSE                                                          -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-parse">
+<h2>Parse (Stage 1 LLM Pipeline)</h2>
+
+<section class="endpoint" id="post-api-parse" data-method="POST" data-path="/api/parse">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/parse</code>
+  </div>
+  <p class="endpoint-summary">Upload documents for LLM-powered extraction (transactions, holdings, investments). Returns an IngestionPreview.</p>
+  <h4>Rate Limits</h4>
+  <p>Max 5 files, 10 MB per file, 50 MB total. Axum body limit overridden to 50 MB for this endpoint.</p>
+  <h4>Request Body <span class="content-type">multipart/form-data</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Kind</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>files[]</code></td><td>file</td><td>binary</td><td>Yes</td><td>1-5 files (CSV, PDF, Excel). Max 10 MB each, 50 MB total.</td></tr>
+      <tr><td><code>account_id</code></td><td>text</td><td>string</td><td>Yes</td><td>Account to associate with parsed data</td></tr>
+      <tr><td><code>hints</code></td><td>text</td><td>JSON string</td><td>Yes</td><td>ParseHints JSON (controls extraction types and mode)</td></tr>
+      <tr><td><code>parse_id</code></td><td>text</td><td>string</td><td>No</td><td>Client-generated ID for SSE progress tracking</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/parse \
+  -F "files[]=@statement.csv" \
+  -F "account_id=monzo-alex" \
+  -F 'hints={"return_type":{"transactions":true,"holdings":{"enabled":true},"investments":false}}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "status": "success",
+  "metadata": {
+    "files_processed": 1,
+    "institution_detected": "monzo",
+    "detection_confidence": 0.95,
+    "processing_time_ms": 3200,
+    "notes": [],
+    "relationships_found": [],
+    "estimated_price": {
+      "calls": [
+        {
+          "parser": "unified",
+          "agent": "sonnet",
+          "model": "claude-sonnet-4-6",
+          "input_tokens": 4500,
+          "output_tokens": 2100,
+          "duration_ms": 2800,
+          "amount": "0.035",
+          "currency": "USD"
+        }
+      ],
+      "total": "0.035",
+      "currency": "USD"
+    }
+  },
+  "transactions": {
+    "count": 5,
+    "new": 4,
+    "duplicate": 1,
+    "errors": 0,
+    "rows": [...],
+    "payload": { "account_id": "monzo-alex", "transactions": [...] }
+  },
+  "holdings": {
+    "count": 0,
+    "new": 0,
+    "modify": 0,
+    "rows": [],
+    "payload": null,
+    "known_holdings": []
+  },
+  "investments": {
+    "count": 0,
+    "new": 0,
+    "duplicate": 0,
+    "rows": [],
+    "payload": null
+  }
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>no_files</code></td><td>No files uploaded</td></tr>
+      <tr><td>400</td><td><code>too_many_files</code></td><td>More than 5 files</td></tr>
+      <tr><td>400</td><td><code>file_too_large</code></td><td>Single file exceeds 10 MB</td></tr>
+      <tr><td>400</td><td><code>total_too_large</code></td><td>Total upload exceeds 50 MB</td></tr>
+      <tr><td>400</td><td><code>empty_file</code></td><td>File has zero bytes</td></tr>
+      <tr><td>400</td><td><code>missing_account_id</code></td><td>account_id not provided</td></tr>
+      <tr><td>400</td><td><code>missing_hints</code></td><td>hints not provided</td></tr>
+      <tr><td>400</td><td><code>invalid_return_type</code></td><td>No extraction type enabled</td></tr>
+      <tr><td>400</td><td><code>account_not_found</code></td><td>Account does not exist</td></tr>
+      <tr><td>400</td><td><code>provider_config</code></td><td>LLM provider not configured (missing API key)</td></tr>
+      <tr><td>502</td><td><code>upstream_unreachable</code></td><td>LLM service unreachable</td></tr>
+      <tr><td>504</td><td><code>upstream_timeout</code></td><td>LLM service timed out</td></tr>
+      <tr><td>429</td><td><code>upstream_rate_limit</code></td><td>LLM rate limited</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-parse-progress-parse_id" data-method="GET" data-path="/api/parse/progress/:parse_id">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/parse/progress/:parse_id</code>
+  </div>
+  <p class="endpoint-summary">SSE stream of parse progress events.</p>
+  <h4>SSE Event Types</h4>
+  <table>
+    <thead><tr><th>Event</th><th>JSON Shape</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td><code>phase</code></td><td><code>{"phase": "&lt;phase&gt;", "message": "&lt;text&gt;", "task_id": "&lt;id&gt; or null"}</code></td><td>Pipeline transitions between stages</td></tr>
+      <tr><td><code>llm_start</code></td><td><code>{"model": "&lt;model&gt;", "input_tokens": &lt;n&gt;, "task_id": "&lt;id&gt;"}</code></td><td>LLM API call initiated</td></tr>
+      <tr><td><code>llm_progress</code></td><td><code>{"output_tokens": &lt;n&gt;, "elapsed_ms": &lt;n&gt;, "task_id": "&lt;id&gt;"}</code></td><td>Streaming token count update</td></tr>
+      <tr><td><code>done</code></td><td><code>{"total_ms": &lt;n&gt;}</code></td><td>Pipeline complete</td></tr>
+      <tr><td><code>error</code></td><td><code>{"code": "&lt;slug&gt;", "message": "&lt;text&gt;"}</code></td><td>Pipeline failed</td></tr>
+    </tbody>
+  </table>
+  <p>Phase values: <code>preprocessing</code>, <code>building_context</code>, <code>sending_to_llm</code>, <code>waiting_for_llm</code>, <code>post_processing</code>.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -N http://localhost:7433/api/parse/progress/my-parse-123</code></pre>
+  <h4>Example Response (SSE stream)</h4>
+  <pre><code>event: phase
+data: {"phase":"preprocessing","message":"Processing 1 uploaded file(s)","task_id":null}
+
+event: phase
+data: {"phase":"sending_to_llm","message":"Sending 1 file(s) to AI model","task_id":null}
+
+event: llm_start
+data: {"model":"claude-sonnet-4-6","input_tokens":4500,"task_id":"unified"}
+
+event: llm_progress
+data: {"output_tokens":1200,"elapsed_ms":1500,"task_id":"unified"}
+
+event: phase
+data: {"phase":"post_processing","message":"Checking for duplicates","task_id":null}
+
+event: done
+data: {"total_ms":3200}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Event</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>error</td><td><code>not_found</code></td><td>No active parse with this parse_id</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 9: BUDGET                                                         -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-budget">
+<h2>Budget</h2>
+
+<section class="endpoint" id="get-api-budget-spending-grid" data-method="GET" data-path="/api/budget/spending-grid">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/budget/spending-grid</code>
+  </div>
+  <p class="endpoint-summary">Multi-period spending vs budget grid.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>query</td><td>string</td><td>Yes</td><td>Start date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>end</code></td><td>query</td><td>string</td><td>Yes</td><td>End date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>granularity</code></td><td>query</td><td>string</td><td>Yes</td><td>monthly, quarterly, or yearly</td></tr>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter by profile</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/budget/spending-grid?start=2026-01-01&end=2026-05-31&granularity=monthly"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "preferred_currency": "GBP",
+  "rows": [
+    {
+      "category": "Food: Groceries",
+      "category_id": "c-groceries",
+      "section": "Spending",
+      "periods": {
+        "2026-01": "-210.50",
+        "2026-02": "-195.30",
+        "2026-03": "-240.00",
+        "2026-04": "-180.20",
+        "2026-05": "-245.80"
+      },
+      "average": "-214.36",
+      "budget": "250.00",
+      "total": "-1071.80"
+    }
+  ]
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-budget-month" data-method="GET" data-path="/api/budget/:month">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/budget/:month</code>
+  </div>
+  <p class="endpoint-summary">Effective budget for a specific month (standing + overrides, actual spend).</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>:month</code></td><td>path</td><td>string</td><td>Yes</td><td>Month in YYYY-MM format</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/budget/2026-05</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "preferred_currency": "GBP",
+  "rows": [
+    {
+      "category": "Food: Groceries",
+      "category_id": "c-groceries",
+      "budgeted": "250.00",
+      "actual": "245.80",
+      "percent": 98.32
+    },
+    {
+      "category": "Transport: Tube & Rail",
+      "category_id": "c-tube",
+      "budgeted": "80.00",
+      "actual": "56.00",
+      "percent": 70.0
+    }
+  ]
+}</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-budget" data-method="POST" data-path="/api/budget">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/budget</code>
+  </div>
+  <p class="endpoint-summary">Set a standing monthly budget for a category (applies every month unless overridden).</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>category_id</code></td><td>string</td><td>No*</td><td>FK to categories.id (preferred)</td></tr>
+      <tr><td><code>category</code></td><td>string</td><td>No*</td><td>Legacy category name</td></tr>
+      <tr><td><code>amount</code></td><td>string</td><td>Yes</td><td>Non-negative decimal string</td></tr>
+    </tbody>
+  </table>
+  <p>*One of category_id or category is required.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/budget \
+  -H "Content-Type: application/json" \
+  -d '{"category_id": "c-groceries", "amount": "250.00"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-budget-override" data-method="POST" data-path="/api/budget/override">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/budget/override</code>
+  </div>
+  <p class="endpoint-summary">Set a per-month budget override.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>month</code></td><td>string</td><td>Yes</td><td>YYYY-MM</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>No*</td><td>FK to categories.id</td></tr>
+      <tr><td><code>category</code></td><td>string</td><td>No*</td><td>Legacy category name</td></tr>
+      <tr><td><code>amount</code></td><td>string</td><td>Yes</td><td>Non-negative decimal string</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/budget/override \
+  -H "Content-Type: application/json" \
+  -d '{"month": "2026-05", "category_id": "c-groceries", "amount": "300.00"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 10: HOLDINGS                                                      -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-holdings">
+<h2>Holdings</h2>
+
+<section class="endpoint" id="get-api-holdings" data-method="GET" data-path="/api/holdings">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/holdings</code>
+  </div>
+  <p class="endpoint-summary">List holdings for account(s) or profile.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No*</td><td>Single account ID</td></tr>
+      <tr><td><code>account_ids</code></td><td>query</td><td>string</td><td>No*</td><td>Comma-separated account IDs</td></tr>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No*</td><td>Filter by profile (investment accounts only)</td></tr>
+      <tr><td><code>include_closed</code></td><td>query</td><td>boolean</td><td>No</td><td>Include closed positions (default: false)</td></tr>
+    </tbody>
+  </table>
+  <p>*One of account_id, account_ids, or profile_id is required.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/holdings?account_id=vanguard-alex"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "account_id": "vanguard-alex",
+    "symbol": "VWRL",
+    "name": "Vanguard FTSE All-World",
+    "holding_type": "etf",
+    "quantity": "150.000",
+    "price_per_unit": "95.00",
+    "value": "14250.00",
+    "currency": "GBP",
+    "as_of": "2026-05-01T00:00:00",
+    "is_closed": false,
+    "derived": false
+  },
+  {
+    "account_id": "vanguard-alex",
+    "symbol": "GBP",
+    "name": "Cash",
+    "holding_type": "cash",
+    "quantity": "1.000",
+    "price_per_unit": null,
+    "value": "342.50",
+    "currency": "GBP",
+    "as_of": "2026-05-01T00:00:00",
+    "is_closed": false,
+    "derived": false
+  }
+]</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>missing_parameter</code></td><td>None of account_id, account_ids, or profile_id provided</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-holdings-summary" data-method="GET" data-path="/api/holdings/summary">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/holdings/summary</code>
+  </div>
+  <p class="endpoint-summary">Portfolio summary: net worth, breakdowns by type/institution/asset class.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter by profile</td></tr>
+      <tr><td><code>as_of</code></td><td>query</td><td>string</td><td>No</td><td>Date (YYYY-MM-DD). Default: today.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/holdings/summary?profile_id=alex"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "net_worth": "34826.56",
+  "preferred_currency": "GBP",
+  "as_of": "2026-05-30",
+  "total_assets": "34826.56",
+  "total_liabilities": "0",
+  "available_wealth": "16226.56",
+  "unavailable_wealth": "18600.00",
+  "accounts": [...],
+  "by_type": [
+    { "label": "investment_isa", "value": "14592.50", "percentage": 41.9 },
+    { "label": "pension", "value": "18600.00", "percentage": 53.4 }
+  ],
+  "by_institution": [
+    { "label": "vanguard", "value": "14592.50", "percentage": 41.9 },
+    { "label": "aviva", "value": "18600.00", "percentage": 53.4 }
+  ],
+  "by_asset_class": [
+    { "label": "Investments", "value": "14592.50", "percentage": 41.9 },
+    { "label": "Pension", "value": "18600.00", "percentage": 53.4 }
+  ],
+  "investment_metrics": {
+    "start_value": "28000.00",
+    "end_value": "33192.50",
+    "total_growth": "5192.50",
+    "new_cash_invested": "3600.00",
+    "market_growth": "1592.50"
+  }
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-holdings-history" data-method="GET" data-path="/api/holdings/history">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/holdings/history</code>
+  </div>
+  <p class="endpoint-summary">Net worth over time (monthly/quarterly/yearly).</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>query</td><td>string</td><td>Yes</td><td>Start date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>end</code></td><td>query</td><td>string</td><td>Yes</td><td>End date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>granularity</code></td><td>query</td><td>string</td><td>Yes</td><td>monthly, quarterly, or yearly</td></tr>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter by profile</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/holdings/history?start=2026-01-01&end=2026-05-31&granularity=monthly"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "preferred_currency": "GBP",
+  "rows": [
+    {
+      "month": "2026-01",
+      "available_wealth": "14000.00",
+      "unavailable_wealth": "17500.00",
+      "total_wealth": "31500.00"
+    },
+    {
+      "month": "2026-02",
+      "available_wealth": "14300.00",
+      "unavailable_wealth": "17800.00",
+      "total_wealth": "32100.00"
+    }
+  ]
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-holdings-balances" data-method="GET" data-path="/api/holdings/balances">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/holdings/balances</code>
+  </div>
+  <p class="endpoint-summary">Per-account balance snapshots in a date range.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>query</td><td>string</td><td>Yes</td><td>Start date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>end</code></td><td>query</td><td>string</td><td>Yes</td><td>End date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>summary</code></td><td>query</td><td>string</td><td>No</td><td>"true" for BalanceDelta[] instead of AccountSnapshot[]</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request (full)</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/holdings/balances?start=2026-01-01&end=2026-05-31"</code></pre>
+  <h4>Example Response (full) <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "as_of": "2026-01-01T00:00:00",
+    "account_id": "vanguard-alex",
+    "balance": "13000.00",
+    "currency": "GBP"
+  }
+]</code></pre>
+  <h4>Example Response (summary=true) <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "account_id": "vanguard-alex",
+    "start_balance": "13000.00",
+    "end_balance": "14592.50",
+    "delta": "1592.50"
+  }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-holdings-cash-flow" data-method="GET" data-path="/api/holdings/cash-flow">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/holdings/cash-flow</code>
+  </div>
+  <p class="endpoint-summary">Income/spending cash flow over time.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>query</td><td>string</td><td>Yes</td><td>Start date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>end</code></td><td>query</td><td>string</td><td>Yes</td><td>End date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>granularity</code></td><td>query</td><td>string</td><td>Yes</td><td>monthly, quarterly, or yearly</td></tr>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter by profile</td></tr>
+      <tr><td><code>exclude_category_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated category IDs to exclude</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/holdings/cash-flow?start=2026-01-01&end=2026-05-31&granularity=monthly"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "preferred_currency": "GBP",
+  "rows": [
+    {
+      "month": "2026-01",
+      "income": "3500.00",
+      "spending": "2100.00"
+    },
+    {
+      "month": "2026-02",
+      "income": "3500.00",
+      "spending": "1950.00"
+    }
+  ]
+}</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-holdings-import" data-method="POST" data-path="/api/holdings/import">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/holdings/import</code>
+  </div>
+  <p class="endpoint-summary">Bulk import holdings for an account. Supports dry_run.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>dry_run</code></td><td>query</td><td>boolean</td><td>No</td><td>Preview without committing</td></tr>
+    </tbody>
+  </table>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <p>HoldingsImportPayload object (see Models).</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST "http://localhost:7433/api/holdings/import" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_id": "vanguard-alex",
+    "holdings": [
+      {
+        "account_id": "vanguard-alex",
+        "symbol": "VWRL",
+        "name": "Vanguard FTSE All-World",
+        "holding_type": "etf",
+        "quantity": "150.000",
+        "value": "14250.00",
+        "currency": "GBP",
+        "as_of": "2026-05-01T00:00:00",
+        "is_closed": false,
+        "derived": false
+      }
+    ]
+  }'</code></pre>
+  <h4>Example Response (commit) <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true,
+  "holdings_imported": 1
+}</code></pre>
+  <h4>Example Response (dry_run=true) <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "dry_run": true,
+  "preview": { "total": 1, "snapshots": [...] },
+  "commit_payload": { "account_id": "vanguard-alex", "holdings": [...] }
+}</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-holdings-account_id" data-method="POST" data-path="/api/holdings/:account_id">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/holdings/:account_id</code>
+  </div>
+  <p class="endpoint-summary">Replace all holdings for an account.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <p>Array of Holding objects.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/holdings/vanguard-alex \
+  -H "Content-Type: application/json" \
+  -d '[
+    {
+      "account_id": "vanguard-alex",
+      "symbol": "VWRL",
+      "name": "Vanguard FTSE All-World",
+      "holding_type": "etf",
+      "quantity": "160.000",
+      "value": "15200.00",
+      "currency": "GBP",
+      "as_of": "2026-05-15T00:00:00",
+      "is_closed": false,
+      "derived": false
+    }
+  ]'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true,
+  "holdings_updated": 1
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-holdings-account_id-symbol" data-method="GET" data-path="/api/holdings/:account_id/:symbol">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/holdings/:account_id/:symbol</code>
+  </div>
+  <p class="endpoint-summary">Get snapshot history for a specific holding.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/holdings/vanguard-alex/VWRL</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "account_id": "vanguard-alex",
+    "symbol": "VWRL",
+    "name": "Vanguard FTSE All-World",
+    "holding_type": "etf",
+    "quantity": "150.000",
+    "price_per_unit": "95.00",
+    "value": "14250.00",
+    "currency": "GBP",
+    "as_of": "2026-05-01T00:00:00",
+    "is_closed": false,
+    "derived": false
+  },
+  {
+    "account_id": "vanguard-alex",
+    "symbol": "VWRL",
+    "name": "Vanguard FTSE All-World",
+    "holding_type": "etf",
+    "quantity": "140.000",
+    "price_per_unit": "94.50",
+    "value": "13230.00",
+    "currency": "GBP",
+    "as_of": "2026-04-01T00:00:00",
+    "is_closed": false,
+    "derived": false
+  }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="patch-api-holdings-account_id-symbol" data-method="PATCH" data-path="/api/holdings/:account_id/:symbol">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/holdings/:account_id/:symbol</code>
+  </div>
+  <p class="endpoint-summary">Update a specific holding snapshot.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>as_of</code></td><td>string</td><td>Yes</td><td>Snapshot timestamp to identify the row</td></tr>
+      <tr><td><code>sub_account</code></td><td>string</td><td>No</td><td>Current sub-account label (scoping)</td></tr>
+      <tr><td><code>is_closed</code></td><td>boolean</td><td>No</td><td>Close or reopen the position</td></tr>
+      <tr><td><code>value</code></td><td>string</td><td>No</td><td>New value (decimal string)</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>No</td><td>New currency code</td></tr>
+      <tr><td><code>new_sub_account</code></td><td>string</td><td>No</td><td>Rename sub-account (empty string = set to null)</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/holdings/vanguard-alex/VWRL \
+  -H "Content-Type: application/json" \
+  -d '{"as_of": "2026-05-01T00:00:00", "value": "14500.00"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true,
+  "rows_updated": 1
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_patch</code></td><td>No fields to update</td></tr>
+      <tr><td>404</td><td><code>not_found</code></td><td>No matching holding snapshot</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-holdings-account_id-symbol" data-method="DELETE" data-path="/api/holdings/:account_id/:symbol">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/holdings/:account_id/:symbol</code>
+  </div>
+  <p class="endpoint-summary">Delete a specific holding snapshot.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>as_of</code></td><td>query</td><td>string</td><td>Yes</td><td>Snapshot datetime to delete</td></tr>
+      <tr><td><code>sub_account</code></td><td>query</td><td>string</td><td>No</td><td>Sub-account label (further scoping)</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE "http://localhost:7433/api/holdings/vanguard-alex/VWRL?as_of=2026-04-01T00:00:00"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true,
+  "rows_deleted": 1
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>No matching holding snapshot</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 11: INGESTION CHECKLIST                                           -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-ingestion">
+<h2>Ingestion Checklist</h2>
+
+<section class="endpoint" id="get-api-ingestion-checklist-month" data-method="GET" data-path="/api/ingestion/checklist/:month">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/ingestion/checklist/:month</code>
+  </div>
+  <p class="endpoint-summary">Get ingestion checklist for a month.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/ingestion/checklist/2026-05</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "account_id": "monzo-alex",
+    "account_name": "Monzo Current",
+    "status": "complete",
+    "completed_at": "2026-05-28T14:30:00",
+    "notes": "Imported via parse endpoint"
+  },
+  {
+    "account_id": "revolut-alex",
+    "account_name": "Revolut Main",
+    "status": "pending",
+    "completed_at": null,
+    "notes": null
+  }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-ingestion-checklist-month-account_id" data-method="POST" data-path="/api/ingestion/checklist/:month/:account_id">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/ingestion/checklist/:month/:account_id</code>
+  </div>
+  <p class="endpoint-summary">Mark an account as ingested for a month.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/ingestion/checklist/2026-05/revolut-alex \
+  -H "Content-Type: application/json" \
+  -d '{"notes": "Manual skip, no activity this month"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>Account does not exist</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 12: CURRENCIES                                                    -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-currencies">
+<h2>Currencies</h2>
+
+<section class="endpoint" id="get-api-currencies" data-method="GET" data-path="/api/currencies">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/currencies</code>
+  </div>
+  <p class="endpoint-summary">List all currencies with exchange rates.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl http://localhost:7433/api/currencies</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  { "code": "GBP", "is_preferred": true, "fx_rate": "1.0", "updated_at": null },
+  { "code": "USD", "is_preferred": false, "fx_rate": "1.27", "updated_at": "2026-05-01T12:00:00" },
+  { "code": "EUR", "is_preferred": false, "fx_rate": "1.17", "updated_at": "2026-05-01T12:00:00" }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-currencies" data-method="POST" data-path="/api/currencies">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/currencies</code>
+  </div>
+  <p class="endpoint-summary">Create a currency. Must be a valid ISO 4217 code.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>code</code></td><td>string</td><td>Yes</td><td>ISO 4217 code (e.g. "USD")</td></tr>
+      <tr><td><code>fx_rate</code></td><td>string</td><td>Yes</td><td>Exchange rate (positive decimal)</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/currencies \
+  -H "Content-Type: application/json" \
+  -d '{"code": "USD", "fx_rate": "1.27"}'</code></pre>
+  <h4>Example Response <span class="status-code">201</span></h4>
+  <pre class="example-response"><code>{
+  "code": "USD",
+  "is_preferred": false,
+  "fx_rate": "1.27",
+  "updated_at": null
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_currency_code</code></td><td>Not a valid ISO 4217 code</td></tr>
+      <tr><td>400</td><td><code>invalid_rate</code></td><td>Exchange rate is not positive</td></tr>
+      <tr><td>409</td><td><code>currency_exists</code></td><td>Currency already exists</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="patch-api-currencies-code" data-method="PATCH" data-path="/api/currencies/:code">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/currencies/:code</code>
+  </div>
+  <p class="endpoint-summary">Update exchange rate or set as preferred currency.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>fx_rate</code></td><td>string</td><td>No</td><td>New exchange rate (rejected for preferred currency)</td></tr>
+      <tr><td><code>is_preferred</code></td><td>boolean</td><td>No</td><td>Set this currency as preferred</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/currencies/USD \
+  -H "Content-Type: application/json" \
+  -d '{"fx_rate": "1.28"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "code": "USD",
+  "is_preferred": false,
+  "fx_rate": "1.28",
+  "updated_at": "2026-05-30T15:00:00"
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_patch</code></td><td>No fields provided</td></tr>
+      <tr><td>400</td><td><code>cannot_update_preferred_rate</code></td><td>Cannot change rate of preferred currency</td></tr>
+      <tr><td>404</td><td><code>not_found</code></td><td>Currency not found</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-currencies-code" data-method="DELETE" data-path="/api/currencies/:code">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/currencies/:code</code>
+  </div>
+  <p class="endpoint-summary">Delete a currency. Fails if preferred or in use by accounts/transactions.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/currencies/EUR</code></pre>
+  <h4>Response <span class="status-code">204</span></h4>
+  <p>No body.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>cannot_delete_preferred</code></td><td>Cannot delete the preferred currency</td></tr>
+      <tr><td>404</td><td><code>not_found</code></td><td>Currency not found</td></tr>
+      <tr><td>409</td><td><code>currency_in_use</code></td><td>Currency referenced by accounts or transactions</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 13: INVESTMENTS                                                   -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-investments">
+<h2>Investments</h2>
+
+<section class="endpoint" id="get-api-investments" data-method="GET" data-path="/api/investments">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/investments</code>
+  </div>
+  <p class="endpoint-summary">List investment events with optional filters.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter by account</td></tr>
+      <tr><td><code>symbol</code></td><td>query</td><td>string</td><td>No</td><td>Filter by ticker symbol</td></tr>
+      <tr><td><code>event_type</code></td><td>query</td><td>string</td><td>No</td><td>Filter by event type</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments?account_id=vanguard-alex&symbol=VWRL"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "id": "inv-001",
+    "account_id": "vanguard-alex",
+    "event_type": "buy",
+    "symbol": "VWRL",
+    "date": "2026-01-15T00:00:00",
+    "quantity": "10.000",
+    "price_per_share": "95.00",
+    "fee": null,
+    "currency": "GBP",
+    "notes": null,
+    "fingerprint": "def456...",
+    "created_at": "2026-01-15T10:00:00"
+  }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-investments" data-method="POST" data-path="/api/investments">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/investments</code>
+  </div>
+  <p class="endpoint-summary">Create a single investment event.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>account_id</code></td><td>string</td><td>Yes</td><td>FK to account</td></tr>
+      <tr><td><code>event_type</code></td><td>string</td><td>Yes</td><td>InvestmentEventType value</td></tr>
+      <tr><td><code>symbol</code></td><td>string</td><td>Yes</td><td>Ticker symbol</td></tr>
+      <tr><td><code>date</code></td><td>string</td><td>Yes</td><td>ISO 8601 date or datetime</td></tr>
+      <tr><td><code>quantity</code></td><td>string</td><td>Yes</td><td>Decimal string</td></tr>
+      <tr><td><code>price_per_share</code></td><td>string</td><td>Yes</td><td>Decimal string</td></tr>
+      <tr><td><code>fee</code></td><td>string</td><td>No</td><td>Transaction fee (decimal string)</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>Yes</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/investments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_id": "vanguard-alex",
+    "event_type": "buy",
+    "symbol": "VWRL",
+    "date": "2026-05-15",
+    "quantity": "10.000",
+    "price_per_share": "95.00",
+    "currency": "GBP"
+  }'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "inv-002",
+  "account_id": "vanguard-alex",
+  "event_type": "buy",
+  "symbol": "VWRL",
+  "date": "2026-05-15T00:00:00",
+  "quantity": "10.000",
+  "price_per_share": "95.00",
+  "fee": null,
+  "currency": "GBP",
+  "notes": null,
+  "fingerprint": "ghi789...",
+  "created_at": "2026-05-30T12:00:00"
+}</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-investments-import" data-method="POST" data-path="/api/investments/import">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/investments/import</code>
+  </div>
+  <p class="endpoint-summary">Bulk import investment events.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <p>InvestmentsImportPayload object (see Models).</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/investments/import \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_id": "vanguard-alex",
+    "events": [
+      {
+        "event_type": "buy",
+        "symbol": "VWRL",
+        "date": "2026-01-15",
+        "quantity": "10.000",
+        "price_per_share": "95.00",
+        "currency": "GBP"
+      }
+    ]
+  }'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "total": 1,
+  "inserted": 1,
+  "duplicates": 0,
+  "errors": []
+}</code></pre>
+</section>
+
+<section class="endpoint" id="patch-api-investments-id" data-method="PATCH" data-path="/api/investments/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/investments/:id</code>
+  </div>
+  <p class="endpoint-summary">Update an investment event.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>event_type</code></td><td>string</td><td>No</td><td>InvestmentEventType value</td></tr>
+      <tr><td><code>symbol</code></td><td>string</td><td>No</td><td>Ticker symbol</td></tr>
+      <tr><td><code>date</code></td><td>string</td><td>No</td><td>ISO 8601 date or datetime</td></tr>
+      <tr><td><code>quantity</code></td><td>string</td><td>No</td><td>Decimal string</td></tr>
+      <tr><td><code>price_per_share</code></td><td>string</td><td>No</td><td>Decimal string</td></tr>
+      <tr><td><code>fee</code></td><td>string</td><td>No</td><td>Transaction fee</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>No</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/investments/inv-001 \
+  -H "Content-Type: application/json" \
+  -d '{"notes": "Regular monthly contribution"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "inv-001",
+  "account_id": "vanguard-alex",
+  "event_type": "buy",
+  "symbol": "VWRL",
+  "date": "2026-01-15T00:00:00",
+  "quantity": "10.000",
+  "price_per_share": "95.00",
+  "fee": null,
+  "currency": "GBP",
+  "notes": "Regular monthly contribution",
+  "fingerprint": "def456...",
+  "created_at": "2026-01-15T10:00:00"
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_body</code></td><td>No fields provided</td></tr>
+      <tr><td>404</td><td><code>not_found</code></td><td>Investment event not found</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-investments-id" data-method="DELETE" data-path="/api/investments/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/investments/:id</code>
+  </div>
+  <p class="endpoint-summary">Delete an investment event.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/investments/inv-001</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "ok": true
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>Investment event not found</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-investments-pools" data-method="GET" data-path="/api/investments/pools">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/investments/pools</code>
+  </div>
+  <p class="endpoint-summary">S104 average-cost pool snapshot per symbol. ISA and pension accounts are excluded as CGT-sheltered.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>as_at</code></td><td>query</td><td>string</td><td>No</td><td>Limit pooling to events on or before this date (YYYY-MM-DD)</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/pools?as_at=2026-04-05"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "symbol": "VWRL",
+    "current_shares": "20.000",
+    "total_allowable_expenditure": "1900.00",
+    "average_cost_per_share": "95.00"
+  }
+]</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_date</code></td><td>as_at is not a valid YYYY-MM-DD date</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-investments-capital-gains" data-method="GET" data-path="/api/investments/capital-gains">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/investments/capital-gains</code>
+  </div>
+  <p class="endpoint-summary">UK Capital Gains Tax report. Applies HMRC same-day, 30-day (bed &amp; breakfast), and S104 pool matching across all non-sheltered accounts; totals are normalized to the preferred base currency.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>No</td><td>UK tax year as <code>YYYY-YY</code> (e.g. <code>2024-25</code> = 6 Apr 2024 to 5 Apr 2025). Overrides start_date/end_date.</td></tr>
+      <tr><td><code>start_date</code></td><td>query</td><td>string</td><td>No</td><td>Custom range start (YYYY-MM-DD); used when tax_year is omitted</td></tr>
+      <tr><td><code>end_date</code></td><td>query</td><td>string</td><td>No</td><td>Custom range end (YYYY-MM-DD); used when tax_year is omitted</td></tr>
+      <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter disposals by account</td></tr>
+      <tr><td><code>symbol</code></td><td>query</td><td>string</td><td>No</td><td>Filter by ticker symbol</td></tr>
+      <tr><td><code>as_at</code></td><td>query</td><td>string</td><td>No</td><td>Limit calculations to events on or before this date (YYYY-MM-DD)</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/capital-gains?tax_year=2025-26"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "summary": {
+    "total_proceeds": "1200.00",
+    "total_allowable_costs": "950.00",
+    "total_gains": "250.00",
+    "total_losses": "0.00",
+    "net_gain_loss": "250.00",
+    "base_currency": "GBP"
+  },
+  "symbol_summaries": [
+    {
+      "symbol": "VWRL",
+      "total_proceeds": "1200.00",
+      "total_allowable_costs": "950.00",
+      "total_gains": "250.00",
+      "total_losses": "0.00",
+      "net_gain_loss": "250.00",
+      "original_currency": "GBP"
+    }
+  ],
+  "realized_events": [
+    {
+      "symbol": "VWRL",
+      "disposal_id": "inv-050",
+      "disposal_date": "2026-02-10T00:00:00",
+      "quantity": "10.000",
+      "disposal_price": "120.00",
+      "proceeds": "1200.00",
+      "cost_basis": "950.00",
+      "gain_loss": "250.00",
+      "rule_applied": "S104 Pool",
+      "original_currency": "GBP",
+      "matches": [
+        {
+          "acquisition_id": "inv-001",
+          "acquisition_date": "2026-01-15T00:00:00",
+          "quantity": "10.000",
+          "price": "95.00"
+        }
+      ]
+    }
+  ],
+  "pools": [
+    {
+      "symbol": "VWRL",
+      "current_shares": "20.000",
+      "total_allowable_expenditure": "1900.00",
+      "average_cost_per_share": "95.00"
+    }
+  ]
+}</code></pre>
+  <p><code>rule_applied</code> is one of <code>Same-Day</code>, <code>30-Day Rule</code>, <code>S104 Pool</code>, or <code>Unmatched</code>.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in YYYY-YY format</td></tr>
+      <tr><td>400</td><td><code>invalid_date</code></td><td>start_date, end_date, or as_at is not a valid date</td></tr>
+      <tr><td>400</td><td><code>invalid_date_range</code></td><td>start_date is after end_date</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- CHANGELOG                                                               -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<h2 id="changelog">Changelog</h2>
+<table>
+  <thead><tr><th>Date</th><th>Change</th></tr></thead>
+  <tbody>
+    <tr><td>2026-05-30</td><td>Initial API reference: 45 endpoints across 13 groups, 39 models documented.</td></tr>
+    <tr><td>2026-06-07</td><td>Added Capital Gains endpoints: <code>GET /api/investments/pools</code> (S104 pools) and <code>GET /api/investments/capital-gains</code> (UK CGT report).</td></tr>
+  </tbody>
+</table>
+
+</div><!-- .main -->
+
+<script>
+// Dark mode toggle
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('fynance-theme', next);
+}
+(function() {
+  const saved = localStorage.getItem('fynance-theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  else if (window.matchMedia('(prefers-color-scheme: dark)').matches)
+    document.documentElement.setAttribute('data-theme', 'dark');
+})();
+
+// Search filter
+function filterEndpoints(query) {
+  const q = query.toLowerCase().trim();
+  const endpoints = document.querySelectorAll('.endpoint');
+  const groups = document.querySelectorAll('.endpoint-group');
+  const navEndpoints = document.querySelectorAll('.sidebar-nav .nav-endpoint');
+  const navGroups = document.querySelectorAll('.sidebar-nav .nav-group');
+
+  endpoints.forEach(function(el) {
+    var method = (el.getAttribute('data-method') || '').toLowerCase();
+    var path = (el.getAttribute('data-path') || '').toLowerCase();
+    var summary = el.querySelector('.endpoint-summary');
+    var text = summary ? summary.textContent.toLowerCase() : '';
+    var match = !q || method.includes(q) || path.includes(q) || text.includes(q);
+    el.style.display = match ? '' : 'none';
+  });
+
+  groups.forEach(function(group) {
+    var visibleEndpoints = group.querySelectorAll('.endpoint:not([style*="display: none"])');
+    group.style.display = (!q || visibleEndpoints.length > 0) ? '' : 'none';
+  });
+
+  navEndpoints.forEach(function(a) {
+    var href = a.getAttribute('href') || '';
+    var target = href ? document.querySelector(href) : null;
+    if (target) a.style.display = target.style.display;
+  });
+
+  navGroups.forEach(function(div) {
+    var next = div.nextElementSibling;
+    var anyVisible = false;
+    while (next && next.classList.contains('nav-endpoint')) {
+      if (next.style.display !== 'none') anyVisible = true;
+      next = next.nextElementSibling;
+    }
+    div.style.display = (!q || anyVisible) ? '' : 'none';
+  });
+}
+
+// JSON syntax highlighting
+(function() {
+  document.querySelectorAll('pre.example-response code').forEach(function(block) {
+    var html = block.innerHTML;
+    html = html.replace(/("(?:[^"\\]|\\.)*")\s*:/g, '<span class="json-key">$1</span>:');
+    html = html.replace(/:\s*("(?:[^"\\]|\\.)*")/g, ': <span class="json-string">$1</span>');
+    html = html.replace(/:\s*(-?\d+\.?\d*)/g, ': <span class="json-number">$1</span>');
+    html = html.replace(/:\s*(true|false)/g, ': <span class="json-bool">$1</span>');
+    html = html.replace(/:\s*(null)/g, ': <span class="json-null">$1</span>');
+    // Handle array values
+    html = html.replace(/\[\s*("(?:[^"\\]|\\.)*")/g, '[<span class="json-string">$1</span>');
+    html = html.replace(/,\s*("(?:[^"\\]|\\.)*")\s*\]/g, ', <span class="json-string">$1</span>]');
+    block.innerHTML = html;
+  });
+})();
+</script>
+</body>
+</html>
