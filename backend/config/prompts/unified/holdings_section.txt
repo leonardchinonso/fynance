@@ -22,5 +22,7 @@ Each entry has this shape:
 
 `derived` is a hard boolean: set it `false` when the snapshot value at this `as_of` is read directly from the document, and `true` when you computed or inferred it (e.g. interpolated a missing month-end from neighbouring snapshots and transactions). Do not conflate this with `row_confidence` — a derived value can still be high-confidence.
 
+`as_of` is REQUIRED and must be the date the snapshot is valid for — the statement closing date for a balance, or the position date for a holding. Read it from the document: the statement period end, the "balance as of" / "statement date" printed on the file, or the snapshot date. Do NOT use today's date or the date you are processing this import; use the date that belongs to the data. If a document covers a period, use that period's closing date. For a derived snapshot, use the date it represents (e.g. the month-end you interpolated). Omitting `as_of` or defaulting to today creates a misdated snapshot that will not line up with the user's existing data and will look like a brand-new position on every re-import.
+
 Continuity context — these are the user's most recent existing snapshots for each open holding on this account (JSON). Use them to maintain the same `symbol` and `name` spelling, and to anchor amounts where the documents are silent:
 {{LAST_HOLDINGS_JSON}}

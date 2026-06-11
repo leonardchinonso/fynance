@@ -662,9 +662,11 @@ export function HoldingsSection({
 
   const willCommit = (payload?.holdings.length ?? 0) - markedForDeletion.size
 
+  const dupCount = result.rows.filter((r) => r.status === "duplicate").length
   const summary = (
     <>
       {result.new} new · {result.modify} update
+      {dupCount > 0 && <> · {dupCount} unchanged</>}
       {markedForDeletion.size > 0 && (
         <> · <span className="text-foreground">{markedForDeletion.size} marked skip</span></>
       )}

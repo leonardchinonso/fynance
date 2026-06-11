@@ -3523,6 +3523,17 @@ impl Db {
                 )
                 .ok();
 
+            // Snapshot identity is (account, symbol, sub_account, as_of). A row
+            // whose exact snapshot already exists is "modify" — unless the value
+            // is unchanged, in which case it's a true no-op and we mark it
+            // "duplicate" so the UI shows Skip and the commit drops it.
+            let status = match &existing_value {
+                Some(ev) if ev.parse::<Decimal>().ok() == Some(h.value) => "duplicate",
+                Some(_) => "modify",
+                None => "new",
+            }
+            .to_string();
+
             previews.push(HoldingPreview {
                 account_id: account_id.to_string(),
                 symbol: h.symbol.clone(),
@@ -3530,11 +3541,7 @@ impl Db {
                 value: h.value,
                 currency: h.currency.clone(),
                 as_of: as_of_str,
-                status: if existing_value.is_some() {
-                    "modify".to_string()
-                } else {
-                    "new".to_string()
-                },
+                status,
                 existing_value,
                 derived: h.derived,
                 source_document_ids: Vec::new(),
@@ -5043,6 +5050,32 @@ mod consolidation_tests {
         assert_eq!(previews.len(), 1);
         assert_eq!(previews[0].status, "modify");
         assert_eq!(previews[0].existing_value.as_deref(), Some("8000"));
+    }
+
+    #[test]
+    fn test_dry_run_unchanged_snapshot_is_duplicate() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+
+        let dt = naive_dt(2026, 4, 15);
+        db.upsert_holdings(
+            "t212",
+            &[make_holding("t212", "VWRL", HoldingType::Etf, dec!(8000), dt)],
+        )
+        .unwrap();
+
+        // Re-importing the exact same snapshot (same value, same as_of) is a
+        // no-op, so it should be flagged "duplicate" (Skip), not "modify".
+        let previews = db
+            .dry_run_holdings(
+                "t212",
+                &[make_holding("t212", "VWRL", HoldingType::Etf, dec!(8000), dt)],
+            )
+            .unwrap();
+
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].status, "duplicate");
     }
 
     #[test]
