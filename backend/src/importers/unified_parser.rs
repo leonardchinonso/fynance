@@ -122,6 +122,8 @@ struct UnifiedTransactionRaw {
     merchant: Option<String>,
     #[serde(default)]
     notes: Option<String>,
+    #[serde(default)]
+    source_file: Option<String>,
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -215,6 +217,31 @@ fn build_unified_prompt(hints: &ParseHints, ctx: &UnifiedContext) -> String {
 // ── Tool schema ─────────────────────────────────────────────────────────────
 
 fn build_unified_tool_schema() -> Value {
+    let source_file_prop = json!({
+        "type": ["string", "null"],
+        "description": "The exact filename (as provided in the upload) that THIS row was extracted from. Required when more than one file is uploaded so each row can be traced to its source document."
+    });
+
+    // Holdings / investments reuse the split-mode item schemas, with a
+    // `source_file` property injected so unified-mode rows carry attribution.
+    let mut holdings_item =
+        super::holdings_parser::build_holdings_tool_schema()["properties"]["rows"]["items"].clone();
+    if let Some(props) = holdings_item
+        .get_mut("properties")
+        .and_then(|p| p.as_object_mut())
+    {
+        props.insert("source_file".to_string(), source_file_prop.clone());
+    }
+    let mut investments_item = super::investments_parser::build_investments_tool_schema()
+        ["properties"]["rows"]["items"]
+        .clone();
+    if let Some(props) = investments_item
+        .get_mut("properties")
+        .and_then(|p| p.as_object_mut())
+    {
+        props.insert("source_file".to_string(), source_file_prop.clone());
+    }
+
     json!({
         "type": "object",
         "required": ["transactions", "holdings", "investments"],
@@ -233,17 +260,18 @@ fn build_unified_tool_schema() -> Value {
                         "category_confidence": { "type": ["number", "null"] },
                         "row_confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
                         "merchant": { "type": ["string", "null"] },
-                        "notes": { "type": ["string", "null"] }
+                        "notes": { "type": ["string", "null"] },
+                        "source_file": source_file_prop
                     }
                 }
             },
             "holdings": {
                 "type": "array",
-                "items": super::holdings_parser::build_holdings_tool_schema()["properties"]["rows"]["items"].clone()
+                "items": holdings_item
             },
             "investments": {
                 "type": "array",
-                "items": super::investments_parser::build_investments_tool_schema()["properties"]["rows"]["items"].clone()
+                "items": investments_item
             }
         }
     })
@@ -343,6 +371,7 @@ fn convert_transaction(t: UnifiedTransactionRaw) -> Result<UnifiedStatementRow> 
         row_confidence: t.row_confidence,
         category_id: t.category_id,
         category_confidence: t.category_confidence,
+        source_file: t.source_file,
     })
 }
 
@@ -420,6 +449,7 @@ mod tests {
                 as_of: None,
                 row_confidence: 0.9,
                 derived: false,
+                source_file: None,
             }],
             investments: vec![],
         };
@@ -442,6 +472,7 @@ mod tests {
             row_confidence: 0.97,
             merchant: None,
             notes: None,
+            source_file: None,
         };
         let row = convert_transaction(raw).unwrap();
         assert_eq!(row.description, "Lidl");

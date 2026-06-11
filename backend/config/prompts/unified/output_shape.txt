@@ -10,3 +10,17 @@ You MUST call the `extract_unified` tool exactly once. Its input is an object wi
 ```
 
 All three arrays MUST always be present in the tool input. Use `[]` for any section that is not requested or has no entries.
+
+SOURCE ATTRIBUTION (read carefully — this is important)
+Every extracted row (in `transactions`, `holdings`, and `investments`) has a `source_file` field. Set it to the EXACT filename, as provided in the upload, of the document THAT SPECIFIC ROW's data actually came from.
+
+Rules:
+- Attribute PER ROW, by where the data physically appears. Do NOT just put the same filename on every row. Different rows often come from different files.
+- If a value appears in more than one uploaded file, attribute it to the file you actually read it from (prefer the more authoritative/structured one, e.g. a statement PDF for a closing balance).
+- Only use a filename that was actually provided in this upload. Never invent or guess a filename.
+- If exactly one file was uploaded, set `source_file` to that file on every row.
+
+Worked example — two files uploaded for a credit card: `march_transactions.csv` (a list of individual purchases) and `march_statement.pdf` (the formatted statement showing the closing/account balance):
+- Each individual purchase/transaction row → `source_file: "march_transactions.csv"` (that's where the line items live).
+- The closing balance / cash position holding → `source_file: "march_statement.pdf"` (the balance is printed on the statement, NOT in the per-transaction CSV).
+Putting the balance holding on the CSV in this example would be WRONG: the CSV does not contain a balance. Trace each row to the file it really came from.

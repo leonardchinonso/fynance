@@ -11,6 +11,7 @@ import { TransactionsPage } from "@/pages/transactions"
 import { BudgetPage } from "@/pages/budget"
 import { PortfolioPage } from "@/pages/portfolio"
 import { ReportsLanding } from "@/pages/reports/reports_landing"
+import { DocumentsPage } from "@/pages/reports/documents/documents_page"
 import {
   SettingsPage,
   SettingsGeneralPage,
@@ -48,6 +49,7 @@ function Layout() {
           <Route path="/budget" element={<BudgetPage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/reports" element={<ReportsLanding />} />
+          <Route path="/reports/documents" element={<DocumentsPage />} />
           <Route
             path="/reports/cgt"
             element={

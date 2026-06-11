@@ -2127,6 +2127,134 @@ data: {"total_ms":3200}</code></pre>
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- GROUP 8b: DOCUMENTS                                                     -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="endpoint-group" id="group-documents">
+<h2>Documents (Source-File Storage &amp; Provenance)</h2>
+<p>Every uploaded source file is stored as a document. Imported transactions,
+holdings, and investments carry a <code>source_document_ids</code> array linking
+back to the document(s) they were extracted from. Files auto-stored during a
+parse have <code>origin = "parse"</code>; files uploaded directly here have
+<code>origin = "manual"</code>. A document is <em>orphaned</em> when no row
+references it, regardless of origin. Auth mirrors the import endpoints: loopback
+browser requests pass without a token; non-loopback requires a bearer token.</p>
+
+<section class="endpoint" id="get-api-documents" data-method="GET" data-path="/api/documents">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/documents</code>
+  </div>
+  <p class="endpoint-summary">List all stored documents with their reference count and orphan flag.</p>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "id": "doc_9f2c…",
+    "filename": "monzo_may.csv",
+    "mime_type": "text/csv",
+    "size_bytes": 18234,
+    "origin": "parse",
+    "account_id": "monzo-alex",
+    "uploaded_at": "2026-05-31T09:14:02Z",
+    "reference_count": 47,
+    "orphaned": false
+  }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-documents" data-method="POST" data-path="/api/documents">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/documents</code>
+  </div>
+  <p class="endpoint-summary">Upload one or more standalone documents (not tied to a parse). Stored with <code>origin = "manual"</code>; deduplicated by content hash.</p>
+  <h4>Request Body <span class="content-type">multipart/form-data</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Kind</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>files[]</code></td><td>file</td><td>binary</td><td>Yes</td><td>One or more files. Max 10 MB each.</td></tr>
+      <tr><td><code>account_id</code></td><td>text</td><td>string</td><td>No</td><td>Optional account to associate. Also accepted as a query param.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/documents \
+  -F "files[]=@reference.pdf"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  {
+    "id": "doc_1a2b…",
+    "filename": "reference.pdf",
+    "mime_type": "application/pdf",
+    "size_bytes": 90422,
+    "origin": "manual",
+    "account_id": null,
+    "uploaded_at": "2026-06-09T12:00:00Z",
+    "reference_count": 0,
+    "orphaned": true
+  }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-documents-id" data-method="GET" data-path="/api/documents/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/documents/:id</code>
+  </div>
+  <p class="endpoint-summary">Metadata for a single document, including its reference count and orphan flag.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>No document with this id</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-documents-id-download" data-method="GET" data-path="/api/documents/:id/download">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/documents/:id/download</code>
+  </div>
+  <p class="endpoint-summary">Stream the raw bytes of the stored file back, with its original filename as an attachment.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -OJ http://localhost:7433/api/documents/doc_9f2c/download</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>No document with this id, or the file is missing on disk</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-documents-id" data-method="DELETE" data-path="/api/documents/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/documents/:id</code>
+  </div>
+  <p class="endpoint-summary">Delete a document. Rejected with 409 if any row references it, unless <code>?force=true</code>, which first strips the id from every referencing row.</p>
+  <h4>Query Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Param</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>force</code></td><td>boolean</td><td>No</td><td>When true, unlink from all referencing rows then delete. Default false.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{ "deleted": true, "unlinked": { "transactions": 12, "holdings": 0, "investments": 3 } }</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>No document with this id</td></tr>
+      <tr><td>409</td><td><code>document_referenced</code></td><td>Referenced by rows and <code>force</code> not set. Body includes a <code>references</code> breakdown.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
 <!-- GROUP 9: BUDGET                                                         -->
 <!-- ════════════════════════════════════════════════════════════════════════ -->
 

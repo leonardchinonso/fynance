@@ -21,6 +21,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 2,
@@ -37,6 +38,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 3,
@@ -53,6 +55,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 4,
@@ -69,6 +72,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 5,
@@ -85,6 +89,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 6,
@@ -101,6 +106,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   // Sam's T212 ISA
   {
@@ -118,6 +124,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 8,
@@ -134,6 +141,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 9,
@@ -150,6 +158,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 10,
@@ -166,6 +175,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   // Alex's pension holdings
   {
@@ -183,6 +193,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 12,
@@ -199,6 +210,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   // Sam's pension holdings
   {
@@ -216,6 +228,7 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
   {
     id: 14,
@@ -232,5 +245,6 @@ export const MOCK_HOLDINGS: MockHolding[] = [
     sub_account: null,
     is_closed: false,
     derived: false,
+    source_document_ids: [],
   },
 ]

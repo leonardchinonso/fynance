@@ -28,6 +28,7 @@ import type { KnownHolding } from "@/bindings/KnownHolding"
 import type { Currency } from "@/types"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { SourceChips, type SourceDocMeta } from "@/components/source_chips"
 import { StatusBadge } from "./status_badge"
 import { DateCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
@@ -150,12 +151,31 @@ function PrevDiffCell({
   currentValue,
   prev,
   currency,
+  known,
 }: {
   currentValue: string
   prev: PrevRef | null
   currency: string
+  /** Latest existing snapshot for this symbol on the account (any date), if any. */
+  known: KnownHolding | null
 }) {
   if (!prev) {
+    // No earlier snapshot to diff against. Distinguish "symbol exists on this
+    // account but only at a later/equal date" (backdated row) from a genuinely
+    // first-ever position — only the latter is a real "New position".
+    if (known) {
+      return (
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className="text-xs text-muted-foreground cursor-help">—</span>}
+          />
+          <TooltipContent>
+            No snapshot before this date to compare. Latest on file: {known.last_value} {currency} on{" "}
+            {formatDate(known.last_as_of)}.
+          </TooltipContent>
+        </Tooltip>
+      )
+    }
     return (
       <Tooltip>
         <TooltipTrigger
@@ -509,6 +529,7 @@ interface Props {
   markedForDeletion: Set<number>
   setMarkedForDeletion: (s: Set<number>) => void
   currencyOptions: Currency[]
+  docs: Map<string, SourceDocMeta>
 }
 
 export function HoldingsSection({
@@ -518,6 +539,7 @@ export function HoldingsSection({
   markedForDeletion,
   setMarkedForDeletion,
   currencyOptions,
+  docs,
 }: Props) {
   const ctrls = useSectionControls()
   const url = useUrlState()
@@ -615,6 +637,16 @@ export function HoldingsSection({
     [result.rows, result.known_holdings]
   )
 
+  // Latest existing snapshot per holding key, used to tell a genuinely new
+  // position apart from a backdated row whose symbol already exists in the DB.
+  const knownByKey = useMemo(() => {
+    const m = new Map<string, KnownHolding>()
+    for (const k of result.known_holdings) {
+      m.set(holdingKey(k.symbol, k.sub_account ?? null), k)
+    }
+    return m
+  }, [result.known_holdings])
+
   function updatePayloadAt(idx: number, patch: Partial<Holding>) {
     if (!payload) return
     const next: Holding[] = payload.holdings.map((h, i) => (i === idx ? { ...h, ...patch } : h))
@@ -689,7 +721,8 @@ export function HoldingsSection({
         <TableHeader>
           <TableRow>
             <SortHeader label="Action" columnId="action" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("action")} className="w-24" />
-            <SortHeader label="Source" columnId="source" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("source")} className="w-24" />
+            <SortHeader label="Origin" columnId="source" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("source")} className="w-24" />
+            <TableHead className="w-16">Source</TableHead>
             <SortHeader label="Symbol" columnId="symbol" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("symbol")} className="w-28" />
             <TableHead>Name</TableHead>
             <TableHead className="w-28">Type</TableHead>
@@ -703,7 +736,7 @@ export function HoldingsSection({
         <TableBody>
           {pageEntries.length === 0 && (
             <TableRow>
-              <TableCell colSpan={10} className="text-center text-xs text-muted-foreground py-6">
+              <TableCell colSpan={11} className="text-center text-xs text-muted-foreground py-6">
                 No rows match
               </TableCell>
             </TableRow>
@@ -725,6 +758,9 @@ export function HoldingsSection({
                 </TableCell>
                 <TableCell>
                   <SourceBadge derived={row.derived} />
+                </TableCell>
+                <TableCell>
+                  <SourceChips documentIds={row.source_document_ids} docs={docs} />
                 </TableCell>
                 <TableCell>
                   {editable && h && !marked ? (
@@ -793,6 +829,7 @@ export function HoldingsSection({
                     currentValue={editable && h && !marked ? h.value : row.value}
                     prev={prevRefsByDisplayIdx[displayIdx] ?? null}
                     currency={editable && h && !marked ? h.currency : row.currency}
+                    known={knownByKey.get(holdingKey(row.symbol, row.sub_account)) ?? null}
                   />
                 </TableCell>
                 <TableCell>

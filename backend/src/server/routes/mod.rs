@@ -6,6 +6,7 @@ pub mod capital_gains;
 pub mod categories;
 pub mod currencies;
 pub mod docs;
+pub mod documents;
 pub mod health;
 pub mod holdings;
 pub mod import_api;

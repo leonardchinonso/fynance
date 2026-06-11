@@ -43,6 +43,10 @@ pub struct Transaction {
     pub exclude_from_summary: bool,
     pub fingerprint: String,
     pub fitid: Option<String>,
+    /// IDs of the source documents this transaction was extracted from
+    /// (`documents.id`). Empty for manual / CSV / API imports with no document.
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
 }
 
 /// A hierarchical category entry.
@@ -426,6 +430,10 @@ pub struct ImportTransaction {
     pub is_recurring: Option<bool>,
     #[serde(default)]
     pub exclude_from_summary: Option<bool>,
+    /// IDs of the source documents this row was extracted from (`documents.id`).
+    /// The parse endpoint fills these in per row; manual rows leave it empty.
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
 }
 
 /// Request body for `POST /api/import`.
@@ -541,6 +549,16 @@ pub struct Holding {
     /// defaults to `false` when round-tripped through the API or read back.
     #[serde(default)]
     pub derived: bool,
+    /// IDs of the source documents this snapshot was extracted from
+    /// (`documents.id`). Persisted. Empty for manual / API imports.
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
+    /// Transient: the filename this row was attributed to during a parse. Used
+    /// only to resolve `source_document_ids` once documents are stored; never
+    /// persisted or sent to clients.
+    #[serde(default, skip_serializing)]
+    #[ts(skip)]
+    pub source_file: Option<String>,
 }
 
 /// Internal row type used only by `get_holdings_for_summary` -- not serialized.
@@ -571,6 +589,10 @@ pub struct HoldingPreview {
     /// the LLM extraction pipeline (e.g. the user-driven /api/holdings preview).
     #[serde(default)]
     pub derived: bool,
+    /// IDs of the source documents this snapshot was extracted from (resolve
+    /// names via `IngestionPreview.documents`).
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -886,6 +908,10 @@ pub struct InvestmentEvent {
     #[serde(with = "serde_naive_datetime")]
     #[ts(type = "string")]
     pub created_at: NaiveDateTime,
+    /// IDs of the source documents this event was extracted from
+    /// (`documents.id`). Empty for manual / API imports.
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -900,6 +926,10 @@ pub struct CreateInvestmentEventBody {
     pub fee: Option<String>,
     pub currency: String,
     pub notes: Option<String>,
+    /// IDs of the source documents this row was extracted from (`documents.id`).
+    /// The parse endpoint fills these in per row; manual rows leave it empty.
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -979,6 +1009,10 @@ pub struct TransactionPreviewRow {
     /// LLM confidence in the category assignment, [0.0, 1.0]. Unified mode only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_confidence: Option<f32>,
+    /// IDs of the source documents this row was extracted from (resolve names
+    /// via `IngestionPreview.documents`). Empty for the user-driven JSON dryrun.
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
 }
 
 /// Full response from a transaction import dryrun.
@@ -1061,6 +1095,11 @@ pub struct IngestionPreview {
     pub investments: InvestmentIngestionResult,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clarifications_needed: Vec<ClarificationRequest>,
+    /// Documents stored for this parse, in upload order. Rows reference these
+    /// by id via their `source_document_ids`; the frontend renders a numbered
+    /// "Source" chip per id and resolves the name/date from this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<DocumentSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1156,6 +1195,10 @@ pub struct InvestmentPreviewRow {
     pub status: TransactionPreviewStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_id: Option<String>,
+    /// IDs of the source documents this row was extracted from (resolve names
+    /// via `IngestionPreview.documents`).
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1187,4 +1230,65 @@ pub struct ClarificationRequest {
     pub file: String,
     pub question: String,
     pub suggestions: Vec<String>,
+}
+
+// ── Documents (source-file storage & provenance) ─────────────────────────────
+
+/// Full metadata for a stored source document. Internal: the API returns
+/// [`DocumentSummary`], which adds the computed reference info. `file_path`
+/// is a local absolute path and is never serialized to clients.
+#[derive(Debug, Clone)]
+pub struct Document {
+    pub id: String,
+    pub filename: String,
+    pub file_path: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
+    pub content_hash: String,
+    /// `"parse"` (auto-stored during a parse) or `"manual"` (standalone upload).
+    pub origin: String,
+    pub account_id: Option<String>,
+    pub uploaded_at: String,
+}
+
+/// API view of a stored document: metadata plus how many rows reference it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct DocumentSummary {
+    pub id: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size_bytes: usize,
+    pub origin: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    pub uploaded_at: String,
+    /// Total rows across transactions + holdings + investments linking this doc.
+    pub reference_count: usize,
+    /// True when `reference_count == 0`, regardless of `origin`.
+    pub orphaned: bool,
+}
+
+/// Per-entity reference counts for one document. Used in the delete-conflict
+/// body and the force-delete unlink summary.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct DocumentReferences {
+    pub transactions: usize,
+    pub holdings: usize,
+    pub investments: usize,
+}
+
+impl DocumentReferences {
+    pub fn total(&self) -> usize {
+        self.transactions + self.holdings + self.investments
+    }
+}
+
+/// Response from a successful `DELETE /api/documents/:id` (force or unreferenced).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct DocumentDeleteResult {
+    pub deleted: bool,
+    pub unlinked: DocumentReferences,
 }

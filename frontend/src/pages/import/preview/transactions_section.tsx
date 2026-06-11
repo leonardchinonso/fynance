@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { SourceChips, type SourceDocMeta } from "@/components/source_chips"
 import { Trash2, RotateCcw, Undo2 } from "lucide-react"
 import { cn, formatDate } from "@/lib/utils"
 import type { TransactionIngestionResult } from "@/bindings/TransactionIngestionResult"
@@ -114,6 +115,7 @@ interface Props {
   /** `category_id` → "Parent: Child" display name. */
   categoryById: Record<string, string>
   currencyOptions: Currency[]
+  docs: Map<string, SourceDocMeta>
 }
 
 function nameFromId(
@@ -132,6 +134,7 @@ export function TransactionsSection({
   setMarkedForDeletion,
   categoryById,
   currencyOptions,
+  docs,
 }: Props) {
   const ctrls = useSectionControls()
   const { categoryColors, syncParents } = useCategoryColorsContext()
@@ -330,13 +333,14 @@ export function TransactionsSection({
             <SortHeader label="Amount" columnId="amount" activeColumn={sortColumn} direction={sortDir} onClick={() => cycleSort("amount")} className="w-28" align="right" />
             <TableHead className="w-20">Currency</TableHead>
             <TableHead className="w-56">Category</TableHead>
+            <TableHead className="w-20">Source</TableHead>
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>
         <TableBody>
           {pageEntries.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">
+              <TableCell colSpan={8} className="text-center text-xs text-muted-foreground py-6">
                 No rows match
               </TableCell>
             </TableRow>
@@ -488,6 +492,9 @@ export function TransactionsSection({
                       <span className="text-xs text-muted-foreground">—</span>
                     )
                   })()}
+                </TableCell>
+                <TableCell>
+                  <SourceChips documentIds={row.source_document_ids} docs={docs} />
                 </TableCell>
                 <TableCell>
                   {editable && payloadIdx !== null && (

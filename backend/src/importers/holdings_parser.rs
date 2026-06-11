@@ -43,6 +43,10 @@ pub struct ParsedHoldingRow {
     /// the user can tell explicit vs derived rows apart.
     #[serde(default)]
     pub derived: bool,
+    /// Filename this row was attributed to during a parse. Set per-file in split
+    /// mode or by the model in unified mode; resolved to `source_document_ids`.
+    #[serde(default)]
+    pub source_file: Option<String>,
 }
 
 // ── Trait ────────────────────────────────────────────────────────────────────
@@ -265,6 +269,7 @@ mod tests {
                 as_of: None,
                 row_confidence: 0.97,
                 derived: false,
+                source_file: None,
             }],
         };
 

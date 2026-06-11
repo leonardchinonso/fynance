@@ -114,6 +114,21 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/parse/progress/:parse_id",
             get(routes::parse::parse_progress),
         )
+        // ── Documents (source-file storage & provenance) ───────────────────
+        .route(
+            "/documents",
+            get(routes::documents::list_documents)
+                .post(routes::documents::upload_document)
+                .layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
+        .route(
+            "/documents/:id",
+            get(routes::documents::get_document).delete(routes::documents::delete_document),
+        )
+        .route(
+            "/documents/:id/download",
+            get(routes::documents::download_document),
+        )
         // ── Budget ─────────────────────────────────────────────────────────
         .route(
             "/budget/spending-grid",

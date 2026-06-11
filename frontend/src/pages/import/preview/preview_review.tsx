@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { api } from "@/api/client"
+import type { SourceDocMeta } from "@/components/source_chips"
 import type { IngestionPreview } from "@/bindings/IngestionPreview"
 import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
@@ -92,6 +93,15 @@ export function PreviewReview({
 
   const [categoryById, setCategoryById] = useState<Record<string, string>>({})
   const [currencyOptions, setCurrencyOptions] = useState<Currency[]>([])
+
+  // Lookup for the per-row "Source" chips: document id -> name/date.
+  const docsMap = useMemo(() => {
+    const m = new Map<string, SourceDocMeta>()
+    for (const d of preview.documents ?? []) {
+      m.set(d.id, { filename: d.filename, uploaded_at: d.uploaded_at })
+    }
+    return m
+  }, [preview.documents])
 
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -270,6 +280,7 @@ export function PreviewReview({
               setMarkedForDeletion={setTxDeleted}
               categoryById={categoryById}
               currencyOptions={currencyOptions}
+              docs={docsMap}
             />
           )}
           {tab === "holdings" && showHoldings && (
@@ -280,6 +291,7 @@ export function PreviewReview({
               markedForDeletion={holdingsDeleted}
               setMarkedForDeletion={setHoldingsDeleted}
               currencyOptions={currencyOptions}
+              docs={docsMap}
             />
           )}
           {tab === "investments" && showInv && (
@@ -290,6 +302,7 @@ export function PreviewReview({
               markedForDeletion={invDeleted}
               setMarkedForDeletion={setInvDeleted}
               currencyOptions={currencyOptions}
+              docs={docsMap}
             />
           )}
         </div>
@@ -327,6 +340,7 @@ export function PreviewReview({
                   setMarkedForDeletion={setTxDeleted}
                   categoryById={categoryById}
                   currencyOptions={currencyOptions}
+                  docs={docsMap}
                 />
               )}
             </TabsContent>
@@ -341,6 +355,7 @@ export function PreviewReview({
                   markedForDeletion={holdingsDeleted}
                   setMarkedForDeletion={setHoldingsDeleted}
                   currencyOptions={currencyOptions}
+                  docs={docsMap}
                 />
               )}
             </TabsContent>
@@ -355,6 +370,7 @@ export function PreviewReview({
                   markedForDeletion={invDeleted}
                   setMarkedForDeletion={setInvDeleted}
                   currencyOptions={currencyOptions}
+                  docs={docsMap}
                 />
               )}
             </TabsContent>

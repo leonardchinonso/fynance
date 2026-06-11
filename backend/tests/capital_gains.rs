@@ -77,6 +77,7 @@ fn insert_event(
         fee: fee.map(|s| s.to_string()),
         currency: "GBP".to_string(),
         notes: None,
+        source_document_ids: Vec::new(),
     };
     db.create_investment_event(&body).unwrap();
 }
@@ -1022,6 +1023,7 @@ async fn test_cgt_missing_currency_returns_400() {
             fee: None,
             currency: "ZAR".to_string(),
             notes: None,
+            source_document_ids: Vec::new(),
         };
         let body_sell = CreateInvestmentEventBody {
             account_id: "gia".to_string(),
@@ -1033,6 +1035,7 @@ async fn test_cgt_missing_currency_returns_400() {
             fee: None,
             currency: "ZAR".to_string(),
             notes: None,
+            source_document_ids: Vec::new(),
         };
         db_lock.create_investment_event(&body_buy).unwrap();
         db_lock.create_investment_event(&body_sell).unwrap();

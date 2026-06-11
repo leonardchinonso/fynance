@@ -223,6 +223,7 @@ pub async fn import_csv(
                 notes: r.notes.clone(),
                 is_recurring: None,
                 exclude_from_summary: None,
+                source_document_ids: Vec::new(),
             })
             .collect();
 

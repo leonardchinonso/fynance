@@ -16,4 +16,9 @@ category: string | null,
 /**
  * FK to categories.id; only leaf nodes are valid
  */
-category_id: string | null, category_source: CategorySource | null, confidence: number | null, notes: string | null, is_recurring: boolean, exclude_from_summary: boolean, fingerprint: string, fitid: string | null, };
+category_id: string | null, category_source: CategorySource | null, confidence: number | null, notes: string | null, is_recurring: boolean, exclude_from_summary: boolean, fingerprint: string, fitid: string | null, 
+/**
+ * IDs of the source documents this transaction was extracted from
+ * (`documents.id`). Empty for manual / CSV / API imports with no document.
+ */
+source_document_ids: Array<string>, };

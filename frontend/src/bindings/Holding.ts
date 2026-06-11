@@ -9,4 +9,9 @@ export type Holding = { account_id: string, symbol: string, name: string, holdin
  * Not persisted to SQLite; surfaces in the import preview only and
  * defaults to `false` when round-tripped through the API or read back.
  */
-derived: boolean, };
+derived: boolean, 
+/**
+ * IDs of the source documents this snapshot was extracted from
+ * (`documents.id`). Persisted. Empty for manual / API imports.
+ */
+source_document_ids: Array<string>, };
