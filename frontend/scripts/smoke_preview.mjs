@@ -92,11 +92,21 @@ async function runView(browser, view) {
   //    Scope to the import card to avoid the navbar's "Import" button.
   await page.getByRole("main").getByRole("button", { name: /^import$/i }).click()
 
-  // 5a. While parsing, the ReloadingOverlay shows a determinate progress bar plus
-  //     a live label, driven by the mock service's scripted progress timeline.
+  // 5a. While parsing, the ReloadingOverlay shows a determinate progress bar plus a
+  //     live label, driven by the mock service's scripted progress timeline. Assert
+  //     the bar actually advances and the label reflects the stream (live token count),
+  //     so the feature is exercised, not just rendered.
   const parseBar = page.locator("[data-slot='progress']").first()
   await parseBar.waitFor({ state: "visible", timeout: 5000 })
-  await page.waitForTimeout(900) // let the mock progress advance so the bar is visibly filled
+  await page.waitForTimeout(900) // let the mock progress advance past the pre segment
+  const valueNow = Number(await parseBar.getAttribute("aria-valuenow"))
+  if (!(valueNow > 0)) {
+    throw new Error(`Parse progress bar did not advance (aria-valuenow=${valueNow})`)
+  }
+  const progressLabel = page
+    .getByText(/tokens|reading your statements|extracting transactions|categorizing/i)
+    .first()
+  await progressLabel.waitFor({ state: "visible", timeout: 5000 })
   await shot(page, `preview_${label}_3b_parsing_progress`)
 
   await page.getByRole("heading", { name: /^review /i }).waitFor({ timeout: 15000 })
@@ -188,6 +198,10 @@ async function runView(browser, view) {
   await page.getByRole("heading", { name: /capital gains tax report/i }).waitFor({ timeout: 5000 })
   await page.getByText(/^filters$/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9a_cgt_filter_default`)
+
+  // Generate stays disabled until a profile is selected; pick the first one.
+  await page.getByRole("combobox").filter({ hasText: /select profile/i }).first().click()
+  await page.getByRole("option").first().click()
 
   await page.getByRole("button", { name: /^generate$/i }).click()
   await page.waitForURL(/\/reports\/cgt\/[\w-]+$/, { timeout: 10000 })
