@@ -139,9 +139,17 @@ pub async fn extract_all(
     let tool_schema = build_unified_tool_schema();
     let agent_override = Some(hints.agent().unwrap_or(Agent::Sonnet));
 
-    let text_supplement = format!(
+    let mut text_supplement = format!(
         "Account being imported: {account_id}. Extract entries strictly according to the rules in the system prompt."
     );
+    // Surface user-provided context to the model, but only when it's actually present.
+    if let Some(hint) = hints.hint.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+        text_supplement.push_str(
+            "\n\nAdditional context provided by the user that they believe will help you \
+             parse this document correctly:\n",
+        );
+        text_supplement.push_str(hint);
+    }
 
     // Sizes only, never content (prompt + schema can be many KB).
     tracing::debug!(

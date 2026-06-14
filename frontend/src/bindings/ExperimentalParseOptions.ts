@@ -3,9 +3,11 @@ import type { Agent } from "./Agent";
 import type { ParseMode } from "./ParseMode";
 
 /**
- * **EXPERIMENTAL.** Opt-in knobs for trying alternative parsing strategies
- * and model agents. May be renamed or removed once the unified-mode
- * prototype is promoted or dropped.
+ * **EXPERIMENTAL — testing only, not for production use.** Opt-in knobs for
+ * trying alternative parsing strategies and model agents. The web UI never
+ * sends this; omitting it runs the default unified pipeline. Kept on the API
+ * surface so split mode and specific model agents can be exercised by tests
+ * and ad-hoc scripts.
  */
 export type ExperimentalParseOptions = { mode: ParseMode, 
 /**

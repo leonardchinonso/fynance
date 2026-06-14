@@ -4,9 +4,10 @@ import type { ReturnType } from "./ReturnType";
 
 export type ParseHints = { return_type: ReturnType, 
 /**
- * **EXPERIMENTAL.** Opt-in. See [`ExperimentalParseOptions`].
+ * **EXPERIMENTAL — testing only.** Omit for the default unified pipeline.
+ * See [`ExperimentalParseOptions`].
  */
-experimental: ExperimentalParseOptions | null, 
+experimental?: ExperimentalParseOptions, 
 /**
  * Free-text hint surfaced to every parser's prompt verbatim.
  */

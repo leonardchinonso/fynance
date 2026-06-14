@@ -62,14 +62,16 @@ pub enum ContentType {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 #[serde(rename_all = "lowercase")]
 pub enum ParseMode {
-    #[default]
     Split,
+    #[default]
     Unified,
 }
 
-/// **EXPERIMENTAL.** Opt-in knobs for trying alternative parsing strategies
-/// and model agents. May be renamed or removed once the unified-mode
-/// prototype is promoted or dropped.
+/// **EXPERIMENTAL — testing only, not for production use.** Opt-in knobs for
+/// trying alternative parsing strategies and model agents. The web UI never
+/// sends this; omitting it runs the default unified pipeline. Kept on the API
+/// surface so split mode and specific model agents can be exercised by tests
+/// and ad-hoc scripts.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct ExperimentalParseOptions {
@@ -84,8 +86,10 @@ pub struct ExperimentalParseOptions {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct ParseHints {
     pub return_type: ReturnType,
-    /// **EXPERIMENTAL.** Opt-in. See [`ExperimentalParseOptions`].
+    /// **EXPERIMENTAL — testing only.** Omit for the default unified pipeline.
+    /// See [`ExperimentalParseOptions`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub experimental: Option<ExperimentalParseOptions>,
     /// Free-text hint surfaced to every parser's prompt verbatim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
