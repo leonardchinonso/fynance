@@ -587,12 +587,22 @@ pub async fn parse_progress(
     State(state): State<AppState>,
     Path(parse_id): Path<String>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let rx = state
-        .progress_channels
-        .lock()
-        .expect("progress_channels mutex poisoned")
-        .get(&parse_id)
-        .map(|tx| tx.subscribe());
+    // The channel is registered near the start of POST /api/parse. A client that
+    // opens this stream first (the normal case) can briefly race ahead of that
+    // insert, so poll for up to ~2s before treating the parse as unknown.
+    let mut rx = None;
+    for _ in 0..20 {
+        if let Some(tx) = state
+            .progress_channels
+            .lock()
+            .expect("progress_channels mutex poisoned")
+            .get(&parse_id)
+        {
+            rx = Some(tx.subscribe());
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 
     let stream = match rx {
         Some(rx) => {
