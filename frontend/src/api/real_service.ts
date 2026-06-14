@@ -75,7 +75,7 @@ import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
-import type { ApiService, CgtFilters, HoldingsImportResponse } from "./service"
+import type { ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
 import { MockApiService } from "./mock_service"
@@ -360,13 +360,43 @@ export class RealApiService implements ApiService {
   async parseDocuments(
     files: File[],
     accountId: string,
-    hints: ParseHints
+    hints: ParseHints,
+    opts?: ParseOptions
   ): Promise<IngestionPreview> {
+    const parseId = opts?.parseId ?? crypto.randomUUID()
     const formData = new FormData()
     files.forEach((f) => formData.append("files[]", f, f.name))
     formData.append("account_id", accountId)
     formData.append("hints", JSON.stringify(hints))
-    return postMultipart<IngestionPreview>(`${BASE}/parse`, formData)
+    formData.append("parse_id", parseId)
+
+    // Subscribe to progress before firing the upload. The backend registers the
+    // channel at the start of POST /api/parse and polls briefly for late
+    // subscribers, so opening the stream here reliably attaches.
+    let es: EventSource | null = null
+    if (opts?.onProgress) {
+      const onProgress = opts.onProgress
+      es = new EventSource(`${BASE}/parse/progress/${encodeURIComponent(parseId)}`)
+      const forward = (ev: MessageEvent) => {
+        // Generic transport errors arrive with no data; only named SSE frames carry JSON.
+        if (typeof ev.data !== "string") return
+        try {
+          onProgress(JSON.parse(ev.data) as ParseProgressEvent)
+        } catch {
+          // ignore malformed frame
+        }
+      }
+      for (const name of ["phase", "llm_start", "llm_progress", "done", "error"]) {
+        es.addEventListener(name, forward as EventListener)
+      }
+    }
+
+    try {
+      return await postMultipart<IngestionPreview>(`${BASE}/parse`, formData)
+    } finally {
+      // We own the close, so the browser never auto-reconnects into a not_found loop.
+      es?.close()
+    }
   }
 
   async commitTransactions(payload: ImportPayload): Promise<ImportResult> {

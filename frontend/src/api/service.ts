@@ -35,6 +35,18 @@ import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
+// Aliased: the generated binding's `ProgressEvent` shadows the DOM global.
+import type { ProgressEvent as ParseProgressEvent } from "@/bindings/ProgressEvent"
+
+export type { ParseProgressEvent }
+export type ParseProgressHandler = (event: ParseProgressEvent) => void
+/** Optional streaming-progress wiring for `parseDocuments`. */
+export interface ParseOptions {
+  /** Client-generated id correlating the upload with its SSE progress stream. */
+  parseId?: string
+  /** Called for every progress event received on the SSE stream. */
+  onProgress?: ParseProgressHandler
+}
 
 export interface HoldingsImportResponse { inserted: number; updated: number; total: number }
 
@@ -164,8 +176,14 @@ export interface ApiService {
   // ── Import ────────────────────────────────────────────────────────
   importCsv(accountId: string, file: File): Promise<ImportResult>
 
-  /** Stage 1: upload files to `/api/parse`. Returns a preview with payloads. */
-  parseDocuments(files: File[], accountId: string, hints: ParseHints): Promise<IngestionPreview>
+  /** Stage 1: upload files to `/api/parse`. Returns a preview with payloads.
+   * Pass `opts.onProgress` to receive SSE progress events during the parse. */
+  parseDocuments(
+    files: File[],
+    accountId: string,
+    hints: ParseHints,
+    opts?: ParseOptions,
+  ): Promise<IngestionPreview>
   /** Stage 2: commit transactions via `/api/transactions/import`. */
   commitTransactions(payload: ImportPayload): Promise<ImportResult>
   /** Stage 2: commit holdings via `/api/holdings/import`. */

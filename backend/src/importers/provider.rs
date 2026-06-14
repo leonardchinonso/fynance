@@ -47,8 +47,9 @@ const MAX_TOKENS_DOCUMENTS: u32 = 32_000;
 
 pub type ProgressTx = tokio::sync::broadcast::Sender<ProgressEvent>;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(tag = "event", rename_all = "snake_case")]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
 pub enum ProgressEvent {
     Phase {
         phase: ParsePhase,
@@ -58,17 +59,23 @@ pub enum ProgressEvent {
     },
     LlmStart {
         model: String,
+        // Serialized to JSON and read with JSON.parse on the client, so it is a
+        // JS number at runtime, not a bigint.
+        #[ts(type = "number")]
         input_tokens: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
     },
     LlmProgress {
+        #[ts(type = "number")]
         output_tokens: u64,
+        #[ts(type = "number")]
         elapsed_ms: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
     },
     Done {
+        #[ts(type = "number")]
         total_ms: u64,
     },
     Error {
@@ -77,8 +84,9 @@ pub enum ProgressEvent {
     },
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
 pub enum ParsePhase {
     Preprocessing,
     BuildingContext,

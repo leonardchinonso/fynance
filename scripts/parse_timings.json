@@ -1,0 +1,188 @@
+{
+  "txn-small": {
+    "runs": 5,
+    "D_pre": {
+      "mean": 775,
+      "sd": 257,
+      "n": 5
+    },
+    "D_llm": {
+      "mean": 1460,
+      "sd": 117,
+      "n": 5
+    },
+    "D_post": {
+      "mean": 1,
+      "sd": 0,
+      "n": 5
+    },
+    "total": {
+      "mean": 2236,
+      "sd": 301,
+      "n": 5
+    },
+    "fractions": {
+      "pre": 0.347,
+      "llm": 0.653,
+      "post": 0
+    },
+    "phases": [
+      "post_processing"
+    ]
+  },
+  "txn-mid": {
+    "runs": 5,
+    "D_pre": {
+      "mean": 1011,
+      "sd": 839,
+      "n": 5
+    },
+    "D_llm": {
+      "mean": 1340,
+      "sd": 37,
+      "n": 5
+    },
+    "D_post": {
+      "mean": 1,
+      "sd": 0,
+      "n": 5
+    },
+    "total": {
+      "mean": 2352,
+      "sd": 847,
+      "n": 5
+    },
+    "fractions": {
+      "pre": 0.43,
+      "llm": 0.57,
+      "post": 0
+    },
+    "phases": [
+      "post_processing"
+    ]
+  },
+  "txn-multi": {
+    "runs": 5,
+    "D_pre": {
+      "mean": 599,
+      "sd": 35,
+      "n": 5
+    },
+    "D_llm": {
+      "mean": 4436,
+      "sd": 3573,
+      "n": 5
+    },
+    "D_post": {
+      "mean": 2,
+      "sd": 1,
+      "n": 5
+    },
+    "total": {
+      "mean": 5036,
+      "sd": 3571,
+      "n": 5
+    },
+    "fractions": {
+      "pre": 0.119,
+      "llm": 0.881,
+      "post": 0
+    },
+    "phases": [
+      "post_processing"
+    ]
+  },
+  "pdf": {
+    "runs": 5,
+    "D_pre": {
+      "mean": 1789,
+      "sd": 531,
+      "n": 5
+    },
+    "D_llm": {
+      "mean": 9416,
+      "sd": 5586,
+      "n": 5
+    },
+    "D_post": {
+      "mean": 1,
+      "sd": 0,
+      "n": 5
+    },
+    "total": {
+      "mean": 11207,
+      "sd": 6105,
+      "n": 5
+    },
+    "fractions": {
+      "pre": 0.16,
+      "llm": 0.84,
+      "post": 0
+    },
+    "phases": [
+      "post_processing"
+    ]
+  },
+  "holdings": {
+    "runs": 5,
+    "D_pre": {
+      "mean": 726,
+      "sd": 83,
+      "n": 5
+    },
+    "D_llm": {
+      "mean": 1432,
+      "sd": 58,
+      "n": 5
+    },
+    "D_post": {
+      "mean": 1,
+      "sd": 0,
+      "n": 5
+    },
+    "total": {
+      "mean": 2159,
+      "sd": 77,
+      "n": 5
+    },
+    "fractions": {
+      "pre": 0.336,
+      "llm": 0.663,
+      "post": 0
+    },
+    "phases": [
+      "post_processing"
+    ]
+  },
+  "invest": {
+    "runs": 5,
+    "D_pre": {
+      "mean": 694,
+      "sd": 228,
+      "n": 5
+    },
+    "D_llm": {
+      "mean": 1917,
+      "sd": 782,
+      "n": 5
+    },
+    "D_post": {
+      "mean": 1,
+      "sd": 0,
+      "n": 5
+    },
+    "total": {
+      "mean": 2612,
+      "sd": 1007,
+      "n": 5
+    },
+    "fractions": {
+      "pre": 0.266,
+      "llm": 0.734,
+      "post": 0
+    },
+    "phases": [
+      "post_processing"
+    ]
+  }
+}
