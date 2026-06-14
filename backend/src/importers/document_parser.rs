@@ -345,6 +345,16 @@ pub fn build_multi_preview(
         let rows_new = previews.iter().filter(|p| p.status == "new").count();
         let rows_modify = previews.iter().filter(|p| p.status == "modify").count();
 
+        // Commit only the actionable rows; unchanged snapshots ("duplicate") are
+        // skipped, mirroring transactions. Order matches `previews`, so the
+        // frontend's row->payload index mapping (new/modify only) still aligns.
+        let payload_holdings: Vec<Holding> = holdings_with_account
+            .iter()
+            .zip(previews.iter())
+            .filter(|(_, p)| p.status != "duplicate")
+            .map(|(h, _)| h.clone())
+            .collect();
+
         HoldingsIngestionResult {
             count: previews.len(),
             new: rows_new,
@@ -352,7 +362,7 @@ pub fn build_multi_preview(
             rows: previews,
             payload: Some(HoldingsImportPayload {
                 account_id: account_id.to_string(),
-                holdings: holdings_with_account,
+                holdings: payload_holdings,
             }),
             known_holdings,
         }
