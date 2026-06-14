@@ -1,9 +1,12 @@
 // Drives the import progress bar from the /api/parse SSE stream plus a wall-clock
 // tick. Real events (`llm_start`, `post_processing`, `done`) snap the bar forward
-// between calibrated segments; between events the bar eases toward the current
-// segment ceiling, slowing as it approaches so it always moves but never completes
-// a segment until the real event lands. Tuning is calibrated from real parses —
-// see scripts/parse_timings.md / scripts/parse_timings.json.
+// between segments; between events the bar eases toward the current segment ceiling
+// with a time-constant sized to the *expected* duration, so it keeps creeping the
+// whole time (never saturating early) and the label carries the honest live signals
+// (elapsed clock + streamed token count).
+//
+// Pace is sized from production parse logs, not the tiny test fixture: real PDF
+// statements run ~0.65s/KB and routinely take 2-3 minutes; CSV/Excel are far faster.
 //
 // Aliased: the generated binding's `ProgressEvent` shadows the DOM global.
 import type { ProgressEvent as ParseProgressEvent } from "@/bindings/ProgressEvent"
@@ -16,29 +19,22 @@ export interface ParseProgressUi {
 }
 
 // Segment ceilings on the 0–100 bar. post-processing (~1ms) is folded into the
-// final jump to 100, so it gets no segment of its own.
+// final jump to 100, so it gets no segment of its own. The LLM segment is wide and
+// approached asymptotically — for a long parse the bar realistically sits in the
+// 50-80% range and keeps inching up, rather than parking at the ceiling.
 const SEG = { pre: 15, llm: 90 } as const
 
-// Cosmetic during the opaque LLM stage: the backend can't confirm sub-steps, so
-// these stay generic. The model name + live token count below are the real signal.
-const ROTATION = [
-  "Reading your statements",
-  "Extracting transactions",
-  "Matching categories",
-  "Almost there",
-]
-const ROTATION_MS = 3000
-
-// Expected per-segment durations, from scripts/parse_timings.json: pre ~800ms for
-// CSV/XLSX and ~1800ms for PDF; the LLM call ~1.4s for a small CSV, ~+1.5s per extra
-// file, and ~9s for a PDF.
+// Expected segment durations. The LLM time scales with statement size and is the
+// dominant, highly-variable phase; these are deliberate slight over-estimates so the
+// bar paces steadily rather than racing to the ceiling and freezing.
 function estimate(files: File[]): { preMs: number; llmMs: number } {
   const hasPdf = files.some((f) => /\.pdf$/i.test(f.name))
-  const n = Math.max(1, files.length)
-  return {
-    preMs: hasPdf ? 1800 : 800,
-    llmMs: hasPdf ? 9000 : 1400 + (n - 1) * 1500,
-  }
+  const kb = files.reduce((sum, f) => sum + f.size, 0) / 1024
+  const preMs = hasPdf ? 1800 : 800
+  const llmMs = hasPdf
+    ? Math.min(210_000, Math.max(20_000, kb * 650)) // PDF: ~0.65s/KB, 20s floor, 3.5min cap
+    : Math.max(2_000, kb * 60) //                       CSV/Excel: ~60ms/KB, 2s floor
+  return { preMs, llmMs }
 }
 
 type Phase = "pre" | "llm" | "post" | "done" | "error"
@@ -110,7 +106,10 @@ export class ParseProgressController {
   sample(now: number = performance.now()): ParseProgressUi {
     if (this.phase === "pre" || this.phase === "llm") {
       const ceil = this.phase === "pre" ? SEG.pre : SEG.llm
-      const tau = (this.phase === "pre" ? this.est.preMs : this.est.llmMs) * 0.7
+      // tau ≈ expected segment duration: the bar reaches ~63% of the segment at the
+      // expected time and keeps creeping toward (never reaching) the ceiling, so it is
+      // always perceptibly moving even when a parse runs far longer than expected.
+      const tau = this.phase === "pre" ? this.est.preMs : this.est.llmMs
       const dt = Math.max(0, now - this.lastTick)
       this.value = Math.min(ceil, this.value + (ceil - this.value) * (1 - Math.exp(-dt / tau)))
     }
@@ -128,10 +127,13 @@ export class ParseProgressController {
     if (this.phase === "error") return this.errorLabel ?? "Import failed"
     if (this.phase === "done") return "Done"
     if (this.phase === "post") return this.postLabel ?? "Checking for duplicates"
-    const base = ROTATION[Math.floor((now - this.startedAt) / ROTATION_MS) % ROTATION.length]
-    if (this.phase === "llm" && this.tokens > 0) {
-      return `${base} · ${this.tokens.toLocaleString()} tokens`
-    }
-    return base
+    if (this.phase === "pre") return "Reading your statement…"
+    // LLM phase: honest, always-moving signals — a live elapsed clock and the
+    // streamed token count (no looping placeholder phrases).
+    const secs = Math.floor((now - this.startedAt) / 1000)
+    const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`
+    let label = `Extracting transactions · ${clock}`
+    if (this.tokens > 0) label += ` · ${this.tokens.toLocaleString()} tokens`
+    return label
   }
 }

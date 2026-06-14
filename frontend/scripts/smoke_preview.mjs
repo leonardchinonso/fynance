@@ -199,10 +199,13 @@ async function runView(browser, view) {
   await page.getByText(/^filters$/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9a_cgt_filter_default`)
 
-  // Generate stays disabled until a profile is selected; pick the first one.
-  await page.getByRole("combobox").filter({ hasText: /select profile/i }).first().click()
-  await page.getByRole("option").first().click()
-
+  // Generate is gated on a profile. Select one only if none is pre-selected (the
+  // page may default to the first profile), then generate.
+  const profileTrigger = page.getByRole("combobox").filter({ hasText: /select profile/i }).first()
+  if ((await profileTrigger.count()) > 0) {
+    await profileTrigger.click()
+    await page.getByRole("option").first().click()
+  }
   await page.getByRole("button", { name: /^generate$/i }).click()
   await page.waitForURL(/\/reports\/cgt\/[\w-]+$/, { timeout: 10000 })
   await page.getByText(/disposal proceeds/i).waitFor({ timeout: 10000 })

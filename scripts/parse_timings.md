@@ -25,12 +25,28 @@ Anthropic key. 6 configs × 6 runs each, first (warm-up) run dropped. Raw means 
 - **Post-processing (dedup) is effectively instant** (~1ms) at these sizes — folded into
   the final jump to 100%, not its own segment.
 
+## Correction (2026-06-14): the fixture PDF was not representative
+
+The `pdf` config above used the 3 KB `sample_statement.pdf` fixture, which the LLM
+clears in ~9 s. **Real statements are far heavier.** Production parse logs:
+
+| input | size | LLM duration | output |
+|---|---|---|---|
+| Amex PDF | 157 KB | **126 s** | 77 transactions |
+| Amex PDF (2 files) | 318 KB | **169 s** | 109 transactions |
+
+So PDF transaction extraction runs roughly **0.6–0.8 s/KB** and routinely takes 2–3
+minutes. A fixed `llmMs = 9000` made the bar race to ~90% in ~20 s and then sit frozen
+for the rest of the parse. The frontend now sizes `llmMs` from actual file bytes.
+
 ## Derived frontend constants (see `frontend/src/pages/import/parse_progress.ts`)
 
 - Segments: **pre [0, 15]**, **llm [15, 90]**, **finalize → 100**.
-- Expected durations (drive the per-segment easing time-constant τ):
-  `preMs = hasPdf ? 1800 : 800`; `llmMs = hasPdf ? 9000 : 1400 + (n-1)*1500`.
-- Within a segment the bar eases toward the ceiling as `v += (ceil - v)·(1 - e^(-dt/τ))`,
-  so it slows near the ceiling and never reaches it until the next real event arrives.
+- Expected durations (drive the per-segment easing time-constant τ), sized to real bytes:
+  `preMs = hasPdf ? 1800 : 800`;
+  `llmMs = hasPdf ? clamp(kb*650, 20s, 3.5min) : max(2s, kb*60)`.
+- τ ≈ the expected segment duration, so the bar reaches ~63% of a segment at the expected
+  time and keeps creeping toward (never reaching) the ceiling — always moving, never frozen.
 - `llm_start`, `post_processing`, `done` snap the bar forward; the resolved POST promise
-  forces 100% even if the SSE `done` was missed.
+  forces 100% even if the SSE `done` was missed. The label carries the honest live signals
+  (elapsed clock + streamed `llm_progress` token count).
