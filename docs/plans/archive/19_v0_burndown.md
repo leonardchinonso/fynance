@@ -2,6 +2,8 @@
 
 Everything needed to ship a usable V0. Split by owner. These items were pulled from a conversation between Ope and Nonso on 2026-04-18 and reconciled against existing design docs.
 
+> **Re-audit 2026-06-14:** This archived doc was re-checked against the current code. Most items that were marked `⚠️` "deferred to V1" have since been implemented in later feature work (PDF/Excel parsing via `/api/parse`, document storage + provenance, transaction & CSV dry-run, periodic-holdings snapshot extraction, parse hints, budget average spend, account edit/delete, multi-currency frontend). Those were flipped to `✅`. Items re-confirmed **still open** are annotated inline; the genuine outstanding work is the small cleanup list captured at the bottom of this file under "Still open after 2026-06-14 audit".
+
 ---
 
 ## Nonso (Backend / API)
@@ -27,7 +29,7 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
   - Index on is_closed for query filtering (line 101)
   - Patch endpoint at `/api/holdings/:account_id/:symbol` (holdings.rs:416)
 
-- ⚠️ **Fix holding write model: union of scalar value vs. quantity+price** — currently the import payload requires `quantity` (non-optional) and optionally `price_per_unit`, with `value` also present, meaning all three can be set simultaneously with no consistency guarantee. The request type should be a tagged union: either `{ value }` (scalar, for cash/property/loan) or `{ quantity, price_per_unit }` (computed, for stocks/ETFs/crypto), with the backend deriving `value = quantity * price_per_unit` in the computed case. The response `Holding` struct stays flat (`value` always set, `quantity`/`price_per_unit` optional) so the frontend never needs to pattern-match on reads. Validation should reject payloads that supply fields from both arms.
+- ⚠️ **Fix holding write model: union of scalar value vs. quantity+price** — **STILL OPEN (2026-06-14 audit):** `HoldingsImportPayload` is still `{ account_id, holdings: Vec<Holding> }` and `Holding` still carries `quantity: Decimal` (non-optional), `price_per_unit: Option`, and `value: Decimal` all at once — no tagged union, no both-arms validation. — currently the import payload requires `quantity` (non-optional) and optionally `price_per_unit`, with `value` also present, meaning all three can be set simultaneously with no consistency guarantee. The request type should be a tagged union: either `{ value }` (scalar, for cash/property/loan) or `{ quantity, price_per_unit }` (computed, for stocks/ETFs/crypto), with the backend deriving `value = quantity * price_per_unit` in the computed case. The response `Holding` struct stays flat (`value` always set, `quantity`/`price_per_unit` optional) so the frontend never needs to pattern-match on reads. Validation should reject payloads that supply fields from both arms.
 
 ### Accounts
 
@@ -85,7 +87,7 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
   - schema.sql: category_id foreign key to categories.id (line 20, 29)
   - PATCH /api/transactions/:id allows updating category_id (transactions.rs:213)
 
-- ⚠️ **Drop legacy `category` string field from all structs** — `Transaction`, `SectionMapping`, `StandingBudget`, `BudgetRow`, `SpendingGridRow`, `ImportTransaction`, `SetStandingBudgetBody`, `SetBudgetOverrideBody` all carry both `category: Option<String>` (legacy display name) and `category_id` (FK). The `category` field is explicitly marked "kept for backward compat" in model.rs comments. Once agents are updated to send `category_id`, remove `category` from all structs; ts-rs will regenerate the frontend bindings automatically and no frontend changes are needed.
+- ⚠️ **Drop legacy `category` string field from all structs** — **STILL OPEN (2026-06-14 audit):** still present on `Transaction` (model.rs:36), `SectionMapping` (381), `StandingBudget` (391), `ImportTransaction` (421), plus the `category` field on budget.rs:100/150 and transactions.rs:191 request bodies and unified.rs:43; all still marked "kept for backward compat". — `Transaction`, `SectionMapping`, `StandingBudget`, `BudgetRow`, `SpendingGridRow`, `ImportTransaction`, `SetStandingBudgetBody`, `SetBudgetOverrideBody` all carry both `category: Option<String>` (legacy display name) and `category_id` (FK). The `category` field is explicitly marked "kept for backward compat" in model.rs comments. Once agents are updated to send `category_id`, remove `category` from all structs; ts-rs will regenerate the frontend bindings automatically and no frontend changes are needed.
 
 ### Transactions
 
@@ -96,7 +98,7 @@ Everything needed to ship a usable V0. Split by owner. These items were pulled f
   - PATCH endpoint respects this field (transactions.rs:213)
   - Query filters exclude these rows in spending-grid, cash-flow, by-category (db.rs lines 613, 1075, 1100, 1181)
   - ImportTransaction payload includes field (model.rs:362)
-- ⚠️ Fingerprint collision disambiguation
+- ⚠️ Fingerprint collision disambiguation — **STILL DEFERRED (2026-06-14 audit):** util/mod.rs `fingerprint()` is still `sha256(datetime, amount, account_id)`; no `duplicate_index`. Intentional deferral, not a regression.
   - **Status:** Deferred - using simple sha256(datetime, amount, account_id) fingerprint
   - For same-day same-amount collisions, optional `duplicate_index` could be added later
   - Current approach: rely on LLM categorization + uniqueness checks
@@ -117,9 +119,9 @@ Implemented endpoints by entity:
 | Budget | GET /api/budget/:month, POST /api/budget (standing), POST /api/budget/override (monthly) | ✅ Done |
 
 Dry-run support:
-- ⚠️ Transactions: **NOT implemented** for POST /api/import or POST /api/import/csv/bulk
-  - Currently all imports commit immediately to database
-  - Could be added in future: would require LLM re-processing or token caching
+- [x] ✅ Transactions: `?dry_run=true` implemented on POST /api/transactions/import and POST /api/import/csv (import_api.rs:95, 198)
+  - Returns a TransactionImportPreview (new/duplicate/error row counts) without committing
+  - Backed by `dry_run_transactions` / `dry_run_transactions_from_parsed` in storage/db.rs
 - [x] ✅ Holdings: `?dry_run=true` query param returns previews without committing (holdings.rs:346, 365-368)
   - Returns HoldingPreview list with status field
   - Supports efficient confirmation via repeated call with dry_run=false
@@ -130,28 +132,26 @@ Dry-run support:
 CSV is supported. PDFs and images deferred to V1.
 
 - [x] ✅ CSV uploads: POST /api/import/csv (import_api.rs:79), POST /api/import/bulk (import_api.rs:136)
-- ⚠️ PDF uploads: **Deferred to V1** (requires LLM extraction, not yet implemented)
-- ⚠️ Image/screenshot uploads: **Deferred to V1**
-- ⚠️ Multi-file per account with cross-file context: **Deferred to V1**
-- ⚠️ Optional `hints` field: **Deferred to V1** (can add to ImportPayload later)
+- [x] ✅ PDF uploads: implemented via POST /api/parse (pdf_parser.rs; format_detection.rs validates the `%PDF` header and enforces a 20-page cap)
+- ⚠️ Image/screenshot uploads: **STILL OPEN** — format_detection.rs handles CSV/Excel/PDF only; no image MIME path. Tracked in docs/plans/20_post_v0_plans.md.
+- ⚠️ Multi-file per account: multi-file upload + parallel per-file extraction is done (document_parser.rs `run_multi_file_pipeline`); true **cross-file LLM context still open** (tracked in 20_post_v0_plans.md).
+- [x] ✅ Optional `hints` field: ParseHints.hint surfaced verbatim to every parser prompt (document_parser.rs; pdf_parser.rs `user_hint`)
 - [x] ✅ Dry-run for imports: supported in holdings import (holdings.rs:346), transaction import flow
 
 ##### Trading 212
-- ⚠️ T212 PDF parsing: **Deferred** (no PDF support yet)
-- ⚠️ Opening/closing balance extraction: **Deferred**
+- [x] ✅ T212 PDF parsing: covered by the bank-agnostic LLM PDF parser (pdf_parser.rs)
+- [x] ✅ Opening/closing balance extraction: periodic_holdings_parser extracts period-end snapshots (document_parser.rs `pdf_periodic_holdings` / `csv_periodic_holdings`)
 
 ##### Monzo
 - [x] ✅ CSV parsing: fully supported, bank-detected by LLM
-- ⚠️ PDF parsing: **Deferred to V1**
+- [x] ✅ PDF parsing: covered by the bank-agnostic LLM PDF parser (pdf_parser.rs)
 - [x] ✅ Multiple pots support: schema supports `sub_account` field for multiple cash holdings per account
-- ⚠️ Multiple document upload: **Deferred to V1**
+- [x] ✅ Multiple document upload: POST /api/parse accepts multiple files (`run_multi_file_pipeline`)
 
 #### Holding Snapshots from Imports
 
-- ⚠️ Automatic snapshot extraction: **Deferred** (not yet implemented)
-  - Could be added to import flow to extract last balance from CSV
-  - Requires LLM coordination or explicit balance field in ImportPayload
-- ⚠️ Multi-holding snapshots: **Deferred** (dependent on first item)
+- [x] ✅ Automatic snapshot extraction: periodic_holdings_parser extracts period-end balances from CSV/PDF (document_parser.rs `csv_periodic_holdings` / `pdf_periodic_holdings`)
+- [x] ✅ Multi-holding snapshots: extraction produces a `Vec<Holding>` per period, each carrying the `derived` provenance flag
 
 ### API Documentation
 
@@ -168,11 +168,8 @@ CSV is supported. PDFs and images deferred to V1.
   - Returns HoldingPreview structs with `status` field indicating create/modify/conflict
   - Does NOT write to database
   - Supports efficient confirmation via repeated call with dry_run=false
-- ⚠️ CSV import dry-run: Not yet implemented for CSV preview
-  - **Status:** Deferred (CsvImportQuery has no dry_run param)
-  - Dry-run works for holdings import (holdings.rs:346)
-  - CSV import could add ?dry_run=true query param
-  - Would require LLM re-processing or token caching for cost-effective preview
+- [x] ✅ CSV import dry-run: `?dry_run=true` implemented on POST /api/import/csv (import_api.rs:198; `CsvImportQuery.dry_run`)
+  - Returns row previews via `dry_run_transactions_from_parsed` without committing
 
 ### Currency
 
@@ -194,7 +191,7 @@ CSV is supported. PDFs and images deferred to V1.
 
 ### Type Sharing (ts-rs)
 
-- ⚠️ Generic `Paginated<T>` struct: **Not implemented**
+- ⚠️ Generic `Paginated<T>` struct: **Not implemented** — **STILL OPEN (2026-06-14 audit):** no `Paginated<T>` struct in backend/src.
   - Could be added in future for cleaner API responses
   - Current endpoints return either single objects or arrays
   - Would require frontend PaginatedResponse refactor (deferred)
@@ -215,9 +212,9 @@ CSV is supported. PDFs and images deferred to V1.
 - [x] ✅ **Fixed sidebar navigation.** `overflow-x-hidden` removed from `main` in App.tsx — sticky now works correctly.
 - [x] ✅ **Skeleton loading states.** Implemented via RemoteData system — all pages and leaf components show skeletons on load.
 - [x] ✅ **Tests for profile/account creation.** Test infrastructure ready, tests not yet written
-- ⚠️ **tests for CSV import.** Test infrastructure ready, tests not yet written
-- ⚠️ **Edit/delete buttons.** Disabled with "Coming soon" tooltips (backend PATCH/DELETE not yet added)
-- ⚠️ **Multi-currency: fulfill all frontend asks** — Settings currency section, preferred currency picker, exchange rate inputs, portfolio page display using `preferred_currency` and `display_currency`, unconverted holdings warning banner. Full spec: [docs/plans/22_multi_currency.md](../22_multi_currency.md) (frontend section).
+- ⚠️ **tests for CSV import.** **STILL OPEN** — no frontend unit/integration tests exist (only the Playwright smoke script). Test infrastructure ready, tests not written.
+- [x] ✅ **Edit/delete buttons.** Wired to backend PATCH/DELETE — `EditAccountDialog` + delete-confirm dialog in settings/accounts_section.tsx (Pencil / Trash2 icons).
+- [x] ✅ **Multi-currency frontend:** Settings currency section (currencies_section.tsx) with preferred-currency picker + star, preferred_currency_context, and `DualAmount` display using `preferred_currency` / `display_currency` across portfolio and budget. Full spec: [docs/plans/22_multi_currency.md](../22_multi_currency.md).
 
 ### Build: Fix Pre-existing TypeScript Errors
 
@@ -253,9 +250,9 @@ CSV is supported. PDFs and images deferred to V1.
   - Clicking the budget cell for any category opens a popover to set the standing monthly budget
   - Saves via `POST /api/budget` (standing) or `POST /api/budget/override` (monthly)
   - Grid refreshes automatically after saving
-- ⚠️ Average spend calculation: deferred
-- ⚠️ Budget tooltip on hover: deferred
-- ⚠️ Show empty categories toggle: deferred
+- [x] ✅ Average spend calculation: `rowAvg` / `average_display` rendered per row in budget_spreadsheet.tsx
+- ⚠️ Budget tooltip on hover: **STILL OPEN** — no spending-trend hover tooltip in budget_spreadsheet.tsx
+- ⚠️ Show empty categories toggle: **STILL OPEN** — not implemented in the budget grid
 
 ### Category / Category ID Cleanup
 
@@ -263,7 +260,7 @@ CSV is supported. PDFs and images deferred to V1.
 
 ### Type Sharing (ts-rs)
 
-- ⚠️ Drop hand-written `PaginatedResponse<T>`: **Deferred**
+- ⚠️ Drop hand-written `PaginatedResponse<T>`: **Deferred** — **STILL OPEN (2026-06-14 audit):** still hand-written in frontend/src/types/api.ts:55.
   - Depends on generic `Paginated<T>` struct implementation on backend
   - Current endpoints return arrays or single objects
   - Can be added in future refactor
@@ -277,7 +274,7 @@ CSV is supported. PDFs and images deferred to V1.
 - [x] **Categories section:** grouped list with add/edit/delete (backend CRUD endpoints available: POST/GET/PATCH/DELETE /api/categories)
 - [x] **Data Ingestion section:** account ordering via DraggableList, hide/show accounts, stored in localStorage
 - [x] **Appearance section:** Light/Dark/System theme toggle (moved from navbar)
-  - ⚠️ **"System" mode broken on mobile** — on mobile devices, selecting "System" does not detect/apply the OS dark mode preference. Light/Dark manual selections work fine; only auto-detection is affected.
+  - ⚠️ **"System" mode broken on mobile** — **NEEDS MOBILE RE-TEST (2026-06-14 audit):** use_theme.ts now resolves `system` via `matchMedia("(prefers-color-scheme: dark)")` and subscribes to changes, so the code path looks correct; the original mobile-only bug can't be confirmed or refuted statically. Verify on a real device / mobile emulator.
 - [x] **Data Source section:** Live/Mock toggle with MOCK_ONLY env var support (moved from navbar)
 - [x] **Navbar changes:** removed theme and mock/live toggles, added Import CTA popover, added Settings gear icon
 - [x] **Import wizard** (`/import?mode=wizard`): step through accounts with file upload, skip, preview results, completion summary
@@ -391,3 +388,27 @@ Pending (deferred for later phases):
 - View investment portfolio and cash holdings
 - Manage accounts and profiles
 Polish items (loading states, edit dialogs, tests) scheduled for next phase.
+
+---
+
+## Still open after 2026-06-14 audit
+
+Everything else in this doc is done in the current code. These are the only items re-confirmed outstanding. None block V0; they are cleanup / polish / deferred-by-design and should be tracked in an active plan rather than this archive.
+
+**Backend cleanup (not tracked elsewhere — needs an active home):**
+- **Drop legacy `category` string field** from `Transaction`, `SectionMapping`, `StandingBudget`, `ImportTransaction`, the budget/transactions request bodies, and `unified.rs`. Still marked "kept for backward compat".
+- **Holding write model tagged union** (scalar `value` vs `quantity`+`price_per_unit`). Import payload is still flat `Vec<Holding>` with all three fields settable and no consistency validation.
+- **Generic `Paginated<T>` struct** (backend) + dropping hand-written `PaginatedResponse<T>` (frontend/src/types/api.ts:55).
+
+**Deferred by design (still intentionally not done):**
+- Fingerprint collision disambiguation (`duplicate_index`) — current `sha256(datetime, amount, account_id)` is intentional.
+- Image / screenshot uploads — already tracked in docs/plans/20_post_v0_plans.md.
+- Cross-file LLM context for multi-file imports — already tracked in docs/plans/20_post_v0_plans.md (multi-file upload itself is done).
+
+**Frontend polish (not tracked elsewhere):**
+- Budget hover tooltip (spending trend).
+- "Show empty categories" toggle in the budget grid.
+- Frontend unit/integration tests for CSV import (only the Playwright smoke script exists).
+
+**Needs verification, not a code gap:**
+- "System" theme mode on mobile — code path looks correct (matchMedia + change listener); needs a real-device / emulator re-test to confirm the original bug is gone.
