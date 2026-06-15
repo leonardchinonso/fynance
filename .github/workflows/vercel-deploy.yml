@@ -20,7 +20,12 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      # Mirror the `frontend` job in ci.yml: use `npm install` (not `npm ci`)
+      # because the lockfile is generated on Windows dev boxes where npm
+      # doesn't serialise the same platform-conditional optional deps Linux CI
+      # expects (e.g. @tailwindcss/oxide-wasm32-wasi -> @emnapi/*), which makes
+      # the strict sync check in `npm ci` fail on every transitive bump.
+      - run: npm install --no-audit --no-fund --prefer-offline
       - name: Deploy to Vercel
         run: npx vercel deploy --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
         env:
