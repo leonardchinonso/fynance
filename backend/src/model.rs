@@ -13,6 +13,17 @@ use ts_rs::TS;
 
 use crate::util::{serde_naive_datetime, serde_naive_datetime_option};
 
+/// Generic pagination envelope shared by list endpoints. `total` is the full
+/// match count across all pages; `data` holds the current page.
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct Paginated<T> {
+    pub data: Vec<T>,
+    pub total: u32,
+    pub page: u32,
+    pub limit: u32,
+}
+
 /// A single bank transaction.
 ///
 /// `amount` follows the bank convention: negative = money out, positive =
@@ -32,9 +43,8 @@ pub struct Transaction {
     pub amount: Decimal,
     pub currency: String,
     pub account_id: String,
-    /// Display name "Parent: Child" (resolved via JOIN, or legacy string from CSV)
-    pub category: Option<String>,
-    /// FK to categories.id; only leaf nodes are valid
+    /// FK to categories.id; only leaf nodes are valid. The display name is
+    /// resolved client-side from the categories list.
     pub category_id: Option<String>,
     pub category_source: Option<CategorySource>,
     pub confidence: Option<f64>,
@@ -247,8 +257,7 @@ impl Granularity {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SpendingGridRow {
-    pub category: String,
-    /// FK to categories.id
+    /// FK to categories.id (leaf). Display name resolved client-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_id: Option<String>,
     pub section: String,
@@ -278,8 +287,7 @@ pub struct SpendingGridRow {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct BudgetRow {
-    pub category: String,
-    /// FK to categories.id
+    /// FK to categories.id (leaf). Display name resolved client-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_id: Option<String>,
     /// Effective budget for this month (standing or override). Null if not set.
@@ -298,7 +306,9 @@ pub struct BudgetRow {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct CategoryTotal {
-    pub category: String,
+    /// FK to categories.id (leaf), or null for uncategorized. Display name
+    /// resolved client-side.
+    pub category_id: Option<String>,
     /// When `direction` is unset the total is the signed net sum
     /// (negative = net spend). When `direction` is `outflow` or `income`
     /// the total is the sum of absolute values of matching transactions.
@@ -377,8 +387,6 @@ impl TransactionDirection {
 pub struct SectionMapping {
     /// One of: Income | Bills | Spending | Irregular | Transfers
     pub section: String,
-    /// Legacy display name (kept for backward compat)
-    pub category: Option<String>,
     /// FK to parent categories.id
     pub category_id: Option<String>,
 }
@@ -387,8 +395,6 @@ pub struct SectionMapping {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct StandingBudget {
-    /// Legacy display name (kept for backward compat)
-    pub category: Option<String>,
     /// FK to categories.id (leaf)
     pub category_id: Option<String>,
     pub amount: String,
@@ -399,7 +405,7 @@ pub struct StandingBudget {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct BudgetOverride {
     pub month: String,
-    pub category: String,
+    pub category_id: String,
     pub amount: String,
 }
 
@@ -416,10 +422,7 @@ pub struct ImportTransaction {
     pub amount: Decimal,
     #[serde(default)]
     pub currency: Option<String>,
-    /// Legacy category name (kept for backward compat with old agents)
-    #[serde(default)]
-    pub category: Option<String>,
-    /// Preferred: FK to categories.id (leaf node)
+    /// FK to categories.id (leaf node)
     #[serde(default)]
     pub category_id: Option<String>,
     #[serde(default)]
@@ -600,6 +603,99 @@ pub struct HoldingPreview {
 pub struct HoldingsImportPayload {
     pub account_id: String,
     pub holdings: Vec<Holding>,
+}
+
+/// One holding in a write request. The amount is a presence-discriminated union:
+/// supply either `value` (scalar: cash, property, loan, credit) OR both
+/// `quantity` and `price_per_unit` (computed: stock, etf, fund, bond, crypto),
+/// never both. The backend derives `value = quantity * price_per_unit` for the
+/// computed arm. The response `Holding` stays flat so reads never branch.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct HoldingWrite {
+    pub symbol: String,
+    pub name: String,
+    pub holding_type: HoldingType,
+    pub currency: String,
+    #[serde(with = "serde_naive_datetime")]
+    #[ts(type = "string")]
+    pub as_of: NaiveDateTime,
+    #[serde(default)]
+    pub sub_account: Option<String>,
+    #[serde(default)]
+    pub is_closed: bool,
+    #[serde(default)]
+    pub source_document_ids: Vec<String>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(type = "string | null")]
+    pub value: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(type = "string | null")]
+    pub quantity: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(type = "string | null")]
+    pub price_per_unit: Option<Decimal>,
+}
+
+impl HoldingWrite {
+    /// Validate the amount union and flatten into a storable [`Holding`].
+    /// Errors when both arms are supplied, neither is, or the computed arm is
+    /// missing one of its fields.
+    pub fn into_holding(self, account_id: &str) -> Result<Holding, String> {
+        let has_value = self.value.is_some();
+        let has_quantity = self.quantity.is_some();
+        let has_price = self.price_per_unit.is_some();
+
+        let (quantity, price_per_unit, value) = if has_quantity || has_price {
+            if has_value {
+                return Err(
+                    "holding must set either `value` or `quantity`+`price_per_unit`, not both"
+                        .to_string(),
+                );
+            }
+            let quantity = self
+                .quantity
+                .ok_or_else(|| "computed holding requires `quantity`".to_string())?;
+            let price = self
+                .price_per_unit
+                .ok_or_else(|| "computed holding requires `price_per_unit`".to_string())?;
+            (quantity, Some(price), quantity * price)
+        } else if has_value {
+            (Decimal::ZERO, None, self.value.unwrap())
+        } else {
+            return Err(
+                "holding requires either `value` or both `quantity` and `price_per_unit`"
+                    .to_string(),
+            );
+        };
+
+        Ok(Holding {
+            account_id: account_id.to_string(),
+            symbol: self.symbol,
+            name: self.name,
+            holding_type: self.holding_type,
+            quantity,
+            price_per_unit,
+            value,
+            currency: self.currency,
+            as_of: self.as_of,
+            short_name: None,
+            sub_account: self.sub_account,
+            is_closed: self.is_closed,
+            derived: false,
+            source_document_ids: self.source_document_ids,
+            source_file: None,
+        })
+    }
+}
+
+/// Request body for the holdings write endpoints (`POST /api/holdings/import`
+/// and `POST /api/holdings/:account_id`). See [`HoldingWrite`] for the union.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct HoldingsWritePayload {
+    pub account_id: String,
+    pub holdings: Vec<HoldingWrite>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

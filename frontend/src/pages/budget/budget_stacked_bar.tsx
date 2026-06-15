@@ -7,6 +7,7 @@ import {
 } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
+import { useResolveCategoryName } from "@/context/category_names_context"
 
 interface BudgetStackedBarProps {
   rows: SpendingGridRow[]
@@ -16,12 +17,13 @@ interface BudgetStackedBarProps {
 
 export function BudgetStackedBar({ rows, months, granularity }: BudgetStackedBarProps) {
   const { categoryColors } = useCategoryColorsContext()
+  const resolveName = useResolveCategoryName()
   const spendingRows = rows.filter(
     (r) => r.section === "Spending" || r.section === "Bills"
   )
 
   const categories = Array.from(
-    new Set(spendingRows.map((r) => r.category.split(":")[0].trim()))
+    new Set(spendingRows.map((r) => resolveName(r.category_id).split(":")[0].trim()))
   )
 
   const periods = groupMonthsByGranularity(months, granularity)
@@ -41,7 +43,7 @@ export function BudgetStackedBar({ rows, months, granularity }: BudgetStackedBar
     }
     for (const cat of categories) {
       const catRows = spendingRows.filter(
-        (r) => r.category.split(":")[0].trim() === cat
+        (r) => resolveName(r.category_id).split(":")[0].trim() === cat
       )
       let total = 0
       for (const row of catRows) {

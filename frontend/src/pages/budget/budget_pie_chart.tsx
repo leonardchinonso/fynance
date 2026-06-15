@@ -3,6 +3,7 @@ import { InteractivePie } from "@/components/charts"
 import { formatCurrency } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
+import { useResolveCategoryName } from "@/context/category_names_context"
 
 interface BudgetPieChartProps {
   rows: SpendingGridRow[]
@@ -10,13 +11,14 @@ interface BudgetPieChartProps {
 
 export function BudgetPieChart({ rows }: BudgetPieChartProps) {
   const { categoryColors } = useCategoryColorsContext()
+  const resolveName = useResolveCategoryName()
   const spendingRows = rows.filter(
     (r) => r.section === "Spending" || r.section === "Bills"
   )
 
   const categoryTotals = new Map<string, number>()
   for (const row of spendingRows) {
-    const parent = row.category.split(":")[0].trim()
+    const parent = resolveName(row.category_id).split(":")[0].trim()
     const total = Math.abs(parseFloat(row.total ?? "0"))
     categoryTotals.set(parent, (categoryTotals.get(parent) ?? 0) + total)
   }

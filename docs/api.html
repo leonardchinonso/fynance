@@ -485,8 +485,7 @@ td code { font-size: 12px; }
       <tr><td><code>amount</code></td><td>string</td><td>Decimal string. Negative = money out, positive = money in.</td></tr>
       <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 currency code</td></tr>
       <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
-      <tr><td><code>category</code></td><td>string | null</td><td>Display name "Parent: Child"</td></tr>
-      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id (leaf)</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id (leaf). Resolve the display name client-side via GET /api/categories.</td></tr>
       <tr><td><code>category_source</code></td><td>string | null</td><td>One of: rule, agent, manual</td></tr>
       <tr><td><code>confidence</code></td><td>number | null</td><td>Categorization confidence [0.0, 1.0]</td></tr>
       <tr><td><code>notes</code></td><td>string | null</td><td>User notes</td></tr>
@@ -623,7 +622,6 @@ td code { font-size: 12px; }
     <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>section</code></td><td>string</td><td>One of: Income, Bills, Spending, Irregular, Transfers</td></tr>
-      <tr><td><code>category</code></td><td>string | null</td><td>Legacy category name</td></tr>
       <tr><td><code>category_id</code></td><td>string | null</td><td>FK to parent categories.id</td></tr>
     </tbody>
   </table>
@@ -639,8 +637,7 @@ td code { font-size: 12px; }
       <tr><td><code>description</code></td><td>string</td><td>Yes</td><td>Transaction description</td></tr>
       <tr><td><code>amount</code></td><td>string</td><td>Yes</td><td>Decimal string</td></tr>
       <tr><td><code>currency</code></td><td>string</td><td>No</td><td>Default: GBP</td></tr>
-      <tr><td><code>category</code></td><td>string</td><td>No</td><td>Legacy category name</td></tr>
-      <tr><td><code>category_id</code></td><td>string</td><td>No</td><td>FK to categories.id (preferred)</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>No</td><td>FK to categories.id (leaf)</td></tr>
       <tr><td><code>category_source</code></td><td>string</td><td>No</td><td>rule, agent, or manual</td></tr>
       <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
       <tr><td><code>is_recurring</code></td><td>boolean</td><td>No</td><td>Recurring flag</td></tr>
@@ -1007,8 +1004,7 @@ td code { font-size: 12px; }
   <table class="model-table">
     <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>category</code></td><td>string</td><td>Category display name</td></tr>
-      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id. Resolve the name client-side.</td></tr>
       <tr><td><code>budgeted</code></td><td>string | null</td><td>Effective budget (standing or override). Null if not set.</td></tr>
       <tr><td><code>actual</code></td><td>string</td><td>Actual spend (absolute value)</td></tr>
       <tr><td><code>actual_display</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
@@ -1022,8 +1018,7 @@ td code { font-size: 12px; }
   <table class="model-table">
     <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>category</code></td><td>string</td><td>Category display name</td></tr>
-      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id. Resolve the name client-side.</td></tr>
       <tr><td><code>section</code></td><td>string</td><td>Section name (Income, Bills, etc.)</td></tr>
       <tr><td><code>periods</code></td><td>Record&lt;string, string | null&gt;</td><td>Period key to decimal string (negative = expense)</td></tr>
       <tr><td><code>periods_display</code></td><td>Record&lt;string, DisplayCurrency&gt;</td><td>Original currency for each period</td></tr>
@@ -1039,7 +1034,7 @@ td code { font-size: 12px; }
   <table class="model-table">
     <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>category</code></td><td>string</td><td>Category display name</td></tr>
+      <tr><td><code>category_id</code></td><td>string | null</td><td>FK to categories.id (null for uncategorized). Resolve the name client-side.</td></tr>
       <tr><td><code>total</code></td><td>string</td><td>Sum of transaction amounts (signed net or absolute, depending on direction param)</td></tr>
       <tr><td><code>display_currency</code></td><td>DisplayCurrency | null</td><td>Original currency display</td></tr>
     </tbody>
@@ -1607,10 +1602,10 @@ td code { font-size: 12px; }
   <pre class="example-request"><code>curl http://localhost:7433/api/sections</code></pre>
   <h4>Example Response <span class="status-code">200</span></h4>
   <pre class="example-response"><code>[
-  { "section": "Income", "category": "Income", "category_id": "c-income" },
-  { "section": "Bills", "category": "Bills", "category_id": "c-bills" },
-  { "section": "Spending", "category": "Food", "category_id": "c-food" },
-  { "section": "Spending", "category": "Transport", "category_id": "c-transport" }
+  { "section": "Income", "category_id": "c-income" },
+  { "section": "Bills", "category_id": "c-bills" },
+  { "section": "Spending", "category_id": "c-food" },
+  { "section": "Spending", "category_id": "c-transport" }
 ]</code></pre>
 </section>
 
@@ -1681,7 +1676,6 @@ td code { font-size: 12px; }
       "amount": "-45.20",
       "currency": "GBP",
       "account_id": "monzo-alex",
-      "category": "Food: Groceries",
       "category_id": "c-groceries",
       "category_source": "agent",
       "confidence": 0.95,
@@ -1722,8 +1716,8 @@ td code { font-size: 12px; }
   <pre class="example-response"><code>{
   "preferred_currency": "GBP",
   "rows": [
-    { "category": "Food: Groceries", "total": "245.80", "display_currency": null },
-    { "category": "Transport: Tube & Rail", "total": "56.00", "display_currency": null }
+    { "category_id": "c-groceries", "total": "245.80", "display_currency": null },
+    { "category_id": "c-tube-rail", "total": "56.00", "display_currency": null }
   ]
 }</code></pre>
 </section>
@@ -1762,8 +1756,7 @@ td code { font-size: 12px; }
   <table class="params-table">
     <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>category</code></td><td>string</td><td>No</td><td>Legacy category name (still accepted)</td></tr>
-      <tr><td><code>category_id</code></td><td>string</td><td>No</td><td>FK to categories.id (preferred, must be leaf)</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>No</td><td>FK to categories.id (must be a leaf)</td></tr>
       <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
       <tr><td><code>exclude_from_summary</code></td><td>boolean</td><td>No</td><td>Exclude from budget summaries</td></tr>
     </tbody>
@@ -1781,7 +1774,6 @@ td code { font-size: 12px; }
   "amount": "-45.20",
   "currency": "GBP",
   "account_id": "monzo-alex",
-  "category": "Food: Restaurants",
   "category_id": "c-restaurants",
   "category_source": "manual",
   "confidence": null,
@@ -2285,7 +2277,6 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   "preferred_currency": "GBP",
   "rows": [
     {
-      "category": "Food: Groceries",
       "category_id": "c-groceries",
       "section": "Spending",
       "periods": {
@@ -2323,14 +2314,12 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   "preferred_currency": "GBP",
   "rows": [
     {
-      "category": "Food: Groceries",
       "category_id": "c-groceries",
       "budgeted": "250.00",
       "actual": "245.80",
       "percent": 98.32
     },
     {
-      "category": "Transport: Tube & Rail",
       "category_id": "c-tube",
       "budgeted": "80.00",
       "actual": "56.00",
@@ -2350,12 +2339,10 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <table class="params-table">
     <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>category_id</code></td><td>string</td><td>No*</td><td>FK to categories.id (preferred)</td></tr>
-      <tr><td><code>category</code></td><td>string</td><td>No*</td><td>Legacy category name</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>Yes</td><td>FK to categories.id (leaf)</td></tr>
       <tr><td><code>amount</code></td><td>string</td><td>Yes</td><td>Non-negative decimal string</td></tr>
     </tbody>
   </table>
-  <p>*One of category_id or category is required.</p>
   <h4>Example Request</h4>
   <pre class="example-request"><code>curl -X POST http://localhost:7433/api/budget \
   -H "Content-Type: application/json" \
@@ -2377,8 +2364,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>month</code></td><td>string</td><td>Yes</td><td>YYYY-MM</td></tr>
-      <tr><td><code>category_id</code></td><td>string</td><td>No*</td><td>FK to categories.id</td></tr>
-      <tr><td><code>category</code></td><td>string</td><td>No*</td><td>Legacy category name</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>Yes</td><td>FK to categories.id (leaf)</td></tr>
       <tr><td><code>amount</code></td><td>string</td><td>Yes</td><td>Non-negative decimal string</td></tr>
     </tbody>
   </table>
@@ -2632,7 +2618,14 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     </tbody>
   </table>
   <h4>Request Body <span class="content-type">application/json</span></h4>
-  <p>HoldingsImportPayload object (see Models).</p>
+  <p><code>{ account_id, holdings: HoldingWrite[] }</code>. Each holding's amount is a
+  presence-discriminated union: supply either <code>value</code> (scalar: cash,
+  property, loan) OR both <code>quantity</code> and <code>price_per_unit</code>
+  (computed: stock, etf, fund, bond, crypto). The server derives
+  <code>value = quantity &times; price_per_unit</code> for the computed arm and
+  rejects payloads that set fields from both arms (400 <code>invalid_holding</code>).
+  Common fields: symbol, name, holding_type, currency, as_of, and optional
+  sub_account, is_closed, source_document_ids.</p>
   <h4>Example Request</h4>
   <pre class="example-request"><code>curl -X POST "http://localhost:7433/api/holdings/import" \
   -H "Content-Type: application/json" \
@@ -2640,16 +2633,21 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     "account_id": "vanguard-alex",
     "holdings": [
       {
-        "account_id": "vanguard-alex",
         "symbol": "VWRL",
         "name": "Vanguard FTSE All-World",
         "holding_type": "etf",
         "quantity": "150.000",
-        "value": "14250.00",
+        "price_per_unit": "95.00",
         "currency": "GBP",
-        "as_of": "2026-05-01T00:00:00",
-        "is_closed": false,
-        "derived": false
+        "as_of": "2026-05-01T00:00:00"
+      },
+      {
+        "symbol": "_CASH",
+        "name": "Cash",
+        "holding_type": "cash",
+        "value": "500.00",
+        "currency": "GBP",
+        "as_of": "2026-05-01T00:00:00"
       }
     ]
   }'</code></pre>

@@ -71,6 +71,12 @@ pub enum ProgressEvent {
         output_tokens: u64,
         #[ts(type = "number")]
         elapsed_ms: u64,
+        /// Rows extracted so far, derived live from the streamed tool JSON.
+        #[ts(type = "number")]
+        items: u64,
+        /// Section being extracted: "transactions" | "holdings" | "investments".
+        #[serde(skip_serializing_if = "Option::is_none")]
+        section: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
     },
@@ -374,6 +380,51 @@ impl SseAccumulator {
         self.output_tokens
     }
 
+    /// Best-effort live extraction progress from the streamed tool-use JSON: the
+    /// section currently being filled (the unified tool returns transactions,
+    /// holdings, then investments, in that order) and the number of completed rows
+    /// so far. This parses partial JSON, so it is a heuristic — fine for a label.
+    fn extraction_progress(&self) -> (Option<String>, u64) {
+        let buf: String = self.tool_inputs.values().cloned().collect();
+        let section = if buf.contains("\"investments\"") {
+            Some("investments")
+        } else if buf.contains("\"holdings\"") {
+            Some("holdings")
+        } else if buf.contains("\"transactions\"") {
+            Some("transactions")
+        } else {
+            None
+        };
+        // Count array-element objects that have closed: each closes back to depth 2
+        // (root object -> section array -> element). String bytes are skipped so
+        // braces inside string values do not miscount.
+        let (mut depth, mut in_str, mut esc, mut rows) = (0i32, false, false, 0u64);
+        for c in buf.bytes() {
+            if in_str {
+                match (esc, c) {
+                    (true, _) => esc = false,
+                    (false, b'\\') => esc = true,
+                    (false, b'"') => in_str = false,
+                    _ => {}
+                }
+                continue;
+            }
+            match c {
+                b'"' => in_str = true,
+                b'{' | b'[' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 2 {
+                        rows += 1;
+                    }
+                }
+                b']' => depth -= 1,
+                _ => {}
+            }
+        }
+        (section.map(str::to_string), rows)
+    }
+
     fn into_result(self, expected_tool: &str) -> Result<ProviderCallResult, ProviderError> {
         let tool_names = self.tool_names;
         let tool_json = self
@@ -564,9 +615,12 @@ impl AnthropicProvider {
             "content_block_delta"
                 if last_emit.elapsed() >= std::time::Duration::from_secs(1) =>
             {
+                let (section, items) = acc.extraction_progress();
                 let _ = tx.send(ProgressEvent::LlmProgress {
                     output_tokens: acc.output_tokens(),
                     elapsed_ms: 0,
+                    items,
+                    section,
                     task_id: task_id.clone(),
                 });
                 *last_emit = std::time::Instant::now();

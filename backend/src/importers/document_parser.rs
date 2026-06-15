@@ -38,6 +38,9 @@ pub enum FileFormat {
     Csv,
     Pdf,
     Excel,
+    /// PNG/JPEG/GIF/WEBP screenshot of a statement; sent to the LLM as an image
+    /// content block (same extraction path as PDF).
+    Image,
 }
 
 #[derive(Debug, Clone)]
@@ -275,7 +278,6 @@ pub fn build_multi_preview(
                         .to_string(),
                     amount: r.amount,
                     currency: Some(r.currency.clone()),
-                    category: None, // id-only contract; backend resolves at insert time
                     category_id,
                     category_source,
                     notes: r.notes.clone(),
@@ -662,7 +664,7 @@ async fn extract_single_file(
     use crate::importers::pricing::parser_call_cost;
     match content_type {
         ContentType::Transactions => match doc.format {
-            FileFormat::Pdf => {
+            FileFormat::Pdf | FileFormat::Image => {
                 let parser = PdfStatementParser::new(provider);
                 let (parsed, call) = parser
                     .parse(&doc.raw_bytes, &doc.filename, user_hint, agent_override)
@@ -694,7 +696,7 @@ async fn extract_single_file(
             }
         },
         ContentType::Holdings => match doc.format {
-            FileFormat::Pdf => match period {
+            FileFormat::Pdf | FileFormat::Image => match period {
                 Some(p) => {
                     let parser = PdfPeriodicHoldingsParser::new(provider);
                     let (parsed, call) = parser
@@ -775,7 +777,7 @@ async fn extract_single_file(
             },
         },
         ContentType::Investments => match doc.format {
-            FileFormat::Pdf => {
+            FileFormat::Pdf | FileFormat::Image => {
                 let parser = PdfInvestmentsParser::new(provider);
                 let (parsed, call) = parser
                     .extract(&doc.raw_bytes, &doc.filename, user_hint, agent_override)

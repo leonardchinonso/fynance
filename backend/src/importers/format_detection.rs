@@ -11,6 +11,7 @@ pub fn detect_format(filename: &str, bytes: &[u8]) -> FileFormat {
         Some("csv") | Some("tsv") => FileFormat::Csv,
         Some("pdf") => FileFormat::Pdf,
         Some("xlsx") | Some("xls") => FileFormat::Excel,
+        Some("png") | Some("jpg") | Some("jpeg") | Some("webp") | Some("gif") => FileFormat::Image,
         _ => detect_from_magic_bytes(bytes),
     }
 }
@@ -18,6 +19,18 @@ pub fn detect_format(filename: &str, bytes: &[u8]) -> FileFormat {
 fn detect_from_magic_bytes(bytes: &[u8]) -> FileFormat {
     if bytes.len() >= 4 && &bytes[0..4] == b"%PDF" {
         return FileFormat::Pdf;
+    }
+    if bytes.len() >= 8 && &bytes[0..8] == b"\x89PNG\r\n\x1a\n" {
+        return FileFormat::Image;
+    }
+    if bytes.len() >= 3 && &bytes[0..3] == b"\xFF\xD8\xFF" {
+        return FileFormat::Image;
+    }
+    if bytes.len() >= 6 && (&bytes[0..6] == b"GIF87a" || &bytes[0..6] == b"GIF89a") {
+        return FileFormat::Image;
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return FileFormat::Image;
     }
     if bytes.len() >= 2 && &bytes[0..2] == b"PK" {
         return FileFormat::Excel;
@@ -61,6 +74,13 @@ pub fn preprocess_file(filename: &str, bytes: Vec<u8>) -> Result<DocumentInput> 
                 original_size,
             })
         }
+        FileFormat::Image => Ok(DocumentInput {
+            filename: filename.to_string(),
+            format: FileFormat::Image,
+            text_content: String::new(),
+            raw_bytes: bytes,
+            original_size,
+        }),
     }
 }
 
@@ -170,6 +190,21 @@ mod tests {
     #[test]
     fn test_detect_pdf_by_extension() {
         assert_eq!(detect_format("statement.pdf", b"%PDF-1.5"), FileFormat::Pdf);
+    }
+
+    #[test]
+    fn test_detect_image_by_extension() {
+        assert_eq!(detect_format("statement.png", b""), FileFormat::Image);
+        assert_eq!(detect_format("receipt.JPG", b""), FileFormat::Image);
+        assert_eq!(detect_format("scan.jpeg", b""), FileFormat::Image);
+        assert_eq!(detect_format("shot.webp", b""), FileFormat::Image);
+    }
+
+    #[test]
+    fn test_detect_image_by_magic_bytes() {
+        assert_eq!(detect_format("unknown", b"\x89PNG\r\n\x1a\nrest"), FileFormat::Image);
+        assert_eq!(detect_format("unknown", b"\xFF\xD8\xFF\xE0rest"), FileFormat::Image);
+        assert_eq!(detect_format("unknown", b"GIF89arest"), FileFormat::Image);
     }
 
     #[test]

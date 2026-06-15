@@ -21,5 +21,7 @@ Categorization: for each transaction, pick the best-matching category from the u
 - 0.70–0.95 if it's plausible but not certain.
 - below 0.70 if you are guessing — pick the closest category and let the user fix it.
 
+When a category has a `description`, treat it as authoritative guidance on what does and does not belong in that category — including hints to avoid a catch-all/fallback category when a more specific one fits.
+
 The user's active categories (JSON):
 {{CATEGORIES_JSON}}

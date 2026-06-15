@@ -54,7 +54,7 @@ import type {
   Granularity,
   Holding,
   ImportResult,
-  PaginatedResponse,
+  Paginated,
   PortfolioHistoryRow,
   PortfolioResponse,
   Profile,
@@ -70,6 +70,9 @@ import type { IngestionPreview } from "@/bindings/IngestionPreview"
 import type { ParseHints } from "@/bindings/ParseHints"
 import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
+import type { Holding as HoldingRow } from "@/bindings/Holding"
+import type { HoldingWrite } from "@/bindings/HoldingWrite"
+import type { HoldingsWritePayload } from "@/bindings/HoldingsWritePayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
@@ -81,6 +84,30 @@ import { cgtFiltersToParams } from "./cgt_filter_params"
 import { MockApiService } from "./mock_service"
 
 const BASE = "/api"
+
+// Holding types whose value is computed from quantity x price_per_unit; all
+// others are scalar (cash, property, loan, credit).
+const COMPUTED_HOLDING_TYPES = new Set(["stock", "etf", "fund", "bond", "crypto"])
+
+// Map a flat Holding (parse/preview shape) to the write-API union: computed
+// holdings send quantity+price, everything else sends a scalar value. The
+// backend rejects payloads that set both arms.
+function toHoldingWrite(h: HoldingRow): HoldingWrite {
+  const base = {
+    symbol: h.symbol,
+    name: h.name,
+    holding_type: h.holding_type,
+    currency: h.currency,
+    as_of: h.as_of,
+    sub_account: h.sub_account ?? null,
+    is_closed: h.is_closed,
+    source_document_ids: h.source_document_ids,
+  }
+  if (COMPUTED_HOLDING_TYPES.has(h.holding_type) && h.price_per_unit != null) {
+    return { ...base, quantity: h.quantity, price_per_unit: h.price_per_unit, value: null }
+  }
+  return { ...base, value: h.value, quantity: null, price_per_unit: null }
+}
 
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
   const url = new URL(path, window.location.origin)
@@ -166,7 +193,7 @@ export class RealApiService implements ApiService {
 
   async getTransactions(
     filters: TransactionFilters
-  ): Promise<PaginatedResponse<Transaction>> {
+  ): Promise<Paginated<Transaction>> {
     const params: Record<string, string> = {}
     if (filters.start) params.start = filters.start
     if (filters.end) params.end = filters.end
@@ -179,7 +206,7 @@ export class RealApiService implements ApiService {
     if (filters.limit) params.limit = String(filters.limit)
     if (filters.sort) params.sort = filters.sort
     if (filters.sort_dir) params.sort_dir = filters.sort_dir
-    return get<PaginatedResponse<Transaction>>(`${BASE}/transactions`, params)
+    return get<Paginated<Transaction>>(`${BASE}/transactions`, params)
   }
 
   async getTransactionsByCategory(
@@ -404,9 +431,13 @@ export class RealApiService implements ApiService {
   }
 
   async commitHoldings(payload: HoldingsImportPayload): Promise<HoldingsImportResponse> {
+    const writePayload: HoldingsWritePayload = {
+      account_id: payload.account_id,
+      holdings: (payload.holdings ?? []).map(toHoldingWrite),
+    }
     const res = await post<{ inserted?: number; updated?: number; total?: number; holdings_imported?: number; ok?: boolean }>(
       `${BASE}/holdings/import`,
-      payload
+      writePayload
     )
     return {
       inserted: res.inserted ?? res.holdings_imported ?? 0,

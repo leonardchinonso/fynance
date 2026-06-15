@@ -4,7 +4,12 @@ import type { DisplayCurrency } from "./DisplayCurrency";
 /**
  * Aggregate spend per category, used by `GET /api/transactions/by-category`.
  */
-export type CategoryTotal = { category: string, 
+export type CategoryTotal = { 
+/**
+ * FK to categories.id (leaf), or null for uncategorized. Display name
+ * resolved client-side.
+ */
+category_id: string | null, 
 /**
  * When `direction` is unset the total is the signed net sum
  * (negative = net spend). When `direction` is `outflow` or `income`

@@ -481,6 +481,11 @@ async fn run_unified_path(
                 "text/csv".to_string(),
                 d.text_content.clone().into_bytes(),
             ),
+            FileFormat::Image => (
+                d.filename.clone(),
+                infer_mime(&d.filename),
+                d.raw_bytes.clone(),
+            ),
         })
         .collect();
 

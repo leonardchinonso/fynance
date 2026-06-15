@@ -6,10 +6,6 @@
  */
 export type SetStandingBudgetBody = { 
 /**
- * Preferred: FK to categories.id (leaf)
+ * FK to categories.id (leaf)
  */
-category_id: string | null, 
-/**
- * Legacy: category name string (still accepted for backward compat)
- */
-category: string | null, amount: string, };
+category_id: string, amount: string, };

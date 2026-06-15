@@ -42,16 +42,15 @@ type Phase = "pre" | "llm" | "post" | "done" | "error"
 export class ParseProgressController {
   private phase: Phase = "pre"
   private value = 0
-  private tokens = 0
+  private items = 0
+  private section: string | null = null
   private postLabel: string | null = null
   private errorLabel: string | null = null
   private readonly est: { preMs: number; llmMs: number }
-  private readonly startedAt: number
   private lastTick: number
 
   constructor(files: File[], now: number = performance.now()) {
     this.est = estimate(files)
-    this.startedAt = now
     this.lastTick = now
   }
 
@@ -65,7 +64,8 @@ export class ParseProgressController {
       case "llm_progress":
         if (this.phase === "pre") this.value = Math.max(this.value, SEG.pre)
         this.phase = "llm"
-        this.tokens = event.output_tokens
+        this.items = event.items
+        if (event.section) this.section = event.section
         break
       case "phase":
         if (event.phase === "post_processing") {
@@ -114,7 +114,7 @@ export class ParseProgressController {
       this.value = Math.min(ceil, this.value + (ceil - this.value) * (1 - Math.exp(-dt / tau)))
     }
     this.lastTick = now
-    return { value: this.value, label: this.label(now), state: this.uiState() }
+    return { value: this.value, label: this.label(), state: this.uiState() }
   }
 
   private uiState(): ParseProgressUi["state"] {
@@ -123,17 +123,15 @@ export class ParseProgressController {
     return "running"
   }
 
-  private label(now: number): string {
+  private label(): string {
     if (this.phase === "error") return this.errorLabel ?? "Import failed"
     if (this.phase === "done") return "Done"
     if (this.phase === "post") return this.postLabel ?? "Checking for duplicates"
     if (this.phase === "pre") return "Reading your statement…"
-    // LLM phase: honest, always-moving signals — a live elapsed clock and the
-    // streamed token count (no looping placeholder phrases).
-    const secs = Math.floor((now - this.startedAt) / 1000)
-    const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`
-    let label = `Extracting transactions · ${clock}`
-    if (this.tokens > 0) label += ` · ${this.tokens.toLocaleString()} tokens`
-    return label
+    // LLM phase: real progress derived from the streamed tool JSON — which section
+    // the model is on and how many rows it has produced so far.
+    const what = this.section ? `Extracting ${this.section}` : "Reading your statement"
+    const found = this.items > 0 ? ` · ${this.items.toLocaleString()} found` : ""
+    return `${what}${found}`
   }
 }

@@ -7,6 +7,7 @@ import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { ColoredBarChart } from "@/components/charts"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { categoryParent } from "@/lib/utils"
+import { useResolveCategoryName } from "@/context/category_names_context"
 
 export function TransactionBarChart({
   data,
@@ -34,9 +35,10 @@ function TransactionBarChartInternal({
   totals: CategoryTotal[]
   categoryColors: Record<string, string>
 }) {
+  const resolveName = useResolveCategoryName()
   const byParent = new Map<string, number>()
   for (const row of totals) {
-    const parent = categoryParent(row.category)
+    const parent = categoryParent(resolveName(row.category_id))
     byParent.set(parent, (byParent.get(parent) ?? 0) + parseFloat(row.total))
   }
 

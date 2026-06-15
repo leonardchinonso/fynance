@@ -1,10 +1,10 @@
-import { useTheme } from "@/hooks/use_theme"
+import { useThemeContext } from "@/context/theme_context"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Sun, Moon, Monitor } from "lucide-react"
 
 export function AppearanceSection() {
-  const { theme, setTheme } = useTheme()
+  const { theme, setTheme } = useThemeContext()
 
   return (
     <Card id="appearance">

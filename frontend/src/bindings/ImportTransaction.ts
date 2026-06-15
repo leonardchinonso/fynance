@@ -6,11 +6,7 @@ import type { CategorySource } from "./CategorySource";
  */
 export type ImportTransaction = { date: string, description: string, amount: string, currency: string | null, 
 /**
- * Legacy category name (kept for backward compat with old agents)
- */
-category: string | null, 
-/**
- * Preferred: FK to categories.id (leaf node)
+ * FK to categories.id (leaf node)
  */
 category_id: string | null, category_source: CategorySource | null, notes: string | null, is_recurring: boolean | null, exclude_from_summary: boolean | null, 
 /**

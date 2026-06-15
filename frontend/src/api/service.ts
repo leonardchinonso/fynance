@@ -14,7 +14,7 @@ import type {
   Granularity,
   Holding,
   ImportResult,
-  PaginatedResponse,
+  Paginated,
   PortfolioHistoryRow,
   PortfolioResponse,
   Profile,
@@ -85,7 +85,7 @@ export interface ApiService {
   // Transactions
   getTransactions(
     filters: TransactionFilters
-  ): Promise<PaginatedResponse<Transaction>>
+  ): Promise<Paginated<Transaction>>
   /**
    * Server-side aggregation of transactions grouped by category.
    *

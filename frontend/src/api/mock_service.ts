@@ -14,7 +14,7 @@ import type {
   Granularity,
   Holding,
   ImportResult,
-  PaginatedResponse,
+  Paginated,
   PortfolioHistoryRow,
   PortfolioResponse,
   Profile,
@@ -117,7 +117,7 @@ export class MockApiService implements ApiService {
 
   async getTransactions(
     filters: TransactionFilters
-  ): Promise<PaginatedResponse<Transaction>> {
+  ): Promise<Paginated<Transaction>> {
     await delay(DELAY_MS)
 
     let data = [...MOCK_TRANSACTIONS]
@@ -146,8 +146,8 @@ export class MockApiService implements ApiService {
       const set = new Set(filters.categories)
       const wantUncategorized = set.delete("__uncategorized__")
       data = data.filter((t) => {
-        if (t.category == null || t.category === "") return wantUncategorized
-        return set.has(t.category)
+        if (t.category_id == null || t.category_id === "") return wantUncategorized
+        return set.has(t.category_id)
       })
     }
     if (filters.search) {
@@ -156,7 +156,7 @@ export class MockApiService implements ApiService {
         (t) =>
           t.normalized.toLowerCase().includes(q) ||
           t.description.toLowerCase().includes(q) ||
-          (t.category ?? "").toLowerCase().includes(q) ||
+          (t.category_id ?? "").toLowerCase().includes(q) ||
           t.account_id.toLowerCase().includes(q) ||
           (t.notes ?? "").toLowerCase().includes(q)
       )
@@ -180,12 +180,12 @@ export class MockApiService implements ApiService {
             bv = parseFloat(b.amount)
             break
           case "category": {
-            const aHas = a.category != null && a.category !== ""
-            const bHas = b.category != null && b.category !== ""
+            const aHas = a.category_id != null && a.category_id !== ""
+            const bHas = b.category_id != null && b.category_id !== ""
             // Uncategorized always at the bottom regardless of direction.
             if (aHas !== bHas) return aHas ? -1 : 1
-            av = a.category ?? ""
-            bv = b.category ?? ""
+            av = a.category_id ?? ""
+            bv = b.category_id ?? ""
             break
           }
         }
@@ -234,7 +234,7 @@ export class MockApiService implements ApiService {
     }
     if (filters.categories && filters.categories.length > 0) {
       const set = new Set(filters.categories)
-      data = data.filter((t) => t.category !== null && set.has(t.category))
+      data = data.filter((t) => t.category_id !== null && set.has(t.category_id))
     }
 
     // Direction filter
@@ -247,15 +247,15 @@ export class MockApiService implements ApiService {
     // Group by leaf category, summing by direction semantics
     const totals = new Map<string, number>()
     for (const t of data) {
-      if (!t.category) continue
+      if (!t.category_id) continue
       const amt = parseFloat(t.amount)
       const contribution = filters.direction ? Math.abs(amt) : amt
-      totals.set(t.category, (totals.get(t.category) ?? 0) + contribution)
+      totals.set(t.category_id, (totals.get(t.category_id) ?? 0) + contribution)
     }
 
     // DESC order to match the backend's ORDER BY total DESC
     return Array.from(totals.entries())
-      .map(([category, total]) => ({ category, total: total.toFixed(2), display_currency: null }))
+      .map(([category_id, total]) => ({ category_id, total: total.toFixed(2), display_currency: null }))
       .sort((a, b) => parseFloat(b.total) - parseFloat(a.total))
   }
 
@@ -263,7 +263,7 @@ export class MockApiService implements ApiService {
     await delay(DELAY_MS)
     const cats = new Set<string>()
     for (const t of MOCK_TRANSACTIONS) {
-      if (t.category) cats.add(t.category)
+      if (t.category_id) cats.add(t.category_id)
     }
     return Array.from(cats).sort()
   }
@@ -272,14 +272,11 @@ export class MockApiService implements ApiService {
     await delay(DELAY_MS)
     const cats = new Set<string>()
     for (const t of MOCK_TRANSACTIONS) {
-      if (t.category) cats.add(t.category)
+      if (t.category_id) cats.add(t.category_id)
     }
     const fromMock = Array.from(cats)
       .sort()
-      .map((name) => ({
-        id: `cat-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-        name,
-      }))
+      .map((name) => ({ id: name, name }))
     // Demo ids returned by mock `parseDocuments` so the preview can resolve
     // them to readable names in the SelectCell.
     return [
@@ -310,10 +307,10 @@ export class MockApiService implements ApiService {
       if (getMonthFromDate(t.date) !== month) continue
       const amt = parseFloat(t.amount)
       if (amt >= 0) continue // skip income
-      if (!t.category) continue
+      if (!t.category_id) continue
       spending.set(
-        t.category,
-        (spending.get(t.category) ?? 0) + Math.abs(amt)
+        t.category_id,
+        (spending.get(t.category_id) ?? 0) + Math.abs(amt)
       )
     }
 
@@ -321,8 +318,7 @@ export class MockApiService implements ApiService {
       const actual = spending.get(b.category) ?? 0
       const budgeted = parseFloat(b.amount)
       return {
-        category: b.category,
-        category_id: null,
+        category_id: b.category,
         budgeted: b.amount,
         actual: actual.toFixed(2),
         actual_display: null,
@@ -354,7 +350,7 @@ export class MockApiService implements ApiService {
     for (const t of MOCK_TRANSACTIONS) {
       if (t.date < start || t.date > end) continue
       if (profileAccounts && !profileAccounts.has(t.account_id)) continue
-      const cat = t.category ?? "Other: Uncategorized"
+      const cat = t.category_id ?? "Other: Uncategorized"
       const month = getMonthFromDate(t.date)
       if (!grid.has(cat)) grid.set(cat, new Map())
       const catMap = grid.get(cat)!
@@ -400,8 +396,7 @@ export class MockApiService implements ApiService {
       const budget = MOCK_BUDGETS.find((b) => b.category === cat)
 
       rows.push({
-        category: cat,
-        category_id: null,
+        category_id: cat,
         section: getSection(cat),
         periods: monthValues,
         periods_display: {},
@@ -418,7 +413,7 @@ export class MockApiService implements ApiService {
     rows.sort(
       (a, b) =>
         sectionOrder.indexOf(a.section) - sectionOrder.indexOf(b.section) ||
-        a.category.localeCompare(b.category)
+        (a.category_id ?? "").localeCompare(b.category_id ?? "")
     )
 
     return rows
@@ -891,9 +886,9 @@ export class MockApiService implements ApiService {
     // post_processing -> done sequence) so the progress bar animates in mock mode.
     const emit = opts?.onProgress
     emit?.({ event: "llm_start", model: "claude-sonnet-4-6", input_tokens: 4200, task_id: "unified" })
-    for (const output_tokens of [300, 700, 1100, 1500]) {
+    for (const items of [4, 11, 19, 26]) {
       await delay(DELAY_MS / 2)
-      emit?.({ event: "llm_progress", output_tokens, elapsed_ms: 0, task_id: "unified" })
+      emit?.({ event: "llm_progress", output_tokens: 0, elapsed_ms: 0, items, section: "transactions", task_id: "unified" })
     }
     emit?.({ event: "phase", phase: "post_processing", message: "Checking for duplicates", task_id: null })
     await delay(DELAY_MS / 3)
@@ -914,9 +909,9 @@ export class MockApiService implements ApiService {
       ? {
           account_id: accountId,
           transactions: [
-            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category: null, category_id: "cat-transport", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
-            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category: null, category_id: "cat-eating-out", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
-            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category: null, category_id: "cat-subscriptions", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: true, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category_id: "cat-transport", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category_id: "cat-eating-out", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category_id: "cat-subscriptions", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: true, exclude_from_summary: null, source_document_ids: [] },
           ],
         }
       : null

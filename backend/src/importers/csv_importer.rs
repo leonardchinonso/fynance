@@ -92,6 +92,8 @@ impl Importer for CsvImporter {
                 continue;
             }
 
+            let mut row = row;
+            crate::importers::unified::resolve_row_category_id(db, &mut row)?;
             let tx = Transaction::from_unified(row, account_id);
             match db.insert_transaction(&tx)? {
                 InsertOutcome::Inserted => result.rows_inserted += 1,

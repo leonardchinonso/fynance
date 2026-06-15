@@ -430,7 +430,6 @@ export function TransactionsSection({
                           onChange={(v) =>
                             updatePayloadAt(payloadIdx, {
                               category_id: v || null,
-                              category: null,
                               category_source: "manual" satisfies CategorySource,
                             })
                           }
@@ -465,7 +464,6 @@ export function TransactionsSection({
                                   onClick={() =>
                                     updatePayloadAt(payloadIdx, {
                                       category_id: agentPickId,
-                                      category: null,
                                       category_source: "agent" satisfies CategorySource,
                                     })
                                   }

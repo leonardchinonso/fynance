@@ -3,4 +3,4 @@
 /**
  * Per-month override for a standing budget.
  */
-export type BudgetOverride = { month: string, category: string, amount: string, };
+export type BudgetOverride = { month: string, category_id: string, amount: string, };

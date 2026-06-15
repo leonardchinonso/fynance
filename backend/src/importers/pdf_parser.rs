@@ -15,6 +15,20 @@ const PERIODIC_HOLDINGS_PROMPT: &str =
     include_str!("../../config/prompts/periodic_holdings_parser.txt");
 const INVESTMENTS_PROMPT: &str = include_str!("../../config/prompts/investments_parser.txt");
 
+/// MIME type for a binary document inferred from its filename extension. Drives
+/// the Anthropic content block in the provider: `application/pdf` -> document
+/// block, `image/*` -> image block. Defaults to PDF for unknown extensions.
+fn binary_mime(filename: &str) -> String {
+    match filename.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        _ => "application/pdf",
+    }
+    .to_string()
+}
+
 // ── PDF Transaction Parser ─────────────────────────────────────────────────
 
 pub struct PdfStatementParser {
@@ -49,9 +63,9 @@ impl PdfStatementParser {
 
         let call = self
             .provider
-            .chat_with_pdf_and_tools(
+            .chat_with_files_and_tools(
                 STATEMENT_PROMPT,
-                pdf_bytes,
+                &[(filename.to_string(), binary_mime(filename), pdf_bytes.to_vec())],
                 &text_supplement,
                 "parse_bank_statement",
                 tool_schema,
@@ -107,9 +121,9 @@ impl PdfHoldingsParser {
 
         let call = self
             .provider
-            .chat_with_pdf_and_tools(
+            .chat_with_files_and_tools(
                 HOLDINGS_PROMPT,
-                pdf_bytes,
+                &[(filename.to_string(), binary_mime(filename), pdf_bytes.to_vec())],
                 &text_supplement,
                 "parse_holdings",
                 tool_schema,
@@ -172,9 +186,9 @@ impl PdfPeriodicHoldingsParser {
 
         let call = self
             .provider
-            .chat_with_pdf_and_tools(
+            .chat_with_files_and_tools(
                 PERIODIC_HOLDINGS_PROMPT,
-                pdf_bytes,
+                &[(filename.to_string(), binary_mime(filename), pdf_bytes.to_vec())],
                 &text_supplement,
                 "extract_periodic_holdings",
                 tool_schema,
@@ -228,9 +242,9 @@ impl PdfInvestmentsParser {
 
         let call = self
             .provider
-            .chat_with_pdf_and_tools(
+            .chat_with_files_and_tools(
                 INVESTMENTS_PROMPT,
-                pdf_bytes,
+                &[(filename.to_string(), binary_mime(filename), pdf_bytes.to_vec())],
                 &text_supplement,
                 "parse_investments",
                 tool_schema,

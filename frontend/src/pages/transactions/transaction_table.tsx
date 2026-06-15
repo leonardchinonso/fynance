@@ -1,5 +1,6 @@
 import { useState, useEffect, type ReactNode } from "react"
 import type { Transaction } from "@/types"
+import { useResolveCategoryName } from "@/context/category_names_context"
 import { api } from "@/api/client"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
@@ -306,14 +307,16 @@ function TransactionTableInternal({
     }
   }
 
+  const resolveName = useResolveCategoryName()
+
   async function changeCategory(
     id: string,
-    previousCategory: string | null,
+    previousCategoryId: string | null,
     next: { id: string; name: string }
   ) {
     setTransactions(prev =>
       prev.map(t =>
-        t.id === id ? { ...t, category: next.name, category_source: "manual" } : t
+        t.id === id ? { ...t, category_id: next.id, category_source: "manual" } : t
       )
     )
     try {
@@ -322,7 +325,7 @@ function TransactionTableInternal({
       setTransactions(prev => prev.map(t => (t.id === id ? updated : t)))
     } catch {
       setTransactions(prev =>
-        prev.map(t => (t.id === id ? { ...t, category: previousCategory } : t))
+        prev.map(t => (t.id === id ? { ...t, category_id: previousCategoryId } : t))
       )
     }
   }
@@ -383,11 +386,11 @@ function TransactionTableInternal({
               {isVisible("category") && (
                 <TableCell>
                   <CategoryEditPopover
-                    current={t.category}
-                    triggerLabel={t.category ?? "Uncategorized"}
-                    triggerColor={t.category ? getCategoryColor(t.category, categoryColors) : "#78716c"}
+                    current={t.category_id}
+                    triggerLabel={t.category_id ? resolveName(t.category_id) : "Uncategorized"}
+                    triggerColor={t.category_id ? getCategoryColor(resolveName(t.category_id), categoryColors) : "#78716c"}
                     options={categoryOptions}
-                    onSelect={(opt) => changeCategory(t.id, t.category, opt)}
+                    onSelect={(opt) => changeCategory(t.id, t.category_id, opt)}
                     disabled={categoryOptions.length === 0}
                   />
                 </TableCell>

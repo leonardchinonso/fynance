@@ -31,9 +31,9 @@ pub async fn replace_sections(
 ) -> Result<Json<Value>, AppError> {
     // Validate every mapping
     for m in &body {
-        if m.category_id.is_none() && m.category.as_ref().is_none_or(|c| c.is_empty()) {
+        if m.category_id.is_none() {
             return Err(AppError::bad_request(
-                "each mapping must have a category_id or category",
+                "each mapping must have a category_id",
                 "invalid_category",
             ));
         }
