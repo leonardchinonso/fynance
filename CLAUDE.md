@@ -283,6 +283,7 @@ A reasonable rule of thumb: if you're about to type "I'll wait for X to finish b
 
 ## Conventions
 
+- **Never touch the SQLite database directly.** All reads and writes (accounts, transactions, holdings, investments, categories, etc.) go through the fynance REST API or the CLI, never raw `sqlite3`/SQL against the DB file. This applies to verification reads too (use `GET` endpoints, not direct queries). If the backend is down, restart it (`cargo run -- serve --no-open`) and go through the API rather than bypassing it via the DB.
 - Filenames use underscores, not spaces
 - Avoid em dashes in any written content; use commas, colons, or separate sentences instead
 - Money values use `rust_decimal::Decimal`, never `f32` or `f64`
