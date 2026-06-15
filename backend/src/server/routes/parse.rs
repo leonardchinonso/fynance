@@ -11,7 +11,7 @@ use futures_util::Stream;
 use tokio_stream::StreamExt;
 
 use crate::importers::document_parser::{
-    DocumentInput, ParseHints, ParseMode, PipelineOutcome, build_multi_preview,
+    DocumentInput, FileFormat, ParseHints, ParseMode, PipelineOutcome, build_multi_preview,
     run_multi_file_pipeline,
 };
 use crate::importers::provider::{
@@ -465,9 +465,23 @@ async fn run_unified_path(
     );
 
     // Build file tuples for type-agnostic upload (filename, mime, bytes).
+    // PDFs are sent as native document blocks (the model reads the raw bytes);
+    // CSV/Excel content lives in `text_content` after preprocessing (raw_bytes
+    // is empty for those), so send the extracted text as a text/csv block.
     let files: Vec<(String, String, Vec<u8>)> = documents
         .iter()
-        .map(|d| (d.filename.clone(), infer_mime(&d.filename), d.raw_bytes.clone()))
+        .map(|d| match d.format {
+            FileFormat::Pdf => (
+                d.filename.clone(),
+                "application/pdf".to_string(),
+                d.raw_bytes.clone(),
+            ),
+            FileFormat::Csv | FileFormat::Excel => (
+                d.filename.clone(),
+                "text/csv".to_string(),
+                d.text_content.clone().into_bytes(),
+            ),
+        })
         .collect();
 
     // Wrap provider with progress if channel is available.
@@ -521,15 +535,19 @@ async fn run_unified_path(
 
     let elapsed = start.elapsed().as_millis() as u64;
 
-    let cost = parser_call_cost("unified", &unified.call);
-    let mut unified_notes = unified.notes;
+    // A truncated response means the model ran out of output budget mid-result,
+    // so the extracted data is incomplete and cannot be trusted. Rather than
+    // return partial rows, fail with actionable guidance to split the upload.
     if unified.call.stop_reason.as_deref() == Some("max_tokens") {
-        unified_notes.push(format!(
-            "LLM response was truncated (hit max_tokens cap; output_tokens={}). \
-             Results below are incomplete. Try fewer or smaller files, or a different agent.",
-            unified.call.usage.output_tokens
+        return Err(AppError::bad_request(
+            "The uploaded document(s) produced more data than the model could return in a \
+             single response, so the result was truncated. Please split your upload into \
+             smaller batches (we recommend a few months at a time) and try again.",
+            "response_truncated",
         ));
     }
+    let cost = parser_call_cost("unified", &unified.call);
+    let unified_notes = unified.notes;
     let extraction = ExtractionResult {
         transactions: unified.transactions,
         holdings: unified.holdings,

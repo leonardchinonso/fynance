@@ -227,7 +227,7 @@ fn build_unified_prompt(hints: &ParseHints, ctx: &UnifiedContext) -> String {
 fn build_unified_tool_schema() -> Value {
     let source_file_prop = json!({
         "type": ["string", "null"],
-        "description": "The exact filename (as provided in the upload) that THIS row was extracted from. Required when more than one file is uploaded so each row can be traced to its source document."
+        "description": "The filename of the source document this row was extracted from, copied verbatim from the \"Source document filename: …\" label shown before each uploaded document. When more than one file is uploaded you MUST set this on every row so each row is traced to the correct document. With a single uploaded file it may be null."
     });
 
     // Holdings / investments reuse the split-mode item schemas, with a

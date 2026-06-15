@@ -1,5 +1,14 @@
 INVESTMENTS (requested)
-An investment event is one transactional action on a security: a buy, a sell, a dividend, a stock split, or a transfer in/out.
+An investment event is a single EXECUTED TRADE that changes how many shares/units you hold: a purchase, a disposal, an RSU/award vest, a sell-to-cover, a transfer of shares between accounts, or a stock split.
+
+Extract these ONLY from executed-trade / disposal / vesting tables — rows that have an execution date, a quantity of shares, and a price per share. A statement usually contains only a handful of these. Do NOT invent one event per holding.
+
+A single document may contain several separate trade tables — for example one per account or section (such as an "Invest account" and a "Stocks ISA account"), or per-symbol blocks. Scan the ENTIRE document and extract the qualifying trades from every such table, not just the first one.
+
+Do NOT emit an investment event for any of the following (they are not share trades):
+- Dividends or interest. These are income paid in cash, not a change in share count. A "dividend" label or a "gross amount per share" column is the tell — ignore these rows entirely.
+- Open positions / holdings summaries. Those describe what you hold at a point in time, not a trade.
+- Fees, taxes, deposits, withdrawals, or other cash movements.
 
 Each entry has this shape:
 ```
@@ -17,6 +26,17 @@ Each entry has this shape:
 }
 ```
 
-`event_type` is one of: `buy`, `sell`, `dividend`, `split`, `transfer_in`, `transfer_out`.
+`event_type` is one of: `buy`, `sell`, `vest`, `withhold`, `transfer`, `split`.
+- `buy` / `sell`: open-market purchase / disposal for cash.
+- `vest`: RSU/award shares released to you.
+- `withhold`: shares sold or withheld to cover tax at vest.
+- `transfer`: shares moved into or out of the account (not a disposal).
+- `split`: stock-split adjustment.
 
-Dates use ISO 8601 datetime (`YYYY-MM-DDTHH:MM:SS`); use `T00:00:00` if only the date is given. `fee` may be `"0"` if none.
+Field meanings:
+- `date`: the execution date/time of the trade.
+- `quantity`: the number of shares/units in this single trade (the position size of the disposal or purchase).
+- `price_per_share`: the execution price per share, in the instrument's native currency (use the EXECUTION PRICE column, not an average price or FX rate).
+- `fee`: broker / exchange / government fees on the trade. Use `"0"` only if the statement genuinely shows none.
+
+Dates use ISO 8601 datetime (`YYYY-MM-DDTHH:MM:SS`); use `T00:00:00` if only the date is given.

@@ -393,7 +393,7 @@ Polish items (loading states, edit dialogs, tests) scheduled for next phase.
 
 ## Still open after 2026-06-14 audit
 
-Everything else in this doc is done in the current code. These are the only items re-confirmed outstanding. None block V0; they are cleanup / polish / deferred-by-design and should be tracked in an active plan rather than this archive.
+Everything else in this doc is done in the current code. These are the only items re-confirmed outstanding. None block V0; they are cleanup / polish / deferred-by-design. **Action plan: [docs/plans/27_v0_burndown_cleanup.md](../27_v0_burndown_cleanup.md).**
 
 **Backend cleanup (not tracked elsewhere — needs an active home):**
 - **Drop legacy `category` string field** from `Transaction`, `SectionMapping`, `StandingBudget`, `ImportTransaction`, the budget/transactions request bodies, and `unified.rs`. Still marked "kept for backward compat".
@@ -412,3 +412,291 @@ Everything else in this doc is done in the current code. These are the only item
 
 **Needs verification, not a code gap:**
 - "System" theme mode on mobile — code path looks correct (matchMedia + change listener); needs a real-device / emulator re-test to confirm the original bug is gone.
+
+
+---
+
+# V0 Burndown Cleanup
+
+Action plan for the items left open after the 2026-06-14 re-audit of
+`docs/plans/archive/19_v0_burndown.md`. Everything else in that archived doc is
+done in the current code; this captures the genuine outstanding work and how to
+close it.
+
+## Scope
+
+**In scope (untracked until now):**
+
+1. Drop the legacy `category` string field
+2. Holding write-model tagged union (scalar `value` vs `quantity`+`price_per_unit`)
+3. Generic `Paginated<T>` (backend) + drop hand-written `PaginatedResponse<T>` (frontend)
+4. Budget hover tooltip (spending trend)
+5. "Show empty categories" toggle in the budget grid
+6. ~~Frontend tests for CSV import~~ — dropped (2026-06-14): CSV import is already covered by backend integration tests; see the resolved note below
+7. Verify "System" theme mode on mobile
+
+**Explicitly out of scope (already tracked in `docs/plans/20_post_v0_plans.md`, do not duplicate here):**
+
+- Image / screenshot uploads
+- Cross-file LLM context for multi-file imports (multi-file upload itself is done)
+- Fingerprint collision disambiguation (`duplicate_index`) — intentional deferral; current `sha256(datetime, amount, account_id)` stays
+
+## Suggested order
+
+Do the cheap, low-risk, file-disjoint items first to bank progress, then the
+one large migration last:
+
+1. Generic `Paginated<T>` (item 3) — mechanical, well-specified
+2. Holding write-model union (item 2) — contained to holdings write path
+3. Budget tooltip + empty-categories toggle (items 4, 5) — frontend only, same file
+4. Verify system theme on mobile (item 7) — verification, not code
+5. Drop legacy `category` (item 1) — largest, riskiest; do alone, do last
+
+Items 1, 2, and 4/5 are file-disjoint and could run in parallel if delegated.
+
+---
+
+## 1. Drop the legacy `category` string field
+
+**Reality check:** the archived burndown framed this as "remove the field; ts-rs
+regenerates bindings; no frontend changes needed." That is wrong. `category` is
+not a dead field — it is an active query column:
+
+- `storage/db.rs` reads/filters/searches/sorts on `t.category`,
+  `section_mappings.category`, and `standing_budgets.category` in ~20 places
+  (display COALESCE, category filter clauses, search `LIKE`, ordering, the
+  upsert at the `standing_budgets` ON CONFLICT, and a hardcoded
+  `WHERE category = 'Finance: Investment Transfer'` at db.rs:3325).
+- Schema columns exist on `transactions`, `section_mappings`, `standing_budgets`;
+  migration 7 already made `section_mappings.category` nullable on old DBs.
+- Frontend `types/models.ts:72` (legacy hand-written) and all of
+  `data/mock_transactions.ts` reference `category`. Generated binding
+  `bindings/UnifiedStatementRow.ts` also exposes it.
+
+So this is a data + query migration, not a struct edit.
+
+**Consumers (decided 2026-06-14):** there are no external agents. The frontend
+is the only API consumer, and any future integrator reads the API docs, so
+updating `docs/api.html` + the OpenAPI spec is the contract. That means a clean
+break: drop `category` from the API input outright and update the frontend in
+the same PR. No deprecation window on the input is needed.
+
+**Second internal consumer — the CLI.** `fynance budget set --category "<name>"`
+(commands/budget.rs:11) and `budget status` (`b.category`) use category *names*,
+not IDs, and humans will keep typing names. The CLI should keep accepting a name
+and resolve it server-side to `category_id` (throwing a clear error if the name
+does not resolve, per the agreed converter behaviour); it must be migrated
+alongside the FE, and the old `Budget` model / `set_budget` (model.rs:459,
+db.rs:2291) updated.
+
+**Existing-data risk: checked and clear (2026-06-14).** Queried the real DB at
+`X:\projects\fynance\data\fynance.db`: of 2592 transactions, **0** have a legacy
+`category` string without a `category_id` (1347 carry both; the remainder are
+uncategorized). section_mappings (19/19) and standing_budgets (10/10) are fully
+on `category_id`. So no row depends on the legacy string — the backfill below is
+a safety net, not a data migration, and dropping the columns loses nothing real.
+
+**The hardcoded investment-transfer query is a latent bug this migration fixes.**
+`compute_investment_metrics` (db.rs:3301) computes `new_cash_invested` — money
+moved *into* investments during the period — by summing transactions with
+`category = 'Finance: Investment Transfer'`, so the portfolio view can split
+`total_growth` into `market_growth` (real gains) vs contributions. On the real DB
+that string matches **0 rows**: the taxonomy category is named `Investment
+Transfer` (id `3996e2d7-...`) and the legacy strings don't use that exact
+`Finance: …` full-path form, so `new_cash_invested` is effectively always 0
+(market growth == total growth). Phase B must resolve this category by id (and
+its descendants) and filter `category_id IN (...)`, which removes the legacy
+dependency *and* fixes the metric.
+
+**Phased approach:**
+
+- **Phase A — backfill.** Add a migration that, for every row with a non-null
+  `category` but null `category_id`, resolves the name to `categories.id` and
+  sets `category_id`. Report (don't silently drop) any names that fail to
+  resolve. Do the same for `section_mappings` and `standing_budgets`. On the
+  current real DB this is a no-op (0 rows need it — see the data check above);
+  keep it so any other DB stays safe.
+- **Phase B — rewrite reads.** Change every db.rs query that displays/filters/
+  searches/sorts by `category` to use `category_id` joined to `categories` for
+  the display name. Replace the hardcoded investment-transfer string match with
+  a `category_id` lookup (resolve the well-known category once).
+- **Phase C — stop writing.** Remove `category` from the insert/update paths;
+  the PATCH at db.rs:1582 stops writing the `category` column.
+- **Phase D — drop the field + columns.** Remove `category: Option<String>` from
+  `Transaction`, `SectionMapping`, `StandingBudget`, `ImportTransaction`, the
+  budget request bodies (budget.rs:100/150), the transactions request body
+  (transactions.rs:191), and `importers/unified.rs:43`. Add a migration dropping
+  the three columns. Regenerate bindings.
+- **Phase E — frontend follow-through.** Drop `category` from `types/models.ts`,
+  scrub `data/mock_transactions.ts`, and fix any component reading
+  `tx.category` (search before assuming none). Update `docs/api.html` and the
+  OpenAPI examples so they show `category_id`, not `category`.
+
+**Verification:** `cargo test` + `cargo clippy`; a manual import + transactions
+list + budget + spending-grid round trip on a copy of a real DB to confirm
+display names still resolve; `tsc --noEmit` + `npm run build`; smoke script.
+
+**Risk:** high. Old databases with unresolvable category names; the
+investment-transfer hardcode; mock-data drift. Do this PR alone.
+
+---
+
+## 2. Holding write-model tagged union
+
+**Goal:** the write payload should be either `{ value }` (scalar: cash,
+property, loan) or `{ quantity, price_per_unit }` (computed: stock, ETF,
+crypto), with the backend deriving `value = quantity * price_per_unit` in the
+computed case and rejecting payloads that set fields from both arms. The
+response `Holding` stays flat (`value` always set, `quantity`/`price_per_unit`
+optional) so reads never pattern-match.
+
+**Current state:** `HoldingsImportPayload { account_id, holdings: Vec<Holding> }`
+(model.rs:600) and the POST upsert both take the flat `Holding`, which carries
+`quantity: Decimal` (non-optional), `price_per_unit: Option`, and
+`value: Decimal` simultaneously with no consistency check.
+
+**Approach:**
+
+- Add an input type in model.rs, e.g. `HoldingWrite` with the common fields
+  (account_id, symbol, name, holding_type, currency, as_of, sub_account,
+  is_closed, source_document_ids) plus a `HoldingAmount` enum:
+  `Scalar { value }` | `Computed { quantity, price_per_unit }`. Prefer an
+  internally-tagged or explicitly-validated representation over `#[serde(untagged)]`
+  so error messages are clear and "both arms supplied" is rejectable.
+- Use `HoldingWrite` for `POST /api/holdings/:account_id` and
+  `POST /api/holdings/import` payloads. Derive `value` in the computed arm.
+- Keep the internal/parse pipeline producing the flat `Holding` (it already
+  computes value); only the external write API gains the union.
+- Validation: reject mixed arms with a 400 `invalid_holding`.
+
+**Files:** `model.rs` (new types), `server/routes/holdings.rs` (import_holdings,
+the POST upsert, the dry-run preview path), `storage/db.rs` upsert if the
+signature changes, `docs/api.html` + OpenAPI examples, bindings regenerate.
+Check whether the frontend import-commit flow constructs holding payloads
+(`api/real_service.ts`, portfolio/import pages) and update the shape there.
+
+**Verification:** `cargo test` (add cases: scalar-only ok, computed derives
+value, both-arms rejected, neither rejected); clippy; `tsc`/build if frontend
+payload shape changed; holdings import smoke (dry-run + commit).
+
+**Risk:** medium. API shape change for external callers; coordinate with agents.
+
+---
+
+## 3. Generic `Paginated<T>` + drop `PaginatedResponse<T>`
+
+**Goal:** a single generated pagination envelope shared by Rust and TS, per the
+design already written in `docs/plans/archive/13_frontend_backend_handover_unimplemented.md`
+section 6.1.
+
+**Current state:** `transactions.rs` defines an inline response struct
+(`total`, `page`, `limit` + data) at lines 49-51 / 101-114. The frontend
+hand-writes `PaginatedResponse<T>` in `types/api.ts:55`, consumed by
+`api/service.ts`, `api/real_service.ts`, `api/mock_service.ts`, and
+`hooks/data/use_transactions.ts`.
+
+**Approach:**
+
+- Add `pub struct Paginated<T: TS + 'static> { data: Vec<T>, total: u64, page: u32, limit: u32 }`
+  to model.rs with the `#[ts(export)]` derive (ts-rs supports generics →
+  `bindings/Paginated.ts`).
+- Return `Paginated<Transaction>` from `list_transactions`; delete the inline
+  struct.
+- Frontend: delete `PaginatedResponse<T>` from `types/api.ts`, re-export
+  `Paginated` from `@/bindings/Paginated`, and update the five import sites.
+
+**Verification:** `cargo test` + clippy; regenerate bindings; `tsc --noEmit` +
+`npm run build`; transactions table paging smoke.
+
+**Risk:** low, mechanical. Confirm no other endpoint silently relied on the old
+inline shape.
+
+---
+
+## 4. Budget hover tooltip (spending trend)
+
+**Goal:** hovering a budget/spending cell shows the recent per-period trend for
+that category.
+
+**Approach:** in `frontend/src/pages/budget/budget_spreadsheet.tsx`, wrap the
+relevant cell in the shared `Tooltip` (`components/ui/tooltip`) with a compact
+table or mini-sparkline of recent months. The spending-grid response already
+carries per-period values per row; reuse them rather than fetching. Mirror the
+existing CostTag tooltip pattern referenced by the smoke script
+(`[data-slot=tooltip-content] table`).
+
+**Verification:** `tsc`/build; extend `scripts/smoke_preview.mjs` to hover the
+budget cell and assert the tooltip table renders; screenshots to `.playwright-mcp/`.
+
+**Risk:** low.
+
+---
+
+## 5. "Show empty categories" toggle (budget grid)
+
+**Goal:** a toggle that hides categories with no budget and no spend in the
+visible range; default hidden.
+
+**Approach:** add a `Switch` in the budget grid header and filter rows where
+budget and actual are both zero across the visible periods, in
+`budget_spreadsheet.tsx`. Persist the choice the same way other view prefs are
+persisted (localStorage), matching the ingestion-preferences pattern.
+
+**Verification:** `tsc`/build; add a smoke step toggling it; screenshots.
+
+**Risk:** low.
+
+---
+
+## 6. (Resolved) Import tests already exist — no new CSV tests needed
+
+Decided 2026-06-14: do not add frontend CSV tests. CSV import is already covered
+on the backend:
+
+- `backend/tests/import_csv.rs` — full importer → storage → sqlite integration
+  test, driven by `MockStatementParser` seeded from
+  `tests/fixtures/{monzo,revolut,lloyds}.expected.json` (runs without an API key).
+- `backend/tests/parse_multipart.rs` — the `/api/parse` multipart flow.
+- In-module `#[test]`s in `importers/` (format_detection, llm_parser,
+  holdings_parser, etc.).
+
+**Frontend:** the import path *is* tested. `frontend/scripts/smoke_preview.mjs`
+is a Playwright script that drives import → account select → file upload → parse
+(it asserts the progress bar advances) → preview → submit → confirm → "import
+complete", in mock mode, across desktop + mobile and light + dark. It's a smoke
+script rather than a unit-test runner, but it covers "the import path works."
+Nothing to add for V0 cleanup.
+
+---
+
+## 7. Verify "System" theme mode on mobile
+
+**Not a code gap — a verification task.** `frontend/src/hooks/use_theme.ts`
+already resolves `system` via `matchMedia("(prefers-color-scheme: dark)")` and
+subscribes to changes, so the path looks correct. The original report ("System
+mode does not auto-detect on mobile") cannot be confirmed or refuted statically.
+
+**Approach:** the smoke script already runs the mobile viewport (390×844) but
+sets an explicit `light`/`dark` theme, so it doesn't exercise `system`
+auto-detect. Add a variant that stores theme = `system`, emulates
+`prefers-color-scheme` dark then light, and asserts the `<html>` class follows.
+If it reproduces, the usual culprit is the `matchMedia` change subscription
+(older iOS Safari needs `addEventListener` / `addListener` fallbacks) — check
+`use_theme.ts` uses a listener API the target browsers support. Otherwise mark
+the burndown note resolved.
+
+**Verification:** Playwright mobile run with color-scheme emulation; screenshots.
+
+**Risk:** low.
+
+---
+
+## Open decisions for the user
+
+1. **Legacy `category` (item 1):** consumers resolved (FE + docs + CLI), and the
+   data check is clear (no row depends on the legacy string), so dropping the
+   three columns now is safe and loses nothing. Recommend the column drop in the
+   same PR; the migration also fixes the dead investment-transfer metric. No
+   real decision left here unless you'd rather stage the column drop separately.
+2. **Holding union (item 2):** confirm the shape — internally-tagged enum with
+   explicit "both arms supplied" rejection, vs `#[serde(untagged)]`.

@@ -1193,6 +1193,11 @@ pub struct InvestmentPreviewRow {
     pub price_per_share: String,
     pub currency: String,
     pub status: TransactionPreviewStatus,
+    /// Why this row was rejected, when `status` is `Error` (e.g. low confidence,
+    /// invalid date/quantity/price). `None` for new/duplicate rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_id: Option<String>,
     /// IDs of the source documents this row was extracted from (resolve names
