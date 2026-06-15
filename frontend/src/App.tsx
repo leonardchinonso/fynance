@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { ProfileProvider } from "@/context/profile_context"
 import { PreferredCurrencyProvider } from "@/context/preferred_currency_context"
 import { CategoryColorsProvider } from "@/context/category_colors_context"
+import { CategoryNamesProvider } from "@/context/category_names_context"
 import { ProfileColorsProvider } from "@/context/profile_colors_context"
 import { RedactedProvider } from "@/context/redacted_context"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -90,13 +91,15 @@ export default function App() {
       <ProfileProvider>
         <PreferredCurrencyProvider>
           <CategoryColorsProvider>
-            <ProfileColorsProvider>
-              <RedactedProvider>
-                <TooltipProvider>
-                  <Layout />
-                </TooltipProvider>
-              </RedactedProvider>
-            </ProfileColorsProvider>
+            <CategoryNamesProvider>
+              <ProfileColorsProvider>
+                <RedactedProvider>
+                  <TooltipProvider>
+                    <Layout />
+                  </TooltipProvider>
+                </RedactedProvider>
+              </ProfileColorsProvider>
+            </CategoryNamesProvider>
           </CategoryColorsProvider>
         </PreferredCurrencyProvider>
       </ProfileProvider>

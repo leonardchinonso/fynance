@@ -42,13 +42,17 @@ export function BudgetEditPopover({
       setOpen(false)
       return
     }
+    if (!category_id) {
+      setError("Category not set")
+      return
+    }
     setSaving(true)
     setError(null)
     try {
       if (month) {
-        await api.setBudgetOverride({ month, category_id, category: null, amount: formatted })
+        await api.setBudgetOverride({ month, category_id, amount: formatted })
       } else {
-        await api.setStandingBudget({ category_id, category: null, amount: formatted })
+        await api.setStandingBudget({ category_id, amount: formatted })
       }
       setOpen(false)
       onSaved?.(formatted)

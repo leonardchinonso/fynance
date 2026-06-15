@@ -47,12 +47,10 @@ export class ParseProgressController {
   private postLabel: string | null = null
   private errorLabel: string | null = null
   private readonly est: { preMs: number; llmMs: number }
-  private readonly startedAt: number
   private lastTick: number
 
   constructor(files: File[], now: number = performance.now()) {
     this.est = estimate(files)
-    this.startedAt = now
     this.lastTick = now
   }
 

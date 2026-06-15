@@ -10,6 +10,7 @@ import {
 } from "@/lib/utils"
 import { DualAmount } from "@/components/currency"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
+import { useResolveCategoryName } from "@/context/category_names_context"
 import { SpreadsheetSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -169,6 +170,7 @@ function SectionBlock({
   preferredCurrency: string
   onBudgetSaved?: () => void
 }) {
+  const resolveName = useResolveCategoryName()
   const totals: Record<string, number | null> = {}
   for (const p of periods) totals[p] = null
   for (const row of rows) {
@@ -197,9 +199,9 @@ function SectionBlock({
           : null
 
         return (
-          <TableRow key={row.category}>
+          <TableRow key={row.category_id ?? "uncategorized"}>
             <TableCell className="sticky left-0 bg-background text-sm z-10">
-              {categoryLeaf(row.category)}
+              {categoryLeaf(resolveName(row.category_id))}
             </TableCell>
             {periods.map((p, i) => {
               const val = rowValues[i]
@@ -230,7 +232,7 @@ function SectionBlock({
                     arrowClassName="bg-popover fill-popover"
                   >
                     <div className="space-y-1 text-xs">
-                      <p className="text-[10px] font-medium text-muted-foreground">{categoryLeaf(row.category)} — spend by period</p>
+                      <p className="text-[10px] font-medium text-muted-foreground">{categoryLeaf(resolveName(row.category_id))} — spend by period</p>
                       <table className="w-full tabular-nums">
                         <tbody>
                           {periods.map((p, i) => {
@@ -251,7 +253,7 @@ function SectionBlock({
             </TableCell>
             <TableCell className="text-right text-sm tabular-nums">
               <BudgetEditPopover
-                category={row.category}
+                category={resolveName(row.category_id)}
                 category_id={row.category_id}
                 currentBudget={row.budget ?? null}
                 onSaved={onBudgetSaved}

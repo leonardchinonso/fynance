@@ -8,6 +8,7 @@ import { InteractivePie } from "@/components/charts"
 import { formatCurrency, categoryParent } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
+import { useResolveCategoryName } from "@/context/category_names_context"
 
 export function TransactionPieChart({
   data,
@@ -36,9 +37,10 @@ function TransactionPieChartInternal({
   categoryColors: Record<string, string>
 }) {
   const preferredCurrency = usePreferredCurrency()
+  const resolveName = useResolveCategoryName()
   const byParent = new Map<string, number>()
   for (const row of totals) {
-    const parent = categoryParent(row.category)
+    const parent = categoryParent(resolveName(row.category_id))
     byParent.set(parent, (byParent.get(parent) ?? 0) + parseFloat(row.total))
   }
 

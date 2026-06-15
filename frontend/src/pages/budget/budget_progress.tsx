@@ -4,6 +4,7 @@ import { MoneyDisplay, DualAmount } from "@/components/currency"
 import { cn, formatCurrency } from "@/lib/utils"
 import { getBudgetProgressClass, getBudgetStatusClass } from "@/lib/colors"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
+import { useResolveCategoryName } from "@/context/category_names_context"
 
 interface BudgetProgressProps {
   rows: BudgetRow[]
@@ -11,6 +12,7 @@ interface BudgetProgressProps {
 
 export function BudgetProgress({ rows }: BudgetProgressProps) {
   const preferredCurrency = usePreferredCurrency()
+  const resolveName = useResolveCategoryName()
   return (
     <div className="space-y-3">
       {rows.map((row) => {
@@ -18,11 +20,11 @@ export function BudgetProgress({ rows }: BudgetProgressProps) {
         const budgeted = row.budgeted ?? "0"
         return (
           <div
-            key={row.category}
+            key={row.category_id ?? "uncategorized"}
             className="rounded-lg border p-4"
           >
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium">{row.category}</span>
+              <span className="text-sm font-medium">{resolveName(row.category_id)}</span>
               <span className={cn("text-sm font-medium", getBudgetStatusClass(pct))}>
                 {pct}%
               </span>
