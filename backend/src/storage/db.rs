@@ -4078,7 +4078,10 @@ fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
 // ── Seed helpers ─────────────────────────────────────────────────────────────
 
 fn seed_defaults(conn: &Connection) -> Result<()> {
-    conn.execute_batch("INSERT OR IGNORE INTO profiles (id, name) VALUES ('default', 'Default')")?;
+    // Profiles are never auto-seeded: there is no implicit "default" profile.
+    // A fresh database starts with zero profiles; the user creates one
+    // explicitly via the API/UI. This is what lets a deleted profile stay
+    // deleted across restarts instead of being resurrected on every open.
     seed_categories(conn)?;
     migrate_category_data(conn)?;
     seed_section_mappings(conn)?;
@@ -5851,5 +5854,36 @@ mod category_delete_tests {
         db.hard_delete_category(&child).expect("delete child");
         db.hard_delete_category(&parent).expect("delete parent now childless");
         assert!(db.get_category_by_id(&parent).expect("get").is_none());
+    }
+}
+
+#[cfg(test)]
+mod profile_seed_tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn fresh_db_seeds_no_profiles() {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        assert!(
+            db.get_profiles().expect("get_profiles").is_empty(),
+            "Db::open must not auto-seed a default profile"
+        );
+    }
+
+    #[test]
+    fn deleted_profile_stays_gone_after_reopen() {
+        let file = NamedTempFile::new().expect("temp file");
+        {
+            let db = Db::open(file.path()).expect("open");
+            db.create_profile("solo", "Solo").expect("create");
+            db.delete_profile("solo").expect("delete");
+        }
+        let db = Db::open(file.path()).expect("reopen");
+        assert!(
+            db.get_profiles().expect("get_profiles").is_empty(),
+            "a deleted profile must not be resurrected when the db is reopened"
+        );
     }
 }

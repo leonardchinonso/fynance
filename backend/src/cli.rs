@@ -92,6 +92,10 @@ pub enum AccountCommand {
         account_type: String,
         #[arg(long)]
         currency: Option<String>,
+        /// Profile(s) this account belongs to. Required; repeat for multiple.
+        /// The profile must already exist (create one via the web UI/API).
+        #[arg(long = "profile", required = true)]
+        profiles: Vec<String>,
     },
     /// Record a new balance snapshot for an existing account (writes a `_CASH`
     /// holding; the API exposes the aggregated balance derived from holdings).

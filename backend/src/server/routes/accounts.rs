@@ -67,12 +67,13 @@ pub async fn create_account(
         )
     })?;
 
-    // Normalize profile_ids: empty -> ["default"]
-    let profile_ids = if body.profile_ids.is_empty() {
-        vec!["default".to_string()]
-    } else {
-        body.profile_ids.clone()
-    };
+    if body.profile_ids.is_empty() {
+        return Err(AppError::bad_request(
+            "at least one profile_id is required",
+            "missing_profile_ids",
+        ));
+    }
+    let profile_ids = body.profile_ids.clone();
 
     let currency = body.currency.as_deref().unwrap_or("GBP");
 
@@ -99,6 +100,14 @@ pub async fn create_account(
                 format!("account {} already exists", body.id),
                 "account_exists",
             ));
+        }
+        for pid in &account.profile_ids {
+            if !db.profile_exists(pid)? {
+                return Err(AppError::bad_request(
+                    format!("profile {pid} does not exist"),
+                    "unknown_profile",
+                ));
+            }
         }
         validate_currency(&db, currency)?;
         db.create_account(&account)?;
@@ -176,6 +185,22 @@ pub async fn update_account(
     }
     if let Some(ref c) = body.currency {
         validate_currency(&db, c)?;
+    }
+    if let Some(ref pids) = body.profile_ids {
+        if pids.is_empty() {
+            return Err(AppError::bad_request(
+                "at least one profile_id is required",
+                "missing_profile_ids",
+            ));
+        }
+        for pid in pids {
+            if !db.profile_exists(pid)? {
+                return Err(AppError::bad_request(
+                    format!("profile {pid} does not exist"),
+                    "unknown_profile",
+                ));
+            }
+        }
     }
 
     let notes_arg = body.notes.as_deref().map(Some);

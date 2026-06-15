@@ -93,21 +93,25 @@ async function runView(browser, view) {
   await page.getByRole("main").getByRole("button", { name: /^import$/i }).click()
 
   // 5a. While parsing, the ReloadingOverlay shows a determinate progress bar plus a
-  //     live label, driven by the mock service's scripted progress timeline. Assert
-  //     the bar actually advances and the label reflects the stream (live token count),
-  //     so the feature is exercised, not just rendered.
+  //     time-driven cosmetic label (parse_progress.ts). Assert the label is one of the
+  //     wait phrases as soon as the bar appears (before the short mock parse can finish
+  //     and close the overlay), then confirm the bar advances.
   const parseBar = page.locator("[data-slot='progress']").first()
   await parseBar.waitFor({ state: "visible", timeout: 5000 })
+  await shot(page, `preview_${label}_3b_parsing_progress`)
+  // Scope to the parse overlay (role=dialog) — the cosmetic label words (reading,
+  // holdings, categories…) also appear elsewhere on the page, so a page-wide match
+  // could pick a hidden element.
+  const progressLabel = page
+    .getByRole("dialog")
+    .getByText(/reading|scanning|pulling|identifying|matching|merchants|categories|holdings|cross-referencing|tidying|amounts|almost there|checking for duplicates|^done$/i)
+    .first()
+  await progressLabel.waitFor({ state: "visible", timeout: 5000 })
   await page.waitForTimeout(900) // let the mock progress advance past the pre segment
   const valueNow = Number(await parseBar.getAttribute("aria-valuenow"))
   if (!(valueNow > 0)) {
     throw new Error(`Parse progress bar did not advance (aria-valuenow=${valueNow})`)
   }
-  const progressLabel = page
-    .getByText(/extracting (transactions|holdings|investments)|found|reading your statement/i)
-    .first()
-  await progressLabel.waitFor({ state: "visible", timeout: 5000 })
-  await shot(page, `preview_${label}_3b_parsing_progress`)
 
   await page.getByRole("heading", { name: /^review /i }).waitFor({ timeout: 15000 })
   await page.waitForTimeout(800) // allow tables to render

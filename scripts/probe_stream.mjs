@@ -48,7 +48,7 @@ async function readSse() {
         let extra = ""
         if (ev === "phase") extra = `phase=${d.phase} "${d.message}"`
         else if (ev === "llm_start") extra = `model=${d.model} input=${d.input_tokens}`
-        else if (ev === "llm_progress") extra = `section=${d.section ?? "—"} items=${d.items} out_tokens=${d.output_tokens}`
+        else if (ev === "llm_progress") extra = `section=${(d.section ?? "—").padEnd(12)} items=${String(d.items).padStart(3)} ~tokens=${String(d.output_tokens).padStart(5)} cost=$${d.cost_usd ?? "?"}`
         else if (ev === "done") extra = `total_ms=${d.total_ms}`
         else if (ev === "error") extra = `${d.code}: ${d.message}`
         console.log(`${ts()}  ${ev.padEnd(13)} ${extra}`)

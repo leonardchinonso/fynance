@@ -29,6 +29,15 @@ fn request(method: Method, uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+fn request_json(method: Method, uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
+}
+
 #[tokio::test]
 async fn health_endpoint_responds_without_auth() {
     let (app, _) = test_router();
@@ -71,6 +80,82 @@ async fn unknown_path_falls_back_to_embedded_index_html() {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     assert!(content_type.starts_with("text/html"));
+}
+
+#[tokio::test]
+async fn fresh_db_has_no_default_profile() {
+    let (app, _) = test_router();
+    let response = app
+        .oneshot(request(Method::GET, "/api/profiles"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let profiles: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        profiles.as_array().map(|a| a.len()),
+        Some(0),
+        "a fresh database must not auto-seed a default profile"
+    );
+}
+
+fn new_account_body(profile_ids: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "id": "acc1",
+        "name": "Current",
+        "institution": "TestBank",
+        "type": "checking",
+        "profile_ids": profile_ids,
+    })
+}
+
+#[tokio::test]
+async fn create_account_requires_a_profile() {
+    let (app, _) = test_router();
+    let response = app
+        .oneshot(request_json(
+            Method::POST,
+            "/api/accounts",
+            new_account_body(serde_json::json!([])),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn create_account_rejects_unknown_profile() {
+    let (app, _) = test_router();
+    let response = app
+        .oneshot(request_json(
+            Method::POST,
+            "/api/accounts",
+            new_account_body(serde_json::json!(["ghost"])),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn create_account_succeeds_with_existing_profile() {
+    let (app, db) = test_router();
+    {
+        let db = db.lock().unwrap();
+        db.create_profile("alice", "Alice").unwrap();
+    }
+    let response = app
+        .oneshot(request_json(
+            Method::POST,
+            "/api/accounts",
+            new_account_body(serde_json::json!(["alice"])),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let account: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(account["profile_ids"], serde_json::json!(["alice"]));
 }
 
 #[tokio::test]

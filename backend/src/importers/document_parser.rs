@@ -1082,8 +1082,9 @@ mod tests {
     }
 
     #[test]
-    fn test_period_requires_transactions() {
-        // period=Some with transactions=false is invalid per the route handler validation
+    fn test_period_requires_transactions_or_investments() {
+        // period=Some needs transactions OR investments; with both disabled it is
+        // invalid per the route handler validation.
         let hints = ParseHints {
             return_type: ReturnType {
                 transactions: false,
@@ -1096,10 +1097,12 @@ mod tests {
             experimental: None,
             hint: None,
         };
-        // is_valid() passes (holdings.enabled=true) but the route rejects period without transactions
+        // is_valid() passes (holdings.enabled=true) but the route rejects period when
+        // neither transactions nor investments is enabled.
         assert!(hints.return_type.is_valid());
         assert!(hints.return_type.holdings.period.is_some());
         assert!(!hints.return_type.transactions);
+        assert!(!hints.return_type.investments);
     }
 
     #[test]
