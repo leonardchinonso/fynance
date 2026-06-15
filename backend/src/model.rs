@@ -152,9 +152,8 @@ pub struct Account {
     pub balance_date: Option<NaiveDateTime>,
     pub is_active: bool,
     pub notes: Option<String>,
-    /// JSON array of profile IDs, e.g. `["alex", "sam"]`.
-    /// Defaults to `["default"]` when not specified.
-    #[serde(default = "default_profile_ids")]
+    /// JSON array of profile IDs, e.g. `["alex", "sam"]`. Required: there is no
+    /// implicit default profile, so this must name at least one existing profile.
     pub profile_ids: Vec<String>,
     /// Set in portfolio responses to indicate whether the carried-forward
     /// balance is stale (snapshot > 45 days before the query date).
@@ -165,10 +164,6 @@ pub struct Account {
     /// Derived from account_type at query time; never stored in the DB.
     #[serde(default)]
     pub is_available: bool,
-}
-
-fn default_profile_ids() -> Vec<String> {
-    vec!["default".to_string()]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

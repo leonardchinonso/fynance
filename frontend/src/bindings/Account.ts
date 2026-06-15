@@ -3,8 +3,8 @@ import type { AccountType } from "./AccountType";
 
 export type Account = { id: string, name: string, institution: string, type: AccountType, currency: string, balance: string | null, balance_date: string | null, is_active: boolean, notes: string | null, 
 /**
- * JSON array of profile IDs, e.g. `["alex", "sam"]`.
- * Defaults to `["default"]` when not specified.
+ * JSON array of profile IDs, e.g. `["alex", "sam"]`. Required: there is no
+ * implicit default profile, so this must name at least one existing profile.
  */
 profile_ids: Array<string>, 
 /**

@@ -511,7 +511,7 @@ td code { font-size: 12px; }
       <tr><td><code>balance_date</code></td><td>string | null</td><td>Date of last balance</td></tr>
       <tr><td><code>is_active</code></td><td>boolean</td><td>Active account flag</td></tr>
       <tr><td><code>notes</code></td><td>string | null</td><td>Free-text notes</td></tr>
-      <tr><td><code>profile_ids</code></td><td>string[]</td><td>Profiles this account belongs to (default: ["default"])</td></tr>
+      <tr><td><code>profile_ids</code></td><td>string[]</td><td>Profiles this account belongs to (required; each must already exist)</td></tr>
       <tr><td><code>is_stale</code></td><td>boolean</td><td>Balance snapshot older than 45 days (portfolio context only)</td></tr>
       <tr><td><code>is_available</code></td><td>boolean</td><td>Counts toward available (liquid) wealth</td></tr>
     </tbody>
@@ -1175,7 +1175,7 @@ td code { font-size: 12px; }
       <tr><td><code>institution</code></td><td>string</td><td>Yes</td><td>Bank/provider</td></tr>
       <tr><td><code>type</code></td><td>string</td><td>Yes</td><td>AccountType enum value</td></tr>
       <tr><td><code>currency</code></td><td>string</td><td>No</td><td>Default: GBP</td></tr>
-      <tr><td><code>profile_ids</code></td><td>string[]</td><td>No</td><td>Default: ["default"]</td></tr>
+      <tr><td><code>profile_ids</code></td><td>string[]</td><td>Yes</td><td>At least one; each must name an existing profile (no implicit default)</td></tr>
       <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
     </tbody>
   </table>
