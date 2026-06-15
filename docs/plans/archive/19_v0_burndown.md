@@ -133,7 +133,7 @@ CSV is supported. PDFs and images deferred to V1.
 
 - [x] ✅ CSV uploads: POST /api/import/csv (import_api.rs:79), POST /api/import/bulk (import_api.rs:136)
 - [x] ✅ PDF uploads: implemented via POST /api/parse (pdf_parser.rs; format_detection.rs validates the `%PDF` header and enforces a 20-page cap)
-- ⚠️ Image/screenshot uploads: **STILL OPEN** — format_detection.rs handles CSV/Excel/PDF only; no image MIME path. Tracked in docs/plans/20_post_v0_plans.md.
+- [x] ✅ Image/screenshot uploads: done (PR #72). `format_detection` recognizes PNG/JPEG/GIF/WEBP (extension + magic bytes); routed to the LLM as image content blocks, same path as PDF.
 - ⚠️ Multi-file per account: multi-file upload + parallel per-file extraction is done (document_parser.rs `run_multi_file_pipeline`); true **cross-file LLM context still open** (tracked in 20_post_v0_plans.md).
 - [x] ✅ Optional `hints` field: ParseHints.hint surfaced verbatim to every parser prompt (document_parser.rs; pdf_parser.rs `user_hint`)
 - [x] ✅ Dry-run for imports: supported in holdings import (holdings.rs:346), transaction import flow

@@ -45,8 +45,9 @@ Post-V0 improvements grouped by urgency. Items copied here from the V0 burndown 
 
 ### Document Import Enhancements
 
-- [ ] Support image uploads / screenshots (same import flow as CSV/PDF, extraction handled by the LLM) (from V0 burndown, marked V1)
-- [ ] Support multiple files per single account in one import call, with the LLM having context across all files for that account (useful for multiple screenshots) (from V0 burndown, marked V1)
+- [x] Support image uploads / screenshots — **done (PR #72)**: `format_detection` recognizes PNG/JPEG/GIF/WEBP (by extension and magic bytes) and routes them to the LLM as image content blocks, same import flow as PDF.
+- [ ] Cross-file LLM context for multi-file imports. Multi-file **upload** + parallel per-file extraction is done; this is the narrower case of feeding all of an account's files into a single prompt so the model can reason across them (e.g. stitching one statement split across screenshots). Lower priority — parallel-independent extraction is the better default for separate statements.
+- [ ] Fingerprint collision disambiguation. The dedup hash is `sha256(date, amount, account_id)`, so two genuinely distinct same-day / same-amount transactions on one account collapse (the second is dropped as a duplicate). Add a deterministic tiebreaker (e.g. `duplicate_index`) that stays idempotent on statement re-import. (from V0 burndown, deferred)
 - [ ] Consolidate parse-hint validation into one place. `ReturnType::is_valid()` lives on the type but the `holdings.period` requires `transactions` rule is enforced separately in the `POST /api/parse` route handler, so validity is split across layers (a `ReturnType` can pass `is_valid()` yet be rejected by the route). Move all of it onto the type (e.g. a single `ReturnType::validate() -> Result<(), _>`) so callers cannot construct/accept an invalid config. (from PR #50 review)
 
 ### CORS

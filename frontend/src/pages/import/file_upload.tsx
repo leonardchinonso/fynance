@@ -80,13 +80,13 @@ export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmi
           Drop files here or click to browse
         </p>
         <p className="text-xs text-muted-foreground mt-1">
-          CSV, PDF files accepted
+          CSV, PDF, and image files accepted
         </p>
         <input
           ref={inputRef}
           type="file"
           multiple
-          accept=".csv,.pdf"
+          accept=".csv,.pdf,.png,.jpg,.jpeg,.webp,.gif"
           className="hidden"
           onChange={(e) => addFiles(e.target.files)}
         />
