@@ -136,11 +136,15 @@ fn validate_pdf(filename: &str, bytes: &[u8]) -> Result<()> {
         .count()
         .max(content.matches("/Type/Page").count());
 
-    const MAX_PDF_PAGES: usize = 20;
+    // Claude's document API accepts up to 100 pages per PDF; reject only past
+    // that hard limit. Output-side truncation (the more common failure for
+    // dense statements) is detected separately after the model call.
+    const MAX_PDF_PAGES: usize = 100;
     if page_count > MAX_PDF_PAGES {
         return Err(anyhow!(
-            "PDF '{}' has approximately {} pages (maximum {} allowed). \
-             Use a shorter statement or split into multiple files.",
+            "PDF '{}' has approximately {} pages, which exceeds the {}-page per-document \
+             limit. Please split it into smaller files (e.g. a few months at a time) and \
+             try again.",
             filename,
             page_count,
             MAX_PDF_PAGES
@@ -237,17 +241,12 @@ mod tests {
     #[test]
     fn test_validate_pdf_too_many_pages() {
         let mut content = b"%PDF-1.5\n".to_vec();
-        for _ in 0..25 {
+        for _ in 0..105 {
             content.extend_from_slice(b"/Type /Page\n");
         }
         let result = validate_pdf("huge.pdf", &content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("maximum 20 allowed")
-        );
+        assert!(result.unwrap_err().to_string().contains("100-page"));
     }
 
     #[test]
@@ -316,12 +315,7 @@ mod tests {
         let bytes = std::fs::read(&fixture).expect("fixture file must exist");
         let result = preprocess_file("too_many_pages.pdf", bytes);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("maximum 20 allowed")
-        );
+        assert!(result.unwrap_err().to_string().contains("100-page"));
     }
 
     #[test]

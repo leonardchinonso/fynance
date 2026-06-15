@@ -3567,19 +3567,25 @@ impl Db {
             .prepare("SELECT id FROM investments WHERE fingerprint = ?1")?;
 
         for (i, row) in rows.iter().enumerate() {
+            let err_row = |reason: String| crate::model::InvestmentPreviewRow {
+                index: i,
+                event_type: row.event_type.clone(),
+                symbol: row.symbol.clone(),
+                date: row.date.clone(),
+                quantity: row.quantity.clone(),
+                price_per_share: row.price_per_share.clone(),
+                currency: row.currency.clone(),
+                status: TransactionPreviewStatus::Error,
+                error_reason: Some(reason),
+                existing_id: None,
+                source_document_ids: Vec::new(),
+            };
+
             if row.row_confidence < min_row_confidence {
-                previews.push(crate::model::InvestmentPreviewRow {
-                    index: i,
-                    event_type: row.event_type.clone(),
-                    symbol: row.symbol.clone(),
-                    date: row.date.clone(),
-                    quantity: row.quantity.clone(),
-                    price_per_share: row.price_per_share.clone(),
-                    currency: row.currency.clone(),
-                    status: TransactionPreviewStatus::Error,
-                    existing_id: None,
-                    source_document_ids: Vec::new(),
-                });
+                previews.push(err_row(format!(
+                    "Row confidence {:.2} is below the import threshold {:.2}",
+                    row.row_confidence, min_row_confidence
+                )));
                 continue;
             }
 
@@ -3591,18 +3597,7 @@ impl Db {
                         date = %row.date,
                         "invalid date in investment row; marking as error"
                     );
-                    previews.push(crate::model::InvestmentPreviewRow {
-                        index: i,
-                        event_type: row.event_type.clone(),
-                        symbol: row.symbol.clone(),
-                        date: row.date.clone(),
-                        quantity: row.quantity.clone(),
-                        price_per_share: row.price_per_share.clone(),
-                        currency: row.currency.clone(),
-                        status: TransactionPreviewStatus::Error,
-                        existing_id: None,
-                        source_document_ids: Vec::new(),
-                    });
+                    previews.push(err_row(format!("Could not parse date \"{}\"", row.date)));
                     continue;
                 }
             };
@@ -3611,18 +3606,7 @@ impl Db {
                 Ok(d) => d.to_string(),
                 Err(_) => {
                     tracing::warn!(symbol = %row.symbol, "invalid quantity in investment row; marking as error");
-                    previews.push(crate::model::InvestmentPreviewRow {
-                        index: i,
-                        event_type: row.event_type.clone(),
-                        symbol: row.symbol.clone(),
-                        date: row.date.clone(),
-                        quantity: row.quantity.clone(),
-                        price_per_share: row.price_per_share.clone(),
-                        currency: row.currency.clone(),
-                        status: TransactionPreviewStatus::Error,
-                        existing_id: None,
-                        source_document_ids: Vec::new(),
-                    });
+                    previews.push(err_row(format!("Invalid quantity \"{}\"", row.quantity)));
                     continue;
                 }
             };
@@ -3631,18 +3615,10 @@ impl Db {
                 Ok(d) => d.to_string(),
                 Err(_) => {
                     tracing::warn!(symbol = %row.symbol, "invalid price_per_share in investment row; marking as error");
-                    previews.push(crate::model::InvestmentPreviewRow {
-                        index: i,
-                        event_type: row.event_type.clone(),
-                        symbol: row.symbol.clone(),
-                        date: row.date.clone(),
-                        quantity: row.quantity.clone(),
-                        price_per_share: row.price_per_share.clone(),
-                        currency: row.currency.clone(),
-                        status: TransactionPreviewStatus::Error,
-                        existing_id: None,
-                        source_document_ids: Vec::new(),
-                    });
+                    previews.push(err_row(format!(
+                        "Invalid price per share \"{}\"",
+                        row.price_per_share
+                    )));
                     continue;
                 }
             };
@@ -3676,6 +3652,7 @@ impl Db {
                 price_per_share: row.price_per_share.clone(),
                 currency: row.currency.clone(),
                 status,
+                error_reason: None,
                 existing_id,
                 source_document_ids: Vec::new(),
             });

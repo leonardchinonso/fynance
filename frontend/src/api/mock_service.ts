@@ -39,7 +39,7 @@ import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { SymbolSummary } from "@/bindings/SymbolSummary"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
-import type { ApiService, CgtFilters, HoldingsImportResponse } from "./service"
+import type { ApiService, CgtFilters, HoldingsImportResponse, ParseOptions } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
 import {
@@ -884,29 +884,39 @@ export class MockApiService implements ApiService {
   async parseDocuments(
     files: File[],
     accountId: string,
-    hints: ParseHints
+    hints: ParseHints,
+    opts?: ParseOptions
   ): Promise<IngestionPreview> {
-    await delay(DELAY_MS * 2)
+    // Scripted progress timeline (mirrors the real llm_start -> llm_progress ->
+    // post_processing -> done sequence) so the progress bar animates in mock mode.
+    const emit = opts?.onProgress
+    emit?.({ event: "llm_start", model: "claude-sonnet-4-6", input_tokens: 4200, task_id: "unified" })
+    for (const output_tokens of [300, 700, 1100, 1500]) {
+      await delay(DELAY_MS / 2)
+      emit?.({ event: "llm_progress", output_tokens, elapsed_ms: 0, task_id: "unified" })
+    }
+    emit?.({ event: "phase", phase: "post_processing", message: "Checking for duplicates", task_id: null })
+    await delay(DELAY_MS / 3)
+    emit?.({ event: "done", total_ms: 2000 })
     const wantTx = hints.return_type.transactions
     const wantHoldings = hints.return_type.holdings.enabled
     const wantInv = hints.return_type.investments
 
-    const isUnified = hints.experimental?.mode === "unified"
     const txRows = wantTx
       ? [
-          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-transport" : null, category_confidence: isUnified ? 0.95 : null, source_document_ids: [] },
-          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null, category_id: isUnified ? "cat-groceries" : null, category_confidence: isUnified ? 0.97 : null, source_document_ids: [] },
-          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-eating-out" : null, category_confidence: isUnified ? 0.78 : null, source_document_ids: [] },
-          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: isUnified ? "cat-subscriptions" : null, category_confidence: isUnified ? 0.45 : null, source_document_ids: [] },
+          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "cat-transport", category_confidence: 0.95, source_document_ids: [] },
+          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null, category_id: "cat-groceries", category_confidence: 0.97, source_document_ids: [] },
+          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "cat-eating-out", category_confidence: 0.78, source_document_ids: [] },
+          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "cat-subscriptions", category_confidence: 0.45, source_document_ids: [] },
         ]
       : []
     const txPayload: ImportPayload | null = wantTx
       ? {
           account_id: accountId,
           transactions: [
-            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category: null, category_id: isUnified ? "cat-transport" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
-            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category: null, category_id: isUnified ? "cat-eating-out" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
-            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category: null, category_id: isUnified ? "cat-subscriptions" : null, category_source: isUnified ? ("agent" satisfies CategorySource) : null, notes: null, is_recurring: true, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category: null, category_id: "cat-transport", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category: null, category_id: "cat-eating-out", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category: null, category_id: "cat-subscriptions", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: true, exclude_from_summary: null, source_document_ids: [] },
           ],
         }
       : null
@@ -945,70 +955,18 @@ export class MockApiService implements ApiService {
     const newCount = (n: number, d = 0) => n - d
     const _ = files // referenced to keep ts-rs happy
     void _
-    const unifiedAgent = (hints.experimental?.agent ?? "sonnet") as "haiku" | "sonnet" | "opus"
-    const splitAgent = (hints.experimental?.agent ?? "haiku") as "haiku" | "sonnet" | "opus"
-    const modelFor: Record<"haiku" | "sonnet" | "opus", string> = {
-      haiku: "claude-haiku-4-5-20251001",
-      sonnet: "claude-sonnet-4-6",
-      opus: "claude-opus-4-7",
-    }
-    const calls = isUnified
-      ? [
-          {
-            parser: "unified",
-            agent: unifiedAgent,
-            model: modelFor[unifiedAgent],
-            input_tokens: BigInt(8420),
-            output_tokens: BigInt(1180),
-            duration_ms: BigInt(2340),
-            amount: "0.0430",
-            currency: "USD",
-          },
-        ]
-      : [
-          ...(wantTx
-            ? [
-                {
-                  parser: "csv_transactions",
-                  agent: splitAgent,
-                  model: modelFor[splitAgent],
-                  input_tokens: BigInt(3120),
-                  output_tokens: BigInt(540),
-                  duration_ms: BigInt(820),
-                  amount: "0.0058",
-                  currency: "USD",
-                },
-              ]
-            : []),
-          ...(wantHoldings
-            ? [
-                {
-                  parser: "csv_holdings",
-                  agent: splitAgent,
-                  model: modelFor[splitAgent],
-                  input_tokens: BigInt(2100),
-                  output_tokens: BigInt(340),
-                  duration_ms: BigInt(710),
-                  amount: "0.0038",
-                  currency: "USD",
-                },
-              ]
-            : []),
-          ...(wantInv
-            ? [
-                {
-                  parser: "csv_investments",
-                  agent: splitAgent,
-                  model: modelFor[splitAgent],
-                  input_tokens: BigInt(1840),
-                  output_tokens: BigInt(420),
-                  duration_ms: BigInt(620),
-                  amount: "0.0039",
-                  currency: "USD",
-                },
-              ]
-            : []),
-        ]
+    const calls = [
+      {
+        parser: "unified",
+        agent: "sonnet" as const,
+        model: "claude-sonnet-4-6",
+        input_tokens: BigInt(8420),
+        output_tokens: BigInt(1180),
+        duration_ms: BigInt(2340),
+        amount: "0.0430",
+        currency: "USD",
+      },
+    ]
     const totalUsd = calls
       .reduce((s, c) => s + parseFloat(c.amount), 0)
       .toFixed(4)

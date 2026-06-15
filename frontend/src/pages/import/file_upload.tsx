@@ -1,6 +1,7 @@
 import { useState, useRef, type DragEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -8,12 +9,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Upload, X, FileText } from "lucide-react"
+import { Upload, X, FileText, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ParseHints } from "@/bindings/ParseHints"
 import type { SnapshotPeriod } from "@/bindings/SnapshotPeriod"
-import type { ParseMode } from "@/bindings/ParseMode"
-import type { Agent } from "@/bindings/Agent"
 
 interface Props {
   files: File[]
@@ -36,6 +35,7 @@ const PERIOD_LABELS: Record<"none" | SnapshotPeriod, string> = {
 
 export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmit, onSkip, submitting, accountName, accountInstitution }: Props) {
   const [dragOver, setDragOver] = useState(false)
+  const [showContext, setShowContext] = useState(() => !!hints.hint)
   const inputRef = useRef<HTMLInputElement>(null)
 
   function addFiles(newFiles: FileList | null) {
@@ -193,70 +193,35 @@ export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmi
         )}
       </div>
 
-      {/* EXPERIMENTAL knobs. */}
-      <div className="space-y-2 rounded-lg border border-dashed border-muted-foreground/30 p-3">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-medium">Parsing strategy</p>
-          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
-            experimental
-          </span>
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          Try different parsing strategies and model agents. May be removed
-          once one is promoted to default.
-        </p>
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 pt-1">
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-xs text-muted-foreground">Mode:</span>
-            <Select
-              value={hints.experimental?.mode ?? "split"}
-              onValueChange={(v) =>
-                onHintsChange({
-                  ...hints,
-                  experimental: {
-                    mode: v as ParseMode,
-                    agent: hints.experimental?.agent ?? null,
-                  },
-                })
-              }
+      {/* Optional free-text context passed to the parsing agent via hints.hint */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowContext((v) => !v)}
+          disabled={submitting}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+          aria-expanded={showContext}
+        >
+          <ChevronRight className={cn("h-4 w-4 transition-transform", showContext && "rotate-90")} />
+          Add additional context (optional)
+        </button>
+        {showContext && (
+          <div className="pt-2">
+            <Textarea
+              value={hints.hint ?? ""}
+              onChange={(e) => {
+                const v = e.target.value
+                onHintsChange({ ...hints, hint: v.trim() === "" ? null : v })
+              }}
               disabled={submitting}
-            >
-              <SelectTrigger className="h-8 w-auto min-w-[10rem] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="split">Split (per-type)</SelectItem>
-                <SelectItem value="unified">Unified (single call)</SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-xs text-muted-foreground">Agent:</span>
-            <Select
-              value={hints.experimental?.agent ?? "default"}
-              onValueChange={(v) =>
-                onHintsChange({
-                  ...hints,
-                  experimental: {
-                    mode: hints.experimental?.mode ?? "split",
-                    agent: v === "default" ? null : (v as Agent),
-                  },
-                })
-              }
-              disabled={submitting}
-            >
-              <SelectTrigger className="h-8 w-auto min-w-[8rem] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">Default</SelectItem>
-                <SelectItem value="haiku">Haiku</SelectItem>
-                <SelectItem value="sonnet">Sonnet</SelectItem>
-                <SelectItem value="opus">Opus</SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
-        </div>
+              rows={3}
+              placeholder="Anything that helps the agent read this document correctly, e.g. &quot;amounts are in EUR&quot;, &quot;ignore the summary page&quot;, or &quot;this is a joint account&quot;."
+            />
+            <p className="pt-1.5 text-xs text-muted-foreground">
+              Only sent when filled in. Passed to the AI as extra context for this import.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Actions */}

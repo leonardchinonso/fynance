@@ -99,12 +99,16 @@ export function CgtReportPage() {
           <CardTitle>Filters</CardTitle>
         </CardHeader>
         <CardContent>
-          <CgtFilterBar
-            profiles={profiles}
-            initial={defaultFilters}
-            loading={state.status === "loading" || state.status === "reloading"}
-            onGenerate={handleGenerate}
-          />
+          {profilesData.status === "succeeded" ? (
+            <CgtFilterBar
+              profiles={profiles}
+              initial={defaultFilters}
+              loading={state.status === "loading" || state.status === "reloading"}
+              onGenerate={handleGenerate}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">Loading profiles…</p>
+          )}
         </CardContent>
       </Card>
 

@@ -5,15 +5,18 @@
  * Run from the `frontend` directory:
  *   node scripts/smoke_preview.mjs
  *
- * Screenshots are written to ../.playwright-mcp/.
+ * Screenshots are written to a dated run folder under ../.playwright-mcp/,
+ * e.g. ../.playwright-mcp/smoke_preview_2026-06-14/ . Set SMOKE_RUN to
+ * override the folder name.
  */
 import { chromium } from "playwright"
-import { mkdirSync, existsSync } from "node:fs"
+import { mkdirSync } from "node:fs"
 import { resolve } from "node:path"
 
 const BASE = process.env.SMOKE_BASE || "http://localhost:5173"
-const OUT = resolve(process.cwd(), "..", ".playwright-mcp")
-if (!existsSync(OUT)) mkdirSync(OUT, { recursive: true })
+const RUN = process.env.SMOKE_RUN || `smoke_preview_${new Date().toISOString().slice(0, 10)}`
+const OUT = resolve(process.cwd(), "..", ".playwright-mcp", RUN)
+mkdirSync(OUT, { recursive: true })
 
 async function shot(page, name) {
   await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true })
@@ -76,39 +79,36 @@ async function runView(browser, view) {
   })
   await shot(page, `preview_${label}_3_filepicked`)
 
-  // 4b. Validate the new "Parsing strategy" card with Mode + Agent selectors.
-  //     The Mode select should default to "Split" and Agent to "Default".
-  const strategyCard = page.locator("text=Parsing strategy")
-  await strategyCard.waitFor({ timeout: 5000 })
-  if ((await strategyCard.count()) === 0) {
-    throw new Error("Parsing strategy card not found on upload step")
-  }
-  await shot(page, `preview_${label}_3b_strategy_card`)
-
-  // 4c. Switch Mode to "Unified" so the resulting preview will populate
-  //     category_confidence on transaction rows (mock_service branches on this).
-  const modeTrigger = page
-    .locator("label", { hasText: "Mode:" })
-    .getByRole("combobox")
-    .first()
-  await modeTrigger.click()
-  await page.getByRole("option", { name: /unified/i }).click()
-  await page.waitForTimeout(150)
-  await shot(page, `preview_${label}_3c_mode_unified`)
-
-  // 4d. Switch Agent to "Haiku" to exercise the override path.
-  const agentTrigger = page
-    .locator("label", { hasText: "Agent:" })
-    .getByRole("combobox")
-    .first()
-  await agentTrigger.click()
-  await page.getByRole("option", { name: /^haiku$/i }).click()
-  await page.waitForTimeout(150)
-  await shot(page, `preview_${label}_3d_agent_haiku`)
+  // 4a. Expand the optional "additional context" disclosure and type a hint.
+  //     This is passed to the agent via hints.hint; the textarea only renders
+  //     once the disclosure is open.
+  await page.getByRole("button", { name: /add additional context/i }).click()
+  const contextBox = page.locator("textarea[data-slot='textarea']").first()
+  await contextBox.waitFor({ state: "visible", timeout: 5000 })
+  await contextBox.fill("Amounts are in EUR; ignore the summary page.")
+  await shot(page, `preview_${label}_3a_additional_context`)
 
   // 5. Trigger the parse → preview flow.
   //    Scope to the import card to avoid the navbar's "Import" button.
   await page.getByRole("main").getByRole("button", { name: /^import$/i }).click()
+
+  // 5a. While parsing, the ReloadingOverlay shows a determinate progress bar plus a
+  //     live label, driven by the mock service's scripted progress timeline. Assert
+  //     the bar actually advances and the label reflects the stream (live token count),
+  //     so the feature is exercised, not just rendered.
+  const parseBar = page.locator("[data-slot='progress']").first()
+  await parseBar.waitFor({ state: "visible", timeout: 5000 })
+  await page.waitForTimeout(900) // let the mock progress advance past the pre segment
+  const valueNow = Number(await parseBar.getAttribute("aria-valuenow"))
+  if (!(valueNow > 0)) {
+    throw new Error(`Parse progress bar did not advance (aria-valuenow=${valueNow})`)
+  }
+  const progressLabel = page
+    .getByText(/tokens|reading your statements|extracting transactions|categorizing/i)
+    .first()
+  await progressLabel.waitFor({ state: "visible", timeout: 5000 })
+  await shot(page, `preview_${label}_3b_parsing_progress`)
+
   await page.getByRole("heading", { name: /^review /i }).waitFor({ timeout: 15000 })
   await page.waitForTimeout(800) // allow tables to render
   await shot(page, `preview_${label}_4_preview`)
@@ -199,6 +199,13 @@ async function runView(browser, view) {
   await page.getByText(/^filters$/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9a_cgt_filter_default`)
 
+  // Generate is gated on a profile. Select one only if none is pre-selected (the
+  // page may default to the first profile), then generate.
+  const profileTrigger = page.getByRole("combobox").filter({ hasText: /select profile/i }).first()
+  if ((await profileTrigger.count()) > 0) {
+    await profileTrigger.click()
+    await page.getByRole("option").first().click()
+  }
   await page.getByRole("button", { name: /^generate$/i }).click()
   await page.waitForURL(/\/reports\/cgt\/[\w-]+$/, { timeout: 10000 })
   await page.getByText(/disposal proceeds/i).waitFor({ timeout: 10000 })

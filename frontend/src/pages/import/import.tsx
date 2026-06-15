@@ -27,6 +27,7 @@ import { ImportLanding } from "./import_landing"
 import { WizardSetup } from "./wizard_setup"
 import { RecentImportsList } from "./recent_imports_list"
 import { useRecentImports, type RecentImportEntry } from "@/hooks/use_recent_imports"
+import { ParseProgressController, type ParseProgressUi } from "./parse_progress"
 
 type Step = "account-select" | "wizard-prep" | "upload" | "preview" | "complete"
 
@@ -133,6 +134,7 @@ export function ImportPage() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [parsing, setParsing] = useState(false)
+  const [progress, setProgress] = useState<ParseProgressUi | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
   const [accountResults, setAccountResults] = useState<AccountResult[]>([])
   /** Parse hints the user has chosen for the active account. Reset on account flip. */
@@ -307,8 +309,17 @@ export function ImportPage() {
     if (!currentAccount) return
     setParsing(true)
     setParseError(null)
+    const ctrl = new ParseProgressController(filesToSend)
+    setProgress(ctrl.sample())
+    // Sample the eased value on an interval; the bar's CSS transition smooths
+    // between samples, so a coarse cadence is enough.
+    const ticker = window.setInterval(() => setProgress(ctrl.sample()), 120)
     try {
-      const result = await api.parseDocuments(filesToSend, currentAccount.id, hints)
+      const result = await api.parseDocuments(filesToSend, currentAccount.id, hints, {
+        onProgress: (e) => ctrl.onEvent(e),
+      })
+      ctrl.complete()
+      setProgress(ctrl.sample())
       const id = recents.add({
         accountId: currentAccount.id,
         fileNames: filesToSend.map((f) => f.name),
@@ -319,7 +330,9 @@ export function ImportPage() {
       console.error("Parse failed:", err)
       setParseError(extractErrorMessage(err))
     } finally {
+      window.clearInterval(ticker)
       setParsing(false)
+      setProgress(null)
     }
   }
 
@@ -619,6 +632,7 @@ export function ImportPage() {
       <ReloadingOverlay
         active={parsing}
         fullscreen
+        progress={progress ?? undefined}
         text="Currently importing data. Please wait, this might take a while."
       />
     </div>

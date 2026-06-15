@@ -462,7 +462,7 @@ td code { font-size: 12px; }
     <tr><td>TransactionDirection</td><td><code>outflow</code>, <code>income</code></td><td>GET /api/transactions/by-category direction param</td></tr>
     <tr><td>TransactionPreviewStatus</td><td><code>new</code>, <code>duplicate</code>, <code>error</code></td><td>TransactionPreviewRow.status, InvestmentPreviewRow.status</td></tr>
     <tr><td>Agent</td><td><code>haiku</code>, <code>sonnet</code>, <code>opus</code></td><td>ParserCallCost.agent</td></tr>
-    <tr><td>ParseMode</td><td><code>split</code>, <code>unified</code></td><td>ParseHints.experimental.mode</td></tr>
+    <tr><td>ParseMode</td><td><code>split</code>, <code>unified</code></td><td>ParseHints.experimental.mode (testing only; default <code>unified</code>)</td></tr>
     <tr><td>ParsePhase</td><td><code>preprocessing</code>, <code>building_context</code>, <code>sending_to_llm</code>, <code>waiting_for_llm</code>, <code>post_processing</code></td><td>SSE phase events</td></tr>
   </tbody>
 </table>
@@ -1996,10 +1996,11 @@ td code { font-size: 12px; }
     <tbody>
       <tr><td><code>files[]</code></td><td>file</td><td>binary</td><td>Yes</td><td>1-5 files (CSV, PDF, Excel). Max 10 MB each, 50 MB total.</td></tr>
       <tr><td><code>account_id</code></td><td>text</td><td>string</td><td>Yes</td><td>Account to associate with parsed data</td></tr>
-      <tr><td><code>hints</code></td><td>text</td><td>JSON string</td><td>Yes</td><td>ParseHints JSON (controls extraction types and mode)</td></tr>
+      <tr><td><code>hints</code></td><td>text</td><td>JSON string</td><td>Yes</td><td>ParseHints JSON: <code>return_type</code> (which entity types to extract) and an optional free-text <code>hint</code> passed to the model as additional user context</td></tr>
       <tr><td><code>parse_id</code></td><td>text</td><td>string</td><td>No</td><td>Client-generated ID for SSE progress tracking</td></tr>
     </tbody>
   </table>
+  <p><strong>Experimental (testing only):</strong> ParseHints also accepts an optional <code>experimental</code> object (<code>{ "mode": "split" | "unified", "agent": "haiku" | "sonnet" | "opus" }</code>) to force the legacy split pipeline or pin a specific model agent. It is not used by the web UI and is not intended for production; omit it to run the default unified pipeline.</p>
   <h4>Example Request</h4>
   <pre class="example-request"><code>curl -X POST http://localhost:7433/api/parse \
   -F "files[]=@statement.csv" \
@@ -2099,22 +2100,22 @@ td code { font-size: 12px; }
   <pre class="example-request"><code>curl -N http://localhost:7433/api/parse/progress/my-parse-123</code></pre>
   <h4>Example Response (SSE stream)</h4>
   <pre><code>event: phase
-data: {"phase":"preprocessing","message":"Processing 1 uploaded file(s)","task_id":null}
+data: {"event":"phase","phase":"preprocessing","message":"Processing 1 uploaded file(s)"}
 
 event: phase
-data: {"phase":"sending_to_llm","message":"Sending 1 file(s) to AI model","task_id":null}
+data: {"event":"phase","phase":"sending_to_llm","message":"Sending 1 file(s) to AI model"}
 
 event: llm_start
-data: {"model":"claude-sonnet-4-6","input_tokens":4500,"task_id":"unified"}
+data: {"event":"llm_start","model":"claude-sonnet-4-6","input_tokens":4500,"task_id":"unified"}
 
 event: llm_progress
-data: {"output_tokens":1200,"elapsed_ms":1500,"task_id":"unified"}
+data: {"event":"llm_progress","output_tokens":1200,"elapsed_ms":1500,"task_id":"unified"}
 
 event: phase
-data: {"phase":"post_processing","message":"Checking for duplicates","task_id":null}
+data: {"event":"phase","phase":"post_processing","message":"Checking for duplicates"}
 
 event: done
-data: {"total_ms":3200}</code></pre>
+data: {"event":"done","total_ms":3200}</code></pre>
   <h4>Errors</h4>
   <table class="errors-table">
     <thead><tr><th>Event</th><th>Code</th><th>When</th></tr></thead>

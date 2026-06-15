@@ -41,14 +41,15 @@ pub struct ProviderCallResult {
 }
 
 const MAX_TOKENS_TEXT: u32 = 16_384;
-const MAX_TOKENS_DOCUMENTS: u32 = 32_000;
+const MAX_TOKENS_DOCUMENTS: u32 = 64_000;
 
 // ── Progress reporting ──────────────────────────────────────────────────────
 
 pub type ProgressTx = tokio::sync::broadcast::Sender<ProgressEvent>;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(tag = "event", rename_all = "snake_case")]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
 pub enum ProgressEvent {
     Phase {
         phase: ParsePhase,
@@ -58,17 +59,23 @@ pub enum ProgressEvent {
     },
     LlmStart {
         model: String,
+        // Serialized to JSON and read with JSON.parse on the client, so it is a
+        // JS number at runtime, not a bigint.
+        #[ts(type = "number")]
         input_tokens: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
     },
     LlmProgress {
+        #[ts(type = "number")]
         output_tokens: u64,
+        #[ts(type = "number")]
         elapsed_ms: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
     },
     Done {
+        #[ts(type = "number")]
         total_ms: u64,
     },
     Error {
@@ -77,8 +84,9 @@ pub enum ProgressEvent {
     },
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
 pub enum ParsePhase {
     Preprocessing,
     BuildingContext,
@@ -673,8 +681,18 @@ impl LlmProvider for AnthropicProvider {
     ) -> Result<ProviderCallResult, ProviderError> {
         let model = self.resolve_model(ModelTier::Advanced, agent_override);
 
-        let mut content: Vec<Value> = Vec::with_capacity(files.len() + 1);
+        let mut content: Vec<Value> = Vec::with_capacity(files.len() * 2 + 1);
         for (filename, mime, bytes) in files {
+            // Label each file by name so the model can attribute extracted rows
+            // to the right document via `source_file`. PDF/image blocks carry no
+            // filename of their own, so without this the model cannot tell which
+            // document a row came from when several are uploaded.
+            content.push(json!({
+                "type": "text",
+                "text": format!(
+                    "Source document filename: {filename}\nFor every row you extract from the document immediately below, set its \"source_file\" field to exactly this filename."
+                ),
+            }));
             content.push(
                 anthropic_content_block_for_file(filename, mime, bytes)
                     .map_err(|e| ProviderError::ResponseUnreadable(format!("{e}")))?,
