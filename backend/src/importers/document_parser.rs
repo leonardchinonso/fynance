@@ -275,7 +275,6 @@ pub fn build_multi_preview(
                         .to_string(),
                     amount: r.amount,
                     currency: Some(r.currency.clone()),
-                    category: None, // id-only contract; backend resolves at insert time
                     category_id,
                     category_source,
                     notes: r.notes.clone(),

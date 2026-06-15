@@ -9,10 +9,6 @@ export type SectionMapping = {
  */
 section: string, 
 /**
- * Legacy display name (kept for backward compat)
- */
-category: string | null, 
-/**
  * FK to parent categories.id
  */
 category_id: string | null, };

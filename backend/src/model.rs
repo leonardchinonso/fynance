@@ -43,9 +43,8 @@ pub struct Transaction {
     pub amount: Decimal,
     pub currency: String,
     pub account_id: String,
-    /// Display name "Parent: Child" (resolved via JOIN, or legacy string from CSV)
-    pub category: Option<String>,
-    /// FK to categories.id; only leaf nodes are valid
+    /// FK to categories.id; only leaf nodes are valid. The display name is
+    /// resolved client-side from the categories list.
     pub category_id: Option<String>,
     pub category_source: Option<CategorySource>,
     pub confidence: Option<f64>,
@@ -258,8 +257,7 @@ impl Granularity {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SpendingGridRow {
-    pub category: String,
-    /// FK to categories.id
+    /// FK to categories.id (leaf). Display name resolved client-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_id: Option<String>,
     pub section: String,
@@ -289,8 +287,7 @@ pub struct SpendingGridRow {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct BudgetRow {
-    pub category: String,
-    /// FK to categories.id
+    /// FK to categories.id (leaf). Display name resolved client-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_id: Option<String>,
     /// Effective budget for this month (standing or override). Null if not set.
@@ -309,7 +306,9 @@ pub struct BudgetRow {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct CategoryTotal {
-    pub category: String,
+    /// FK to categories.id (leaf), or null for uncategorized. Display name
+    /// resolved client-side.
+    pub category_id: Option<String>,
     /// When `direction` is unset the total is the signed net sum
     /// (negative = net spend). When `direction` is `outflow` or `income`
     /// the total is the sum of absolute values of matching transactions.
@@ -388,8 +387,6 @@ impl TransactionDirection {
 pub struct SectionMapping {
     /// One of: Income | Bills | Spending | Irregular | Transfers
     pub section: String,
-    /// Legacy display name (kept for backward compat)
-    pub category: Option<String>,
     /// FK to parent categories.id
     pub category_id: Option<String>,
 }
@@ -398,8 +395,6 @@ pub struct SectionMapping {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct StandingBudget {
-    /// Legacy display name (kept for backward compat)
-    pub category: Option<String>,
     /// FK to categories.id (leaf)
     pub category_id: Option<String>,
     pub amount: String,
@@ -410,7 +405,7 @@ pub struct StandingBudget {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct BudgetOverride {
     pub month: String,
-    pub category: String,
+    pub category_id: String,
     pub amount: String,
 }
 
@@ -427,10 +422,7 @@ pub struct ImportTransaction {
     pub amount: Decimal,
     #[serde(default)]
     pub currency: Option<String>,
-    /// Legacy category name (kept for backward compat with old agents)
-    #[serde(default)]
-    pub category: Option<String>,
-    /// Preferred: FK to categories.id (leaf node)
+    /// FK to categories.id (leaf node)
     #[serde(default)]
     pub category_id: Option<String>,
     #[serde(default)]

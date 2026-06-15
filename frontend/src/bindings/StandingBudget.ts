@@ -5,10 +5,6 @@
  */
 export type StandingBudget = { 
 /**
- * Legacy display name (kept for backward compat)
- */
-category: string | null, 
-/**
  * FK to categories.id (leaf)
  */
 category_id: string | null, amount: string, };

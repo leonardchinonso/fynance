@@ -6,9 +6,9 @@ import type { DisplayCurrency } from "./DisplayCurrency";
  * (e.g. "2026-01", "2026-Q1", "2026") to the spending total as a Decimal
  * string, or null if there were no transactions in that period.
  */
-export type SpendingGridRow = { category: string, 
+export type SpendingGridRow = { 
 /**
- * FK to categories.id
+ * FK to categories.id (leaf). Display name resolved client-side.
  */
 category_id: string | null, section: string, 
 /**

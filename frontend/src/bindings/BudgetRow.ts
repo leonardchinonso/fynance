@@ -4,9 +4,9 @@ import type { DisplayCurrency } from "./DisplayCurrency";
 /**
  * One row in the `GET /api/budget/:month` response.
  */
-export type BudgetRow = { category: string, 
+export type BudgetRow = { 
 /**
- * FK to categories.id
+ * FK to categories.id (leaf). Display name resolved client-side.
  */
 category_id: string | null, 
 /**

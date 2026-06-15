@@ -1000,9 +1000,9 @@ impl Db {
         let rows = self.conn.execute(
             r"INSERT OR IGNORE INTO transactions (
                 id, date, description, normalized, amount, currency,
-                account_id, category, category_id, category_source, confidence, notes,
+                account_id, category_id, category_source, confidence, notes,
                 is_recurring, exclude_from_summary, fingerprint, fitid, source_document_ids
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 tx.id,
                 tx.date.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -1011,7 +1011,6 @@ impl Db {
                 tx.amount.to_string(),
                 tx.currency,
                 tx.account_id,
-                tx.category,
                 tx.category_id,
                 tx.category_source.as_ref().map(|s| s.as_str()),
                 tx.confidence,
@@ -1061,13 +1060,10 @@ impl Db {
             let normalized = normalize_description(&t.description);
             let fp = fingerprint(&date_iso, &amount_str, account_id);
 
-            // Resolve category_id: prefer explicit category_id, fall back to name
-            let (category_id, category_display) = if let Some(ref cid) = t.category_id {
+            // Validate the category_id (must be an active leaf) when provided.
+            let category_id = if let Some(ref cid) = t.category_id {
                 match self.get_category_by_id(cid)? {
-                    Some(cat) if cat.parent_id.is_some() && cat.is_active => {
-                        let display = self.resolve_category_display_name(cid)?;
-                        (Some(cid.clone()), display)
-                    }
+                    Some(cat) if cat.parent_id.is_some() && cat.is_active => Some(cid.clone()),
                     Some(cat) if cat.parent_id.is_none() => {
                         result.errors.push(ImportRowError {
                             index: i,
@@ -1083,16 +1079,8 @@ impl Db {
                         continue;
                     }
                 }
-            } else if let Some(ref name) = t.category {
-                match self.resolve_category_by_name(name)? {
-                    Some(cat) if cat.parent_id.is_some() => {
-                        let display = self.resolve_category_display_name(&cat.id)?;
-                        (Some(cat.id), display)
-                    }
-                    _ => (None, t.category.clone()),
-                }
             } else {
-                (None, None)
+                None
             };
 
             let tx = Transaction {
@@ -1103,7 +1091,6 @@ impl Db {
                 amount: t.amount,
                 currency,
                 account_id: account_id.to_string(),
-                category: category_display,
                 category_id,
                 category_source: t.category_source.clone(),
                 confidence: None,
@@ -1312,12 +1299,10 @@ impl Db {
                         })
                         .collect();
                     let ph = placeholders.join(",");
-                    clauses.push(format!("t.category_id IN ({ph}) OR t.category IN ({ph})"));
+                    clauses.push(format!("t.category_id IN ({ph})"));
                 }
                 if want_uncategorized {
-                    clauses.push(
-                        "(t.category_id IS NULL AND t.category IS NULL)".to_string(),
-                    );
+                    clauses.push("t.category_id IS NULL".to_string());
                 }
                 if !clauses.is_empty() {
                     conditions.push(format!("({})", clauses.join(" OR ")));
@@ -1333,7 +1318,7 @@ impl Db {
             args.push(Box::new(pattern.clone()));
             let idx = args.len();
             conditions.push(format!(
-                "(t.normalized LIKE ?{idx} ESCAPE '\\' OR t.description LIKE ?{idx} ESCAPE '\\' OR t.category LIKE ?{idx} ESCAPE '\\' OR t.notes LIKE ?{idx} ESCAPE '\\')"
+                "(t.normalized LIKE ?{idx} ESCAPE '\\' OR t.description LIKE ?{idx} ESCAPE '\\' OR t.notes LIKE ?{idx} ESCAPE '\\')"
             ));
         }
         if let Some(pid) = &filters.profile_id {
@@ -1379,21 +1364,14 @@ impl Db {
             }
             // Push uncategorized rows to the bottom regardless of direction.
             Some(TransactionSort::Category) => format!(
-                "(category_display IS NULL) ASC, category_display {dir}, t.date DESC, t.id DESC"
+                "(t.category_id IS NULL) ASC, pc.name {dir}, c.name {dir}, t.date DESC, t.id DESC"
             ),
         };
 
         // LEFT JOIN categories to resolve display name from category_id
         let data_sql = format!(
             r"SELECT t.id, t.date, t.description, t.normalized, t.amount, t.currency,
-                     t.account_id,
-                     COALESCE(
-                       CASE WHEN c.parent_id IS NOT NULL THEN pc.name || ': ' || c.name
-                            WHEN c.id IS NOT NULL THEN c.name
-                            ELSE NULL END,
-                       t.category
-                     ) AS category_display,
-                     t.category_id,
+                     t.account_id, t.category_id,
                      t.category_source, t.confidence, t.notes,
                      t.is_recurring, t.exclude_from_summary, t.fingerprint, t.fitid,
                      t.source_document_ids
@@ -1435,7 +1413,7 @@ impl Db {
         use std::collections::HashMap;
 
         let mut conditions: Vec<String> = vec![
-            "(t.category_id IS NOT NULL OR t.category IS NOT NULL)".to_string(),
+            "t.category_id IS NOT NULL".to_string(),
             "t.exclude_from_summary = 0".to_string(),
         ];
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1471,7 +1449,7 @@ impl Db {
                     })
                     .collect();
                 let ph = placeholders.join(",");
-                conditions.push(format!("(t.category_id IN ({ph}) OR t.category IN ({ph}))"));
+                conditions.push(format!("t.category_id IN ({ph})"));
             }
         }
         if let Some(pid) = &filters.profile_id {
@@ -1502,50 +1480,39 @@ impl Db {
         let where_clause = conditions.join(" AND ");
 
         let sql = format!(
-            r"SELECT
-                COALESCE(
-                  CASE WHEN c.parent_id IS NOT NULL THEN pc.name || ': ' || c.name
-                       WHEN c.id IS NOT NULL THEN c.name
-                       ELSE NULL END,
-                  t.category
-                ) AS category_display,
-                t.currency,
-                {sum_expr} AS total
+            r"SELECT t.category_id, t.currency, {sum_expr} AS total
               FROM transactions t
-              LEFT JOIN categories c ON c.id = t.category_id
-              LEFT JOIN categories pc ON pc.id = c.parent_id
               {join}
               WHERE {where_clause}
-              GROUP BY category_display, t.currency
-              ORDER BY category_display"
+              GROUP BY t.category_id, t.currency"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
-        let raw: Vec<(String, String, f64)> = stmt
+        let raw: Vec<(Option<String>, String, f64)> = stmt
             .query_map(
                 rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
                 |row| {
-                    let category: String = row.get(0)?;
+                    let category_id: Option<String> = row.get(0)?;
                     let currency: String = row.get(1)?;
                     let total: f64 = row.get(2)?;
-                    Ok((category, currency, total))
+                    Ok((category_id, currency, total))
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut categories_map: HashMap<String, CurrencyAggregator> = HashMap::new();
-        for (category, currency, total_f64) in raw {
+        let mut categories_map: HashMap<Option<String>, CurrencyAggregator> = HashMap::new();
+        for (category_id, currency, total_f64) in raw {
             let total = Decimal::try_from(total_f64).unwrap_or_default();
             categories_map
-                .entry(category)
+                .entry(category_id)
                 .or_default()
                 .add(total, &currency, fx);
         }
 
         Ok(categories_map
             .into_iter()
-            .map(|(category, agg)| CategoryTotal {
-                category,
+            .map(|(category_id, agg)| CategoryTotal {
+                category_id,
                 total: agg.converted_sum().to_string(),
                 display_currency: agg.display_currency(fx.preferred()),
             })
@@ -1576,11 +1543,9 @@ impl Db {
             ));
         }
 
-        let display_name = self.resolve_category_display_name(category_id)?;
-
         let updated = self.conn.execute(
-            "UPDATE transactions SET category_id = ?1, category = ?2, category_source = ?3 WHERE id = ?4",
-            params![category_id, display_name, source.as_str(), id],
+            "UPDATE transactions SET category_id = ?1, category_source = ?2 WHERE id = ?3",
+            params![category_id, source.as_str(), id],
         )?;
         if updated == 0 {
             return Err(anyhow!("unknown transaction: {id}"));
@@ -1613,20 +1578,11 @@ impl Db {
     pub fn get_transaction_by_id(&self, id: &str) -> Result<Option<Transaction>> {
         let mut stmt = self.conn.prepare(
             r"SELECT t.id, t.date, t.description, t.normalized, t.amount, t.currency,
-                     t.account_id,
-                     COALESCE(
-                       CASE WHEN c.parent_id IS NOT NULL THEN pc.name || ': ' || c.name
-                            WHEN c.id IS NOT NULL THEN c.name
-                            ELSE NULL END,
-                       t.category
-                     ) AS category_display,
-                     t.category_id,
+                     t.account_id, t.category_id,
                      t.category_source, t.confidence, t.notes,
                      t.is_recurring, t.exclude_from_summary, t.fingerprint, t.fitid,
                      t.source_document_ids
               FROM transactions t
-              LEFT JOIN categories c ON c.id = t.category_id
-              LEFT JOIN categories pc ON pc.id = c.parent_id
               WHERE t.id = ?1",
         )?;
         let result = stmt.query_row(params![id], row_to_transaction).optional()?;
@@ -1826,39 +1782,19 @@ impl Db {
         Ok(None)
     }
 
-    fn resolve_category_display_name(&self, category_id: &str) -> Result<Option<String>> {
-        let result: Option<(String, Option<String>)> = self
-            .conn
-            .query_row(
-                "SELECT c.name, pc.name
-             FROM categories c
-             LEFT JOIN categories pc ON pc.id = c.parent_id
-             WHERE c.id = ?1",
-                params![category_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-
-        Ok(result.map(|(name, parent_name)| match parent_name {
-            Some(pn) => format!("{pn}: {name}"),
-            None => name,
-        }))
-    }
-
     // ── Section mappings ──────────────────────────────────────────────────────
 
     pub fn get_section_mappings(&self) -> Result<Vec<SectionMapping>> {
         let mut stmt = self.conn.prepare(
-            r"SELECT sm.section, sm.category, sm.category_id
+            r"SELECT sm.section, sm.category_id
               FROM section_mappings sm
-              ORDER BY sm.section, COALESCE(sm.category, '')",
+              ORDER BY sm.section, sm.category_id",
         )?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(SectionMapping {
                     section: row.get(0)?,
-                    category: row.get(1)?,
-                    category_id: row.get(2)?,
+                    category_id: row.get(1)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1871,8 +1807,8 @@ impl Db {
         tx.execute_batch("DELETE FROM section_mappings")?;
         for m in mappings {
             tx.execute(
-                "INSERT INTO section_mappings (section, category, category_id) VALUES (?1, ?2, ?3)",
-                params![m.section, m.category, m.category_id],
+                "INSERT INTO section_mappings (section, category_id) VALUES (?1, ?2)",
+                params![m.section, m.category_id],
             )?;
         }
         tx.commit()?;
@@ -1883,14 +1819,13 @@ impl Db {
 
     pub fn get_standing_budgets(&self) -> Result<Vec<StandingBudget>> {
         let mut stmt = self.conn.prepare(
-            "SELECT category_id, category, amount FROM standing_budgets ORDER BY category",
+            "SELECT category_id, amount FROM standing_budgets ORDER BY category_id",
         )?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(StandingBudget {
                     category_id: row.get(0)?,
-                    category: row.get(1)?,
-                    amount: row.get(2)?,
+                    amount: row.get(1)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1898,12 +1833,11 @@ impl Db {
     }
 
     pub fn set_standing_budget(&self, category_id: &str, amount: Decimal) -> Result<()> {
-        let display_name = self.resolve_category_display_name(category_id)?;
         self.conn.execute(
-            r"INSERT INTO standing_budgets (category_id, category, amount)
-              VALUES (?1, ?2, ?3)
-              ON CONFLICT(category_id) DO UPDATE SET amount = excluded.amount, category = excluded.category",
-            params![category_id, display_name, amount.to_string()],
+            r"INSERT INTO standing_budgets (category_id, amount)
+              VALUES (?1, ?2)
+              ON CONFLICT(category_id) DO UPDATE SET amount = excluded.amount",
+            params![category_id, amount.to_string()],
         )?;
         Ok(())
     }
@@ -1914,12 +1848,11 @@ impl Db {
         category_id: &str,
         amount: Decimal,
     ) -> Result<()> {
-        let display_name = self.resolve_category_display_name(category_id)?;
         self.conn.execute(
-            r"INSERT INTO budget_overrides (month, category_id, category, amount)
-              VALUES (?1, ?2, ?3, ?4)
+            r"INSERT INTO budget_overrides (month, category_id, amount)
+              VALUES (?1, ?2, ?3)
               ON CONFLICT(month, category_id) DO UPDATE SET amount = excluded.amount",
-            params![month, category_id, display_name, amount.to_string()],
+            params![month, category_id, amount.to_string()],
         )?;
         Ok(())
     }
@@ -2056,27 +1989,7 @@ impl Db {
                     })
                 });
 
-                // Get the category display from a fresh query to avoid dedup issues
-                let category_display = category_id
-                    .as_ref()
-                    .and_then(|cid| {
-                        self.conn
-                            .query_row(
-                                r"SELECT CASE WHEN c.parent_id IS NOT NULL THEN pc.name || ': ' || c.name
-                                           ELSE c.name END
-                                   FROM categories c
-                                   LEFT JOIN categories pc ON pc.id = c.parent_id
-                                   WHERE c.id = ?1",
-                                params![cid],
-                                |row| row.get::<_, Option<String>>(0),
-                            )
-                            .ok()
-                            .flatten()
-                    })
-                    .unwrap_or_else(|| "Unknown".to_string());
-
                 BudgetRow {
-                    category: category_display,
                     category_id,
                     budgeted,
                     actual: actual_dec.to_string(),
@@ -2086,7 +1999,7 @@ impl Db {
             })
             .collect();
 
-        final_rows.sort_by(|a, b| a.category.cmp(&b.category));
+        final_rows.sort_by(|a, b| a.category_id.cmp(&b.category_id));
         Ok(final_rows)
     }
 
@@ -2121,7 +2034,7 @@ impl Db {
         let mut conditions = vec![
             "t.date >= ?1".to_string(),
             "t.date <= ?2".to_string(),
-            "(t.category_id IS NOT NULL OR t.category IS NOT NULL)".to_string(),
+            "t.category_id IS NOT NULL".to_string(),
             "t.exclude_from_summary = 0".to_string(),
         ];
         let mut extra_args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -2139,12 +2052,6 @@ impl Db {
 
         let sql = format!(
             r"SELECT
-                COALESCE(
-                  CASE WHEN c.parent_id IS NOT NULL THEN pc.name || ': ' || c.name
-                       WHEN c.id IS NOT NULL THEN c.name
-                       ELSE NULL END,
-                  t.category
-                ) AS category_display,
                 t.category_id,
                 COALESCE(sm_child.section, sm_parent.section, 'Spending') AS section,
                 {period_expr} AS period,
@@ -2152,13 +2059,12 @@ impl Db {
                 SUM(CAST(t.amount AS REAL)) AS period_total
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
-              LEFT JOIN categories pc ON pc.id = c.parent_id
               LEFT JOIN section_mappings sm_child  ON sm_child.category_id  = c.id
               LEFT JOIN section_mappings sm_parent ON sm_parent.category_id = COALESCE(c.parent_id, c.id)
               {join}
               WHERE {where_clause}
-              GROUP BY category_display, period, t.currency
-              ORDER BY category_display, period, t.currency"
+              GROUP BY t.category_id, period, t.currency
+              ORDER BY t.category_id, period, t.currency"
         );
 
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
@@ -2169,7 +2075,7 @@ impl Db {
         base_args.extend(extra_args);
 
         let mut stmt = self.conn.prepare(&sql)?;
-        let raw: Vec<(String, Option<String>, String, String, String, f64)> = stmt
+        let raw: Vec<(Option<String>, String, String, String, f64)> = stmt
             .query_map(
                 rusqlite::params_from_iter(base_args.iter().map(|b| b.as_ref())),
                 |row| {
@@ -2179,7 +2085,6 @@ impl Db {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
-                        row.get(5)?,
                     ))
                 },
             )?
@@ -2207,13 +2112,12 @@ impl Db {
                 HashMap<String, CurrencyAggregator>,
             ),
         > = HashMap::new();
-        for (category, category_id, section, period, currency, total_f64) in raw {
+        for (category_id, section, period, currency, total_f64) in raw {
             let total_dec = Decimal::try_from(total_f64).unwrap_or_default();
-            let key = category.clone();
+            let key = category_id.clone().unwrap_or_default();
             let entry = grid.entry(key).or_insert_with(|| {
                 (
                     SpendingGridRow {
-                        category: category.clone(),
                         category_id: category_id.clone(),
                         section: section.clone(),
                         periods: HashMap::new(),
@@ -2282,7 +2186,7 @@ impl Db {
             })
             .collect();
 
-        result.sort_by(|a, b| a.category.cmp(&b.category));
+        result.sort_by(|a, b| a.category_id.cmp(&b.category_id));
         Ok(result)
     }
 
@@ -3322,7 +3226,12 @@ impl Db {
             let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
             let mut stmt = self.conn.prepare(
                 r"SELECT amount, currency FROM transactions
-                  WHERE category = 'Finance: Investment Transfer'
+                  WHERE category_id IN (
+                          SELECT c.id FROM categories c
+                          LEFT JOIN categories pc ON pc.id = c.parent_id
+                          WHERE c.name = 'Investment Transfer'
+                             OR (pc.name || ': ' || c.name) = 'Finance: Investment Transfer'
+                        )
                     AND date >= ?1 AND date <= ?2",
             )?;
             let rows = stmt
@@ -3803,7 +3712,7 @@ fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
 fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> {
     let date: String = row.get(1)?;
     let amount: String = row.get(4)?;
-    let cat_source: Option<String> = row.get(9)?;
+    let cat_source: Option<String> = row.get(8)?;
     Ok(Transaction {
         id: row.get(0)?,
         date: parse_transaction_datetime(&date).ok_or_else(|| {
@@ -3818,16 +3727,15 @@ fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> 
         amount: amount.parse::<Decimal>().unwrap_or_default(),
         currency: row.get(5)?,
         account_id: row.get(6)?,
-        category: row.get(7)?,    // resolved display name from COALESCE
-        category_id: row.get(8)?, // FK to categories.id
+        category_id: row.get(7)?, // FK to categories.id
         category_source: cat_source.as_deref().and_then(CategorySource::parse),
-        confidence: row.get(10)?,
-        notes: row.get(11)?,
-        is_recurring: row.get::<_, i64>(12)? != 0,
-        exclude_from_summary: row.get::<_, i64>(13)? != 0,
-        fingerprint: row.get(14)?,
-        fitid: row.get(15)?,
-        source_document_ids: parse_id_array(&row.get::<_, String>(16)?),
+        confidence: row.get(9)?,
+        notes: row.get(10)?,
+        is_recurring: row.get::<_, i64>(11)? != 0,
+        exclude_from_summary: row.get::<_, i64>(12)? != 0,
+        fingerprint: row.get(13)?,
+        fitid: row.get(14)?,
+        source_document_ids: parse_id_array(&row.get::<_, String>(15)?),
     })
 }
 

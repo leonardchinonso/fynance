@@ -94,8 +94,8 @@ impl Transaction {
         let normalized = normalize_description(&description);
         let fp = fingerprint(&date_iso, &amount_str, account_id);
 
-        let category = row.category.filter(|s| !s.is_empty());
-        let category_source = category.as_ref().map(|_| CategorySource::Rule);
+        let category_id = row.category_id.filter(|s| !s.is_empty());
+        let category_source = category_id.as_ref().map(|_| CategorySource::Rule);
 
         Transaction {
             id: Uuid::new_v4().to_string(),
@@ -105,8 +105,7 @@ impl Transaction {
             amount: row.amount,
             currency: row.currency,
             account_id: account_id.to_string(),
-            category,
-            category_id: None,
+            category_id,
             category_source,
             confidence: None,
             notes: row.notes,
@@ -117,4 +116,21 @@ impl Transaction {
             source_document_ids: Vec::new(),
         }
     }
+}
+
+/// If a parsed row carries a category *name* but no id (split mode), resolve the
+/// name to a `category_id` so storage stays id-only. Unknown names are left null
+/// (the row imports uncategorized). No-op when the row already has an id.
+pub fn resolve_row_category_id(
+    db: &crate::storage::Db,
+    row: &mut UnifiedStatementRow,
+) -> anyhow::Result<()> {
+    if row.category_id.is_none() {
+        if let Some(name) = row.category.as_deref().filter(|s| !s.is_empty()) {
+            if let Some(cat) = db.resolve_category_by_name(name)? {
+                row.category_id = Some(cat.id);
+            }
+        }
+    }
+    Ok(())
 }

@@ -10,11 +10,8 @@ import type { CategorySource } from "./CategorySource";
  */
 export type Transaction = { id: string, date: string, description: string, normalized: string, amount: string, currency: string, account_id: string, 
 /**
- * Display name "Parent: Child" (resolved via JOIN, or legacy string from CSV)
- */
-category: string | null, 
-/**
- * FK to categories.id; only leaf nodes are valid
+ * FK to categories.id; only leaf nodes are valid. The display name is
+ * resolved client-side from the categories list.
  */
 category_id: string | null, category_source: CategorySource | null, confidence: number | null, notes: string | null, is_recurring: boolean, exclude_from_summary: boolean, fingerprint: string, fitid: string | null, 
 /**

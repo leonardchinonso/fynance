@@ -214,10 +214,9 @@ pub async fn import_csv(
                     .to_string(),
                 amount: r.amount,
                 currency: Some(r.currency.clone()),
-                category: r.category.clone(),
-                category_id: None,
+                category_id: r.category_id.clone(),
                 category_source: r
-                    .category
+                    .category_id
                     .as_ref()
                     .map(|_| crate::model::CategorySource::Rule),
                 notes: r.notes.clone(),
@@ -493,7 +492,7 @@ fn process_parsed_statement(
         ..ImportResult::default()
     };
 
-    for row in parsed.rows {
+    for mut row in parsed.rows {
         result.rows_total += 1;
         if row.row_confidence < min_row_confidence {
             tracing::warn!(
@@ -504,6 +503,7 @@ fn process_parsed_statement(
             );
             continue;
         }
+        crate::importers::unified::resolve_row_category_id(db, &mut row)?;
         let tx = Transaction::from_unified(row, account_id);
         match db.insert_transaction(&tx)? {
             InsertOutcome::Inserted => result.rows_inserted += 1,
