@@ -126,7 +126,8 @@ export function CategoriesSection() {
             <div>
               <label className="text-sm font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></label>
               <textarea
-                className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm resize-y min-h-[3.5rem]"
+                className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm resize-y min-h-[7.5rem]"
+                rows={5}
                 placeholder="e.g. Utility bills — internet, water, gas, electricity. Not Netflix or Spotify."
                 value={form.description}
                 onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}

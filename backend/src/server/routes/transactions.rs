@@ -2,10 +2,10 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{CategorySource, Transaction, TransactionDirection};
+use crate::model::{CategorySource, Paginated, Transaction, TransactionDirection};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 use crate::server::validation::{
@@ -43,18 +43,10 @@ fn default_limit() -> u32 {
     25
 }
 
-#[derive(Debug, Serialize)]
-pub struct TransactionListResponse {
-    pub data: Vec<Transaction>,
-    pub total: u64,
-    pub page: u32,
-    pub limit: u32,
-}
-
 pub async fn list_transactions(
     State(state): State<AppState>,
     Query(q): Query<ListTransactionsQuery>,
-) -> Result<Json<TransactionListResponse>, AppError> {
+) -> Result<Json<Paginated<Transaction>>, AppError> {
     let start = q.start.as_deref().map(parse_date).transpose()?;
     let end = q.end.as_deref().map(parse_date).transpose()?;
     if let (Some(s), Some(e)) = (start, end) {
@@ -107,9 +99,9 @@ pub async fn list_transactions(
         db.get_transactions(&filters)?
     };
 
-    Ok(Json(TransactionListResponse {
+    Ok(Json(Paginated {
         data,
-        total,
+        total: total as u32,
         page: q.page,
         limit: q.limit,
     }))

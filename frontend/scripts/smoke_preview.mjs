@@ -104,7 +104,7 @@ async function runView(browser, view) {
     throw new Error(`Parse progress bar did not advance (aria-valuenow=${valueNow})`)
   }
   const progressLabel = page
-    .getByText(/tokens|reading your statements|extracting transactions|categorizing/i)
+    .getByText(/extracting (transactions|holdings|investments)|found|reading your statement/i)
     .first()
   await progressLabel.waitFor({ state: "visible", timeout: 5000 })
   await shot(page, `preview_${label}_3b_parsing_progress`)
@@ -238,8 +238,48 @@ async function runView(browser, view) {
   }
   await shot(page, `preview_${label}_10_documents`)
 
+  // 12. Budget grid — verify the "Show empty categories" toggle and the
+  //     per-period spending-trend tooltip on the Average cell (V0 cleanup).
+  await page.goto(`${BASE}/budget?view=spreadsheet`, { waitUntil: "domcontentloaded" })
+  await page.getByText(/show empty categories/i).waitFor({ timeout: 10000 })
+  const emptySwitch = page.locator("[data-slot='switch']").first()
+  await emptySwitch.click()
+  await shot(page, `preview_${label}_11_budget_toggle`)
+
+  const avgTrigger = page.getByRole("table").locator("[data-slot='tooltip-trigger']").first()
+  await avgTrigger.waitFor({ timeout: 5000 })
+  await avgTrigger.hover()
+  await page.waitForTimeout(300)
+  const trendTable = page.locator("[data-slot='tooltip-content'] table").first()
+  await trendTable.waitFor({ timeout: 5000 })
+  if ((await trendTable.count()) === 0) {
+    throw new Error("Budget spending-trend tooltip table did not render on hover")
+  }
+  await shot(page, `preview_${label}_11b_budget_trend_tooltip`)
+
   await ctx.close()
   console.log(`[${label}] OK`)
+}
+
+// Verify the `system` theme resolves and live-updates with the OS color scheme,
+// specifically on a mobile viewport (the burndown reported this broken on
+// mobile). Sets theme=system, flips prefers-color-scheme at runtime, and asserts
+// the <html> dark class follows the change listener.
+async function checkSystemTheme(browser, viewport, label) {
+  const ctx = await browser.newContext({ viewport, colorScheme: "dark" })
+  await ctx.addInitScript(() => {
+    localStorage.setItem("fynance-api-mode", "mock")
+    localStorage.setItem("fynance-theme", "system")
+  })
+  const page = await ctx.newPage()
+  await page.goto(`${BASE}/budget?view=spreadsheet`, { waitUntil: "domcontentloaded" })
+  await page.waitForFunction(() => document.documentElement.classList.contains("dark"), undefined, { timeout: 6000 })
+  await page.emulateMedia({ colorScheme: "light" })
+  await page.waitForFunction(() => !document.documentElement.classList.contains("dark"), undefined, { timeout: 6000 })
+  await page.emulateMedia({ colorScheme: "dark" })
+  await page.waitForFunction(() => document.documentElement.classList.contains("dark"), undefined, { timeout: 6000 })
+  await ctx.close()
+  console.log(`[system-theme ${label}] OK`)
 }
 
 async function main() {
@@ -253,6 +293,8 @@ async function main() {
         await runView(browser, { ...view, theme })
       }
     }
+    await checkSystemTheme(browser, { width: 390, height: 844 }, "mobile")
+    await checkSystemTheme(browser, { width: 1440, height: 900 }, "desktop")
   } finally {
     await browser.close()
   }

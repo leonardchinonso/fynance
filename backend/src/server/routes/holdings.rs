@@ -17,7 +17,7 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 
 use crate::model::{
-    AccountSnapshot, BalanceDelta, BreakdownItem, Holding, HoldingsImportPayload,
+    AccountSnapshot, BalanceDelta, BreakdownItem, Holding, HoldingWrite, HoldingsWritePayload,
     HoldingsSummaryResponse,
 };
 use crate::server::auth::AuthContext;
@@ -389,40 +389,56 @@ pub struct HoldingsImportQuery {
     pub dry_run: Option<bool>,
 }
 
+/// Validate each write-union holding and flatten into storable `Holding`s,
+/// surfacing the first validation failure as a 400.
+fn holdings_from_writes(
+    writes: Vec<HoldingWrite>,
+    account_id: &str,
+) -> Result<Vec<Holding>, AppError> {
+    writes
+        .into_iter()
+        .map(|w| w.into_holding(account_id))
+        .collect::<Result<Vec<_>, String>>()
+        .map_err(|e| AppError::bad_request(e, "invalid_holding"))
+}
+
 pub async fn import_holdings(
     State(state): State<AppState>,
     auth: Extension<AuthContext>,
     Query(q): Query<HoldingsImportQuery>,
-    Json(payload): Json<HoldingsImportPayload>,
+    Json(payload): Json<HoldingsWritePayload>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     require_token_if_remote(&state, &auth)?;
     let db = state.db.lock().expect("db mutex poisoned");
 
-    if !db.account_exists(&payload.account_id)? {
+    let account_id = payload.account_id;
+    if !db.account_exists(&account_id)? {
         return Err(AppError::bad_request(
-            format!("account {} not found", payload.account_id),
+            format!("account {account_id} not found"),
             "account_not_found",
         ));
     }
 
+    let holdings = holdings_from_writes(payload.holdings, &account_id)?;
+
     // Validate currencies for all holdings.
-    for holding in &payload.holdings {
+    for holding in &holdings {
         validate_currency(&db, &holding.currency)?;
     }
 
     if q.dry_run.unwrap_or(false) {
-        let previews = db.dry_run_holdings(&payload.account_id, &payload.holdings)?;
+        let previews = db.dry_run_holdings(&account_id, &holdings)?;
         return Ok(Json(serde_json::json!({
             "dry_run": true,
             "preview": { "total": previews.len(), "snapshots": previews },
-            "commit_payload": { "account_id": payload.account_id, "holdings": payload.holdings }
+            "commit_payload": { "account_id": account_id, "holdings": holdings }
         })));
     }
 
-    db.upsert_holdings(&payload.account_id, &payload.holdings)?;
+    db.upsert_holdings(&account_id, &holdings)?;
     Ok(Json(serde_json::json!({
         "ok": true,
-        "holdings_imported": payload.holdings.len()
+        "holdings_imported": holdings.len()
     })))
 }
 
@@ -432,9 +448,11 @@ pub async fn post_holdings(
     State(state): State<AppState>,
     auth: Extension<AuthContext>,
     Path(account_id): Path<String>,
-    Json(body): Json<Vec<Holding>>,
+    Json(body): Json<Vec<HoldingWrite>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     require_token_if_remote(&state, &auth)?;
+
+    let holdings = holdings_from_writes(body, &account_id)?;
 
     let holdings_updated = {
         let db = state.db.lock().expect("db mutex poisoned");
@@ -445,11 +463,11 @@ pub async fn post_holdings(
         }
 
         // Validate currencies for all holdings.
-        for holding in &body {
+        for holding in &holdings {
             validate_currency(&db, &holding.currency)?;
         }
 
-        db.replace_holdings(&account_id, &body)?
+        db.replace_holdings(&account_id, &holdings)?
     };
 
     Ok(Json(serde_json::json!({

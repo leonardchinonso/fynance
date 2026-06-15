@@ -14,7 +14,7 @@ import type {
   Granularity,
   Holding,
   ImportResult,
-  PaginatedResponse,
+  Paginated,
   PortfolioHistoryRow,
   PortfolioResponse,
   Profile,
@@ -117,7 +117,7 @@ export class MockApiService implements ApiService {
 
   async getTransactions(
     filters: TransactionFilters
-  ): Promise<PaginatedResponse<Transaction>> {
+  ): Promise<Paginated<Transaction>> {
     await delay(DELAY_MS)
 
     let data = [...MOCK_TRANSACTIONS]
@@ -891,9 +891,9 @@ export class MockApiService implements ApiService {
     // post_processing -> done sequence) so the progress bar animates in mock mode.
     const emit = opts?.onProgress
     emit?.({ event: "llm_start", model: "claude-sonnet-4-6", input_tokens: 4200, task_id: "unified" })
-    for (const output_tokens of [300, 700, 1100, 1500]) {
+    for (const items of [4, 11, 19, 26]) {
       await delay(DELAY_MS / 2)
-      emit?.({ event: "llm_progress", output_tokens, elapsed_ms: 0, task_id: "unified" })
+      emit?.({ event: "llm_progress", output_tokens: 0, elapsed_ms: 0, items, section: "transactions", task_id: "unified" })
     }
     emit?.({ event: "phase", phase: "post_processing", message: "Checking for duplicates", task_id: null })
     await delay(DELAY_MS / 3)

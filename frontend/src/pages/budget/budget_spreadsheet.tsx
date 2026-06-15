@@ -1,3 +1,4 @@
+import { useState } from "react"
 import type { SpendingGridRow, Granularity } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
@@ -13,7 +14,11 @@ import { SpreadsheetSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { EmptyState } from "@/components/empty_state"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Switch } from "@/components/ui/switch"
 import { BudgetEditPopover } from "./budget_edit_popover"
+
+const SHOW_EMPTY_KEY = "fynance-budget-show-empty"
 
 interface BudgetSpreadsheetProps {
   data: RemoteData<SpendingGridRow[]>
@@ -51,6 +56,13 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
   rows: SpendingGridRow[]; months: string[]; granularity: Granularity; onBudgetSaved?: () => void
 }) {
   const preferredCurrency = usePreferredCurrency()
+  const [showEmpty, setShowEmpty] = useState<boolean>(() => {
+    try { return localStorage.getItem(SHOW_EMPTY_KEY) === "true" } catch { return false }
+  })
+  const toggleShowEmpty = (v: boolean) => {
+    setShowEmpty(v)
+    try { localStorage.setItem(SHOW_EMPTY_KEY, String(v)) } catch { /* ignore */ }
+  }
   if (rows.length === 0) return <EmptyState />
 
   const periods = groupMonthsByGranularity(months, granularity)
@@ -72,17 +84,39 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
     return hasData ? total.toFixed(2) : null
   }
 
+  const isEmptyRow = (row: SpendingGridRow): boolean => {
+    if (row.budget != null && parseFloat(row.budget) !== 0) return false
+    for (const p of periods) {
+      const v = getPeriodValue(row, p)
+      if (v != null && parseFloat(v) !== 0) return false
+    }
+    return true
+  }
+  const visibleRows = showEmpty ? rows : rows.filter((r) => !isEmptyRow(r))
+
   const sections = ["Income", "Bills", "Spending", "Irregular", "Transfers"]
   const grouped = new Map<string, SpendingGridRow[]>()
   for (const s of sections) grouped.set(s, [])
-  for (const row of rows) {
+  for (const row of visibleRows) {
     const arr = grouped.get(row.section)
     if (arr) arr.push(row)
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <Table>
+    <div className="space-y-2">
+      <div className="flex items-center justify-end">
+        <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-muted-foreground">
+          <Switch size="sm" checked={showEmpty} onCheckedChange={toggleShowEmpty} />
+          Show empty categories
+        </label>
+      </div>
+      {visibleRows.length === 0 ? (
+        <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+          No categories with budget or spend in this range.
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border">
+          <Table>
         <TableHeader>
           <TableRow>
             <TableHead className="sticky left-0 bg-background z-10">Category</TableHead>
@@ -115,7 +149,9 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
             )
           })}
         </TableBody>
-      </Table>
+          </Table>
+        </div>
+      )}
     </div>
   )
 }
@@ -183,7 +219,35 @@ function SectionBlock({
               )
             })}
             <TableCell className="text-right text-sm font-medium">
-              {rowAvg !== null ? <DualAmount value={rowAvg.toFixed(2)} preferredCurrency={preferredCurrency} display={row.average_display} secondaryFirst /> : "-"}
+              {rowAvg !== null ? (
+                <Tooltip>
+                  <TooltipTrigger className="cursor-default underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
+                    <DualAmount value={rowAvg.toFixed(2)} preferredCurrency={preferredCurrency} display={row.average_display} secondaryFirst />
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="left"
+                    className="max-w-xs bg-popover text-popover-foreground ring-1 ring-foreground/10 px-3 py-2"
+                    arrowClassName="bg-popover fill-popover"
+                  >
+                    <div className="space-y-1 text-xs">
+                      <p className="text-[10px] font-medium text-muted-foreground">{categoryLeaf(row.category)} — spend by period</p>
+                      <table className="w-full tabular-nums">
+                        <tbody>
+                          {periods.map((p, i) => {
+                            const v = rowValues[i]
+                            return (
+                              <tr key={p}>
+                                <td className="pr-3 text-left text-[10px] text-muted-foreground">{formatPeriodKey(p, granularity)}</td>
+                                <td className="text-right">{v !== null ? formatCurrency(Math.abs(parseFloat(v)).toFixed(2), preferredCurrency) : "—"}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              ) : "-"}
             </TableCell>
             <TableCell className="text-right text-sm tabular-nums">
               <BudgetEditPopover

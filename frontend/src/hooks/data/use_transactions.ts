@@ -1,11 +1,11 @@
 import { api } from "@/api/client"
-import type { CategoryTotal, CategoryTotalFilters, PaginatedResponse, SortDir, Transaction, TransactionFilters, TransactionSortColumn } from "@/types"
+import type { CategoryTotal, CategoryTotalFilters, Paginated, SortDir, Transaction, TransactionFilters, TransactionSortColumn } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { useRemoteData } from "@/hooks/use_remote_data"
 
 /** Transaction rows plus a map of accountId → display name for the table. */
 export interface TransactionsData {
-  result: PaginatedResponse<Transaction>
+  result: Paginated<Transaction>
   accountNameMap: Record<string, string>
 }
 
