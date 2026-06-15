@@ -1751,6 +1751,52 @@ impl Db {
         Ok(())
     }
 
+    /// Permanently removes a category, unlike [`Self::soft_delete_category`]
+    /// which only flips `is_active`. Refuses if the category still has child
+    /// categories (reparent or delete them first) so a sub-tree is never
+    /// orphaned. Any transactions or budget rows pointing at it are detached
+    /// so no dangling references remain (FK enforcement is off, so this is
+    /// done explicitly rather than relying on ON DELETE).
+    pub fn hard_delete_category(&self, id: &str) -> Result<()> {
+        let child_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM categories WHERE parent_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        if child_count > 0 {
+            return Err(anyhow!(
+                "category {id} has {child_count} child categories; reparent or delete them first"
+            ));
+        }
+
+        self.conn.execute(
+            "UPDATE transactions SET category_id = NULL WHERE category_id = ?1",
+            params![id],
+        )?;
+        self.conn
+            .execute("DELETE FROM budgets WHERE category_id = ?1", params![id])?;
+        self.conn.execute(
+            "DELETE FROM standing_budgets WHERE category_id = ?1",
+            params![id],
+        )?;
+        self.conn.execute(
+            "DELETE FROM budget_overrides WHERE category_id = ?1",
+            params![id],
+        )?;
+        self.conn.execute(
+            "DELETE FROM section_mappings WHERE category_id = ?1",
+            params![id],
+        )?;
+
+        let deleted = self
+            .conn
+            .execute("DELETE FROM categories WHERE id = ?1", params![id])?;
+        if deleted == 0 {
+            return Err(anyhow!("category {id} not found"));
+        }
+        Ok(())
+    }
+
     pub fn resolve_category_by_name(&self, name: &str) -> Result<Option<Category>> {
         let result = self
             .conn
@@ -5752,5 +5798,58 @@ mod document_tests {
             )
             .unwrap();
         assert_eq!(h_ids, "[]");
+    }
+}
+
+#[cfg(test)]
+mod category_delete_tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn new_cat(db: &Db, name: &str, parent_id: Option<&str>) -> String {
+        db.create_category(&CreateCategoryPayload {
+            name: name.to_string(),
+            parent_id: parent_id.map(|s| s.to_string()),
+            display_order: None,
+            description: None,
+        })
+        .expect("create category")
+        .id
+    }
+
+    #[test]
+    fn hard_delete_removes_row_unlike_soft_delete() {
+        let (db, _f) = test_db();
+        let id = new_cat(&db, "Temp Cat", None);
+
+        db.soft_delete_category(&id).expect("soft delete");
+        let after_soft = db.get_category_by_id(&id).expect("get").expect("still present");
+        assert!(!after_soft.is_active, "soft delete only clears is_active");
+
+        db.hard_delete_category(&id).expect("hard delete");
+        assert!(
+            db.get_category_by_id(&id).expect("get").is_none(),
+            "hard delete removes the row entirely"
+        );
+    }
+
+    #[test]
+    fn hard_delete_refuses_when_category_has_children() {
+        let (db, _f) = test_db();
+        let parent = new_cat(&db, "Temp Parent", None);
+        let child = new_cat(&db, "Temp Child", Some(&parent));
+
+        let err = db.hard_delete_category(&parent).unwrap_err().to_string();
+        assert!(err.contains("child categories"), "unexpected error: {err}");
+
+        db.hard_delete_category(&child).expect("delete child");
+        db.hard_delete_category(&parent).expect("delete parent now childless");
+        assert!(db.get_category_by_id(&parent).expect("get").is_none());
     }
 }

@@ -1574,12 +1574,20 @@ td code { font-size: 12px; }
     <span class="method-badge method-delete">DELETE</span>
     <code class="endpoint-path">/api/categories/:id</code>
   </div>
-  <p class="endpoint-summary">Soft-delete a category (sets is_active=false).</p>
+  <p class="endpoint-summary">Soft-delete a category (sets is_active=false). Pass <code>?hard=true</code> to permanently remove the row instead; the hard delete refuses if the category still has child categories, and detaches any referencing transactions (category_id set to null) and budget rows.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>hard</code></td><td>query</td><td>boolean</td><td>No</td><td>When true, permanently delete the row instead of soft-deleting. Defaults to false.</td></tr>
+    </tbody>
+  </table>
   <h4>Example Request</h4>
-  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/categories/c-groceries</code></pre>
+  <pre class="example-request"><code>curl -X DELETE "http://localhost:7433/api/categories/c-groceries?hard=true"</code></pre>
   <h4>Example Response <span class="status-code">200</span></h4>
   <pre class="example-response"><code>{
-  "ok": true
+  "ok": true,
+  "hard": true
 }</code></pre>
 </section>
 

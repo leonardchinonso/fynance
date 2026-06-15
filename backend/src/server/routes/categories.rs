@@ -105,13 +105,26 @@ pub async fn update_category(
     Ok(Json(category))
 }
 
-// ── DELETE /api/categories/:id ───────────────────────────────────────────────
+// ── DELETE /api/categories/:id[?hard=true] ───────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteQuery {
+    /// When true, permanently remove the row instead of soft-deleting
+    /// (flipping `is_active`). Defaults to false.
+    #[serde(default)]
+    pub hard: bool,
+}
 
 pub async fn delete_category(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<DeleteQuery>,
 ) -> Result<Json<Value>, AppError> {
     let db = state.db.lock().expect("db mutex poisoned");
-    db.soft_delete_category(&id)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    if q.hard {
+        db.hard_delete_category(&id)?;
+    } else {
+        db.soft_delete_category(&id)?;
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "hard": q.hard })))
 }
