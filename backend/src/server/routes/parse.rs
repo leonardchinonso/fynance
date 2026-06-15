@@ -175,9 +175,12 @@ pub async fn parse_documents(
             "invalid_return_type",
         ));
     }
-    if hints.return_type.holdings.period.is_some() && !hints.return_type.transactions {
+    if hints.return_type.holdings.period.is_some()
+        && !hints.return_type.transactions
+        && !hints.return_type.investments
+    {
         return Err(AppError::bad_request(
-            "holdings.period requires transactions to be enabled (periodic snapshots are derived from transaction data)",
+            "holdings.period requires transactions or investments to be enabled (periodic snapshots are derived from the underlying activity)",
             "invalid_return_type",
         ));
     }
