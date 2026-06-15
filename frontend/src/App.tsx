@@ -4,6 +4,7 @@ import { ProfileProvider } from "@/context/profile_context"
 import { PreferredCurrencyProvider } from "@/context/preferred_currency_context"
 import { CategoryColorsProvider } from "@/context/category_colors_context"
 import { CategoryNamesProvider } from "@/context/category_names_context"
+import { ThemeProvider } from "@/context/theme_context"
 import { ProfileColorsProvider } from "@/context/profile_colors_context"
 import { RedactedProvider } from "@/context/redacted_context"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -88,6 +89,7 @@ function Layout() {
 export default function App() {
   return (
     <BrowserRouter>
+      <ThemeProvider>
       <ProfileProvider>
         <PreferredCurrencyProvider>
           <CategoryColorsProvider>
@@ -103,6 +105,7 @@ export default function App() {
           </CategoryColorsProvider>
         </PreferredCurrencyProvider>
       </ProfileProvider>
+      </ThemeProvider>
     </BrowserRouter>
   )
 }

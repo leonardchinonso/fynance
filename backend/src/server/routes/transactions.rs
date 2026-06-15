@@ -179,9 +179,7 @@ pub async fn list_categories(State(state): State<AppState>) -> Result<Json<Value
 
 #[derive(Debug, Deserialize)]
 pub struct PatchTransactionBody {
-    /// Legacy: category name string (still accepted for backward compat)
-    pub category: Option<String>,
-    /// Preferred: category UUID (FK to categories.id, must be a leaf)
+    /// FK to categories.id (must be a leaf)
     pub category_id: Option<String>,
     pub notes: Option<String>,
     pub exclude_from_summary: Option<bool>,
@@ -192,13 +190,9 @@ pub async fn patch_transaction(
     Path(id): Path<String>,
     Json(body): Json<PatchTransactionBody>,
 ) -> Result<Json<Transaction>, AppError> {
-    if body.category.is_none()
-        && body.category_id.is_none()
-        && body.notes.is_none()
-        && body.exclude_from_summary.is_none()
-    {
+    if body.category_id.is_none() && body.notes.is_none() && body.exclude_from_summary.is_none() {
         return Err(AppError::bad_request(
-            "request body must include at least one of: category, category_id, notes, exclude_from_summary",
+            "request body must include at least one of: category_id, notes, exclude_from_summary",
             "empty_body",
         ));
     }
@@ -209,23 +203,8 @@ pub async fn patch_transaction(
         .get_transaction_by_id(&id)?
         .ok_or_else(|| AppError::NotFound(format!("transaction {id} not found")))?;
 
-    // category_id takes precedence over category name
     if let Some(ref cat_id) = body.category_id {
         db.update_transaction_category(&id, cat_id, CategorySource::Manual)?;
-    } else if let Some(ref cat_name) = body.category {
-        let cat = db.resolve_category_by_name(cat_name)?.ok_or_else(|| {
-            AppError::bad_request(
-                format!("category '{}' not found", cat_name),
-                "invalid_category",
-            )
-        })?;
-        if cat.parent_id.is_none() {
-            return Err(AppError::bad_request(
-                "cannot assign a parent category; use a leaf category",
-                "invalid_category",
-            ));
-        }
-        db.update_transaction_category(&id, &cat.id, CategorySource::Manual)?;
     }
 
     if let Some(ref notes) = body.notes {
