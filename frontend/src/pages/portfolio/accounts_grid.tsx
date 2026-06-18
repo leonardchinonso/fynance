@@ -1,10 +1,7 @@
-import { useSearchParams } from "react-router-dom"
 import type { Account, AccountSnapshot, Currency, Profile } from "@/types"
-import type { AccountType } from "@/bindings/AccountType"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioAccountsData } from "@/hooks/data"
-import { useHoldings } from "@/hooks/data"
 import { AccountsGridSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -15,13 +12,6 @@ import { daysSince, formatCurrency, formatDate } from "@/lib/utils"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { EmptyState } from "@/components/empty_state"
 import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
-import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet"
-
-// Investment account types that open the full InvestmentsDetail sheet on click.
-// Compile-time error if a new AccountType variant is added without updating this list.
-const INVESTMENT_ACCOUNT_TYPES = new Set<AccountType>(["investment", "investment_isa", "pension"])
 
 export function AccountsGrid({
   data, profilesData, onAccountClick,
@@ -68,17 +58,6 @@ function AccountsGridInternal({
   balances,
   currencies = [],
 }: AccountsGridProps) {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const selectedAccountId = searchParams.get("account")
-  const selectedNonInvestment = accounts.find(a => a.id === selectedAccountId) ?? null
-
-  function openAccount(id: string) {
-    setSearchParams(p => { p.set("account", id); return p })
-  }
-  function closeAccount() {
-    setSearchParams(p => { p.delete("account"); return p })
-  }
-
   // Group by profile, with joint accounts in their own section
   const byProfile = new Map<string, Account[]>()
   for (const a of accounts) {
@@ -125,9 +104,8 @@ function AccountsGridInternal({
   }
 
   return (
-    <>
-      <div className="space-y-6">
-        {Array.from(byProfile.entries()).map(([groupId, accs]) => {
+    <div className="space-y-6">
+      {Array.from(byProfile.entries()).map(([groupId, accs]) => {
           const label =
             groupId === "joint"
               ? "Joint Accounts"
@@ -145,13 +123,7 @@ function AccountsGridInternal({
                     delta={deltas.get(account.id)}
                     preferredCurrency={preferredCurrency}
                     toPreferred={toPreferred}
-                    onClick={() => {
-                      if (INVESTMENT_ACCOUNT_TYPES.has(account.type)) {
-                        onAccountClick(account.id)
-                      } else {
-                        openAccount(account.id)
-                      }
-                    }}
+                    onClick={() => onAccountClick(account.id)}
                   />
                 ))}
               </div>
@@ -159,13 +131,6 @@ function AccountsGridInternal({
           )
         })}
       </div>
-
-      {/* Non-investment account detail sheet */}
-      <AccountDetailSheet
-        account={selectedNonInvestment}
-        onClose={() => closeAccount()}
-      />
-    </>
   )
 }
 
@@ -250,79 +215,5 @@ function AccountCard({
         </div>
       </CardContent>
     </Card>
-  )
-}
-
-function AccountDetailSheet({
-  account,
-  onClose,
-}: {
-  account: Account | null
-  onClose: () => void
-}) {
-  const holdingsData = useHoldings(account?.id ?? null)
-
-  if (!account) return null
-
-  const holdings =
-    holdingsData.status === "succeeded" || holdingsData.status === "reloading"
-      ? holdingsData.value
-      : []
-
-  return (
-    <Sheet open={!!account} onOpenChange={() => onClose()}>
-      <SheetContent className="w-full sm:max-w-md overflow-y-auto px-6">
-        <SheetHeader className="pb-4">
-          <SheetTitle>{account.name}</SheetTitle>
-        </SheetHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <DetailRow label="Institution" value={account.institution} />
-            <DetailRow label="Type" value={ACCOUNT_TYPE_LABELS[account.type]} />
-            <DetailRow label="Currency" value={account.currency} />
-            <DetailRow
-              label="Balance"
-              value={formatCurrency(account.balance ?? "0", account.currency)}
-            />
-            <DetailRow
-              label="Last Updated"
-              value={account.balance_date ? formatDate(account.balance_date) : "Never"}
-            />
-            {account.notes && <DetailRow label="Notes" value={account.notes} />}
-          </div>
-
-          {holdings.length > 1 && (
-            <div className="space-y-2 pt-2">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Holdings
-              </p>
-              {[...holdings]
-                .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
-                .map((h) => (
-                  <div
-                    key={`${h.account_id}-${h.symbol}`}
-                    className="flex justify-between items-center py-1.5 border-b border-border/50"
-                  >
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium">{h.name}</span>
-                      <span className="text-xs text-muted-foreground">{h.symbol}</span>
-                    </div>
-                    <MoneyDisplay amount={h.value} currency={h.currency} colorize={parseFloat(h.value) < 0} />
-                  </div>
-                ))}
-            </div>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
-  )
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between py-1.5 border-b border-border/50">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <span className="text-sm font-medium">{value}</span>
-    </div>
   )
 }

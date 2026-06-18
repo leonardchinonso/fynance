@@ -64,11 +64,11 @@ export function PortfolioPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedAccountId = searchParams.get("account")
 
-  // Derive selected account name when accounts data is available
-  const selectedAccountName =
+  // Resolve the selected account (for the drill-down sheet) once accounts load.
+  const selectedAccount =
     accountsData.status === "succeeded" || accountsData.status === "reloading"
-      ? (accountsData.value.accounts.find(a => a.id === selectedAccountId)?.name ?? "")
-      : ""
+      ? (accountsData.value.accounts.find(a => a.id === selectedAccountId) ?? null)
+      : null
 
   const activeView = view === "table" ? "overview" : view
 
@@ -101,7 +101,7 @@ export function PortfolioPage() {
 
       <InvestmentsDetail
         accountId={selectedAccountId}
-        accountName={selectedAccountName}
+        account={selectedAccount}
         start={start}
         end={end}
         onClose={() => setSearchParams(p => { p.delete("account"); return p })}

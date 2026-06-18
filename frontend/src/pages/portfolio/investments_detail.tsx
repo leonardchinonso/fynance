@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { Holding, Granularity } from "@/types"
+import type { Holding, Granularity, Account } from "@/types"
 import type { HoldingType } from "@/bindings/HoldingType"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useHoldings } from "@/hooks/data"
@@ -17,7 +17,8 @@ import { EmptyState } from "@/components/empty_state"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { LoadingSpinner } from "@/components/loading_spinner"
 import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, formatDate } from "@/lib/utils"
+import { ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { AccountHistoryChart } from "./account_history_chart"
 
 // Colors and labels per holding type
@@ -56,13 +57,13 @@ const INVESTMENT_HOLDING_TYPES: HoldingType[] = ["stock", "etf", "fund", "bond",
 
 interface InvestmentsDetailProps {
   accountId: string | null
-  accountName: string
+  account: Account | null
   start: string
   end: string
   onClose: () => void
 }
 
-export function InvestmentsDetail({ accountId, accountName, start, end, onClose }: InvestmentsDetailProps) {
+export function InvestmentsDetail({ accountId, account, start, end, onClose }: InvestmentsDetailProps) {
   const holdingsData = useHoldings(accountId)
   const currencies = useCurrenciesFromContext()
   const preferredCurrency = usePreferredCurrency()
@@ -96,11 +97,34 @@ export function InvestmentsDetail({ accountId, accountName, start, end, onClose 
     <Sheet open={!!accountId} onOpenChange={() => onClose()}>
       <SheetContent className="w-full sm:max-w-4xl overflow-y-auto px-6">
         <SheetHeader>
-          <SheetTitle>{accountName} Holdings</SheetTitle>
+          <SheetTitle>{account?.name ?? ""} Holdings</SheetTitle>
         </SheetHeader>
+        {account && <AccountMeta account={account} />}
         {content}
       </SheetContent>
     </Sheet>
+  )
+}
+
+function AccountMeta({ account }: { account: Account }) {
+  return (
+    <div className="mt-4 space-y-2">
+      <DetailRow label="Institution" value={account.institution} />
+      <DetailRow label="Type" value={ACCOUNT_TYPE_LABELS[account.type]} />
+      <DetailRow label="Currency" value={account.currency} />
+      <DetailRow label="Balance" value={formatCurrency(account.balance ?? "0", account.currency)} />
+      <DetailRow label="Last Updated" value={account.balance_date ? formatDate(account.balance_date) : "Never"} />
+      {account.notes && <DetailRow label="Notes" value={account.notes} />}
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between py-1.5 border-b border-border/50">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-sm font-medium">{value}</span>
+    </div>
   )
 }
 
