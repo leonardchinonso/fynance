@@ -35,8 +35,17 @@ import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
+import type { AccountHoldingSeries } from "@/bindings/AccountHoldingSeries"
+import type { AccountHoldingHistoryRow } from "@/bindings/AccountHoldingHistoryRow"
 // Aliased: the generated binding's `ProgressEvent` shadows the DOM global.
 import type { ProgressEvent as ParseProgressEvent } from "@/bindings/ProgressEvent"
+
+/** Response of `GET /api/holdings/account-history`: per-holding value series for one account. */
+export interface AccountHoldingsHistory {
+  preferred_currency: string
+  symbols: AccountHoldingSeries[]
+  rows: AccountHoldingHistoryRow[]
+}
 
 export type { ParseProgressEvent }
 export type ParseProgressHandler = (event: ParseProgressEvent) => void
@@ -134,6 +143,13 @@ export interface ApiService {
   ): Promise<PortfolioHistoryRow[]>
   getHoldings(accountId: string): Promise<Holding[]>
   getHoldingsBatch(accountIds: string[]): Promise<Holding[]>
+  /** Per-holding value history for a single account. Maps to `GET /api/holdings/account-history`. */
+  getAccountHoldingsHistory(
+    accountId: string,
+    start: string,
+    end: string,
+    granularity?: Granularity
+  ): Promise<AccountHoldingsHistory>
   getCashFlow(
     start: string,
     end: string,

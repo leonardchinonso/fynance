@@ -1,4 +1,5 @@
-import type { Holding } from "@/types"
+import { useState } from "react"
+import type { Holding, Granularity } from "@/types"
 import type { HoldingType } from "@/bindings/HoldingType"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useHoldings } from "@/hooks/data"
@@ -9,6 +10,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { MoneyDisplay } from "@/components/currency"
 import { InteractivePie } from "@/components/charts"
 import { EmptyState } from "@/components/empty_state"
@@ -16,6 +18,7 @@ import { AuthAwareError } from "@/components/auth_aware_error"
 import { LoadingSpinner } from "@/components/loading_spinner"
 import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { formatCurrency } from "@/lib/utils"
+import { AccountHistoryChart } from "./account_history_chart"
 
 // Colors and labels per holding type
 const HOLDING_TYPE_COLORS: Record<HoldingType, string> = {
@@ -54,10 +57,12 @@ const INVESTMENT_HOLDING_TYPES: HoldingType[] = ["stock", "etf", "fund", "bond",
 interface InvestmentsDetailProps {
   accountId: string | null
   accountName: string
+  start: string
+  end: string
   onClose: () => void
 }
 
-export function InvestmentsDetail({ accountId, accountName, onClose }: InvestmentsDetailProps) {
+export function InvestmentsDetail({ accountId, accountName, start, end, onClose }: InvestmentsDetailProps) {
   const holdingsData = useHoldings(accountId)
   const currencies = useCurrenciesFromContext()
   const preferredCurrency = usePreferredCurrency()
@@ -76,7 +81,14 @@ export function InvestmentsDetail({ accountId, accountName, onClose }: Investmen
           <EmptyState title="No holdings on file" message="This account doesn't have any recorded positions yet." />
         </div>
       ) : (
-        <HoldingsContent holdings={holdings} preferredCurrency={preferredCurrency} toPreferred={toPreferred} />
+        <HoldingsContent
+          holdings={holdings}
+          accountId={accountId ?? ""}
+          start={start}
+          end={end}
+          preferredCurrency={preferredCurrency}
+          toPreferred={toPreferred}
+        />
       ),
   })
 
@@ -94,13 +106,22 @@ export function InvestmentsDetail({ accountId, accountName, onClose }: Investmen
 
 function HoldingsContent({
   holdings,
+  accountId,
+  start,
+  end,
   preferredCurrency,
   toPreferred,
 }: {
   holdings: Holding[]
+  accountId: string
+  start: string
+  end: string
   preferredCurrency: string
   toPreferred: (value: number, currency: string) => number
 }) {
+  const [chartView, setChartView] = useState<"allocation" | "history">("allocation")
+  const [granularity, setGranularity] = useState<Granularity>("monthly")
+
   const sorted = [...holdings].sort((a, b) =>
     toPreferred(parseFloat(b.value), b.currency) - toPreferred(parseFloat(a.value), a.currency)
   )
@@ -189,12 +210,20 @@ function HoldingsContent({
         </div>
       </div>
 
-      {/* Pie chart for investment accounts */}
-      {showPie && (
-        <div>
-          <p className="mb-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Allocation
-          </p>
+      {/* Chart area: allocation pie (investment accounts) and/or value history.
+          Accounts without a pie show history as the only chart option. */}
+      <div className="space-y-3">
+        {showPie && (
+          <ToggleGroup
+            value={[chartView]}
+            onValueChange={(v) => { if (v && v.length) setChartView(v[0] as "allocation" | "history") }}
+          >
+            <ToggleGroupItem value="allocation" size="sm">Allocation</ToggleGroupItem>
+            <ToggleGroupItem value="history" size="sm">History</ToggleGroupItem>
+          </ToggleGroup>
+        )}
+
+        {showPie && chartView === "allocation" ? (
           <InteractivePie
             data={pieData}
             colors={PIE_COLORS}
@@ -203,8 +232,22 @@ function HoldingsContent({
             outerRadius={95}
             label={formatCurrency(totalPreferred.toFixed(2), preferredCurrency)}
           />
-        </div>
-      )}
+        ) : (
+          <div className="space-y-3">
+            <div className="flex justify-end">
+              <ToggleGroup
+                value={[granularity]}
+                onValueChange={(v) => { if (v && v.length) setGranularity(v[0] as Granularity) }}
+              >
+                <ToggleGroupItem value="monthly" size="sm">Monthly</ToggleGroupItem>
+                <ToggleGroupItem value="quarterly" size="sm">Quarterly</ToggleGroupItem>
+                <ToggleGroupItem value="yearly" size="sm">Yearly</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+            <AccountHistoryChart accountId={accountId} start={start} end={end} granularity={granularity} />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

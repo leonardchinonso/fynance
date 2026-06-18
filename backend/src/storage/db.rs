@@ -14,6 +14,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use rust_decimal::Decimal;
 
 use crate::model::{
+    AccountHoldingHistoryRow, AccountHoldingSeries, AccountHoldingValue,
     Account, AccountSnapshot, AccountType, AssetClass, BalanceDelta, BudgetRow, Category,
     CategoryNode, CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus,
     CreateCategoryPayload, CreateInvestmentEventBody, Currency, Document, DocumentReferences,
@@ -2716,6 +2717,95 @@ impl Db {
         }
 
         Ok(rows)
+    }
+
+    /// Per-symbol value history for a single account: one row per period in
+    /// `[from, to]`, each carrying the account total and the per-symbol breakdown
+    /// (all converted to the preferred currency). Mirrors `get_monthly_net_worth`
+    /// but scoped to one account and broken down by holding instead of
+    /// available/unavailable. Sub-accounts are summed into their parent symbol.
+    ///
+    /// Returns `(symbols, rows)` where `symbols` is the stable set of holdings
+    /// seen across the range (for display names) and `rows` are the periods.
+    pub fn get_account_holdings_history(
+        &self,
+        account_id: &str,
+        from: NaiveDate,
+        to: NaiveDate,
+        granularity: &Granularity,
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<(Vec<AccountHoldingSeries>, Vec<AccountHoldingHistoryRow>)> {
+        use std::collections::BTreeMap;
+
+        // Carry-forward: latest snapshot per (symbol, sub_account) on/before the
+        // period end. Same correlated-subquery pattern as get_holdings_for_summary.
+        let mut stmt = self.conn.prepare(
+            r"SELECT h.symbol, h.name, h.short_name, h.value, h.currency
+              FROM holdings h
+              WHERE h.account_id = ?1
+                AND h.as_of = (
+                    SELECT MAX(h2.as_of) FROM holdings h2
+                    WHERE h2.account_id = h.account_id
+                      AND h2.symbol = h.symbol
+                      AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
+                      AND h2.as_of <= ?2
+                )",
+        )?;
+
+        // Stable display metadata per symbol, ordered by first appearance.
+        let mut series: Vec<AccountHoldingSeries> = Vec::new();
+        let mut seen: BTreeMap<String, ()> = BTreeMap::new();
+
+        let periods = generate_period_end_dates(from, to, granularity);
+        let mut rows = Vec::with_capacity(periods.len());
+
+        for (label, period_end) in periods {
+            let period_end_str = period_end.format("%Y-%m-%dT23:59:59").to_string();
+
+            // symbol -> converted value summed across sub-accounts.
+            let mut by_symbol: BTreeMap<String, Decimal> = BTreeMap::new();
+
+            let mapped = stmt.query_map(
+                rusqlite::params![account_id, period_end_str],
+                |row| {
+                    let symbol: String = row.get(0)?;
+                    let name: String = row.get(1)?;
+                    let short_name: Option<String> = row.get(2)?;
+                    let value: String = row.get(3)?;
+                    let currency: String = row.get(4)?;
+                    Ok((symbol, name, short_name, value, currency))
+                },
+            )?;
+
+            for r in mapped {
+                let (symbol, name, short_name, value_str, currency) = r?;
+                let value = value_str.parse::<Decimal>().unwrap_or_default();
+                let converted = fx.convert(value, &currency);
+                *by_symbol.entry(symbol.clone()).or_insert(Decimal::ZERO) += converted;
+
+                if seen.insert(symbol.clone(), ()).is_none() {
+                    series.push(AccountHoldingSeries {
+                        symbol,
+                        name,
+                        short_name,
+                    });
+                }
+            }
+
+            let total: Decimal = by_symbol.values().copied().sum();
+            let values = by_symbol
+                .into_iter()
+                .map(|(symbol, value)| AccountHoldingValue { symbol, value })
+                .collect();
+
+            rows.push(AccountHoldingHistoryRow {
+                period: label,
+                total,
+                values,
+            });
+        }
+
+        Ok((series, rows))
     }
 
     /// Returns the first and last balance (SUM of holdings) per account within `[start, end]`,

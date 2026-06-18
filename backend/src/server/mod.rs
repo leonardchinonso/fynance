@@ -151,6 +151,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             get(routes::holdings::get_holdings_history),
         )
         .route(
+            "/holdings/account-history",
+            get(routes::holdings::get_account_holdings_history),
+        )
+        .route(
             "/holdings/balances",
             get(routes::holdings::get_holdings_balances),
         )

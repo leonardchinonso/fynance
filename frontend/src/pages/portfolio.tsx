@@ -102,6 +102,8 @@ export function PortfolioPage() {
       <InvestmentsDetail
         accountId={selectedAccountId}
         accountName={selectedAccountName}
+        start={start}
+        end={end}
         onClose={() => setSearchParams(p => { p.delete("account"); return p })}
       />
     </div>
