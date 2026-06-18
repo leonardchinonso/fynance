@@ -261,6 +261,37 @@ async function runView(browser, view) {
   }
   await shot(page, `preview_${label}_11b_budget_trend_tooltip`)
 
+  // 13. Portfolio account drill-down → per-account holdings value-history chart.
+  //     Investment account: Allocation/History toggle, then a line chart with a
+  //     Total line + per-holding lines and a Monthly/Quarterly/Yearly toggle.
+  await page.goto(`${BASE}/portfolio?view=accounts&account=t212-isa-alex`, { waitUntil: "domcontentloaded" })
+  const investSheet = page.getByRole("dialog").filter({ hasText: /holdings/i }).first()
+  await investSheet.waitFor({ timeout: 15000 })
+  // Scope to the sheet: the page header also has a "History" view tab.
+  const historyToggle = investSheet.getByRole("button", { name: /^history$/i })
+  await historyToggle.waitFor({ timeout: 10000 })
+  await shot(page, `preview_${label}_12_account_allocation`)
+  await historyToggle.click()
+  await investSheet.getByRole("button", { name: /^monthly$/i }).waitFor({ timeout: 5000 })
+  await investSheet.getByText(/value history/i).waitFor({ timeout: 5000 })
+  // The chart legend always carries a Total line.
+  await investSheet.getByText(/^Total$/).first().waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_12b_account_history`)
+  // Granularity re-buckets without error.
+  await investSheet.getByRole("button", { name: /^quarterly$/i }).click()
+  await page.waitForTimeout(300)
+  await shot(page, `preview_${label}_12c_account_history_quarterly`)
+
+  // 13a. Cash account (no allocation pie): history is shown directly, no toggle.
+  await page.goto(`${BASE}/portfolio?view=accounts&account=monzo-current`, { waitUntil: "domcontentloaded" })
+  const cashSheet = page.getByRole("dialog").filter({ hasText: /holdings/i }).first()
+  await cashSheet.waitFor({ timeout: 15000 })
+  await cashSheet.getByText(/value history/i).waitFor({ timeout: 10000 })
+  if ((await cashSheet.getByRole("button", { name: /^allocation$/i }).count()) > 0) {
+    throw new Error("Allocation toggle should not appear for a cash account with no investment holdings")
+  }
+  await shot(page, `preview_${label}_12d_cash_account_history`)
+
   await ctx.close()
   console.log(`[${label}] OK`)
 }
