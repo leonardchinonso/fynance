@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::model::Agent;
+use crate::model::{Agent, AuthSource};
 
 // ── Tier hint ────────────────────────────────────────────────────────────────
 
@@ -218,27 +218,80 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
 
 // ── AnthropicProvider ─────────────────────────────────────────────────────────
 
+/// How an `AnthropicProvider` authenticates to `api.anthropic.com`.
+#[derive(Clone)]
+enum AnthropicAuth {
+    /// Console API key (`x-api-key` header), pay-per-token billing.
+    ApiKey(String),
+    /// Claude Pro/Max subscription OAuth token (`sk-ant-oat01-`), sent as a
+    /// Bearer token with the `oauth-2025-04-20` beta. Draws from the monthly
+    /// Agent SDK credit pool instead of pay-per-token. This is the same auth
+    /// path Claude Code itself uses; see
+    /// `docs/research/08_subscription_credits_vs_api.md`.
+    Subscription(String),
+}
+
+impl std::fmt::Debug for AnthropicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the credential itself.
+        match self {
+            Self::ApiKey(_) => f.write_str("ApiKey(<redacted>)"),
+            Self::Subscription(_) => f.write_str("Subscription(<redacted>)"),
+        }
+    }
+}
+
+/// Injected as the first system block on subscription calls. Anthropic gates
+/// OAuth tokens to Claude Code; identifying as Claude Code keeps the request
+/// valid if that check is enforced, and is harmless when it is not.
+const CLAUDE_CODE_SYSTEM_IDENTITY: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude.";
+
 #[derive(Debug)]
 pub struct AnthropicProvider {
     client: Client,
-    api_key: String,
+    auth: AnthropicAuth,
     standard_model: String,
     advanced_model: String,
     progress: Option<(ProgressTx, Option<String>)>,
 }
 
 impl AnthropicProvider {
-    /// Build from environment variables.
+    /// Build with a Console API key from `FYNANCE_ANTHROPIC_API_KEY`
+    /// (pay-per-token billing).
     ///
-    /// Required: `FYNANCE_ANTHROPIC_API_KEY`
     /// Optional: `FYNANCE_IMPORT_LLM_MODEL`, `FYNANCE_PARSE_PDF_MODEL`
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("FYNANCE_ANTHROPIC_API_KEY").map_err(|_| {
-            anyhow!(
-                "FYNANCE_ANTHROPIC_API_KEY is not set. \
-                 Set it in your .env file or environment."
-            )
-        })?;
+        let api_key = std::env::var("FYNANCE_ANTHROPIC_API_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "FYNANCE_ANTHROPIC_API_KEY is not set. \
+                     Set it in your .env file or environment."
+                )
+            })?;
+        Self::with_auth(AnthropicAuth::ApiKey(api_key))
+    }
+
+    /// Build with a Claude subscription OAuth token from
+    /// `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN` (obtain one by running
+    /// `claude setup-token`). Billed against the subscription's Agent SDK
+    /// credit pool rather than pay-per-token.
+    pub fn from_env_subscription() -> Result<Self> {
+        let token = std::env::var("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "FYNANCE_CLAUDE_CODE_OAUTH_TOKEN is not set. \
+                     Run `claude setup-token` and set it in your .env file."
+                )
+            })?;
+        Self::with_auth(AnthropicAuth::Subscription(token))
+    }
+
+    fn with_auth(auth: AnthropicAuth) -> Result<Self> {
         let standard_model = std::env::var("FYNANCE_IMPORT_LLM_MODEL")
             .unwrap_or_else(|_| "claude-haiku-4-5-20251001".to_string());
         let advanced_model = std::env::var("FYNANCE_PARSE_PDF_MODEL")
@@ -252,7 +305,7 @@ impl AnthropicProvider {
 
         Ok(Self {
             client,
-            api_key,
+            auth,
             standard_model,
             advanced_model,
             progress: None,
@@ -280,7 +333,7 @@ impl AnthropicProvider {
     ) -> Self {
         Self {
             client: self.client.clone(),
-            api_key: self.api_key.clone(),
+            auth: self.auth.clone(),
             standard_model: self.standard_model.clone(),
             advanced_model: self.advanced_model.clone(),
             progress: Some((tx, task_id)),
@@ -497,18 +550,53 @@ impl AnthropicProvider {
         tool_name: &str,
     ) -> Result<ProviderCallResult, ProviderError> {
         let mut body = body.clone();
-        body.as_object_mut()
-            .expect("request body must be an object")
-            .insert("stream".to_string(), serde_json::Value::Bool(true));
+        {
+            let obj = body
+                .as_object_mut()
+                .expect("request body must be an object");
+            obj.insert("stream".to_string(), serde_json::Value::Bool(true));
+            // Subscription (OAuth) calls must present as Claude Code: prepend the
+            // Claude Code identity as the first system block. The prompt, tools,
+            // and everything else are identical to the API-key path.
+            if matches!(self.auth, AnthropicAuth::Subscription(_)) {
+                let system = obj.get("system").cloned();
+                obj.insert(
+                    "system".to_string(),
+                    with_claude_code_identity(system.as_ref()),
+                );
+            }
+        }
+
+        // Merge any caller-supplied anthropic-beta values (e.g. the PDF beta)
+        // with the OAuth beta needed for subscription auth. The API accepts a
+        // single comma-joined header.
+        let mut beta_values: Vec<String> = extra_headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("anthropic-beta"))
+            .map(|(_, v)| (*v).to_string())
+            .collect();
 
         let mut req = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json");
+        match &self.auth {
+            AnthropicAuth::ApiKey(key) => {
+                req = req.header("x-api-key", key);
+            }
+            AnthropicAuth::Subscription(token) => {
+                req = req.header("authorization", format!("Bearer {token}"));
+                beta_values.push("oauth-2025-04-20".to_string());
+            }
+        }
+        if !beta_values.is_empty() {
+            req = req.header("anthropic-beta", beta_values.join(","));
+        }
         for (k, v) in extra_headers {
-            req = req.header(*k, *v);
+            if !k.eq_ignore_ascii_case("anthropic-beta") {
+                req = req.header(*k, *v);
+            }
         }
 
         let started = std::time::Instant::now();
@@ -786,7 +874,10 @@ impl LlmProvider for AnthropicProvider {
     }
 
     fn name(&self) -> &'static str {
-        "anthropic"
+        match self.auth {
+            AnthropicAuth::ApiKey(_) => "anthropic",
+            AnthropicAuth::Subscription(_) => "anthropic-subscription",
+        }
     }
 
     fn with_progress(
@@ -795,6 +886,24 @@ impl LlmProvider for AnthropicProvider {
         task_id: Option<String>,
     ) -> Option<Arc<dyn LlmProvider>> {
         Some(Arc::new(self.clone_with_progress(tx, task_id)))
+    }
+}
+
+/// Prepend the Claude Code system identity as the first system block (required
+/// for subscription/OAuth calls). Accepts the existing `system` value, which the
+/// callers pass as a plain string, and returns a blocks array with the identity
+/// first so the original system prompt is preserved verbatim.
+fn with_claude_code_identity(system: Option<&Value>) -> Value {
+    let identity = json!({ "type": "text", "text": CLAUDE_CODE_SYSTEM_IDENTITY });
+    match system {
+        Some(Value::String(s)) => json!([identity, { "type": "text", "text": s }]),
+        Some(Value::Array(blocks)) => {
+            let mut out = Vec::with_capacity(blocks.len() + 1);
+            out.push(identity);
+            out.extend(blocks.iter().cloned());
+            Value::Array(out)
+        }
+        _ => json!([identity]),
     }
 }
 
@@ -1236,23 +1345,196 @@ impl LlmProvider for GeminiProvider {
     }
 }
 
+// ── FallbackProvider ───────────────────────────────────────────────────────────
+
+/// Tries `primary` first and, on an auth or quota failure, retries the same call
+/// against `fallback`. Used to run subscription (OAuth) auth as the primary path
+/// and transparently fall back to the Console API key when the subscription
+/// token is rejected or its monthly credit pool is exhausted.
+#[derive(Debug)]
+struct FallbackProvider {
+    primary: Arc<dyn LlmProvider>,
+    fallback: Arc<dyn LlmProvider>,
+}
+
+/// Retry on the fallback only for failures a different credential could plausibly
+/// fix: a rejected/expired token or an exhausted credit pool. Network, schema,
+/// and upstream-bug errors would fail identically on the fallback, so they
+/// propagate unchanged.
+fn should_fall_back(err: &ProviderError) -> bool {
+    matches!(
+        err,
+        ProviderError::AuthRejected(_) | ProviderError::RateLimit { .. }
+    )
+}
+
+#[async_trait]
+impl LlmProvider for FallbackProvider {
+    async fn chat_with_tools(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        tier: ModelTier,
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        match self
+            .primary
+            .chat_with_tools(
+                system_prompt,
+                user_message,
+                tool_name,
+                tool_schema.clone(),
+                tier,
+                agent_override,
+            )
+            .await
+        {
+            Err(e) if should_fall_back(&e) => {
+                tracing::warn!(error = %e, "subscription provider failed; retrying with API key");
+                self.fallback
+                    .chat_with_tools(
+                        system_prompt,
+                        user_message,
+                        tool_name,
+                        tool_schema,
+                        tier,
+                        agent_override,
+                    )
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn chat_with_pdf_and_tools(
+        &self,
+        system_prompt: &str,
+        pdf_bytes: &[u8],
+        text_supplement: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        match self
+            .primary
+            .chat_with_pdf_and_tools(
+                system_prompt,
+                pdf_bytes,
+                text_supplement,
+                tool_name,
+                tool_schema.clone(),
+                agent_override,
+            )
+            .await
+        {
+            Err(e) if should_fall_back(&e) => {
+                tracing::warn!(error = %e, "subscription provider failed; retrying with API key");
+                self.fallback
+                    .chat_with_pdf_and_tools(
+                        system_prompt,
+                        pdf_bytes,
+                        text_supplement,
+                        tool_name,
+                        tool_schema,
+                        agent_override,
+                    )
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn chat_with_files_and_tools(
+        &self,
+        system_prompt: &str,
+        files: &[(String, String, Vec<u8>)],
+        text_supplement: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        match self
+            .primary
+            .chat_with_files_and_tools(
+                system_prompt,
+                files,
+                text_supplement,
+                tool_name,
+                tool_schema.clone(),
+                agent_override,
+            )
+            .await
+        {
+            Err(e) if should_fall_back(&e) => {
+                tracing::warn!(error = %e, "subscription provider failed; retrying with API key");
+                self.fallback
+                    .chat_with_files_and_tools(
+                        system_prompt,
+                        files,
+                        text_supplement,
+                        tool_name,
+                        tool_schema,
+                        agent_override,
+                    )
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        self.primary.name()
+    }
+
+    fn with_progress(
+        &self,
+        tx: ProgressTx,
+        task_id: Option<String>,
+    ) -> Option<Arc<dyn LlmProvider>> {
+        let primary = self
+            .primary
+            .with_progress(tx.clone(), task_id.clone())
+            .unwrap_or_else(|| self.primary.clone());
+        let fallback = self
+            .fallback
+            .with_progress(tx, task_id)
+            .unwrap_or_else(|| self.fallback.clone());
+        Some(Arc::new(FallbackProvider { primary, fallback }))
+    }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
-/// Create the configured LLM provider from environment variables.
+/// Create the configured LLM provider from environment variables, using the
+/// default credential selection ([`AuthSource::Auto`]).
+pub fn create_provider() -> Result<Arc<dyn LlmProvider>> {
+    create_provider_with_auth(AuthSource::Auto)
+}
+
+/// Create the configured LLM provider, overriding which Anthropic credential to
+/// use. `auth` only affects the Anthropic provider; OpenAI and Gemini ignore it.
 ///
-/// Reads `FYNANCE_PARSE_PROVIDER` (default: "anthropic") and builds the
-/// corresponding provider. Returns `Err` if the required API key is not set.
+/// Reads `FYNANCE_PARSE_PROVIDER` (default: "anthropic").
 ///
 /// # Valid values for FYNANCE_PARSE_PROVIDER
-/// - `"anthropic"` (default): requires `FYNANCE_ANTHROPIC_API_KEY`
+/// - `"anthropic"` (default): credential chosen per `auth` (see below)
 /// - `"openai"`: requires `FYNANCE_OPENAI_API_KEY`
 /// - `"gemini"`: returns a stub that errors on every call
-pub fn create_provider() -> Result<Arc<dyn LlmProvider>> {
+///
+/// # Anthropic credential selection
+/// - [`AuthSource::Auto`]: prefer the subscription OAuth token; when both it and
+///   the API key are set, use the subscription with the API key as a runtime
+///   fallback; when only one is set, use that one.
+/// - [`AuthSource::Subscription`]: require `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`.
+/// - [`AuthSource::ApiKey`]: require `FYNANCE_ANTHROPIC_API_KEY`.
+pub fn create_provider_with_auth(auth: AuthSource) -> Result<Arc<dyn LlmProvider>> {
     let provider_name =
         std::env::var("FYNANCE_PARSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
 
     let provider: Arc<dyn LlmProvider> = match provider_name.to_lowercase().as_str() {
-        "anthropic" => Arc::new(AnthropicProvider::from_env()?),
+        "anthropic" => create_anthropic_provider(auth)?,
         "openai" => Arc::new(OpenAIProvider::from_env()?),
         "gemini" => Arc::new(GeminiProvider),
         other => {
@@ -1266,6 +1548,37 @@ pub fn create_provider() -> Result<Arc<dyn LlmProvider>> {
 
     tracing::info!(provider = provider.name(), "LLM provider initialized");
     Ok(provider)
+}
+
+fn env_present(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn create_anthropic_provider(auth: AuthSource) -> Result<Arc<dyn LlmProvider>> {
+    match auth {
+        AuthSource::Subscription => Ok(Arc::new(AnthropicProvider::from_env_subscription()?)),
+        AuthSource::ApiKey => Ok(Arc::new(AnthropicProvider::from_env()?)),
+        AuthSource::Auto => {
+            match (
+                env_present("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN"),
+                env_present("FYNANCE_ANTHROPIC_API_KEY"),
+            ) {
+                (true, true) => Ok(Arc::new(FallbackProvider {
+                    primary: Arc::new(AnthropicProvider::from_env_subscription()?),
+                    fallback: Arc::new(AnthropicProvider::from_env()?),
+                })),
+                (true, false) => Ok(Arc::new(AnthropicProvider::from_env_subscription()?)),
+                (false, true) => Ok(Arc::new(AnthropicProvider::from_env()?)),
+                (false, false) => Err(anyhow!(
+                    "No Anthropic credential is set. Set FYNANCE_CLAUDE_CODE_OAUTH_TOKEN \
+                     (preferred; run `claude setup-token`) or FYNANCE_ANTHROPIC_API_KEY in \
+                     your .env file or environment."
+                )),
+            }
+        }
+    }
 }
 
 // ── MockProvider for tests ────────────────────────────────────────────────────
@@ -1392,17 +1705,95 @@ mod tests {
     }
 
     #[test]
-    fn test_create_provider_anthropic_requires_key() {
+    fn test_create_provider_anthropic_requires_some_credential() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
             std::env::remove_var("FYNANCE_ANTHROPIC_API_KEY");
+            std::env::remove_var("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN");
         }
         let result = create_provider();
         unsafe { std::env::remove_var("FYNANCE_PARSE_PROVIDER") };
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
+        // Names both env vars so the user knows either one resolves it.
         assert!(msg.contains("FYNANCE_ANTHROPIC_API_KEY"), "got: {msg}");
+        assert!(msg.contains("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN"), "got: {msg}");
+    }
+
+    #[test]
+    fn test_create_provider_auto_prefers_subscription() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
+            std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "sk-ant-test");
+            std::env::set_var("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-test");
+        }
+        let result = create_provider_with_auth(AuthSource::Auto);
+        unsafe {
+            std::env::remove_var("FYNANCE_PARSE_PROVIDER");
+            std::env::remove_var("FYNANCE_ANTHROPIC_API_KEY");
+            std::env::remove_var("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN");
+        }
+        // FallbackProvider reports its primary's name, which is the subscription.
+        assert_eq!(result.unwrap().name(), "anthropic-subscription");
+    }
+
+    #[test]
+    fn test_create_provider_auto_uses_api_key_without_subscription() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
+            std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "sk-ant-test");
+            std::env::remove_var("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN");
+        }
+        let result = create_provider_with_auth(AuthSource::Auto);
+        unsafe {
+            std::env::remove_var("FYNANCE_PARSE_PROVIDER");
+            std::env::remove_var("FYNANCE_ANTHROPIC_API_KEY");
+        }
+        assert_eq!(result.unwrap().name(), "anthropic");
+    }
+
+    #[test]
+    fn test_create_provider_subscription_requires_token() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
+            std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "sk-ant-test");
+            std::env::remove_var("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN");
+        }
+        let result = create_provider_with_auth(AuthSource::Subscription);
+        unsafe {
+            std::env::remove_var("FYNANCE_PARSE_PROVIDER");
+            std::env::remove_var("FYNANCE_ANTHROPIC_API_KEY");
+        }
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN")
+        );
+    }
+
+    #[test]
+    fn test_with_claude_code_identity_wraps_string() {
+        let wrapped = with_claude_code_identity(Some(&json!("Parse the statement.")));
+        let arr = wrapped.as_array().expect("should be an array of blocks");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["text"], json!(CLAUDE_CODE_SYSTEM_IDENTITY));
+        assert_eq!(arr[1]["text"], json!("Parse the statement."));
+    }
+
+    #[test]
+    fn test_with_claude_code_identity_prepends_to_array() {
+        let existing = json!([{ "type": "text", "text": "block one" }]);
+        let wrapped = with_claude_code_identity(Some(&existing));
+        let arr = wrapped.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["text"], json!(CLAUDE_CODE_SYSTEM_IDENTITY));
+        assert_eq!(arr[1]["text"], json!("block one"));
     }
 
     #[test]

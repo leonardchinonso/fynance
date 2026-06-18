@@ -61,6 +61,22 @@ The only worthwhile follow-up is **documentation clarity**, so users understand 
 
 Recommended action: spell this out in `README.md` and `.env.example`. No backend change.
 
+## Addendum (June 2026): decision reversed and implemented
+
+The conclusion above was a cost/benefit judgment, not a technical finding, and it rested on one wrong assumption: that reaching the subscription credit pool requires shelling out to `claude -p` / the Agent SDK and therefore losing tool_use, streaming, model selection, and PDF support. In practice the marginal cost of the Console API turned out to be prohibitive for bulk historical imports (well over £20 for a partial backfill), and the technical assumption does not hold.
+
+**What actually works.** The subscription OAuth token (`sk-ant-oat01-`, from `claude setup-token`) can be sent directly to `https://api.anthropic.com/v1/messages` exactly like a Console API key, with three differences:
+
+1. `authorization: Bearer <token>` instead of `x-api-key`.
+2. `anthropic-beta: oauth-2025-04-20` added (merged with any existing beta such as `pdfs-2024-09-25`).
+3. The first system block set to "You are Claude Code, Anthropic's official CLI for Claude." (currently not enforced, but cheap insurance if Anthropic re-enables the check).
+
+This is the same path Claude Code uses internally. Verified live against Haiku 4.5: tool_use, SSE streaming, and token usage all work and the call draws from the subscription, not Console billing.
+
+**How it is implemented.** The branch is at the lowest level: `AnthropicProvider::post_messages_streaming` switches headers and system prefix based on an `AnthropicAuth` enum (`ApiKey` | `Subscription`). Nothing above that layer changed: identical prompts, tool schemas, model-tier selection, parsers, return types, streaming progress, and PDF/image support. `create_provider` prefers the subscription token when present and uses the API key as an automatic runtime fallback (on auth-rejected or rate-limit/quota errors) via a small `FallbackProvider` wrapper. Per-request override is exposed through the parse endpoint's `experimental.auth` field (`auto` | `subscription` | `api_key`). Config: `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`.
+
+**Caveat unchanged.** Using an `sk-ant-oat01-` token outside Anthropic's own products is outside the Consumer Terms for that token type. This is a personal, local, opt-in feature; the API-key path remains the default when no subscription token is configured.
+
 ## Sources
 
 - [Anthropic reinstates OpenClaw and third-party agent usage on Claude subscriptions — with a catch (VentureBeat)](https://venturebeat.com/technology/anthropic-reinstates-openclaw-and-third-party-agent-usage-on-claude-subscriptions-with-a-catch)

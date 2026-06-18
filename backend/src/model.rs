@@ -1134,6 +1134,23 @@ pub enum Agent {
     Opus,
 }
 
+/// Which Anthropic credential the parse pipeline should use. The actual model,
+/// prompts, tools, and output are identical across all variants; only the
+/// authentication (and therefore billing) differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum AuthSource {
+    /// Prefer the Claude subscription OAuth token when configured, otherwise
+    /// fall back to the Console API key. This is the default.
+    #[default]
+    Auto,
+    /// Force the Claude subscription OAuth token (`FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`).
+    Subscription,
+    /// Force the Console API key (`FYNANCE_ANTHROPIC_API_KEY`).
+    ApiKey,
+}
+
 /// Cost of a single LLM call made during a parse run.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]

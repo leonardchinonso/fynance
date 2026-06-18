@@ -123,7 +123,13 @@ Configuration is managed through a `.env` file at the project root. The repo inc
 | `FYNANCE_HOST` | `127.0.0.1` | No | Bind address. Set to `0.0.0.0` in Docker so port mapping can reach the server |
 | `FYNANCE_DB_PATH` | OS data dir | No | Full path to the SQLite database file. In Docker set to `/home/fynance/data/fynance.db` |
 | `FYNANCE_LOG_LEVEL` | `info` | No | Log verbosity. Options: `trace`, `debug`, `info`, `warn`, `error` |
+| `FYNANCE_ANTHROPIC_API_KEY` | (none) | One of these two | Console API key (`sk-ant-api...`) from [console.anthropic.com](https://console.anthropic.com/). Pay-per-token billing |
+| `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN` | (none) | One of these two | Claude Pro/Max subscription token (`sk-ant-oat01...`) from `claude setup-token`. Billed against your subscription's Agent SDK credit pool, not per-token |
 | `FYNANCE_ADDITIONAL_DOCS` | (none) | No | Path to additional documentation for AI agents building against this environment |
+
+**LLM credentials.** Importing statements requires an Anthropic credential. You can use either a pay-per-token Console API key (`FYNANCE_ANTHROPIC_API_KEY`) or a Claude Pro/Max subscription token (`FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`, obtained by running `claude setup-token`). The subscription token draws from your plan's monthly Agent SDK credit instead of billing per token, which is much cheaper for large imports. When both are set, the subscription token is used first and the API key is an automatic fallback if it is rejected or its credit is exhausted. The model, prompts, output, streaming, and PDF support are identical either way.
+
+> Note: using a subscription OAuth token from a third-party app (rather than Claude Code itself) falls outside Anthropic's Consumer Terms for that token type. Only set `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN` if you accept that.
 
 Example `.env` for local binary use:
 ```env
