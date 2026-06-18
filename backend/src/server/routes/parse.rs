@@ -15,7 +15,8 @@ use crate::importers::document_parser::{
     run_multi_file_pipeline,
 };
 use crate::importers::provider::{
-    self, ProgressEvent, ProgressTx, ParsePhase, ProviderError, create_provider, emit_progress,
+    self, ProgressEvent, ProgressTx, ParsePhase, ProviderError, create_provider_with_auth,
+    emit_progress,
 };
 use crate::importers::unified_parser::{
     CategorySummary, HoldingSummary, UnifiedContext, extract_all as unified_extract_all,
@@ -274,10 +275,12 @@ pub async fn parse_documents(
         })?
     };
 
-    // Create the LLM provider (reads FYNANCE_PARSE_PROVIDER from env).
-    // Surface the config message: this is almost always a missing API key,
-    // and hiding it as a generic 500 makes the issue impossible to debug.
-    let provider = create_provider()
+    // Create the LLM provider (reads FYNANCE_PARSE_PROVIDER from env). The
+    // credential is chosen by hints.auth() (default: prefer the subscription
+    // OAuth token, falling back to the API key). Surface the config message:
+    // this is almost always a missing credential, and hiding it as a generic
+    // 500 makes the issue impossible to debug.
+    let provider = create_provider_with_auth(hints.auth())
         .map_err(|e| AppError::bad_request(e.to_string(), "provider_config"))?;
 
     let start = std::time::Instant::now();

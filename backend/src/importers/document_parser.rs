@@ -19,7 +19,7 @@ use crate::importers::pdf_parser::{
 use crate::importers::provider::{LlmProvider, ProgressTx};
 use crate::importers::unified::UnifiedStatementRow;
 use crate::model::{
-    Agent, BankFormat, CategorySource, CreateInvestmentEventBody, Holding, HoldingType,
+    Agent, AuthSource, BankFormat, CategorySource, CreateInvestmentEventBody, Holding, HoldingType,
     HoldingsImportPayload, HoldingsIngestionResult, ImportPayload, ImportTransaction,
     IngestionMetadata, IngestionPreview, IngestionStatus, InvestmentIngestionResult,
     InvestmentsImportPayload, KnownHolding, TransactionIngestionResult,
@@ -83,6 +83,10 @@ pub struct ExperimentalParseOptions {
     /// Override every LLM call's model. `None` uses per-parser defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<Agent>,
+    /// Which Anthropic credential to use. `None` defaults to
+    /// [`AuthSource::Auto`], which prefers the Claude subscription OAuth token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthSource>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
@@ -106,6 +110,12 @@ impl ParseHints {
 
     pub fn agent(&self) -> Option<Agent> {
         self.experimental.and_then(|e| e.agent)
+    }
+
+    pub fn auth(&self) -> AuthSource {
+        self.experimental
+            .and_then(|e| e.auth)
+            .unwrap_or_default()
     }
 }
 

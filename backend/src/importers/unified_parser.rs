@@ -415,6 +415,7 @@ mod tests {
             experimental: Some(ExperimentalParseOptions {
                 mode: ParseMode::Unified,
                 agent: None,
+                auth: None,
             }),
             hint: None,
         }

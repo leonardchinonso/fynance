@@ -2000,7 +2000,7 @@ td code { font-size: 12px; }
       <tr><td><code>parse_id</code></td><td>text</td><td>string</td><td>No</td><td>Client-generated ID for SSE progress tracking</td></tr>
     </tbody>
   </table>
-  <p><strong>Experimental (testing only):</strong> ParseHints also accepts an optional <code>experimental</code> object (<code>{ "mode": "split" | "unified", "agent": "haiku" | "sonnet" | "opus" }</code>) to force the legacy split pipeline or pin a specific model agent. It is not used by the web UI and is not intended for production; omit it to run the default unified pipeline.</p>
+  <p><strong>Experimental (testing only):</strong> ParseHints also accepts an optional <code>experimental</code> object (<code>{ "mode": "split" | "unified", "agent": "haiku" | "sonnet" | "opus", "auth": "auto" | "subscription" | "api_key" }</code>) to force the legacy split pipeline, pin a specific model agent, or select the Anthropic credential. <code>auth</code> defaults to <code>auto</code>, which prefers the Claude subscription OAuth token (<code>FYNANCE_CLAUDE_CODE_OAUTH_TOKEN</code>) and falls back to the Console API key (<code>FYNANCE_ANTHROPIC_API_KEY</code>); <code>subscription</code> and <code>api_key</code> force one credential. The model, prompts, and output are identical regardless. It is not used by the web UI and is not intended for production; omit it to run the default unified pipeline.</p>
   <h4>Example Request</h4>
   <pre class="example-request"><code>curl -X POST http://localhost:7433/api/parse \
   -F "files[]=@statement.csv" \
