@@ -73,7 +73,8 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         // ── Transactions ───────────────────────────────────────────────────
         .route(
             "/transactions",
-            get(routes::transactions::list_transactions),
+            get(routes::transactions::list_transactions)
+                .delete(routes::transactions::bulk_delete_transactions),
         )
         .route(
             "/transactions/by-category",
@@ -93,7 +94,8 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         )
         .route(
             "/transactions/:id",
-            patch(routes::transactions::patch_transaction),
+            patch(routes::transactions::patch_transaction)
+                .delete(routes::transactions::delete_transaction),
         )
         // ── Import ────��─────────────────────────────���──────────────────────
         // `/api/import` is deprecated; new callers should use

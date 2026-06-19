@@ -4,8 +4,10 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use fynance::cli::{AccountCommand, BudgetCommand, Cli, Commands, TokenCommand};
-use fynance::commands::{account, budget, import, serve, stats, token};
+use fynance::cli::{
+    AccountCommand, BudgetCommand, Cli, Commands, TokenCommand, TransactionCommand,
+};
+use fynance::commands::{account, budget, import, serve, stats, token, transaction};
 use fynance::storage::Db;
 use fynance::storage::db::default_db_path;
 
@@ -68,6 +70,11 @@ fn main() -> Result<()> {
             TokenCommand::Create { name } => token::create(&db, &name),
             TokenCommand::List => token::list(&db),
             TokenCommand::Revoke { name } => token::revoke(&db, &name),
+        },
+        Commands::Transaction { command } => match command {
+            TransactionCommand::Delete { ids, account } => {
+                transaction::delete(&db, &ids, account.as_deref())
+            }
         },
     }
 }
