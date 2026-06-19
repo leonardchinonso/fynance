@@ -126,6 +126,16 @@ pub enum AccountCommand {
     },
     /// Print all registered accounts.
     List,
+    /// Delete an account. Refuses if it still has transactions or holdings.
+    /// Defaults to a soft delete (deactivate); pass `--hard` to permanently
+    /// remove the row.
+    Delete {
+        /// Account id to delete.
+        id: String,
+        /// Permanently remove the row instead of deactivating it.
+        #[arg(long)]
+        hard: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -56,6 +56,7 @@ fn main() -> Result<()> {
                 account::set_balance(&db, &id, &amount, &date)
             }
             AccountCommand::List => account::list(&db),
+            AccountCommand::Delete { id, hard } => account::delete(&db, &id, hard),
         },
         Commands::Budget { command } => match command {
             BudgetCommand::Set {

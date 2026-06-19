@@ -765,6 +765,20 @@ impl Db {
         Ok(())
     }
 
+    /// Permanently remove the account row, unlike [`Self::delete_account`] which
+    /// only flips `is_active`. Callers must verify the account has no
+    /// transactions or holdings first (the DELETE route guard does this) so no
+    /// rows are orphaned.
+    pub fn hard_delete_account(&self, id: &str) -> Result<()> {
+        let deleted = self
+            .conn
+            .execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
+        if deleted == 0 {
+            return Err(anyhow!("account {id} not found"));
+        }
+        Ok(())
+    }
+
     // ── Investments ───────────────────────────────────────────────────────────
 
     pub fn create_investment_event(
