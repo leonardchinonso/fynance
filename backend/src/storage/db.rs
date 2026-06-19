@@ -766,6 +766,20 @@ impl Db {
         Ok(())
     }
 
+    /// Permanently remove the account row, unlike [`Self::delete_account`] which
+    /// only flips `is_active`. Callers must verify the account has no
+    /// transactions or holdings first (the DELETE route guard does this) so no
+    /// rows are orphaned.
+    pub fn hard_delete_account(&self, id: &str) -> Result<()> {
+        let deleted = self
+            .conn
+            .execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
+        if deleted == 0 {
+            return Err(anyhow!("account {id} not found"));
+        }
+        Ok(())
+    }
+
     // ── Investments ───────────────────────────────────────────────────────────
 
     pub fn create_investment_event(
@@ -1588,6 +1602,42 @@ impl Db {
         )?;
         let result = stmt.query_row(params![id], row_to_transaction).optional()?;
         Ok(result)
+    }
+
+    /// Hard-delete a single transaction. Returns the number of rows removed
+    /// (0 when the id does not exist). The row's fingerprint is freed, so
+    /// re-importing the same statement will re-insert the transaction.
+    pub fn delete_transaction(&self, id: &str) -> Result<usize> {
+        let n = self
+            .conn
+            .execute("DELETE FROM transactions WHERE id = ?1", params![id])?;
+        Ok(n)
+    }
+
+    /// Hard-delete transactions by id. Returns the number of rows removed.
+    pub fn delete_transactions(&self, ids: &[String]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let placeholders: String = (1..=ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("DELETE FROM transactions WHERE id IN ({placeholders})");
+        let n = self
+            .conn
+            .execute(&sql, rusqlite::params_from_iter(ids.iter()))?;
+        Ok(n)
+    }
+
+    /// Hard-delete every transaction for an account. Returns the number of rows
+    /// removed. Used to clear an account before deleting it.
+    pub fn delete_transactions_for_account(&self, account_id: &str) -> Result<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM transactions WHERE account_id = ?1",
+            params![account_id],
+        )?;
+        Ok(n)
     }
 
     // ── Categories ───────────────────────────────────────────────────────────

@@ -219,6 +219,60 @@ pub async fn patch_transaction(
     Ok(Json(updated))
 }
 
+// ── DELETE /api/transactions/:id ──────────────────────────────────────────────
+
+pub async fn delete_transaction(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let db = state.db.lock().expect("db mutex poisoned");
+    let deleted = db.delete_transaction(&id)?;
+    if deleted == 0 {
+        return Err(AppError::NotFound(format!("transaction {id} not found")));
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "deleted": deleted })))
+}
+
+// ── DELETE /api/transactions ──────────────────────────────────────────────────
+//
+// Bulk hard-delete. Provide exactly one of `ids` (delete those transactions) or
+// `account_id` (delete every transaction for that account, e.g. to clear an
+// account before deleting it).
+
+#[derive(Debug, Deserialize)]
+pub struct BulkDeleteBody {
+    pub ids: Option<Vec<String>>,
+    pub account_id: Option<String>,
+}
+
+pub async fn bulk_delete_transactions(
+    State(state): State<AppState>,
+    Json(body): Json<BulkDeleteBody>,
+) -> Result<Json<Value>, AppError> {
+    let account_id = body.account_id.filter(|s| !s.is_empty());
+    let ids = body.ids.filter(|v| !v.is_empty());
+
+    let db = state.db.lock().expect("db mutex poisoned");
+    let deleted = match (ids, account_id) {
+        (Some(ids), None) => db.delete_transactions(&ids)?,
+        (None, Some(account_id)) => db.delete_transactions_for_account(&account_id)?,
+        (Some(_), Some(_)) => {
+            return Err(AppError::bad_request(
+                "provide either ids or account_id, not both",
+                "ambiguous_request",
+            ));
+        }
+        (None, None) => {
+            return Err(AppError::bad_request(
+                "request body must include a non-empty ids array or an account_id",
+                "empty_body",
+            ));
+        }
+    };
+
+    Ok(Json(serde_json::json!({ "ok": true, "deleted": deleted })))
+}
+
 // ── GET /api/transactions/accounts (legacy alias) ────────────────────────────
 
 pub async fn list_transaction_accounts(

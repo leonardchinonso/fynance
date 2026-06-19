@@ -294,6 +294,8 @@ td code { font-size: 12px; }
     <a href="#get-api-transactions-categories" class="nav-endpoint"><span class="method-badge method-get">GET</span>/categories (legacy)</a>
     <a href="#get-api-transactions-accounts" class="nav-endpoint"><span class="method-badge method-get">GET</span>/accounts (legacy)</a>
     <a href="#patch-api-transactions-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/transactions/:id</a>
+    <a href="#delete-api-transactions-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/transactions/:id</a>
+    <a href="#delete-api-transactions" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/transactions</a>
 
     <div class="nav-group">Import</div>
     <a href="#post-api-transactions-import" class="nav-endpoint"><span class="method-badge method-post">POST</span>/transactions/import</a>
@@ -1268,12 +1270,20 @@ td code { font-size: 12px; }
     <span class="method-badge method-delete">DELETE</span>
     <code class="endpoint-path">/api/accounts/:id</code>
   </div>
-  <p class="endpoint-summary">Delete an account. Fails if referenced by transactions or holdings.</p>
+  <p class="endpoint-summary">Delete an account. Fails if referenced by transactions or holdings. Defaults to a soft delete (sets <code>is_active = 0</code>); pass <code>?hard=true</code> to permanently remove the row. Either way the account must be empty first.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>hard</code></td><td>query</td><td>boolean</td><td>No</td><td>Permanently delete the row instead of deactivating it (default false)</td></tr>
+    </tbody>
+  </table>
   <h4>Example Request</h4>
-  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/accounts/monzo-alex</code></pre>
+  <pre class="example-request"><code>curl -X DELETE "http://localhost:7433/api/accounts/monzo-alex?hard=true"</code></pre>
   <h4>Example Response <span class="status-code">200</span></h4>
   <pre class="example-response"><code>{
-  "ok": true
+  "ok": true,
+  "hard": true
 }</code></pre>
   <h4>Errors</h4>
   <table class="errors-table">
@@ -1799,6 +1809,56 @@ td code { font-size: 12px; }
       <tr><td>400</td><td><code>empty_body</code></td><td>No fields provided</td></tr>
       <tr><td>400</td><td><code>invalid_category</code></td><td>Category not found or is a parent</td></tr>
       <tr><td>404</td><td><code>not_found</code></td><td>Transaction does not exist</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-transactions-id" data-method="DELETE" data-path="/api/transactions/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DEL</span>
+    <code class="endpoint-path">/api/transactions/:id</code>
+  </div>
+  <p class="endpoint-summary">Permanently delete a single transaction (hard delete). The row's dedup fingerprint is freed, so re-importing the same statement will re-add it.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/transactions/a1b2c3d4-e5f6-7890-abcd-ef1234567890</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{ "ok": true, "deleted": 1 }</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>Transaction does not exist</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-transactions" data-method="DELETE" data-path="/api/transactions">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DEL</span>
+    <code class="endpoint-path">/api/transactions</code>
+  </div>
+  <p class="endpoint-summary">Bulk hard-delete. Provide exactly one of <code>ids</code> (delete those transactions) or <code>account_id</code> (delete every transaction for that account, e.g. to clear it before deleting the account).</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>ids</code></td><td>string[]</td><td>No*</td><td>Transaction ids to delete</td></tr>
+      <tr><td><code>account_id</code></td><td>string</td><td>No*</td><td>Delete all transactions for this account</td></tr>
+    </tbody>
+  </table>
+  <p class="endpoint-summary">*Exactly one of <code>ids</code> or <code>account_id</code> is required.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/transactions \
+  -H "Content-Type: application/json" \
+  -d '{"account_id": "ope-gtb"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{ "ok": true, "deleted": 42 }</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_body</code></td><td>Neither ids nor account_id provided</td></tr>
+      <tr><td>400</td><td><code>ambiguous_request</code></td><td>Both ids and account_id provided</td></tr>
     </tbody>
   </table>
 </section>

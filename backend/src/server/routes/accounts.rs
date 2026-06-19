@@ -2,7 +2,7 @@
 //!   GET    /api/accounts
 //!   POST   /api/accounts
 //!   PATCH  /api/accounts/:id
-//!   DELETE /api/accounts/:id
+//!   DELETE /api/accounts/:id[?hard=true]
 //!   PATCH  /api/accounts/:id/balance
 
 use axum::Json;
@@ -218,11 +218,21 @@ pub async fn update_account(
     Ok(Json(updated))
 }
 
-// ── DELETE /api/accounts/:id ─────────────────────────────────────────────────
+// ── DELETE /api/accounts/:id[?hard=true] ─────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteAccountQuery {
+    /// When true, permanently remove the row instead of soft-deleting
+    /// (flipping `is_active`). The account must still be empty (no
+    /// transactions/holdings) either way. Defaults to false.
+    #[serde(default)]
+    pub hard: bool,
+}
 
 pub async fn delete_account(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<DeleteAccountQuery>,
 ) -> Result<Json<Value>, AppError> {
     let db = state.db.lock().expect("db mutex poisoned");
     if !db.account_exists(&id)? {
@@ -238,8 +248,12 @@ pub async fn delete_account(
             "account_in_use",
         ));
     }
-    db.delete_account(&id)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    if q.hard {
+        db.hard_delete_account(&id)?;
+    } else {
+        db.delete_account(&id)?;
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "hard": q.hard })))
 }
 
 // ── PATCH /api/accounts/:id/balance ──────────────────────────────────────────
