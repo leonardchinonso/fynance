@@ -60,6 +60,25 @@ pub enum Commands {
         #[command(subcommand)]
         command: TokenCommand,
     },
+    /// Manage transactions.
+    Transaction {
+        #[command(subcommand)]
+        command: TransactionCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TransactionCommand {
+    /// Permanently delete transactions. Pass one or more ids, or use
+    /// `--account <id>` to delete every transaction for an account (e.g. to
+    /// clear it before deleting the account). This is a hard delete.
+    Delete {
+        /// Transaction id(s) to delete.
+        ids: Vec<String>,
+        /// Delete every transaction belonging to this account id instead.
+        #[arg(long)]
+        account: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -107,6 +126,16 @@ pub enum AccountCommand {
     },
     /// Print all registered accounts.
     List,
+    /// Delete an account. Refuses if it still has transactions or holdings.
+    /// Defaults to a soft delete (deactivate); pass `--hard` to permanently
+    /// remove the row.
+    Delete {
+        /// Account id to delete.
+        id: String,
+        /// Permanently remove the row instead of deactivating it.
+        #[arg(long)]
+        hard: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

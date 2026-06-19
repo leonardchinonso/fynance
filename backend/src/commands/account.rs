@@ -84,6 +84,29 @@ pub fn list(db: &Db) -> Result<()> {
     Ok(())
 }
 
+/// Delete an account. Refuses if it still has transactions or holdings.
+/// Soft delete (deactivate) by default; `hard` permanently removes the row.
+pub fn delete(db: &Db, id: &str, hard: bool) -> Result<()> {
+    if !db.account_exists(id)? {
+        return Err(anyhow!("account {id} not found"));
+    }
+    let tx = db.count_transactions_for_account(id)?;
+    let holdings = db.count_holdings_for_account(id)?;
+    if tx > 0 || holdings > 0 {
+        return Err(anyhow!(
+            "account {id} still has {tx} transaction(s) and {holdings} holding(s); remove them first"
+        ));
+    }
+    if hard {
+        db.hard_delete_account(id)?;
+        println!("Permanently deleted account {id}");
+    } else {
+        db.delete_account(id)?;
+        println!("Deactivated account {id}");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
