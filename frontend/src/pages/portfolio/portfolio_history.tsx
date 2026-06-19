@@ -35,7 +35,11 @@ interface PortfolioHistoryProps {
 
 function formatPeriodLabel(key: string, granularity: Granularity): string {
   if (granularity === "monthly") return formatMonth(key)
-  return key // Q1 2024 or 2024 are already readable
+  // Backend quarterly labels are "YYYY-Qn"; render as "Qn YYYY". Yearly ("YYYY")
+  // and already-formatted "Qn YYYY" keys pass through unchanged.
+  const q = key.match(/^(\d{4})-Q(\d)$/)
+  if (q) return `Q${q[2]} ${q[1]}`
+  return key
 }
 
 function aggregateHistory(
@@ -43,6 +47,13 @@ function aggregateHistory(
   granularity: Granularity
 ): PortfolioHistoryRow[] {
   if (granularity === "monthly") return history
+
+  // The backend already returns rows bucketed by granularity ("YYYY-Qn" for
+  // quarterly, "YYYY" for yearly), so there is nothing to re-aggregate. Only the
+  // mock returns raw monthly ("YYYY-MM") rows that still need grouping here;
+  // re-bucketing the backend's labels with getQuarter would produce "QNaN".
+  const isRawMonthly = history.length === 0 || /^\d{4}-\d{2}$/.test(history[0].month)
+  if (!isRawMonthly) return history
 
   const keyFn = granularity === "quarterly" ? getQuarter : getYear
   const groups = new Map<
@@ -81,19 +92,31 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
   const preferredCurrency = usePreferredCurrency()
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
-  const filtered = history.filter((row) => parseFloat(row.total_wealth) > 0)
-  const aggregated = aggregateHistory(filtered, granularity)
+  const aggregated = aggregateHistory(history, granularity)
 
-  if (aggregated.length === 0) {
+  // Respect the selected date range: keep every period the backend returned and
+  // render points before the first non-zero value as gaps (null) rather than
+  // dropping them, so the axis spans the chosen range and the line simply starts
+  // where tracking begins.
+  const firstIdx = aggregated.findIndex((row) => parseFloat(row.total_wealth) > 0)
+
+  if (firstIdx === -1) {
     return <EmptyState />
   }
 
-  const chartData = aggregated.map((row) => ({
-    period: formatPeriodLabel(row.month, granularity),
-    Available: parseFloat(row.available_wealth),
-    Unavailable: parseFloat(row.unavailable_wealth),
-    Total: parseFloat(row.total_wealth),
-  }))
+  const chartData = aggregated.map((row, i) => {
+    const tracked = i >= firstIdx
+    return {
+      period: formatPeriodLabel(row.month, granularity),
+      Available: tracked ? parseFloat(row.available_wealth) : null,
+      Unavailable: tracked ? parseFloat(row.unavailable_wealth) : null,
+      Total: tracked ? parseFloat(row.total_wealth) : null,
+    }
+  })
+
+  // The table lists only periods from the first tracked value onward; leading
+  // empties would just be rows of £0.00.
+  const tableData = aggregated.slice(firstIdx)
 
   const periodLabel =
     granularity === "monthly"
@@ -134,7 +157,7 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
             </TableRow>
           </TableHeader>
           <TableBody>
-            {[...aggregated].reverse().map((row, i, reversed) => {
+            {[...tableData].reverse().map((row, i, reversed) => {
               const prevRow = i < reversed.length - 1 ? reversed[i + 1] : null
               const change = prevRow
                 ? parseFloat(row.total_wealth) - parseFloat(prevRow.total_wealth)

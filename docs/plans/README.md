@@ -13,6 +13,8 @@ A personal finance tracker written in Rust with a local React web UI. Ingests ba
 | 23 | [23_capital_gains_post_v0.md](23_capital_gains_post_v0.md) | UK CGT rolling tracker: engine shipped, report UI in flight, HMRC-grade items tracked for V2+. |
 | 24 | [24_streaming_progress_errors.md](24_streaming_progress_errors.md) | Streaming Anthropic API, SSE parse progress, and classified provider errors. |
 | 25 | [25_import_gaps.md](25_import_gaps.md) | Multi-institution unified import + dryrun preview: gaps analysis and implementation plan. |
+| 26 | [26_document_storage.md](26_document_storage.md) | Document storage + per-row source provenance. Implemented on `feat/document-storage`. |
+| 27 | [27_dynamic_history_endpoint.md](27_dynamic_history_endpoint.md) | Proposed generic time-series endpoint (dynamic granularity / measure / group_by / filters) to consolidate the bespoke history endpoints. |
 
 ## Archived Plans
 
