@@ -2738,11 +2738,16 @@ impl Db {
         use std::collections::BTreeMap;
 
         // Carry-forward: latest snapshot per (symbol, sub_account) on/before the
-        // period end. Same correlated-subquery pattern as get_holdings_for_summary.
+        // period end. Same correlated-subquery pattern as get_holdings_for_summary,
+        // but a holding only counts for a period when its latest snapshot at/before
+        // that period is non-closed (`h.is_closed = 0`): once the most recent
+        // snapshot is a close, the position drops out and the chart shows a gap
+        // rather than carrying a stale value forward.
         let mut stmt = self.conn.prepare(
             r"SELECT h.symbol, h.name, h.short_name, h.value, h.currency
               FROM holdings h
               WHERE h.account_id = ?1
+                AND h.is_closed = 0
                 AND h.as_of = (
                     SELECT MAX(h2.as_of) FROM holdings h2
                     WHERE h2.account_id = h.account_id

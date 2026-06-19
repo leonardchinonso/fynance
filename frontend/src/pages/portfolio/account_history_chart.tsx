@@ -82,13 +82,22 @@ function AccountHistoryChartInternal({
 
   const chartData = rows.map((row) => {
     const valueBySymbol = new Map(row.values.map((v) => [v.symbol, parseFloat(v.value)]))
-    const point: Record<string, string | number> = {
+    // A symbol absent from `values` has no open (non-closed) snapshot at/before this
+    // period: render a gap (null), not 0, so each line starts where tracking begins
+    // and breaks again once the position is closed.
+    const tracked = row.values.length > 0
+    const point: Record<string, string | number | null> = {
       period: formatPeriodLabel(row.period, granularity),
-      Total: parseFloat(row.total),
+      Total: tracked ? parseFloat(row.total) : null,
     }
-    for (const s of top) point[nameBySymbol.get(s.symbol)!] = valueBySymbol.get(s.symbol) ?? 0
+    for (const s of top) {
+      point[nameBySymbol.get(s.symbol)!] = valueBySymbol.has(s.symbol) ? valueBySymbol.get(s.symbol)! : null
+    }
     if (rest.length > 0) {
-      point.Other = rest.reduce((sum, s) => sum + (valueBySymbol.get(s.symbol) ?? 0), 0)
+      const present = rest.filter((s) => valueBySymbol.has(s.symbol))
+      point.Other = present.length > 0
+        ? present.reduce((sum, s) => sum + valueBySymbol.get(s.symbol)!, 0)
+        : null
     }
     return point
   })

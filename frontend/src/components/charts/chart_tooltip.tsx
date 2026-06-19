@@ -18,14 +18,19 @@ export function ChartTooltip({
 }) {
   if (!active || !payload || payload.length === 0) return null
 
+  // Skip series with no value in this period (gaps before tracking starts) so the
+  // tooltip doesn't try to render null entries.
+  const visible = payload.filter((entry) => entry.value != null)
+  if (visible.length === 0) return null
+
   // Sort: active category first, then by original order
   const sorted = activeCategory
-    ? [...payload].sort((a, b) => {
+    ? [...visible].sort((a, b) => {
         if (a.name === activeCategory) return -1
         if (b.name === activeCategory) return 1
         return 0
       })
-    : payload
+    : visible
 
   return (
     <div className="rounded-lg border border-border/50 bg-popover px-3 py-2 shadow-xl">
