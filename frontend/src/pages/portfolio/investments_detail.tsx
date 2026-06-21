@@ -19,7 +19,7 @@ import { LoadingSpinner } from "@/components/loading_spinner"
 import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { ACCOUNT_TYPE_LABELS } from "@/lib/colors"
-import { AccountHistoryChart } from "./account_history_chart"
+import { AccountHistoryChart, type HoverPeriod } from "./account_history_chart"
 
 // Colors and labels per holding type
 const HOLDING_TYPE_COLORS: Record<HoldingType, string> = {
@@ -145,6 +145,8 @@ function HoldingsContent({
 }) {
   const [chartView, setChartView] = useState<"allocation" | "history">("allocation")
   const [granularity, setGranularity] = useState<Granularity>("monthly")
+  // Period the cursor is over in the history chart; drives the as-of table view.
+  const [hoverPeriod, setHoverPeriod] = useState<HoverPeriod | null>(null)
 
   const sorted = [...holdings].sort((a, b) =>
     toPreferred(parseFloat(b.value), b.currency) - toPreferred(parseFloat(a.value), a.currency)
@@ -164,6 +166,9 @@ function HoldingsContent({
     (h) => INVESTMENT_HOLDING_TYPES.includes(h.holding_type as HoldingType) && toPreferred(parseFloat(h.value), h.currency) > 0
   )
   const showPie = investmentPositions.length > 1
+
+  // Only treat a hover as active while the history chart is the visible chart.
+  const activeHover = !showPie || chartView === "history" ? hoverPeriod : null
 
   const pieData = investmentPositions.map((h) => ({
     name: h.short_name ?? h.symbol,
@@ -194,6 +199,11 @@ function HoldingsContent({
             {sorted.map((h) => {
               const valueInPreferred = toPreferred(parseFloat(h.value), h.currency)
               const typeColor = HOLDING_TYPE_COLORS[h.holding_type as HoldingType] ?? "#78716c"
+              // When hovering the history chart, show that period's as-of value
+              // (preferred currency, from the history series). Qty/price aren't
+              // tracked historically, so they show "-" in that mode.
+              const rowValue = activeHover ? (activeHover.values.get(h.symbol) ?? 0) : valueInPreferred
+              const denom = activeHover ? activeHover.total : totalPreferred
               return (
                 <TableRow key={`${h.account_id}-${h.symbol}`}>
                   <TableCell className="font-medium">{h.symbol}</TableCell>
@@ -207,22 +217,28 @@ function HoldingsContent({
                       {HOLDING_TYPE_LABELS[h.holding_type as HoldingType] ?? h.holding_type}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{h.quantity}</TableCell>
+                  <TableCell className="text-right tabular-nums">{activeHover ? "-" : h.quantity}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {h.price_per_unit
-                      ? <MoneyDisplay amount={h.price_per_unit} currency={h.currency} colorize={false} />
-                      : "-"}
+                    {activeHover
+                      ? "-"
+                      : h.price_per_unit
+                        ? <MoneyDisplay amount={h.price_per_unit} currency={h.currency} colorize={false} />
+                        : "-"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums font-medium">
-                    <MoneyDisplay amount={h.value} currency={h.currency} colorize={false} />
+                    {activeHover
+                      ? <MoneyDisplay amount={rowValue.toFixed(2)} currency={preferredCurrency} colorize={false} />
+                      : <MoneyDisplay amount={h.value} currency={h.currency} colorize={false} />}
                   </TableCell>
                   {showConvertedCol && (
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      <MoneyDisplay amount={valueInPreferred.toFixed(2)} currency={preferredCurrency} colorize={false} />
+                      {activeHover
+                        ? "-"
+                        : <MoneyDisplay amount={valueInPreferred.toFixed(2)} currency={preferredCurrency} colorize={false} />}
                     </TableCell>
                   )}
                   <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {totalPreferred > 0 ? ((valueInPreferred / totalPreferred) * 100).toFixed(1) : "0"}%
+                    {denom > 0 ? ((rowValue / denom) * 100).toFixed(1) : "0"}%
                   </TableCell>
                 </TableRow>
               )
@@ -230,7 +246,10 @@ function HoldingsContent({
           </TableBody>
         </Table>
         <div className="mt-3 text-right text-sm font-medium">
-          Total: <MoneyDisplay amount={totalPreferred.toFixed(2)} currency={preferredCurrency} colorize={false} />
+          {activeHover && (
+            <span className="mr-2 text-xs font-normal text-muted-foreground">as of {activeHover.label}</span>
+          )}
+          Total: <MoneyDisplay amount={(activeHover ? activeHover.total : totalPreferred).toFixed(2)} currency={preferredCurrency} colorize={false} />
         </div>
       </div>
 
@@ -268,7 +287,7 @@ function HoldingsContent({
                 <ToggleGroupItem value="yearly" size="sm">Yearly</ToggleGroupItem>
               </ToggleGroup>
             </div>
-            <AccountHistoryChart accountId={accountId} start={start} end={end} granularity={granularity} />
+            <AccountHistoryChart accountId={accountId} start={start} end={end} granularity={granularity} onHoverPeriod={setHoverPeriod} />
           </div>
         )}
       </div>

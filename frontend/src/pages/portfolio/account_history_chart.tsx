@@ -21,11 +21,20 @@ const HOLDING_COLORS = [
 // Cap the number of individual holding lines; the rest collapse into "Other".
 const TOP_N = 8
 
+/** The period the cursor is over, with each holding's value at that period
+ * (preferred currency). Emitted so the holdings table can show as-of values. */
+export interface HoverPeriod {
+  label: string
+  total: number
+  values: Map<string, number>
+}
+
 interface AccountHistoryChartProps {
   accountId: string
   start: string
   end: string
   granularity: Granularity
+  onHoverPeriod?: (period: HoverPeriod | null) => void
 }
 
 function formatPeriodLabel(period: string, granularity: Granularity): string {
@@ -33,7 +42,7 @@ function formatPeriodLabel(period: string, granularity: Granularity): string {
   return granularity === "monthly" ? formatMonth(period) : period
 }
 
-export function AccountHistoryChart({ accountId, start, end, granularity }: AccountHistoryChartProps) {
+export function AccountHistoryChart({ accountId, start, end, granularity, onHoverPeriod }: AccountHistoryChartProps) {
   const data = useAccountHoldingsHistory(accountId, start, end, granularity)
 
   return visitRemoteData(data, {
@@ -41,7 +50,7 @@ export function AccountHistoryChart({ accountId, start, end, granularity }: Acco
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: (history) => (
       <div className="relative">
-        <AccountHistoryChartInternal history={history} granularity={granularity} />
+        <AccountHistoryChartInternal history={history} granularity={granularity} onHoverPeriod={onHoverPeriod} />
         <ReloadingOverlay active={data.status === "reloading"} />
       </div>
     ),
@@ -51,9 +60,11 @@ export function AccountHistoryChart({ accountId, start, end, granularity }: Acco
 function AccountHistoryChartInternal({
   history,
   granularity,
+  onHoverPeriod,
 }: {
   history: AccountHoldingsHistory
   granularity: Granularity
+  onHoverPeriod?: (period: HoverPeriod | null) => void
 }) {
   const { symbols, rows } = history
 
@@ -123,6 +134,19 @@ function AccountHistoryChartInternal({
         colors={colors}
         height={320}
         curved
+        onActiveIndexChange={(i) => {
+          if (!onHoverPeriod) return
+          if (i === null || !rows[i]) {
+            onHoverPeriod(null)
+            return
+          }
+          const row = rows[i]
+          onHoverPeriod({
+            label: formatPeriodLabel(row.period, granularity),
+            total: parseFloat(row.total),
+            values: new Map(row.values.map((v) => [v.symbol, parseFloat(v.value)])),
+          })
+        }}
       />
     </div>
   )
