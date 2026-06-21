@@ -39,7 +39,7 @@ import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { SymbolSummary } from "@/bindings/SymbolSummary"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
-import type { ApiService, CgtFilters, HoldingsImportResponse, ParseOptions } from "./service"
+import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
 import {
@@ -600,6 +600,65 @@ export class MockApiService implements ApiService {
     await delay(DELAY_MS)
     const set = new Set(accountIds)
     return MOCK_HOLDINGS.filter((h) => set.has(h.account_id))
+  }
+
+  async getAccountHoldingsHistory(
+    accountId: string,
+    start: string,
+    end: string,
+    granularity: Granularity = "monthly"
+  ): Promise<AccountHoldingsHistory> {
+    await delay(DELAY_MS)
+
+    // The mock dataset only stores one snapshot per holding, so synthesize a
+    // per-holding series by distributing each period's account balance across
+    // the account's current holdings proportionally to their current value.
+    const holdings = MOCK_HOLDINGS.filter((h) => h.account_id === accountId)
+    const currentTotal = holdings.reduce((s, h) => s + parseFloat(h.value), 0)
+    const weights = holdings.map((h) => ({
+      symbol: h.symbol,
+      weight: currentTotal > 0 ? parseFloat(h.value) / currentTotal : 0,
+    }))
+
+    const symbols = holdings.map((h) => ({
+      symbol: h.symbol,
+      name: h.name,
+      short_name: h.short_name,
+    }))
+
+    // account_id -> "YYYY-MM" -> balance, carried forward across gaps.
+    const balanceByMonth = new Map<string, number>()
+    for (const snap of MOCK_ACCOUNT_BALANCES) {
+      if (snap.account_id !== accountId) continue
+      balanceByMonth.set(getMonthFromDate(snap.as_of), parseFloat(snap.balance))
+    }
+
+    const periodKey = (month: string): string => {
+      if (granularity === "monthly") return month
+      const [y, m] = month.split("-").map(Number)
+      if (granularity === "quarterly") return `${y}-Q${Math.floor((m - 1) / 3) + 1}`
+      return `${y}`
+    }
+
+    // Build period-end values: walk months ascending, carry the last known
+    // balance forward, and keep the latest month's value per period bucket.
+    const rowByPeriod = new Map<string, { period: string; total: string; values: { symbol: string; value: string }[] }>()
+    let lastBalance = 0
+    for (const month of getMonthsInRange(start, end)) {
+      if (balanceByMonth.has(month)) lastBalance = balanceByMonth.get(month)!
+      const total = lastBalance
+      rowByPeriod.set(periodKey(month), {
+        period: periodKey(month),
+        total: total.toFixed(2),
+        values: weights.map((w) => ({ symbol: w.symbol, value: (total * w.weight).toFixed(2) })),
+      })
+    }
+
+    return {
+      preferred_currency: "GBP",
+      symbols,
+      rows: Array.from(rowByPeriod.values()),
+    }
   }
 
   async getCashFlow(

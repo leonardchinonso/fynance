@@ -20,7 +20,9 @@ const DEFAULT_COLORS = [
 ]
 
 interface StyledLineChartProps {
-  data: Record<string, string | number>[]
+  // `null` marks a gap (no data this period) so the line breaks instead of
+  // dropping to 0 — used with the default `connectNulls={false}`.
+  data: Record<string, string | number | null>[]
   index: string
   categories: string[]
   colors?: string[]

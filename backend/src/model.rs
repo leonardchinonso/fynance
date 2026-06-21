@@ -876,6 +876,40 @@ pub struct HoldingsHistoryRow {
     pub total_wealth_display: Option<DisplayCurrency>,
 }
 
+/// Stable metadata for one holding line in an account's history chart.
+/// Used by `GET /api/holdings/account-history`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct AccountHoldingSeries {
+    pub symbol: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_name: Option<String>,
+}
+
+/// Value of one holding at a period end, converted to the preferred currency.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct AccountHoldingValue {
+    pub symbol: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub value: Decimal,
+}
+
+/// One period in the `GET /api/holdings/account-history` response: the account's
+/// total value and the per-symbol breakdown at that period end (preferred currency).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct AccountHoldingHistoryRow {
+    /// Period label: "YYYY-MM" for monthly, "YYYY-Qn" for quarterly, "YYYY" for yearly.
+    pub period: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total: Decimal,
+    pub values: Vec<AccountHoldingValue>,
+}
+
 /// One row in the `GET /api/holdings/cash-flow` response.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]

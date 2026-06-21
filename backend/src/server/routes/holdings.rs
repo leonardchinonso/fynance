@@ -2,6 +2,7 @@
 //!   GET  /api/holdings
 //!   GET  /api/holdings/summary
 //!   GET  /api/holdings/history
+//!   GET  /api/holdings/account-history
 //!   GET  /api/holdings/balances
 //!   GET  /api/holdings/cash-flow
 //!   POST /api/holdings/import
@@ -271,6 +272,61 @@ pub async fn get_holdings_history(
 
     Ok(Json(serde_json::json!({
         "preferred_currency": preferred_currency,
+        "rows": rows
+    })))
+}
+
+// ── GET /api/holdings/account-history ─────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AccountHistoryQuery {
+    pub account_id: Option<String>,
+    pub start: Option<String>,
+    pub end: Option<String>,
+    pub granularity: Option<String>,
+}
+
+pub async fn get_account_holdings_history(
+    State(state): State<AppState>,
+    Query(q): Query<AccountHistoryQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let account_id = q
+        .account_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::bad_request("account_id is required", "missing_parameter"))?;
+
+    let start = q
+        .start
+        .as_deref()
+        .ok_or_else(|| AppError::bad_request("start is required", "missing_parameter"))
+        .and_then(parse_date)?;
+    let end = q
+        .end
+        .as_deref()
+        .ok_or_else(|| AppError::bad_request("end is required", "missing_parameter"))
+        .and_then(parse_date)?;
+    validate_date_range(start, end)?;
+
+    let granularity = q
+        .granularity
+        .as_deref()
+        .ok_or_else(|| AppError::bad_request("granularity is required", "missing_parameter"))
+        .and_then(parse_granularity)?;
+
+    let (symbols, rows, preferred_currency) = {
+        let db = state.db.lock().expect("db mutex poisoned");
+        let currencies = db.get_currencies()?;
+        let fx = FxRateMap::new(currencies)?;
+        let (symbols, rows) =
+            db.get_account_holdings_history(account_id, start, end, &granularity, &fx)?;
+        let preferred = fx.preferred().to_string();
+        (symbols, rows, preferred)
+    };
+
+    Ok(Json(serde_json::json!({
+        "preferred_currency": preferred_currency,
+        "symbols": symbols,
         "rows": rows
     })))
 }

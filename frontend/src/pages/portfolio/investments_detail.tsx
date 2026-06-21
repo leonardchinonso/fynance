@@ -1,4 +1,5 @@
-import type { Holding } from "@/types"
+import { useState } from "react"
+import type { Holding, Granularity, Account } from "@/types"
 import type { HoldingType } from "@/bindings/HoldingType"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useHoldings } from "@/hooks/data"
@@ -9,13 +10,16 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { MoneyDisplay } from "@/components/currency"
 import { InteractivePie } from "@/components/charts"
 import { EmptyState } from "@/components/empty_state"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { LoadingSpinner } from "@/components/loading_spinner"
 import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, formatDate } from "@/lib/utils"
+import { ACCOUNT_TYPE_LABELS } from "@/lib/colors"
+import { AccountHistoryChart, type HoverPeriod } from "./account_history_chart"
 
 // Colors and labels per holding type
 const HOLDING_TYPE_COLORS: Record<HoldingType, string> = {
@@ -53,11 +57,13 @@ const INVESTMENT_HOLDING_TYPES: HoldingType[] = ["stock", "etf", "fund", "bond",
 
 interface InvestmentsDetailProps {
   accountId: string | null
-  accountName: string
+  account: Account | null
+  start: string
+  end: string
   onClose: () => void
 }
 
-export function InvestmentsDetail({ accountId, accountName, onClose }: InvestmentsDetailProps) {
+export function InvestmentsDetail({ accountId, account, start, end, onClose }: InvestmentsDetailProps) {
   const holdingsData = useHoldings(accountId)
   const currencies = useCurrenciesFromContext()
   const preferredCurrency = usePreferredCurrency()
@@ -76,7 +82,14 @@ export function InvestmentsDetail({ accountId, accountName, onClose }: Investmen
           <EmptyState title="No holdings on file" message="This account doesn't have any recorded positions yet." />
         </div>
       ) : (
-        <HoldingsContent holdings={holdings} preferredCurrency={preferredCurrency} toPreferred={toPreferred} />
+        <HoldingsContent
+          holdings={holdings}
+          accountId={accountId ?? ""}
+          start={start}
+          end={end}
+          preferredCurrency={preferredCurrency}
+          toPreferred={toPreferred}
+        />
       ),
   })
 
@@ -84,23 +97,57 @@ export function InvestmentsDetail({ accountId, accountName, onClose }: Investmen
     <Sheet open={!!accountId} onOpenChange={() => onClose()}>
       <SheetContent className="w-full sm:max-w-4xl overflow-y-auto px-6">
         <SheetHeader>
-          <SheetTitle>{accountName} Holdings</SheetTitle>
+          <SheetTitle>{account?.name ?? ""} Holdings</SheetTitle>
         </SheetHeader>
+        {account && <AccountMeta account={account} />}
         {content}
       </SheetContent>
     </Sheet>
   )
 }
 
+function AccountMeta({ account }: { account: Account }) {
+  return (
+    <div className="mt-4 space-y-2">
+      <DetailRow label="Institution" value={account.institution} />
+      <DetailRow label="Type" value={ACCOUNT_TYPE_LABELS[account.type]} />
+      <DetailRow label="Currency" value={account.currency} />
+      <DetailRow label="Balance" value={formatCurrency(account.balance ?? "0", account.currency)} />
+      <DetailRow label="Last Updated" value={account.balance_date ? formatDate(account.balance_date) : "Never"} />
+      {account.notes && <DetailRow label="Notes" value={account.notes} />}
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between py-1.5 border-b border-border/50">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-sm font-medium">{value}</span>
+    </div>
+  )
+}
+
 function HoldingsContent({
   holdings,
+  accountId,
+  start,
+  end,
   preferredCurrency,
   toPreferred,
 }: {
   holdings: Holding[]
+  accountId: string
+  start: string
+  end: string
   preferredCurrency: string
   toPreferred: (value: number, currency: string) => number
 }) {
+  const [chartView, setChartView] = useState<"allocation" | "history">("allocation")
+  const [granularity, setGranularity] = useState<Granularity>("monthly")
+  // Period the cursor is over in the history chart; drives the as-of table view.
+  const [hoverPeriod, setHoverPeriod] = useState<HoverPeriod | null>(null)
+
   const sorted = [...holdings].sort((a, b) =>
     toPreferred(parseFloat(b.value), b.currency) - toPreferred(parseFloat(a.value), a.currency)
   )
@@ -119,6 +166,9 @@ function HoldingsContent({
     (h) => INVESTMENT_HOLDING_TYPES.includes(h.holding_type as HoldingType) && toPreferred(parseFloat(h.value), h.currency) > 0
   )
   const showPie = investmentPositions.length > 1
+
+  // Only treat a hover as active while the history chart is the visible chart.
+  const activeHover = !showPie || chartView === "history" ? hoverPeriod : null
 
   const pieData = investmentPositions.map((h) => ({
     name: h.short_name ?? h.symbol,
@@ -149,6 +199,11 @@ function HoldingsContent({
             {sorted.map((h) => {
               const valueInPreferred = toPreferred(parseFloat(h.value), h.currency)
               const typeColor = HOLDING_TYPE_COLORS[h.holding_type as HoldingType] ?? "#78716c"
+              // When hovering the history chart, show that period's as-of value
+              // (preferred currency, from the history series). Qty/price aren't
+              // tracked historically, so they show "-" in that mode.
+              const rowValue = activeHover ? (activeHover.values.get(h.symbol) ?? 0) : valueInPreferred
+              const denom = activeHover ? activeHover.total : totalPreferred
               return (
                 <TableRow key={`${h.account_id}-${h.symbol}`}>
                   <TableCell className="font-medium">{h.symbol}</TableCell>
@@ -162,22 +217,28 @@ function HoldingsContent({
                       {HOLDING_TYPE_LABELS[h.holding_type as HoldingType] ?? h.holding_type}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{h.quantity}</TableCell>
+                  <TableCell className="text-right tabular-nums">{activeHover ? "-" : h.quantity}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {h.price_per_unit
-                      ? <MoneyDisplay amount={h.price_per_unit} currency={h.currency} colorize={false} />
-                      : "-"}
+                    {activeHover
+                      ? "-"
+                      : h.price_per_unit
+                        ? <MoneyDisplay amount={h.price_per_unit} currency={h.currency} colorize={false} />
+                        : "-"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums font-medium">
-                    <MoneyDisplay amount={h.value} currency={h.currency} colorize={false} />
+                    {activeHover
+                      ? <MoneyDisplay amount={rowValue.toFixed(2)} currency={preferredCurrency} colorize={false} />
+                      : <MoneyDisplay amount={h.value} currency={h.currency} colorize={false} />}
                   </TableCell>
                   {showConvertedCol && (
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      <MoneyDisplay amount={valueInPreferred.toFixed(2)} currency={preferredCurrency} colorize={false} />
+                      {activeHover
+                        ? "-"
+                        : <MoneyDisplay amount={valueInPreferred.toFixed(2)} currency={preferredCurrency} colorize={false} />}
                     </TableCell>
                   )}
                   <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {totalPreferred > 0 ? ((valueInPreferred / totalPreferred) * 100).toFixed(1) : "0"}%
+                    {denom > 0 ? ((rowValue / denom) * 100).toFixed(1) : "0"}%
                   </TableCell>
                 </TableRow>
               )
@@ -185,16 +246,27 @@ function HoldingsContent({
           </TableBody>
         </Table>
         <div className="mt-3 text-right text-sm font-medium">
-          Total: <MoneyDisplay amount={totalPreferred.toFixed(2)} currency={preferredCurrency} colorize={false} />
+          {activeHover && (
+            <span className="mr-2 text-xs font-normal text-muted-foreground">as of {activeHover.label}</span>
+          )}
+          Total: <MoneyDisplay amount={(activeHover ? activeHover.total : totalPreferred).toFixed(2)} currency={preferredCurrency} colorize={false} />
         </div>
       </div>
 
-      {/* Pie chart for investment accounts */}
-      {showPie && (
-        <div>
-          <p className="mb-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Allocation
-          </p>
+      {/* Chart area: allocation pie (investment accounts) and/or value history.
+          Accounts without a pie show history as the only chart option. */}
+      <div className="space-y-3">
+        {showPie && (
+          <ToggleGroup
+            value={[chartView]}
+            onValueChange={(v) => { if (v && v.length) setChartView(v[0] as "allocation" | "history") }}
+          >
+            <ToggleGroupItem value="allocation" size="sm">Allocation</ToggleGroupItem>
+            <ToggleGroupItem value="history" size="sm">History</ToggleGroupItem>
+          </ToggleGroup>
+        )}
+
+        {showPie && chartView === "allocation" ? (
           <InteractivePie
             data={pieData}
             colors={PIE_COLORS}
@@ -203,8 +275,22 @@ function HoldingsContent({
             outerRadius={95}
             label={formatCurrency(totalPreferred.toFixed(2), preferredCurrency)}
           />
-        </div>
-      )}
+        ) : (
+          <div className="space-y-3">
+            <div className="flex justify-end">
+              <ToggleGroup
+                value={[granularity]}
+                onValueChange={(v) => { if (v && v.length) setGranularity(v[0] as Granularity) }}
+              >
+                <ToggleGroupItem value="monthly" size="sm">Monthly</ToggleGroupItem>
+                <ToggleGroupItem value="quarterly" size="sm">Quarterly</ToggleGroupItem>
+                <ToggleGroupItem value="yearly" size="sm">Yearly</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+            <AccountHistoryChart accountId={accountId} start={start} end={end} granularity={granularity} onHoverPeriod={setHoverPeriod} />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -78,7 +78,7 @@ import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
-import type { ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent } from "./service"
+import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
 import { MockApiService } from "./mock_service"
@@ -295,6 +295,20 @@ export class RealApiService implements ApiService {
 
   async getHoldings(accountId: string): Promise<Holding[]> {
     return get<Holding[]>(`${BASE}/holdings`, { account_id: accountId })
+  }
+
+  async getAccountHoldingsHistory(
+    accountId: string,
+    start: string,
+    end: string,
+    granularity: Granularity = "monthly"
+  ): Promise<AccountHoldingsHistory> {
+    return get<AccountHoldingsHistory>(`${BASE}/holdings/account-history`, {
+      account_id: accountId,
+      start,
+      end,
+      granularity,
+    })
   }
 
   async getHoldingsBatch(accountIds: string[]): Promise<Holding[]> {
