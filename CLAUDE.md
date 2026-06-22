@@ -132,6 +132,8 @@ fynance import <file|dir> --account <id>     # Import CSV statements (auto-detec
 fynance account add --id <id> --name <name> --institution <inst> --type <type>
 fynance account set-balance <id> <amount> --date YYYY-MM-DD
 fynance account list
+fynance account delete <id> [--hard]         # soft-delete (deactivate); --hard removes the row. Refuses if it has transactions/holdings.
+fynance transaction delete <id>... [--account <id>]   # hard-delete transactions by id, or all for an account (clears it before deletion)
 fynance budget set --month YYYY-MM --category <c> --amount N
 fynance budget status
 fynance stats
