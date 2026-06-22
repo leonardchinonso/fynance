@@ -121,6 +121,7 @@ Full spec in [docs/plans/22_multi_currency.md](22_multi_currency.md) (V4 section
 - [ ] Use `as_of` date on holdings snapshots to fetch the rate current at snapshot time, not today's rate, for accurate historical net worth chart values.
 - [ ] `exchange_rates` table already caches by date — historical lookups query that table, fetching from provider if date is missing.
 - [ ] Holdings snapshots already capture value + currency at snapshot date — this is purely about using the right rate per date when aggregating history.
+- [ ] **Also needed for accurate per-account / per-holding history, not just the aggregate net worth.** Concrete case: the rebuilt Trading 212 holdings history (from broker confirmation statements) ties to each confirmation's GBP total only within ~1-2%, because `convert_as_of` currently falls back to today's static USD rate for every historical USD snapshot. With per-date rates, a USD holding's GBP value at each past date would match the broker statement exactly. Same root cause as CGT needing the trade-date rate to compute the gain in GBP.
 
 ---
 
