@@ -151,6 +151,8 @@ GET    /api/transactions?month=&category=&account=&page=&limit=
 GET    /api/transactions/categories
 GET    /api/transactions/accounts
 PATCH  /api/transactions/:id                 # edit category, notes
+DELETE /api/transactions/:id                 # hard-delete one transaction
+DELETE /api/transactions                     # bulk hard-delete: body { ids: [...] } OR { account_id } (clear an account)
 POST   /api/import                           # typed JSON API for structured transaction data (agents, scripts)
 POST   /api/import/csv                       # upload CSV (single file)
 POST   /api/import/bulk                      # upload multiple CSVs
@@ -163,7 +165,8 @@ GET    /api/income/:month                    # derived from Income-category tran
 
 GET    /api/holdings                         # list holdings for an account (?account_id=)
 GET    /api/holdings/summary                 # portfolio summary: net worth, by_asset_class, by_type, by_institution
-GET    /api/holdings/history                 # net worth history over time
+GET    /api/holdings/history                 # net worth history over time (available/unavailable/total)
+GET    /api/holdings/account-history?account_id=&start=&end=&granularity=   # per-account, per-holding value series over time
 GET    /api/holdings/balances               # per-account balances derived from holdings SUM
 GET    /api/holdings/cash-flow              # income/spending cash flow
 POST   /api/holdings                        # upsert holdings for an account
@@ -171,6 +174,7 @@ PATCH  /api/holdings/:id                    # update a single holding
 POST   /api/holdings/import                 # bulk import holdings
 POST   /api/accounts
 PATCH  /api/accounts/:id/balance
+DELETE /api/accounts/:id?hard=true           # delete account (soft/deactivate by default; ?hard=true removes the row). Refuses if it still has transactions/holdings.
 
 GET    /api/investments                      # list investment events (?account_id=&symbol=&event_type=)
 POST   /api/investments                      # create one investment event
