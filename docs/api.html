@@ -611,7 +611,8 @@ td code { font-size: 12px; }
       <tr><td><code>quantity</code></td><td>string</td><td>Decimal string</td></tr>
       <tr><td><code>price_per_share</code></td><td>string</td><td>Decimal string</td></tr>
       <tr><td><code>fee</code></td><td>string | null</td><td>Transaction fee (decimal string)</td></tr>
-      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code of the price</td></tr>
+      <tr><td><code>fee_currency</code></td><td>string | null</td><td>ISO 4217 code of the fee when it differs from <code>currency</code>; null means the fee is in the trade currency (or there is no fee)</td></tr>
       <tr><td><code>notes</code></td><td>string | null</td><td>Free-text notes</td></tr>
       <tr><td><code>fingerprint</code></td><td>string</td><td>Dedup hash</td></tr>
       <tr><td><code>created_at</code></td><td>string</td><td>ISO 8601 datetime</td></tr>
@@ -3139,6 +3140,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     "price_per_share": "95.00",
     "fee": null,
     "currency": "GBP",
+    "fee_currency": null,
     "notes": null,
     "fingerprint": "def456...",
     "created_at": "2026-01-15T10:00:00"
@@ -3163,7 +3165,8 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
       <tr><td><code>quantity</code></td><td>string</td><td>Yes</td><td>Decimal string</td></tr>
       <tr><td><code>price_per_share</code></td><td>string</td><td>Yes</td><td>Decimal string</td></tr>
       <tr><td><code>fee</code></td><td>string</td><td>No</td><td>Transaction fee (decimal string)</td></tr>
-      <tr><td><code>currency</code></td><td>string</td><td>Yes</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>Yes</td><td>ISO 4217 code of the price</td></tr>
+      <tr><td><code>fee_currency</code></td><td>string</td><td>No</td><td>ISO 4217 code of the fee if it differs from <code>currency</code>. Defaults to <code>currency</code> when a fee is present and this is omitted.</td></tr>
       <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
     </tbody>
   </table>
@@ -3190,6 +3193,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   "price_per_share": "95.00",
   "fee": null,
   "currency": "GBP",
+  "fee_currency": null,
   "notes": null,
   "fingerprint": "ghi789...",
   "created_at": "2026-05-30T12:00:00"
@@ -3245,7 +3249,8 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
       <tr><td><code>quantity</code></td><td>string</td><td>No</td><td>Decimal string</td></tr>
       <tr><td><code>price_per_share</code></td><td>string</td><td>No</td><td>Decimal string</td></tr>
       <tr><td><code>fee</code></td><td>string</td><td>No</td><td>Transaction fee</td></tr>
-      <tr><td><code>currency</code></td><td>string</td><td>No</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>No</td><td>ISO 4217 code of the price</td></tr>
+      <tr><td><code>fee_currency</code></td><td>string</td><td>No</td><td>ISO 4217 code of the fee if it differs from <code>currency</code></td></tr>
       <tr><td><code>notes</code></td><td>string</td><td>No</td><td>Free-text notes</td></tr>
     </tbody>
   </table>

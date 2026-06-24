@@ -67,7 +67,16 @@ fn check_required_currencies(
     let preferred = fx.preferred();
     let mut missing: Vec<String> = events
         .iter()
-        .map(|e| e.currency.as_str())
+        .flat_map(|e| {
+            let mut codes: Vec<&str> = vec![e.currency.as_str()];
+            // A non-zero fee in its own currency adds a second requirement.
+            if e.fee.is_some_and(|f| !f.is_zero()) {
+                if let Some(fc) = e.fee_currency.as_deref() {
+                    codes.push(fc);
+                }
+            }
+            codes
+        })
         .filter(|c| *c != preferred && fx.rate(c).is_none())
         .map(|c| c.to_string())
         .collect();
@@ -229,6 +238,8 @@ struct CalEvent {
     price_per_share: Decimal,
     fee: Decimal,
     currency: String,
+    /// Currency the fee is denominated in; may differ from `currency`.
+    fee_currency: String,
 
     // Tracking for matching algorithm
     remaining_qty: Decimal,
@@ -246,6 +257,10 @@ impl From<InvestmentEvent> for CalEvent {
             quantity: e.quantity,
             price_per_share: e.price_per_share,
             fee: e.fee.unwrap_or(Decimal::ZERO),
+            // A null fee_currency means the fee is in the trade currency. This is
+            // only a defensive fallback; new rows carry a concrete value (defaulted
+            // at write time and backfilled by migration).
+            fee_currency: e.fee_currency.unwrap_or_else(|| e.currency.clone()),
             currency: e.currency,
             remaining_qty: e.quantity,
             same_day_matches: Vec::new(),
@@ -266,7 +281,7 @@ impl CalEvent {
         };
 
         let proceeds = fx.convert_as_of(proceeds_raw, &self.currency, self.date.date());
-        let fee = fx.convert_as_of(fee_raw, &self.currency, self.date.date());
+        let fee = fx.convert_as_of(fee_raw, &self.fee_currency, self.date.date());
         (proceeds, fee)
     }
 }
@@ -429,7 +444,8 @@ pub async fn get_capital_gains(
         &fx,
     );
 
-    // Apply currency conversions to normalize summary totals to the preferred base currency
+    // Aggregate the per-event figures (already converted to the preferred base
+    // currency by run_cgt_engine) into the summary and per-symbol totals.
     let mut total_proceeds = Decimal::ZERO;
     let mut total_allowable_costs = Decimal::ZERO;
     let mut total_gains = Decimal::ZERO;
@@ -661,8 +677,15 @@ fn run_cgt_engine(
                         } else {
                             Decimal::ZERO
                         };
-                        let acq_cost_raw = entering * e.price_per_share + prop_fee;
-                        let acq_cost = fx.convert_as_of(acq_cost_raw, &e.currency, e.date.date());
+                        // Price and fee can be in different currencies, so convert
+                        // each at its own rate before summing into the pool cost.
+                        let price_cost = fx.convert_as_of(
+                            entering * e.price_per_share,
+                            &e.currency,
+                            e.date.date(),
+                        );
+                        let fee_cost = fx.convert_as_of(prop_fee, &e.fee_currency, e.date.date());
+                        let acq_cost = price_cost + fee_cost;
 
                         pool_shares += entering;
                         pool_cost += acq_cost;

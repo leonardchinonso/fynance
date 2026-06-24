@@ -20,7 +20,10 @@ Rules:
 7. total_value: total transaction value as a decimal string. Provide ONLY if EXPLICITLY
    present in the source data. Do NOT compute it from quantity * price_per_share. Null if absent.
 8. fee: transaction fee as a decimal string. "0" if no fee shown.
-9. currency: ISO 4217 currency code for the price and fee (e.g. "GBP", "USD").
+9. currency: ISO 4217 currency code of the price (e.g. "GBP", "USD").
+9a. fee_currency: ISO 4217 currency code of the fee, ONLY when the statement charges the
+    fee in a different currency from the price (e.g. a USD-priced share with a GBP commission,
+    FX charge, or stamp duty). Leave it null when the fee is in the same currency as the price.
 10. All amounts must be plain decimal strings with no currency symbols or thousands separators.
 11. Do not invent events. Only emit rows that are explicitly present in the data.
 12. Skip header rows, summary rows, footer rows, and empty rows.

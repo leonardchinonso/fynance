@@ -1001,7 +1001,7 @@ export class MockApiService implements ApiService {
       ? {
           account_id: accountId,
           events: [
-            { account_id: accountId, event_type: "buy", symbol: "AAPL", date: "2026-04-10T14:30:00", quantity: "10.0000", price_per_share: "185.20", fee: "0.00", currency: "USD", notes: null, source_document_ids: [] },
+            { account_id: accountId, event_type: "buy", symbol: "AAPL", date: "2026-04-10T14:30:00", quantity: "10.0000", price_per_share: "185.20", fee: "0.00", currency: "USD", fee_currency: null, notes: null, source_document_ids: [] },
           ],
         }
       : null

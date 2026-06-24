@@ -28,6 +28,10 @@ pub struct ParsedInvestmentRow {
     pub total_value: Option<String>,
     pub fee: String,
     pub currency: String,
+    /// ISO 4217 currency of the fee when it differs from the trade currency.
+    /// `None` (the common case) means the fee is in the trade currency.
+    #[serde(default)]
+    pub fee_currency: Option<String>,
     pub notes: Option<String>,
     pub row_confidence: f32,
     /// Filename this row was attributed to during a parse. Set per-file in split
@@ -90,7 +94,11 @@ pub fn build_investments_tool_schema() -> Value {
                         },
                         "currency": {
                             "type": "string",
-                            "description": "ISO 4217 currency code."
+                            "description": "ISO 4217 currency code of the price."
+                        },
+                        "fee_currency": {
+                            "type": ["string", "null"],
+                            "description": "ISO 4217 currency of the fee, ONLY if it differs from currency (e.g. USD-priced share with a GBP commission). Null when the fee is in the same currency as the price."
                         },
                         "notes": {
                             "type": ["string", "null"],
@@ -224,6 +232,7 @@ mod tests {
                 total_value: Some("763.20".to_string()),
                 fee: "0".to_string(),
                 currency: "GBP".to_string(),
+                fee_currency: None,
                 notes: None,
                 row_confidence: 0.97,
                 source_file: None,

@@ -1028,6 +1028,10 @@ pub struct InvestmentEvent {
     #[ts(type = "string | null")]
     pub fee: Option<Decimal>,
     pub currency: String,
+    /// ISO 4217 currency of the fee when it differs from `currency`. `None` means
+    /// the fee is in the trade currency (or there is no fee).
+    #[serde(default)]
+    pub fee_currency: Option<String>,
     pub notes: Option<String>,
     pub fingerprint: String,
     #[serde(with = "serde_naive_datetime")]
@@ -1050,6 +1054,11 @@ pub struct CreateInvestmentEventBody {
     pub price_per_share: String,
     pub fee: Option<String>,
     pub currency: String,
+    /// ISO 4217 currency of the fee when it differs from `currency`. Omit / `None`
+    /// to charge the fee in the trade currency; the server defaults it to
+    /// `currency` whenever a fee is present.
+    #[serde(default)]
+    pub fee_currency: Option<String>,
     pub notes: Option<String>,
     /// IDs of the source documents this row was extracted from (`documents.id`).
     /// The parse endpoint fills these in per row; manual rows leave it empty.
@@ -1067,6 +1076,8 @@ pub struct PatchInvestmentEventBody {
     pub price_per_share: Option<String>,
     pub fee: Option<String>,
     pub currency: Option<String>,
+    #[serde(default)]
+    pub fee_currency: Option<String>,
     pub notes: Option<String>,
 }
 
