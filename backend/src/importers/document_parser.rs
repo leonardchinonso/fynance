@@ -438,6 +438,7 @@ pub fn build_multi_preview(
                 price_per_share: r.price_per_share.clone(),
                 fee: Some(r.fee.clone()),
                 currency: r.currency.clone(),
+                fee_currency: r.fee_currency.clone(),
                 notes: r.notes.clone(),
                 source_document_ids: inv_source_ids[i].clone(),
             })

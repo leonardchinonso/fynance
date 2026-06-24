@@ -142,8 +142,9 @@ CREATE TABLE IF NOT EXISTS investments (
     date             TEXT NOT NULL,    -- ISO 8601 datetime (YYYY-MM-DDTHH:MM:SS); date-only imports use T00:00:00
     quantity         TEXT NOT NULL,    -- Decimal as TEXT (shares/units)
     price_per_share  TEXT NOT NULL,    -- Decimal as TEXT, in native currency
-    fee              TEXT,             -- Decimal as TEXT; broker commission + stamp duty; assumed same currency as the instrument; NULL for splits/transfers
-    currency         TEXT NOT NULL,    -- native currency of price and fee (e.g. 'USD', 'GBP')
+    fee              TEXT,             -- Decimal as TEXT; broker commission + stamp duty; currency given by fee_currency; NULL for splits/transfers
+    currency         TEXT NOT NULL,    -- native currency of the price (e.g. 'USD', 'GBP')
+    fee_currency     TEXT,             -- ISO 4217 currency of the fee; may differ from currency (e.g. USD-priced trade, GBP commission); NULL means same as currency / no fee
     notes            TEXT,
     fingerprint      TEXT NOT NULL UNIQUE,
     source_document_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array of documents.id

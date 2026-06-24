@@ -25,6 +25,15 @@ fn request(method: Method, uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+fn request_json(method: Method, uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 fn setup_account(db: &Db, id: &str, account_type: AccountType) {
     let name = match account_type {
         AccountType::Investment => "Taxable GIA Brokerage",
@@ -76,6 +85,38 @@ fn insert_event(
         price_per_share: price.to_string(),
         fee: fee.map(|s| s.to_string()),
         currency: "GBP".to_string(),
+        fee_currency: None,
+        notes: None,
+        source_document_ids: Vec::new(),
+    };
+    db.create_investment_event(&body).unwrap();
+}
+
+/// Like `insert_event` but with an explicit trade currency and an optional,
+/// possibly-different fee currency. Used by the cross-currency fee tests.
+#[allow(clippy::too_many_arguments)]
+fn insert_event_ccy(
+    db: &Db,
+    account_id: &str,
+    event_type: &str,
+    symbol: &str,
+    date: &str,
+    quantity: &str,
+    price: &str,
+    fee: Option<&str>,
+    currency: &str,
+    fee_currency: Option<&str>,
+) {
+    let body = CreateInvestmentEventBody {
+        account_id: account_id.to_string(),
+        event_type: event_type.to_string(),
+        symbol: symbol.to_string(),
+        date: date.to_string(),
+        quantity: quantity.to_string(),
+        price_per_share: price.to_string(),
+        fee: fee.map(|s| s.to_string()),
+        currency: currency.to_string(),
+        fee_currency: fee_currency.map(|s| s.to_string()),
         notes: None,
         source_document_ids: Vec::new(),
     };
@@ -1022,6 +1063,7 @@ async fn test_cgt_missing_currency_returns_400() {
             price_per_share: "100".to_string(),
             fee: None,
             currency: "ZAR".to_string(),
+            fee_currency: None,
             notes: None,
             source_document_ids: Vec::new(),
         };
@@ -1034,6 +1076,7 @@ async fn test_cgt_missing_currency_returns_400() {
             price_per_share: "150".to_string(),
             fee: None,
             currency: "ZAR".to_string(),
+            fee_currency: None,
             notes: None,
             source_document_ids: Vec::new(),
         };
@@ -1099,4 +1142,123 @@ async fn test_cgt_profile_ids_no_match() {
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(res["realized_events"].as_array().unwrap().is_empty());
     assert!(res["pools"].as_array().unwrap().is_empty());
+}
+
+/// A fee charged in a different currency from the trade price must be converted
+/// at its own rate, not the trade-currency rate. Price in USD, commission in GBP.
+#[tokio::test]
+async fn test_cgt_fee_in_different_currency() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Buy 100 AAPL @ $10.00 USD, commission £30.00 GBP.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            Some("30.00"),
+            "USD",
+            Some("GBP"),
+        );
+        // Sell 50 AAPL @ $15.00 USD, commission £5.00 GBP.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "50",
+            "15.00",
+            Some("5.00"),
+            "USD",
+            Some("GBP"),
+        );
+    }
+
+    // USD = 2 GBP (preferred GBP stays 1). A whole-number rate keeps decimal scale clean.
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "2" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Pool cost = price 1000 USD -> 2000 GBP, plus fee 30 GBP (unscaled) = 2030.
+    // The buggy behaviour would convert (1000 + 30) USD * 2 = 2060 GBP.
+    // After selling 50 of 100 at avg 20.30: remaining expenditure = 1015.00.
+    let pools = res["pools"].as_array().unwrap();
+    let aapl_pool = pools.iter().find(|p| p["symbol"] == "AAPL").unwrap();
+    assert_eq!(aapl_pool["current_shares"], "50");
+    assert_eq!(aapl_pool["total_allowable_expenditure"], "1015.00");
+    assert_eq!(aapl_pool["average_cost_per_share"], "20.30");
+
+    // Disposal: proceeds 750 USD -> 1500 GBP, less fee 5 GBP = 1495.
+    // Cost basis matched = 50 * 20.30 = 1015. Gain = 1495 - 1015 = 480.
+    let realized = res["realized_events"].as_array().unwrap();
+    assert_eq!(realized.len(), 1);
+    let event = &realized[0];
+    assert_eq!(event["proceeds"], "1495.00");
+    assert_eq!(event["cost_basis"], "1015.00");
+    assert_eq!(event["gain_loss"], "480.00");
+}
+
+/// A non-zero fee in an unconfigured currency must surface the same structured
+/// 400 as an unconfigured price currency, even when the price currency is fine.
+#[tokio::test]
+async fn test_cgt_missing_fee_currency_returns_400() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // Price in GBP (configured); fee in ZAR (not configured).
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "10",
+            "100",
+            Some("3.50"),
+            "GBP",
+            Some("ZAR"),
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "missing_currencies");
+    assert!(
+        res["error"].as_str().unwrap().contains("ZAR"),
+        "error message should name the missing fee currency"
+    );
 }

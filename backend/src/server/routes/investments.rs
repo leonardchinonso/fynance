@@ -77,6 +77,7 @@ pub async fn update_investment(
         && body.price_per_share.is_none()
         && body.fee.is_none()
         && body.currency.is_none()
+        && body.fee_currency.is_none()
         && body.notes.is_none()
     {
         return Err(AppError::bad_request(
@@ -145,6 +146,7 @@ pub async fn import_investments(
                 price_per_share: event.price_per_share.clone(),
                 fee: event.fee.clone(),
                 currency: event.currency.clone(),
+                fee_currency: event.fee_currency.clone(),
                 notes: event.notes.clone(),
                 source_document_ids: event.source_document_ids.clone(),
             };

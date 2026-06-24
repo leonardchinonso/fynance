@@ -804,6 +804,15 @@ impl Db {
                     .map_err(|_| anyhow::anyhow!("invalid fee"))
             })
             .transpose()?;
+        // Invariant: fee_currency is non-null exactly when a fee is present. A fee
+        // with no explicit currency is charged in the trade currency.
+        let fee_currency = fee.map(|_| {
+            body.fee_currency
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(body.currency.as_str())
+                .to_string()
+        });
         let date = parse_transaction_datetime(&body.date)
             .ok_or_else(|| anyhow::anyhow!("invalid date format"))?;
         let date_str = date.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -825,8 +834,8 @@ impl Db {
 
         self.conn.execute(
             "INSERT OR IGNORE INTO investments
-             (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 id,
                 body.account_id,
@@ -841,6 +850,7 @@ impl Db {
                 fingerprint,
                 now,
                 source_ids_json,
+                fee_currency,
             ],
         )?;
 
@@ -851,7 +861,7 @@ impl Db {
         }
 
         let event = self.conn.query_row(
-            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency
              FROM investments WHERE fingerprint = ?1",
             params![fingerprint],
             row_to_investment_event,
@@ -868,7 +878,7 @@ impl Db {
     ) -> Result<Vec<InvestmentEvent>> {
         let mut conditions = vec!["1=1"];
         let mut sql = String::from(
-            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency
              FROM investments WHERE ",
         );
 
@@ -982,6 +992,12 @@ impl Db {
                 params![c, id],
             )?;
         }
+        if let Some(ref fc) = body.fee_currency {
+            self.conn.execute(
+                "UPDATE investments SET fee_currency = ?1 WHERE id = ?2",
+                params![fc, id],
+            )?;
+        }
         if body.notes.is_some() {
             self.conn.execute(
                 "UPDATE investments SET notes = ?1 WHERE id = ?2",
@@ -990,7 +1006,7 @@ impl Db {
         }
 
         let event = self.conn.query_row(
-            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids
+            "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency
              FROM investments WHERE id = ?1",
             params![id],
             row_to_investment_event,
@@ -3976,6 +3992,8 @@ fn row_to_investment_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Investme
         price_per_share: row.get::<_, String>(6)?.parse().unwrap_or_default(),
         fee: fee.and_then(|s| s.parse::<Decimal>().ok()),
         currency: row.get(8)?,
+        // Read by name so SELECTs that omit it fall back to None.
+        fee_currency: row.get::<_, Option<String>>("fee_currency").ok().flatten(),
         notes: row.get(9)?,
         fingerprint: row.get(10)?,
         created_at: parse_transaction_datetime(&created_at_str)
@@ -4610,6 +4628,22 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
                 "ALTER TABLE {table} ADD COLUMN source_document_ids TEXT NOT NULL DEFAULT '[]'"
             ))?;
         }
+    }
+
+    // ── 12. Add fee_currency to investments ──
+    // The fee may be charged in a different currency from the trade price (e.g. a
+    // USD-priced share with a GBP commission). A pre-existing fee was implicitly in
+    // the trade currency, so backfill those rows to keep the invariant that
+    // fee_currency is non-null exactly when a fee is present.
+    if conn
+        .prepare("SELECT fee_currency FROM investments LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE investments ADD COLUMN fee_currency TEXT")?;
+        conn.execute_batch(
+            "UPDATE investments SET fee_currency = currency \
+             WHERE fee IS NOT NULL AND (fee_currency IS NULL OR fee_currency = '')",
+        )?;
     }
 
     Ok(())
@@ -5710,6 +5744,7 @@ mod investment_dedup_tests {
             total_value: None,
             fee: "0".to_string(),
             currency: "GBP".to_string(),
+            fee_currency: None,
             notes: None,
             row_confidence: 0.95,
             source_file: None,
@@ -5761,6 +5796,7 @@ mod investment_dedup_tests {
             price_per_share: "76.32".to_string(),
             fee: Some("0".to_string()),
             currency: "GBP".to_string(),
+            fee_currency: None,
             notes: None,
             source_document_ids: Vec::new(),
         };
@@ -5789,6 +5825,67 @@ mod investment_dedup_tests {
         row.date = "not-a-date".to_string();
         let previews = db.dry_run_investments("acct-1", &[row], 0.70).unwrap();
         assert_eq!(previews[0].status, TransactionPreviewStatus::Error);
+    }
+
+    /// fee_currency is stored non-null exactly when a fee is present: defaulted to
+    /// the trade currency when omitted, preserved when explicit, null when no fee.
+    #[test]
+    fn create_investment_event_enforces_fee_currency_invariant() {
+        let (db, _file) = test_db();
+        db.create_account(&crate::model::Account {
+            id: "acct-1".to_string(),
+            name: "Test".to_string(),
+            institution: "Test Bank".to_string(),
+            account_type: crate::model::AccountType::Investment,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+
+        let base = crate::model::CreateInvestmentEventBody {
+            account_id: "acct-1".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "AAPL".to_string(),
+            date: "2026-03-15T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "100".to_string(),
+            fee: Some("5.00".to_string()),
+            currency: "USD".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: Vec::new(),
+        };
+
+        // Fee present, no fee_currency -> defaults to the trade currency.
+        let defaulted = db.create_investment_event(&base).unwrap();
+        assert_eq!(defaulted.fee_currency.as_deref(), Some("USD"));
+
+        // Fee present with an explicit, different fee_currency -> preserved.
+        let explicit = db
+            .create_investment_event(&crate::model::CreateInvestmentEventBody {
+                symbol: "MSFT".to_string(),
+                fee_currency: Some("GBP".to_string()),
+                ..base.clone()
+            })
+            .unwrap();
+        assert_eq!(explicit.fee_currency.as_deref(), Some("GBP"));
+
+        // No fee -> fee_currency stays null.
+        let no_fee = db
+            .create_investment_event(&crate::model::CreateInvestmentEventBody {
+                symbol: "TSLA".to_string(),
+                fee: None,
+                fee_currency: None,
+                ..base.clone()
+            })
+            .unwrap();
+        assert_eq!(no_fee.fee_currency, None);
     }
 }
 
