@@ -444,7 +444,8 @@ pub async fn get_capital_gains(
         &fx,
     );
 
-    // Apply currency conversions to normalize summary totals to the preferred base currency
+    // Aggregate the per-event figures (already converted to the preferred base
+    // currency by run_cgt_engine) into the summary and per-symbol totals.
     let mut total_proceeds = Decimal::ZERO;
     let mut total_allowable_costs = Decimal::ZERO;
     let mut total_gains = Decimal::ZERO;

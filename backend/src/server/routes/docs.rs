@@ -127,8 +127,8 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "properties": {
                         "symbol": { "type": "string" },
                         "current_shares": { "type": "string", "description": "Decimal as string." },
-                        "total_allowable_expenditure": { "type": "string", "description": "Decimal as string, in the symbol's native currency." },
-                        "average_cost_per_share": { "type": "string", "description": "Decimal as string, in the symbol's native currency." }
+                        "total_allowable_expenditure": { "type": "string", "description": "Decimal as string, in the user's preferred (base) currency." },
+                        "average_cost_per_share": { "type": "string", "description": "Decimal as string, in the user's preferred (base) currency." }
                     }
                 },
                 "CgtSummary": {
@@ -166,7 +166,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             "description": "ISO 8601 datetime, the literal string 'S104 Pool' for pool matches, or null for unmatched remainders."
                         },
                         "quantity": { "type": "string" },
-                        "price": { "type": "string", "description": "Per-share price in the symbol's native currency." }
+                        "price": { "type": "string", "description": "Per-share acquisition price. Native currency for Same-Day and 30-Day matches; the S104 average pool cost (in the preferred base currency) for S104 Pool matches." }
                     }
                 },
                 "CgtRealizedEvent": {
@@ -177,10 +177,10 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         "disposal_id": { "type": "string" },
                         "disposal_date": { "type": "string", "format": "date-time" },
                         "quantity": { "type": "string", "description": "Matched quantity. A single disposal split across rules produces one event per rule." },
-                        "disposal_price": { "type": "string", "description": "Per share, native currency." },
-                        "proceeds": { "type": "string", "description": "Matched quantity * disposal price, net of proportional fee. Native currency." },
-                        "cost_basis": { "type": "string", "description": "Matched quantity * acquisition price. Native currency. Zero for Unmatched rule." },
-                        "gain_loss": { "type": "string", "description": "proceeds - cost_basis. Native currency." },
+                        "disposal_price": { "type": "string", "description": "Per share, in the trade's native currency (see original_currency)." },
+                        "proceeds": { "type": "string", "description": "Matched quantity * disposal price, net of proportional fee, converted to the user's preferred (base) currency." },
+                        "cost_basis": { "type": "string", "description": "Matched quantity * acquisition price, converted to the user's preferred (base) currency. Zero for Unmatched rule." },
+                        "gain_loss": { "type": "string", "description": "proceeds - cost_basis, in the user's preferred (base) currency." },
                         "rule_applied": {
                             "type": "string",
                             "enum": ["Same-Day", "30-Day Rule", "S104 Pool", "Unmatched"]
@@ -319,7 +319,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "description": concat!(
                         "Returns the current S104 pool state for every symbol with a non-empty history. ",
                         "ISA and Pension accounts are excluded. ",
-                        "All values are in the symbol's native trading currency.",
+                        "All monetary values are in the user's preferred (base) currency.",
                     ),
                     "parameters": [
                         {
@@ -357,9 +357,10 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         "Replays all investment events through HMRC's matching rules in strict order: ",
                         "same-day FIFO, 30-day Bed & Breakfast, S104 pool, then any unmatched remainder. ",
                         "ISA and Pension accounts are excluded. ",
-                        "Per-event fields stay in the trade's native currency; only `summary` and ",
-                        "`symbol_summaries` are converted into the user's preferred currency via the ",
-                        "`currencies` table. ",
+                        "All monetary fields (per-event `proceeds` / `cost_basis` / `gain_loss`, the ",
+                        "`pools`, `summary`, and `symbol_summaries`) are converted into the user's ",
+                        "preferred currency via the `currencies` table; only `disposal_price` and ",
+                        "`original_currency` reflect the trade's native currency. ",
                         "If `tax_year` is provided it overrides `start_date` and `end_date`."
                     ),
                     "parameters": [
