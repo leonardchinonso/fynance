@@ -48,7 +48,6 @@ import { SourceChips, type SourceDocMeta } from "@/components/source_chips"
 import type { SortDir, TransactionSortColumn } from "@/types"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
-const PAGE_SIZE_KEY = "fynance-page-size"
 const COLUMNS_KEY = "fynance-tx-columns"
 
 interface Column {
@@ -451,9 +450,7 @@ function TransactionTableInternal({
                 if (v == null){
                   return;
                 }
-                const newLimit = parseInt(v, 10)
-                localStorage.setItem(PAGE_SIZE_KEY, v)
-                onLimitChange(newLimit)
+                onLimitChange(parseInt(v, 10))
               }}
             >
               <SelectTrigger className="h-7 w-[65px] text-xs">
