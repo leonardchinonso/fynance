@@ -143,7 +143,12 @@ pub async fn extract_all(
         "Account being imported: {account_id}. Extract entries strictly according to the rules in the system prompt."
     );
     // Surface user-provided context to the model, but only when it's actually present.
-    if let Some(hint) = hints.hint.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+    if let Some(hint) = hints
+        .hint
+        .as_deref()
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+    {
         text_supplement.push_str(
             "\n\nAdditional context provided by the user that they believe will help you \
              parse this document correctly:\n",
@@ -155,7 +160,9 @@ pub async fn extract_all(
     tracing::debug!(
         files = files.len(),
         system_prompt_bytes = system_prompt.len(),
-        tool_schema_bytes = serde_json::to_string(&tool_schema).map(|s| s.len()).unwrap_or(0),
+        tool_schema_bytes = serde_json::to_string(&tool_schema)
+            .map(|s| s.len())
+            .unwrap_or(0),
         text_supplement_bytes = text_supplement.len(),
         "unified parser: sending request"
     );
@@ -171,10 +178,8 @@ pub async fn extract_all(
         )
         .await?;
 
-    let raw: UnifiedRaw =
-        serde_json::from_value(call.value.clone()).map_err(|e| {
-            anyhow::anyhow!("unified parser: invalid tool input shape: {e}")
-        })?;
+    let raw: UnifiedRaw = serde_json::from_value(call.value.clone())
+        .map_err(|e| anyhow::anyhow!("unified parser: invalid tool input shape: {e}"))?;
 
     let mut extraction = post_validate(raw, hints, account_id)?;
     extraction.call = call;
@@ -191,8 +196,8 @@ fn build_unified_prompt(hints: &ParseHints, ctx: &UnifiedContext) -> String {
     out.push_str("\n\n");
 
     if hints.return_type.transactions {
-        let categories_json = serde_json::to_string_pretty(&ctx.categories)
-            .unwrap_or_else(|_| "[]".to_string());
+        let categories_json =
+            serde_json::to_string_pretty(&ctx.categories).unwrap_or_else(|_| "[]".to_string());
         let section = TRANSACTIONS_SECTION.replace("{{CATEGORIES_JSON}}", &categories_json);
         out.push_str(&section);
         out.push_str("\n\n");
@@ -240,9 +245,9 @@ fn build_unified_tool_schema() -> Value {
     {
         props.insert("source_file".to_string(), source_file_prop.clone());
     }
-    let mut investments_item = super::investments_parser::build_investments_tool_schema()
-        ["properties"]["rows"]["items"]
-        .clone();
+    let mut investments_item =
+        super::investments_parser::build_investments_tool_schema()["properties"]["rows"]["items"]
+            .clone();
     if let Some(props) = investments_item
         .get_mut("properties")
         .and_then(|p| p.as_object_mut())

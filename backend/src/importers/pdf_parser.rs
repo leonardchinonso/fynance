@@ -19,7 +19,12 @@ const INVESTMENTS_PROMPT: &str = include_str!("../../config/prompts/investments_
 /// the Anthropic content block in the provider: `application/pdf` -> document
 /// block, `image/*` -> image block. Defaults to PDF for unknown extensions.
 fn binary_mime(filename: &str) -> String {
-    match filename.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
+    match filename
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("webp") => "image/webp",
@@ -65,14 +70,17 @@ impl PdfStatementParser {
             .provider
             .chat_with_files_and_tools(
                 STATEMENT_PROMPT,
-                &[(filename.to_string(), binary_mime(filename), pdf_bytes.to_vec())],
+                &[(
+                    filename.to_string(),
+                    binary_mime(filename),
+                    pdf_bytes.to_vec(),
+                )],
                 &text_supplement,
                 "parse_bank_statement",
                 tool_schema,
                 agent_override,
             )
             .await?;
-
 
         let parsed: ParsedStatement = super::deserialize_tool_use(
             call.value.clone(),
@@ -123,14 +131,17 @@ impl PdfHoldingsParser {
             .provider
             .chat_with_files_and_tools(
                 HOLDINGS_PROMPT,
-                &[(filename.to_string(), binary_mime(filename), pdf_bytes.to_vec())],
+                &[(
+                    filename.to_string(),
+                    binary_mime(filename),
+                    pdf_bytes.to_vec(),
+                )],
                 &text_supplement,
                 "parse_holdings",
                 tool_schema,
                 agent_override,
             )
             .await?;
-
 
         let parsed: ParsedHoldings = super::deserialize_tool_use(
             call.value.clone(),
@@ -188,14 +199,17 @@ impl PdfPeriodicHoldingsParser {
             .provider
             .chat_with_files_and_tools(
                 PERIODIC_HOLDINGS_PROMPT,
-                &[(filename.to_string(), binary_mime(filename), pdf_bytes.to_vec())],
+                &[(
+                    filename.to_string(),
+                    binary_mime(filename),
+                    pdf_bytes.to_vec(),
+                )],
                 &text_supplement,
                 "extract_periodic_holdings",
                 tool_schema,
                 agent_override,
             )
             .await?;
-
 
         let parsed: ParsedHoldings = super::deserialize_tool_use(
             call.value.clone(),
@@ -244,14 +258,17 @@ impl PdfInvestmentsParser {
             .provider
             .chat_with_files_and_tools(
                 INVESTMENTS_PROMPT,
-                &[(filename.to_string(), binary_mime(filename), pdf_bytes.to_vec())],
+                &[(
+                    filename.to_string(),
+                    binary_mime(filename),
+                    pdf_bytes.to_vec(),
+                )],
                 &text_supplement,
                 "parse_investments",
                 tool_schema,
                 agent_override,
             )
             .await?;
-
 
         let parsed: ParsedInvestments = super::deserialize_tool_use(
             call.value.clone(),

@@ -46,7 +46,12 @@ fn multipart_body(parts: &[Part<'_>]) -> Vec<u8> {
     for part in parts {
         out.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
         match part {
-            Part::File { name, filename, content_type, body } => {
+            Part::File {
+                name,
+                filename,
+                content_type,
+                body,
+            } => {
                 out.extend_from_slice(
                     format!("Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n")
                         .as_bytes(),
@@ -85,8 +90,7 @@ async fn post_parse(app: axum::Router, body: Vec<u8>) -> (StatusCode, serde_json
     let resp = app.oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
     (status, json)
 }
 
