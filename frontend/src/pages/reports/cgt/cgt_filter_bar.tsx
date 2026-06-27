@@ -18,7 +18,7 @@ interface CgtFilterBarProps {
   profiles: Profile[]
   initial: CgtFilters
   loading: boolean
-  onGenerate: (filters: CgtFilters) => void
+  onGenerate: (filters: CgtFilters, higherRate: boolean) => void
 }
 
 export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilterBarProps) {
@@ -26,6 +26,9 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
   const [startDate, setStartDate] = useState(initialStart(initial.period))
   const [endDate, setEndDate] = useState(initialEnd(initial.period))
   const [profileId, setProfileId] = useState(initial.profileId)
+  // Frontend-only: the rate band drives the client-side tax estimate, not the
+  // backend query, so it is not part of CgtFilters / the service contract.
+  const [higherRate, setHigherRate] = useState(true)
 
   const period: CgtPeriod = buildPeriod(preset, startDate, endDate)
   const canGenerate = !loading && profileId !== ""
@@ -71,9 +74,24 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
         </SelectContent>
       </Select>
 
+      <Select
+        value={higherRate ? "higher" : "basic"}
+        onValueChange={(v) => setHigherRate(v === "higher")}
+      >
+        <SelectTrigger className="w-[190px]">
+          <span className="truncate">
+            {higherRate ? "Higher/additional rate" : "Basic rate"}
+          </span>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="higher">Higher/additional rate</SelectItem>
+          <SelectItem value="basic">Basic rate</SelectItem>
+        </SelectContent>
+      </Select>
+
       <Button
         className="ml-auto"
-        onClick={() => onGenerate({ period, profileId })}
+        onClick={() => onGenerate({ period, profileId }, higherRate)}
         disabled={!canGenerate}
       >
         {loading ? "Generating…" : "Generate"}
