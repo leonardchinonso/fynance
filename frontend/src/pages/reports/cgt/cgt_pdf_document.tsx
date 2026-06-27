@@ -89,6 +89,12 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
         filters.higherRate ?? true,
       )
     : null
+  // Pool workings support THIS return's disposals, so only show pools for symbols
+  // actually disposed in the period — not every holding still in the global pool.
+  const disposedSymbols = new Set(response.realized_events.map((e) => e.symbol))
+  const poolRows = response.pools.filter(
+    (p) => Number.parseFloat(p.current_shares) > 0 && disposedSymbols.has(p.symbol),
+  )
   return (
     <Document
       title={`Capital Gains Tax Report — ${periodLabel(filters.period)}`}
@@ -215,12 +221,13 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
         </Page>
       )}
 
-      {response.pools.filter((p) => Number.parseFloat(p.current_shares) > 0).length > 0 && (
+      {poolRows.length > 0 && (
         <Page size="A4" style={styles.page}>
           <Text style={styles.footer} fixed render={renderFooter} />
           <Text style={styles.h1}>S104 Pool Workings</Text>
           <Text style={styles.meta}>
-            Supporting evidence for the S104 average-cost calculations above.
+            Average-cost pool for each symbol disposed in this period, supporting the
+            costs above.
           </Text>
           <View style={styles.tableHeader}>
             <Text style={{ flex: 1.5 }}>Symbol</Text>
@@ -228,22 +235,18 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
             <Text style={{ flex: 1.4, textAlign: "right" }}>Total allowable expenditure</Text>
             <Text style={{ flex: 1.2, textAlign: "right" }}>Avg cost / share</Text>
           </View>
-          {response.pools
-            .filter((p) => Number.parseFloat(p.current_shares) > 0)
-            .map((p) => (
-              <View key={p.symbol} style={styles.tableRow}>
-                <Text style={{ flex: 1.5 }}>{p.symbol}</Text>
-                <Text style={{ flex: 1, textAlign: "right" }}>
-                  {fmtShares(p.current_shares)}
-                </Text>
-                <Text style={{ flex: 1.4, textAlign: "right" }}>
-                  {fmt(p.total_allowable_expenditure, cur)}
-                </Text>
-                <Text style={{ flex: 1.2, textAlign: "right" }}>
-                  {fmt(p.average_cost_per_share, cur)}
-                </Text>
-              </View>
-            ))}
+          {poolRows.map((p) => (
+            <View key={p.symbol} style={styles.tableRow}>
+              <Text style={{ flex: 1.5 }}>{p.symbol}</Text>
+              <Text style={{ flex: 1, textAlign: "right" }}>{fmtShares(p.current_shares)}</Text>
+              <Text style={{ flex: 1.4, textAlign: "right" }}>
+                {fmt(p.total_allowable_expenditure, cur)}
+              </Text>
+              <Text style={{ flex: 1.2, textAlign: "right" }}>
+                {fmt(p.average_cost_per_share, cur)}
+              </Text>
+            </View>
+          ))}
         </Page>
       )}
     </Document>

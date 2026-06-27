@@ -372,6 +372,8 @@ Audit pass: walk every handler in `backend/src/server/routes/`, replace any "thi
 
 Engine takes one rate per currency and uses it for every event regardless of date. PLTR (USD) figures last tax year differ from the filing by ~£80k because of this alone.
 
+**Update (2026-06-26):** with the Shareworks ledger rebuilt (gross vests), static FX is now the *only* remaining reason the report doesn't tie to the filed return on the **gains** side (the losses gap is the deliberate sell-to-cover treatment). For 2024-25, fynance reports PLTR gains-before-losses of £31,877.80 vs the filed £34,702 (~£2.8k); HMRC converts each leg at its own date's rate while we convert every leg at one flat rate, and the configured 0.74 also runs below the ~0.78 GBP/USD average for the period. Confirmed cause, tracked here as the fix. Until it lands, USD positions will not tie to the penny and the report's FX footnote says so.
+
 `convert_as_of(amount, currency, date)` already exists in `fx.rs` but currently delegates to `convert`. Real impl needs a date-keyed `exchange_rates` cache (shared with multi-currency plan §V4):
 
 - Schema: `exchange_rates(base, quote, date, rate, source)` with `(base, quote, date)` PK.
