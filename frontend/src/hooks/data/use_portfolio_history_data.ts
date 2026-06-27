@@ -9,8 +9,11 @@ import { useRemoteData } from "@/hooks/use_remote_data"
  * Named `usePortfolioHistoryData` to avoid collision with the
  * `getPortfolioHistory` API method.
  *
- * - Hard dep: `profileId`
- * - Soft deps: `start`, `end`, `granularity`
+ * - Hard deps: `profileId`, `granularity`. Granularity is hard because the row
+ *   period labels change shape with it ("YYYY-MM" vs "YYYY-Qn" vs "YYYY"); keeping
+ *   stale rows of the previous shape while refetching would render quarterly
+ *   labels under a monthly formatter (and vice-versa), which throws.
+ * - Soft deps: `start`, `end`
  */
 export function usePortfolioHistoryData(
   start: string,
@@ -20,7 +23,7 @@ export function usePortfolioHistoryData(
 ): RemoteData<PortfolioHistoryRow[]> {
   const [data] = useRemoteData(
     () => api.getPortfolioHistory(start, end, granularity, profileId),
-    { hard: [profileId], soft: [start, end, granularity] },
+    { hard: [profileId, granularity], soft: [start, end] },
   )
   return data
 }

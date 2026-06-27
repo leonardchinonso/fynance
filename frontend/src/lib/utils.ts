@@ -86,11 +86,15 @@ export function formatDate(dateStr: string): string {
 
 export function formatMonth(month: string): string {
   const date = parse(month + "-01", "yyyy-MM-dd", new Date())
+  // A non-"YYYY-MM" label (e.g. a quarterly "YYYY-Qn") parses to Invalid Date;
+  // returning it unchanged is harmless and never throws in date-fns `format`.
+  if (Number.isNaN(date.getTime())) return month
   return format(date, "MMM yyyy")
 }
 
 export function formatMonthShort(month: string): string {
   const date = parse(month + "-01", "yyyy-MM-dd", new Date())
+  if (Number.isNaN(date.getTime())) return month
   return format(date, "MMM yy")
 }
 
