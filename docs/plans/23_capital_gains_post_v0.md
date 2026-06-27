@@ -277,6 +277,17 @@ Reorganised from the synthesis we did after the build. Each item lists what we h
 
 **Why the call.** The shape is mostly decided; we need to agree on hardcoding vs configuring, the carryover storage model, and whether allowable-income is in scope for V1.x or pushed.
 
+**Implementation sketch (changes needed).** Concrete work when this lands, so it isn't re-derived. This replaces the interim frontend version (status note above):
+
+- **Backend ([`capital_gains.rs`](../../backend/src/server/routes/capital_gains.rs)):**
+  - New `TaxConfig` input (from the request) and `TaxResult` output (`gains_by_band`, `aea_used`, `losses_used`, `taxable_gain`, `tax_due`), both `#[derive(TS)]` exported to `frontend/src/bindings/`. Add `tax: Option<TaxResult>` to `CapitalGainsResponse`, populated only when a `tax_config` (or a stored/default config) is present.
+  - Compute after `run_cgt_engine`: bucket `realized_events` by `disposal_date` against `rate_bands` (the 2024-25 30 Oct split is just two bands), sum gains per band, then **deduct brought-forward + current-year losses and the AEA from the highest-rate band first.** That ordering minimises the charge and reproduces the accountant's working (verified against the filed £6,315.48 for 2024-25). `allowable_income_remaining` moves that much gain into the lower-rate band; absent it, assume all higher-rate.
+  - Money stays `rust_decimal::Decimal` end-to-end, replacing the interim frontend float math.
+  - Config source per §7.5: a seeded `tax_config` table or `config/uk_tax.yaml` so the rate/AEA/split-date tables are data, not code. Lazy external fetch deferred.
+- **Bindings:** regenerate ts-rs after the struct changes (export runs under `cargo test`).
+- **Frontend ([`cgt_pdf_document.tsx`](../../frontend/src/pages/reports/cgt/cgt_pdf_document.tsx) + [`cgt_filter_bar.tsx`](../../frontend/src/pages/reports/cgt/cgt_filter_bar.tsx)):** delete `AEA_BY_TAX_YEAR`, `computeTaxEstimate`, and the hardcoded rate literals; render `response.tax` directly. Keep the rate-band toggle, but have it set the request's band selector / `allowable_income_remaining` rather than a client-side flag, and send the selection via `cgtFiltersToParams`.
+- **Cleanup:** the TEMPORARY-flagged tables in `cgt_pdf_document.tsx` are removed as part of this; they exist only until the backend owns the computation.
+
 ### 7.5 Defaults + override + prompting system
 
 Generalisation of what 7.4 needs locally. Three levels:
