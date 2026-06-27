@@ -342,12 +342,45 @@ interface TaxEstimate {
   totalTax: number
 }
 
-// Estimated CGT on share gains. 2024-25 changed mid-year (Autumn Budget 2024):
-// before 30 Oct 2024 the rate is 10% (basic) / 20% (higher), on or after it is
-// 18% / 24%; from 2025-26 it is 18% / 24% flat. `higherRate` picks the band — we
-// don't know the taxpayer's income, so a single year can't be split across both
-// bands (see plan 23 §7.4). The Annual Exempt Amount is applied to the higher-
-// rate slice first, which minimises the charge and matches standard practice.
+// UK CGT rates on shares by disposal-date band. The Autumn Budget 2024 raised
+// them mid-year (30 Oct 2024). `start` is required (inclusive) and `end` optional
+// (exclusive; omitted = still current); a disposal before the earliest band gets
+// no rate rather than a silently wrong one, which is why `start` is mandatory.
+interface RateBand {
+  start: string
+  end?: string
+  basic: number
+  higher: number
+}
+
+const CGT_RATE_BANDS: RateBand[] = [
+  { start: "2016-04-06", end: "2024-10-30", basic: 0.1, higher: 0.2 },
+  { start: "2024-10-30", basic: 0.18, higher: 0.24 },
+]
+
+function rateBandFor(date: string): RateBand | undefined {
+  return CGT_RATE_BANDS.find((b) => date >= b.start && (b.end === undefined || date < b.end))
+}
+
+function fmtBandDate(iso: string): string {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  const [y, m, d] = iso.split("-")
+  return `${Number(d)} ${months[Number(m) - 1]} ${y}`
+}
+
+function bandLabel(band: RateBand, rate: number, multiple: boolean): string {
+  const pct = `${(rate * 100).toFixed(0)}%`
+  if (!multiple) return `Taxable gains @ ${pct}`
+  if (band.end) return `Gains before ${fmtBandDate(band.end)} @ ${pct}`
+  return `Gains from ${fmtBandDate(band.start)} @ ${pct}`
+}
+
+// Estimated CGT on share gains. Each disposal is rated by its disposal-date band
+// (so the 30 Oct 2024 mid-year change is just a band boundary, not a special
+// case). `higherRate` picks basic vs higher within each band — we don't know the
+// taxpayer's income, so a single band can't be split across both (see plan 23
+// §7.4). The Annual Exempt Amount and any net-loss band relieve the highest-rate
+// gains first, which minimises the charge and matches standard practice.
 function computeTaxEstimate(
   taxYear: string,
   netGain: number,
@@ -360,67 +393,44 @@ function computeTaxEstimate(
     return { aea, netGain, taxableGain: 0, bands: [], totalTax: 0 }
   }
 
-  const pctLabel = (r: number) => `${(r * 100).toFixed(0)}%`
-
-  if (taxYear === "2024-25") {
-    let pre = 0
-    let post = 0
-    for (const e of realized) {
-      const g = Number.parseFloat(e.gain_loss)
-      if (!Number.isFinite(g)) continue
-      if (e.disposal_date.slice(0, 10) < "2024-10-30") pre += g
-      else post += g
-    }
-    // A net-loss band relieves the other band before rates apply.
-    if (post < 0) {
-      pre += post
-      post = 0
-    }
-    if (pre < 0) {
-      post += pre
-      pre = 0
-    }
-    pre = Math.max(0, pre)
-    post = Math.max(0, post)
-    const aeaToPost = Math.min(aea, post)
-    const postTaxable = post - aeaToPost
-    const preTaxable = Math.max(0, pre - (aea - aeaToPost))
-    const preRate = higherRate ? 0.2 : 0.1
-    const postRate = higherRate ? 0.24 : 0.18
-    const bands: TaxBand[] = []
-    if (preTaxable > 0) {
-      bands.push({
-        label: `Gains before 30 Oct 2024 @ ${pctLabel(preRate)}`,
-        taxable: preTaxable,
-        tax: preTaxable * preRate,
-      })
-    }
-    if (postTaxable > 0) {
-      bands.push({
-        label: `Gains on/after 30 Oct 2024 @ ${pctLabel(postRate)}`,
-        taxable: postTaxable,
-        tax: postTaxable * postRate,
-      })
-    }
-    return {
-      aea,
-      netGain,
-      taxableGain: preTaxable + postTaxable,
-      bands,
-      totalTax: bands.reduce((s, b) => s + b.tax, 0),
-    }
+  // Net each disposal's gain into its disposal-date rate band.
+  const byBand = new Map<string, { band: RateBand; net: number }>()
+  for (const e of realized) {
+    const g = Number.parseFloat(e.gain_loss)
+    if (!Number.isFinite(g)) continue
+    const band = rateBandFor(e.disposal_date.slice(0, 10))
+    if (!band) continue
+    const entry = byBand.get(band.start) ?? { band, net: 0 }
+    entry.net += g
+    byBand.set(band.start, entry)
   }
 
-  const post2024 = Number.parseInt(taxYear.slice(0, 4), 10) >= 2025
-  let rate: number
-  if (higherRate) rate = post2024 ? 0.24 : 0.2
-  else rate = post2024 ? 0.18 : 0.1
-  const taxable = Math.max(0, netGain - aea)
-  const bands: TaxBand[] =
-    taxable > 0
-      ? [{ label: `Taxable gains @ ${pctLabel(rate)}`, taxable, tax: taxable * rate }]
-      : []
-  return { aea, netGain, taxableGain: taxable, bands, totalTax: taxable * rate }
+  const rateOf = (b: RateBand) => (higherRate ? b.higher : b.basic)
+  const gainBands = [...byBand.values()].filter((b) => b.net > 0)
+  // A net-loss band plus the allowance come off the highest-rate gains first.
+  const lossPool = [...byBand.values()].filter((b) => b.net < 0).reduce((s, b) => s + b.net, 0)
+  let toDeduct = aea - lossPool
+  gainBands.sort((a, b) => rateOf(b.band) - rateOf(a.band))
+
+  const multiple = gainBands.length > 1
+  const rated = gainBands.flatMap((gb) => {
+    const rate = rateOf(gb.band)
+    const deduct = Math.min(toDeduct, gb.net)
+    toDeduct -= deduct
+    const taxable = gb.net - deduct
+    if (taxable <= 0) return []
+    return [{ start: gb.band.start, label: bandLabel(gb.band, rate, multiple), taxable, tax: taxable * rate }]
+  })
+  rated.sort((a, b) => a.start.localeCompare(b.start))
+
+  const bands: TaxBand[] = rated.map(({ label, taxable, tax }) => ({ label, taxable, tax }))
+  return {
+    aea,
+    netGain,
+    taxableGain: bands.reduce((s, b) => s + b.taxable, 0),
+    bands,
+    totalTax: bands.reduce((s, b) => s + b.tax, 0),
+  }
 }
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
