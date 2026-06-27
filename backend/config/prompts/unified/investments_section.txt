@@ -28,10 +28,25 @@ Each entry has this shape:
 
 `event_type` is one of: `buy`, `sell`, `vest`, `withhold`, `transfer`, `split`.
 - `buy` / `sell`: open-market purchase / disposal for cash.
-- `vest`: RSU/award shares released to you.
-- `withhold`: shares sold or withheld to cover tax at vest.
+- `vest`: RSU/award shares released to you. quantity = the GROSS shares released
+  (the full vested amount BEFORE tax withholding), never the net/disbursed amount.
+- `withhold`: the shares sold or withheld to cover tax at that vest (the
+  "sold to cover" portion).
 - `transfer`: shares moved into or out of the account (not a disposal).
 - `split`: stock-split adjustment.
+
+CRITICAL for RSU / SAR / equity-compensation releases: a single release produces
+TWO events — a `vest` for the GROSS shares released and a `withhold` for the shares
+sold to cover tax. The shares you keep = vest minus withhold. When the statement
+lists "released"/"vested", "sold to cover"/"withheld", and "disbursed"/"net", set
+vest = released (gross) and withhold = sold-to-cover. NEVER set the `vest` quantity
+to the net/disbursed shares while also recording the withhold: that double-counts
+the tax shares, corrupts the cost basis, and drives the CGT disposal pool negative.
+A column labelled "Disbursed", "Net shares", or "Shares issued" shows the post-tax
+(net) amount and must not be used as the vest quantity; the vest quantity is always
+the larger gross "Released"/"Vested" figure. Also capture the per-share Release Price
+or FMV for every vest: do not emit a vest with a price of 0 when the statement shows a
+release price for that event.
 
 Field meanings:
 - `date`: the execution date/time of the trade.

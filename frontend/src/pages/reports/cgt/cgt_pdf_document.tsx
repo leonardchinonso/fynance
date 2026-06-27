@@ -36,6 +36,14 @@ const styles = StyleSheet.create({
   },
   disposalHeader: { fontSize: 11, fontWeight: 700, marginBottom: 4 },
   footnote: { fontSize: 8, color: "#666", marginTop: 6 },
+  warning: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: "#fff4e5",
+    border: "1pt solid #f0b37e",
+    borderRadius: 3,
+  },
+  warningText: { fontSize: 9, color: "#7a4f01" },
   footer: {
     position: "absolute",
     left: 36,
@@ -62,11 +70,14 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
     pageNumber: number
     totalPages: number
   }) => `${footerPrefix} · Page ${pageNumber} of ${totalPages}`
-  // Pool rows carry no currency tag of their own; derive it from any disposal
-  // we saw for the same symbol so the printed expenditure and avg cost are
-  // labelled correctly.
-  const symbolCurrencyMap = new Map(
-    response.realized_events.map((e) => [e.symbol, e.original_currency]),
+  // Disposals the engine could not match to any acquisition are assigned a zero
+  // cost basis, so 100% of their proceeds becomes gain. That almost always means
+  // the acquisition ledger is incomplete (e.g. RSU vests booked net instead of
+  // gross); surface it loudly rather than letting an overstated gain pass silently.
+  const unmatched = response.realized_events.filter((e) => e.rule_applied === "Unmatched")
+  const unmatchedProceeds = unmatched.reduce(
+    (sum, e) => sum + Number.parseFloat(e.proceeds),
+    0,
   )
   return (
     <Document
@@ -101,8 +112,21 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
         </View>
         <Text style={styles.footnote}>
           Figures are pre-relief. Annual Exempt Amount, brought-forward losses, and
-          tax-year rate adjustments are not applied.
+          tax-year rate adjustments are not applied. Foreign-currency disposals are
+          converted to {cur} at the configured exchange rate.
         </Text>
+
+        {unmatched.length > 0 && (
+          <View style={styles.warning}>
+            <Text style={styles.warningText}>
+              ⚠ {unmatched.length} disposal{unmatched.length === 1 ? "" : "s"} (
+              {fmt(String(unmatchedProceeds), cur)} of proceeds) could not be matched to
+              any acquisition and were treated as 100% gain (zero cost basis). This
+              usually means acquisition events (vests or buys) are missing or understated,
+              so the gain above is overstated. Review the ledger before filing.
+            </Text>
+          </View>
+        )}
 
         {response.symbol_summaries.length > 0 && (
           <>
@@ -115,10 +139,7 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
             </View>
             {response.symbol_summaries.map((s) => (
               <View key={s.symbol} style={styles.tableRow}>
-                <Text style={{ flex: 1.5 }}>
-                  {s.symbol}
-                  {s.original_currency !== cur ? `  (${s.original_currency})` : ""}
-                </Text>
+                <Text style={{ flex: 1.5 }}>{s.symbol}</Text>
                 <Text style={{ flex: 1, textAlign: "right" }}>{fmt(s.total_proceeds, cur)}</Text>
                 <Text style={{ flex: 1, textAlign: "right" }}>
                   {fmt(s.total_allowable_costs, cur)}
@@ -138,7 +159,7 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
             One block per matched leg. Mirrors the SA108 supplementary workings page.
           </Text>
           {response.realized_events.map((e, idx) => (
-            <DisposalBlock key={`${e.disposal_id}-${idx}`} event={e} />
+            <DisposalBlock key={`${e.disposal_id}-${idx}`} event={e} currency={cur} />
           ))}
         </Page>
       )}
@@ -158,26 +179,20 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
           </View>
           {response.pools
             .filter((p) => Number.parseFloat(p.current_shares) > 0)
-            .map((p) => {
-              const cur = symbolCurrencyMap.get(p.symbol) ?? response.summary.base_currency
-              return (
-                <View key={p.symbol} style={styles.tableRow}>
-                  <Text style={{ flex: 1.5 }}>
-                    {p.symbol}
-                    {cur !== response.summary.base_currency ? `  (${cur})` : ""}
-                  </Text>
-                  <Text style={{ flex: 1, textAlign: "right" }}>
-                    {fmtShares(p.current_shares)}
-                  </Text>
-                  <Text style={{ flex: 1.4, textAlign: "right" }}>
-                    {fmt(p.total_allowable_expenditure, cur)}
-                  </Text>
-                  <Text style={{ flex: 1.2, textAlign: "right" }}>
-                    {fmt(p.average_cost_per_share, cur)}
-                  </Text>
-                </View>
-              )
-            })}
+            .map((p) => (
+              <View key={p.symbol} style={styles.tableRow}>
+                <Text style={{ flex: 1.5 }}>{p.symbol}</Text>
+                <Text style={{ flex: 1, textAlign: "right" }}>
+                  {fmtShares(p.current_shares)}
+                </Text>
+                <Text style={{ flex: 1.4, textAlign: "right" }}>
+                  {fmt(p.total_allowable_expenditure, cur)}
+                </Text>
+                <Text style={{ flex: 1.2, textAlign: "right" }}>
+                  {fmt(p.average_cost_per_share, cur)}
+                </Text>
+              </View>
+            ))}
         </Page>
       )}
     </Document>
@@ -190,10 +205,14 @@ function fmtShares(qty: string): string {
   return n.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 4 })
 }
 
-function DisposalBlock({ event }: { event: CgtRealizedEvent }) {
-  const cur = event.original_currency
-  const acquisition =
-    event.matches[0]?.acquisition_date ?? null
+function DisposalBlock({
+  event,
+  currency,
+}: {
+  event: CgtRealizedEvent
+  currency: string
+}) {
+  const acquisition = event.matches[0]?.acquisition_date ?? null
   return (
     <View style={styles.disposalBlock} wrap={false}>
       <Text style={styles.disposalHeader}>
@@ -213,15 +232,15 @@ function DisposalBlock({ event }: { event: CgtRealizedEvent }) {
       </View>
       <View style={styles.row}>
         <Text style={styles.label}>Disposal proceeds</Text>
-        <Text style={styles.value}>{fmt(event.proceeds, cur)}</Text>
+        <Text style={styles.value}>{fmt(event.proceeds, currency)}</Text>
       </View>
       <View style={styles.row}>
         <Text style={styles.label}>Acquisition cost</Text>
-        <Text style={styles.value}>{fmt(event.cost_basis, cur)}</Text>
+        <Text style={styles.value}>{fmt(event.cost_basis, currency)}</Text>
       </View>
       <View style={styles.row}>
         <Text style={[styles.label, styles.bold]}>Gain or (Loss)</Text>
-        <Text style={[styles.value, styles.bold]}>{fmt(event.gain_loss, cur)}</Text>
+        <Text style={[styles.value, styles.bold]}>{fmt(event.gain_loss, currency)}</Text>
       </View>
     </View>
   )
