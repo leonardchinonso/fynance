@@ -235,8 +235,17 @@ export interface ApiService {
   getInvestmentPools(profileId?: string): Promise<S104PoolState[]>
 
   // ── Documents ─────────────────────────────────────────────────────
-  /** List all stored source documents with reference count + orphan flag. */
+  /**
+   * List all stored source documents with their orphan flag. `reference_count`
+   * is `null` here (computed lazily); fetch the real count per doc via
+   * {@link getDocument}.
+   */
   listDocuments(): Promise<DocumentSummary[]>
+  /**
+   * Fetch one document with its computed `reference_count`. Maps to
+   * `GET /api/documents/:id`. Used to resolve the lazy per-row link count.
+   */
+  getDocument(id: string): Promise<DocumentSummary>
   /** Upload one or more standalone documents (origin = "manual"). */
   uploadDocuments(files: File[], accountId?: string): Promise<DocumentSummary[]>
   /**

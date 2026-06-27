@@ -6,9 +6,12 @@
 export type DocumentSummary = { id: string, filename: string, mime_type: string, size_bytes: number, origin: string, account_id: string | null, uploaded_at: string, 
 /**
  * Total rows across transactions + holdings + investments linking this doc.
+ * `null` in the list view: it's not computed there (too slow over the whole
+ * dataset). Fetch the real count via `GET /api/documents/:id`.
  */
-reference_count: number, 
+reference_count: number | null, 
 /**
- * True when `reference_count == 0`, regardless of `origin`.
+ * True when zero rows reference this doc, regardless of `origin`. Computed
+ * cheaply in both the list and single-doc views.
  */
 orphaned: boolean, };

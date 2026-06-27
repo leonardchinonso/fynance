@@ -1,11 +1,12 @@
 import { useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useProfiles } from "@/context/profile_context"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { useAccounts, useInvestments, useInvestmentsOverview } from "@/hooks/data"
 import { accountTypeToAssetClass } from "@/lib/account_type_utils"
-import { History, Layers, Search, Check, ChevronsUpDown } from "lucide-react"
+import { History, Layers, Search, Check, ChevronsUpDown, Plus } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,7 +15,7 @@ import {
 } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { EVENT_TYPES } from "./investments/event_dialog"
+import { EVENT_TYPES, EventDialog } from "./investments/event_dialog"
 import { EventsHistory, type InvSortColumn, type SortDir } from "./investments/events_history"
 import { InvestmentsOverview } from "./investments/investments_overview"
 
@@ -49,6 +50,7 @@ function MultiSelect({
               {options.map((opt) => (
                 <CommandItem
                   key={opt}
+                  value={`${displayFn ? displayFn(opt) : opt} ${opt}`}
                   onSelect={() => onChange(
                     selected.includes(opt) ? selected.filter(s => s !== opt) : [...selected, opt]
                   )}
@@ -85,14 +87,31 @@ export function InvestmentsPage() {
   // Overview is the default; "history" is the only non-default view value.
   const activeView = view === "history" ? "history" : "overview"
 
+  const [adding, setAdding] = useState(false)
+
   const [accountsData] = useAccounts(profileId)
   const accounts = accountsData.status === "succeeded" || accountsData.status === "reloading"
     ? accountsData.value : []
+
+  const { profilesData } = useProfiles()
+  const profiles = profilesData.status === "succeeded" || profilesData.status === "reloading"
+    ? profilesData.value : []
+  const profileNameMap = Object.fromEntries(profiles.map((p) => [p.id, p.name]))
 
   const investmentAccounts = accounts.filter(
     (a) => accountTypeToAssetClass(a.type) === "Investments",
   )
   const accountNameMap = Object.fromEntries(accounts.map((a) => [a.id, a.name]))
+
+  // Two accounts can share a name (e.g. "Trading 212 Invest" across profiles),
+  // so tag each with its profile(s) to disambiguate in the filter and table.
+  const accountLabel = (id: string): string => {
+    const name = accountNameMap[id] ?? id
+    const ids = accounts.find((x) => x.id === id)?.profile_ids ?? []
+    if (ids.length === 0) return name
+    const profs = ids.map((pid) => profileNameMap[pid] ?? pid).filter(Boolean)
+    return profs.length > 0 ? `${name} (${profs.join(", ")})` : name
+  }
 
   const [eventsData, reloadEvents] = useInvestments()
   const overviewData = useInvestmentsOverview(start, end, profileId, selectedAccounts)
@@ -145,7 +164,7 @@ export function InvestmentsPage() {
           options={investmentAccounts.map((a) => a.id)}
           selected={selectedAccounts}
           onChange={setSelectedAccounts}
-          displayFn={(id) => accountNameMap[id] ?? id}
+          displayFn={accountLabel}
         />
         <MultiSelect
           label="Type"
@@ -161,15 +180,20 @@ export function InvestmentsPage() {
         )}
         <div className="flex-1" />
         {activeView === "history" && (
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search events..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 w-[200px] pl-8 text-sm"
-            />
-          </div>
+          <>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search events..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-8 w-[200px] pl-8 text-sm"
+              />
+            </div>
+            <Button size="sm" className="gap-1.5" onClick={() => setAdding(true)} disabled={accounts.length === 0}>
+              <Plus className="h-3.5 w-3.5" /> Add event
+            </Button>
+          </>
         )}
       </div>
 
@@ -177,6 +201,7 @@ export function InvestmentsPage() {
         <EventsHistory
           data={eventsData}
           accounts={accounts}
+          accountLabel={accountLabel}
           reload={() => reloadEvents()}
           start={start}
           end={end}
@@ -198,6 +223,15 @@ export function InvestmentsPage() {
           start={start}
           end={end}
           hasProfile={profileId !== undefined}
+        />
+      )}
+
+      {adding && (
+        <EventDialog
+          event={null}
+          accounts={accounts}
+          onClose={() => setAdding(false)}
+          onSaved={() => { setAdding(false); reloadEvents() }}
         />
       )}
     </div>

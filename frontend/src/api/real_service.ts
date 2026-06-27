@@ -530,6 +530,10 @@ export class RealApiService implements ApiService {
     return get<DocumentSummary[]>(`${BASE}/documents`)
   }
 
+  async getDocument(id: string): Promise<DocumentSummary> {
+    return get<DocumentSummary>(`${BASE}/documents/${encodeURIComponent(id)}`)
+  }
+
   async uploadDocuments(files: File[], accountId?: string): Promise<DocumentSummary[]> {
     const formData = new FormData()
     files.forEach((f) => formData.append("files[]", f, f.name))

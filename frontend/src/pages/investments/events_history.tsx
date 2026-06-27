@@ -21,7 +21,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover"
 import {
-  Plus, Pencil, Trash2, TrendingUp,
+  Pencil, Trash2, TrendingUp,
   ChevronLeft, ChevronRight, Settings2, Check, ArrowUp, ArrowDown, ArrowUpDown,
 } from "lucide-react"
 import {
@@ -67,6 +67,8 @@ function getStoredColumns(): Set<string> {
 interface Props {
   data: RemoteData<InvestmentEvent[]>
   accounts: Account[]
+  /** Renders an account id as "Name (Profile)" for display + search. */
+  accountLabel: (id: string) => string
   reload: () => void
   /** Date range (YYYY-MM-DD); rows outside are filtered out. */
   start: string
@@ -87,21 +89,15 @@ interface Props {
 }
 
 export function EventsHistory({
-  data, accounts, reload, start, end,
+  data, accounts, accountLabel, reload, start, end,
   selectedAccounts, selectedTypes, search,
   page, onPageChange, sort, sortDir, onSort, onResetFilters,
 }: Props) {
-  const accountName = useMemo(() => {
-    const map = new Map(accounts.map((a) => [a.id, a.name]))
-    return (id: string) => map.get(id) ?? id
-  }, [accounts])
-
   const [pageSize, setPageSize] = useState(() => {
     try { return parseInt(localStorage.getItem(PAGE_SIZE_KEY) ?? "25", 10) || 25 }
     catch { return 25 }
   })
 
-  const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<InvestmentEvent | null>(null)
   const [deleting, setDeleting] = useState<InvestmentEvent | null>(null)
 
@@ -121,12 +117,6 @@ export function EventsHistory({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
-        <Button size="sm" className="gap-1.5" onClick={() => setAdding(true)} disabled={accounts.length === 0}>
-          <Plus className="h-3.5 w-3.5" /> Add event
-        </Button>
-      </div>
-
       {visitRemoteData(data, {
         notLoaded: () => <TableSkeleton rows={pageSize} cols={8} />,
         failed: (error) => <AuthAwareError error={error} onRetry={reload} />,
@@ -134,7 +124,7 @@ export function EventsHistory({
           <div className="relative">
             <EventsTable
               events={events}
-              accountName={accountName}
+              accountLabel={accountLabel}
               start={start}
               end={end}
               selectedAccounts={selectedAccounts}
@@ -155,15 +145,6 @@ export function EventsHistory({
           </div>
         ),
       })}
-
-      {adding && (
-        <EventDialog
-          event={null}
-          accounts={accounts}
-          onClose={() => setAdding(false)}
-          onSaved={() => { setAdding(false); reload() }}
-        />
-      )}
 
       {editing && (
         <EventDialog
@@ -192,12 +173,12 @@ export function EventsHistory({
 }
 
 function EventsTable({
-  events, accountName, start, end, selectedAccounts, selectedTypes, search,
+  events, accountLabel, start, end, selectedAccounts, selectedTypes, search,
   page, onPageChange, pageSize, onPageSizeChange, sort, sortDir, onSort,
   onEdit, onDelete, onResetFilters,
 }: {
   events: InvestmentEvent[]
-  accountName: (id: string) => string
+  accountLabel: (id: string) => string
   start: string
   end: string
   selectedAccounts: string[]
@@ -256,14 +237,14 @@ function EventsTable({
         const haystack = [
           e.symbol,
           e.notes ?? "",
-          accountName(e.account_id),
+          accountLabel(e.account_id),
         ].join(" ").toLowerCase()
         if (!haystack.includes(needle)) return false
       }
       return true
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, start, end, accountSet, typeSet, needle, accountName])
+  }, [events, start, end, accountSet, typeSet, needle, accountLabel])
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1
@@ -344,7 +325,7 @@ function EventsTable({
                 <TableCell className="whitespace-nowrap tabular-nums">{formatDate(e.date)}</TableCell>
               )}
               {isVisible("account") && (
-                <TableCell className="text-sm text-muted-foreground">{accountName(e.account_id)}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{accountLabel(e.account_id)}</TableCell>
               )}
               {isVisible("symbol") && <TableCell className="font-medium">{e.symbol}</TableCell>}
               {isVisible("type") && (

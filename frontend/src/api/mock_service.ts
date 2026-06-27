@@ -89,6 +89,8 @@ function classifyBalance(
 export class MockApiService implements ApiService {
   // In-memory document store so the Documents page renders in mock mode. One
   // referenced (orphaned = false) and one orphaned entry to exercise the badge.
+  // `reference_count` is null in the list (matching the real backend), so the
+  // page's lazy per-row count path is exercised; getDocument resolves it.
   private documents: DocumentSummary[] = [
     {
       id: "mock_doc_monzo_may",
@@ -98,7 +100,7 @@ export class MockApiService implements ApiService {
       origin: "parse",
       account_id: "monzo-alex",
       uploaded_at: "2026-05-31T09:14:02Z",
-      reference_count: 47,
+      reference_count: null,
       orphaned: false,
     },
     {
@@ -109,10 +111,17 @@ export class MockApiService implements ApiService {
       origin: "parse",
       account_id: "t212-isa",
       uploaded_at: "2026-06-02T18:40:00Z",
-      reference_count: 0,
+      reference_count: null,
       orphaned: true,
     },
   ]
+
+  // Plausible per-document counts resolved lazily via getDocument. Mirrors the
+  // backend: the orphaned doc resolves to 0, the linked one to a non-zero count.
+  private documentRefCounts: Record<string, number> = {
+    mock_doc_monzo_may: 47,
+    mock_doc_orphan: 0,
+  }
 
   // In-memory investment-events ledger so the Investments page renders and
   // mutates in mock mode. Mirrors the CGT mock symbols (VUSA, AAPL).
@@ -1188,14 +1197,25 @@ export class MockApiService implements ApiService {
 
   async listDocuments(): Promise<DocumentSummary[]> {
     await delay(DELAY_MS)
-    return [...this.documents]
+    // Match the real backend: the list never carries the exact count.
+    return this.documents.map((d) => ({ ...d, reference_count: null }))
+  }
+
+  async getDocument(id: string): Promise<DocumentSummary> {
+    await delay(DELAY_MS)
+    const doc = this.documents.find((d) => d.id === id)
+    if (!doc) throw new Error(`document ${id} not found`)
+    const count = doc.orphaned ? 0 : (this.documentRefCounts[id] ?? 0)
+    return { ...doc, reference_count: count }
   }
 
   async uploadDocuments(files: File[], accountId?: string): Promise<DocumentSummary[]> {
     await delay(DELAY_MS)
     const created = files.map((f) => {
+      const id = `mock_doc_${Math.random().toString(36).slice(2, 10)}`
+      this.documentRefCounts[id] = 0
       const doc: DocumentSummary = {
-        id: `mock_doc_${Math.random().toString(36).slice(2, 10)}`,
+        id,
         filename: f.name,
         mime_type: f.type || "application/octet-stream",
         size_bytes: f.size,
@@ -1214,10 +1234,11 @@ export class MockApiService implements ApiService {
   async deleteDocument(id: string, force = false): Promise<DocumentDeleteResult> {
     await delay(DELAY_MS)
     const doc = this.documents.find((d) => d.id === id)
-    if (doc && doc.reference_count > 0 && !force) {
+    const refs = doc ? (doc.orphaned ? 0 : (this.documentRefCounts[id] ?? 0)) : 0
+    if (doc && refs > 0 && !force) {
       // Synthesize a plausible breakdown for the confirm dialog.
       throw new DocumentReferencedError({
-        transactions: doc.reference_count,
+        transactions: refs,
         holdings: 0,
         investments: 0,
       })
@@ -1225,7 +1246,7 @@ export class MockApiService implements ApiService {
     this.documents = this.documents.filter((d) => d.id !== id)
     return {
       deleted: true,
-      unlinked: { transactions: doc?.reference_count ?? 0, holdings: 0, investments: 0 },
+      unlinked: { transactions: refs, holdings: 0, investments: 0 },
     }
   }
 

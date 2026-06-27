@@ -785,7 +785,7 @@ fn store_parse_documents(
                 origin: stored.origin,
                 account_id: stored.account_id,
                 uploaded_at: stored.uploaded_at,
-                reference_count: refs.total(),
+                reference_count: Some(refs.total()),
                 orphaned: refs.total() == 0,
             });
         }
