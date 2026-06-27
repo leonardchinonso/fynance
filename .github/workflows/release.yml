@@ -70,7 +70,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: cd frontend && npm ci && npm run build
+      - run: cd frontend && npm install --no-audit --no-fund --prefer-offline && npm run build
       - run: cargo build --release --manifest-path backend/Cargo.toml
       - run: cp backend/target/release/fynance fynance-linux-x86_64
       - uses: actions/upload-artifact@v7
@@ -91,7 +91,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: cd frontend && npm ci && npm run build
+      - run: cd frontend && npm install --no-audit --no-fund --prefer-offline && npm run build
       - run: cargo build --release --manifest-path backend/Cargo.toml --target aarch64-apple-darwin
       - run: cp backend/target/aarch64-apple-darwin/release/fynance fynance-macos-aarch64
       - uses: actions/upload-artifact@v7
@@ -110,7 +110,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: cd frontend && npm ci && npm run build
+      - run: cd frontend && npm install --no-audit --no-fund --prefer-offline && npm run build
       - run: cargo build --release --manifest-path backend/Cargo.toml
       - run: cp backend/target/release/fynance.exe fynance-windows-x86_64.exe
       - uses: actions/upload-artifact@v7
@@ -148,6 +148,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Create GitHub Release
         env:
