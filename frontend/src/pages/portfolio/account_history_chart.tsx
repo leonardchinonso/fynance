@@ -161,7 +161,7 @@ function AccountHistoryChartInternal({
                 symbol: v.symbol,
                 name: meta?.name ?? v.symbol,
                 shortName: meta?.short_name ?? null,
-                holdingType: meta?.holding_type ?? "stock",
+                holdingType: meta?.holding_type ?? "",
                 value: parseFloat(v.value),
               }
             })

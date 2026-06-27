@@ -169,11 +169,6 @@ function HoldingsContent({
     toPreferred(parseFloat(b.value), b.currency) - toPreferred(parseFloat(a.value), a.currency)
   )
 
-  // A holding's type is intrinsic, so for any position that still exists the
-  // current type is authoritative — the history series only supplies the type
-  // for positions that have since been closed.
-  const typeBySymbol = new Map(holdings.map((h) => [h.symbol, h.holding_type]))
-
   const totalPreferred = sorted.reduce(
     (s, h) => s + toPreferred(parseFloat(h.value), h.currency), 0
   )
@@ -201,7 +196,7 @@ function HoldingsContent({
         key: h.symbol,
         symbol: h.symbol,
         name: h.name,
-        holdingType: typeBySymbol.get(h.symbol) ?? h.holdingType,
+        holdingType: h.holdingType,
         valueAmount: h.value.toFixed(2),
         valueCurrency: preferredCurrency,
         pct: activeHover.total > 0 ? ((h.value / activeHover.total) * 100).toFixed(1) : "0",
@@ -260,13 +255,15 @@ function HoldingsContent({
                   <TableCell className="font-medium">{r.symbol}</TableCell>
                   <TableCell className="text-sm">{r.name}</TableCell>
                   <TableCell>
-                    <Badge
-                      variant="outline"
-                      className="text-xs"
-                      style={{ borderColor: typeColor, color: typeColor }}
-                    >
-                      {HOLDING_TYPE_LABELS[r.holdingType as HoldingType] ?? r.holdingType}
-                    </Badge>
+                    {r.holdingType && (
+                      <Badge
+                        variant="outline"
+                        className="text-xs"
+                        style={{ borderColor: typeColor, color: typeColor }}
+                      >
+                        {HOLDING_TYPE_LABELS[r.holdingType as HoldingType] ?? r.holdingType}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{r.quantity ?? "-"}</TableCell>
                   <TableCell className="text-right tabular-nums">
