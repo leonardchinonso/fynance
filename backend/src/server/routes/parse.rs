@@ -260,15 +260,24 @@ pub async fn parse_documents(
         documents.push(doc);
     }
 
-    // Look up account (need institution for pipeline)
-    let account = {
+    // Look up account (need institution for pipeline) and resolve its profile
+    // name(s) so unified mode can recognise transfers to the holder's own other
+    // accounts as self-transfers rather than money to other people.
+    let (account, account_holder_names) = {
         let db = state.db.lock().expect("db mutex poisoned");
-        db.get_account_by_id(&account_id)?.ok_or_else(|| {
+        let account = db.get_account_by_id(&account_id)?.ok_or_else(|| {
             AppError::bad_request(
                 format!("account {} not found", account_id),
                 "account_not_found",
             )
-        })?
+        })?;
+        let profiles = db.get_profiles().unwrap_or_default();
+        let names: Vec<String> = account
+            .profile_ids
+            .iter()
+            .filter_map(|pid| profiles.iter().find(|p| &p.id == pid).map(|p| p.name.clone()))
+            .collect();
+        (account, names)
     };
 
     // Create the LLM provider (reads FYNANCE_PARSE_PROVIDER from env). The
@@ -298,6 +307,7 @@ pub async fn parse_documents(
             documents,
             account_id,
             account.institution,
+            account_holder_names,
             provider,
             start,
             progress_tx.clone(),
@@ -409,6 +419,7 @@ async fn run_unified_path(
     documents: Vec<DocumentInput>,
     account_id: String,
     account_institution: String,
+    account_holder_names: Vec<String>,
     provider: std::sync::Arc<dyn crate::importers::provider::LlmProvider>,
     start: std::time::Instant,
     progress_tx: Option<ProgressTx>,
@@ -455,6 +466,7 @@ async fn run_unified_path(
         UnifiedContext {
             categories,
             last_open_holdings,
+            account_holder_names,
         }
     };
 

@@ -1,4 +1,6 @@
 HOLDINGS PERIOD: single snapshot
 Find the most recent balance / valuation for each distinct holding in the documents and emit one snapshot per holding. If the documents contain only transactions, derive the closing balance from the running total at the end of the document.
 
+Roll forward past the latest stated balance: if the document also contains activity (transactions or trades) dated AFTER the most recent stated balance/position, do NOT just echo that stale figure — apply the later activity to it so the snapshot reflects the true CURRENT position (e.g. a statement shows 5 shares at month-end but a later transfer adds 95, so the current holding is 100). Use the latest activity date as the `as_of` and mark `derived: true`.
+
 Set `derived: false` when the snapshot is read directly from the document. Set `derived: true` when you computed it from the running total of transactions.

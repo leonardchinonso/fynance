@@ -1,7 +1,9 @@
 HOLDINGS PERIOD: quarterly
 For every calendar quarter covered by the documents, emit an end-of-quarter snapshot per distinct holding (`as_of` = last day of the quarter: 31 Mar, 30 Jun, 30 Sep, 31 Dec).
 
-If the documents only give one snapshot in a quarter, work forwards or backwards using the transactions in that quarter to derive the other quarter-ends. Example: if a quarter ends with £500 and there were ten outflow transactions of £20 each (£200 total) during that quarter, the previous quarter ended with £700. Reverse the sign for inflows.
+Anchor to labelled balances first. When a statement prints an authoritative balance line ("Opening Balance", "Closing Balance", "Balance brought/carried forward", "New Balance"), pin it as a `derived: false` quarter-end anchor (the opening of a quarter equals the prior quarter's close), and only DERIVE the quarter-ends that have no labelled balance by working through transactions between anchors. A labelled balance beats summing transactions; never overwrite it with a derived value.
+
+If a quarter has no labelled balance, work forwards or backwards using the transactions in that quarter to derive the quarter-end. Example: if a quarter ends with £500 and there were ten outflow transactions of £20 each (£200 total) during that quarter, the previous quarter ended with £700. Reverse the sign for inflows.
 
 Mark each derived snapshot with `row_confidence`: 0.95+ for explicit values, 0.75–0.95 for derived, below 0.75 for gappy.
 
