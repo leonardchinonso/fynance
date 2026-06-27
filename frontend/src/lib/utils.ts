@@ -189,7 +189,28 @@ export function formatPeriodKey(
   granularity: "monthly" | "quarterly" | "yearly"
 ): string {
   if (granularity === "monthly") return formatMonthShort(key)
-  return key // Q1 2024 or 2024 are already readable
+  // Backend quarterly keys are "YYYY-Qn"; render as "Qn YYYY". Yearly "YYYY"
+  // (and any already-readable label) passes through.
+  const q = key.match(/^(\d{4})-Q(\d)$/)
+  return q ? `Q${q[2]} ${q[1]}` : key
+}
+
+/**
+ * The backend period key a "YYYY-MM" month belongs to, matching the keys the
+ * spending grid returns in `SpendingGridRow.periods`: "YYYY-MM" (monthly),
+ * "YYYY-Qn" (quarterly), or "YYYY" (yearly). Used to map range months onto the
+ * backend's pre-bucketed periods (e.g. to scale a monthly budget per period).
+ */
+export function periodKeyForMonth(
+  month: string,
+  granularity: "monthly" | "quarterly" | "yearly"
+): string {
+  if (granularity === "yearly") return month.slice(0, 4)
+  if (granularity === "quarterly") {
+    const [y, m] = month.split("-").map(Number)
+    return `${y}-Q${Math.ceil(m / 3)}`
+  }
+  return month
 }
 
 /**
