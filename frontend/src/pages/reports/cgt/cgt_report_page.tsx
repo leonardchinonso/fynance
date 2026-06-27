@@ -56,13 +56,14 @@ export function CgtReportPage() {
     }
   }, [reportId, stored])
 
-  async function handleGenerate(filters: CgtFilters) {
+  async function handleGenerate(filters: CgtFilters, higherRate: boolean) {
     const response = await generate(filters)
     const id = newReportId()
     const report: StoredCgtReport = {
       id,
       generatedAt: new Date().toISOString(),
       filters,
+      higherRate,
       response,
     }
     saveStoredReport(report)

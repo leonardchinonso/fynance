@@ -226,6 +226,8 @@ Reorganised from the synthesis we did after the build. Each item lists what we h
 
 ### 7.4 Tax computation in the response
 
+**Status (2026-06-26): an interim, client-side version of this shipped.** The CGT PDF report now applies the Annual Exempt Amount, splits 2024-25 gains at the 30 Oct 2024 rate change, and estimates the tax due, with a higher-vs-basic rate toggle on the report filter bar (stored frontend-only on `StoredCgtReport.higherRate`, not on the backend-contract `CgtFilters`). The AEA table and the rates are **hardcoded** in [`cgt_pdf_document.tsx`](../../frontend/src/pages/reports/cgt/cgt_pdf_document.tsx) and flagged temporary in-code. This section remains the target end-state: move the computation server-side, accept a `tax_config` input on the endpoint, and persist user-definable rates/allowances so a Budget change is a config edit, not a code change. The toggle's `higherRate` becomes the `tax_config` rate-band selector (or the `allowable_income_remaining` headroom) when this lands.
+
 **Today.** Engine returns raw `total_gains` / `total_losses` / `net_gain_loss` only. No tax number. WhatsApp thread with Timi (2026-06-07 evening) lands on adding tax — the user explicitly needs the "gan gan", not just the gains.
 
 **Proposed shape** (refined from the WhatsApp discussion):
@@ -275,6 +277,17 @@ Reorganised from the synthesis we did after the build. Each item lists what we h
 
 **Why the call.** The shape is mostly decided; we need to agree on hardcoding vs configuring, the carryover storage model, and whether allowable-income is in scope for V1.x or pushed.
 
+**Implementation sketch (changes needed).** Concrete work when this lands, so it isn't re-derived. This replaces the interim frontend version (status note above):
+
+- **Backend ([`capital_gains.rs`](../../backend/src/server/routes/capital_gains.rs)):**
+  - New `TaxConfig` input (from the request) and `TaxResult` output (`gains_by_band`, `aea_used`, `losses_used`, `taxable_gain`, `tax_due`), both `#[derive(TS)]` exported to `frontend/src/bindings/`. Add `tax: Option<TaxResult>` to `CapitalGainsResponse`, populated only when a `tax_config` (or a stored/default config) is present.
+  - Compute after `run_cgt_engine`: bucket `realized_events` by `disposal_date` against `rate_bands` (the 2024-25 30 Oct split is just two bands), sum gains per band, then **deduct brought-forward + current-year losses and the AEA from the highest-rate band first.** That ordering minimises the charge and reproduces the accountant's working (verified against the filed £6,315.48 for 2024-25). `allowable_income_remaining` moves that much gain into the lower-rate band; absent it, assume all higher-rate.
+  - Money stays `rust_decimal::Decimal` end-to-end, replacing the interim frontend float math.
+  - Config source per §7.5: a seeded `tax_config` table or `config/uk_tax.yaml` so the rate/AEA/split-date tables are data, not code. Lazy external fetch deferred.
+- **Bindings:** regenerate ts-rs after the struct changes (export runs under `cargo test`).
+- **Frontend ([`cgt_pdf_document.tsx`](../../frontend/src/pages/reports/cgt/cgt_pdf_document.tsx) + [`cgt_filter_bar.tsx`](../../frontend/src/pages/reports/cgt/cgt_filter_bar.tsx)):** delete `AEA_BY_TAX_YEAR`, `computeTaxEstimate`, and the hardcoded rate literals; render `response.tax` directly. Keep the rate-band toggle, but have it set the request's band selector / `allowable_income_remaining` rather than a client-side flag, and send the selection via `cgtFiltersToParams`.
+- **Cleanup:** the TEMPORARY-flagged tables in `cgt_pdf_document.tsx` are removed as part of this; they exist only until the backend owns the computation.
+
 ### 7.5 Defaults + override + prompting system
 
 Generalisation of what 7.4 needs locally. Three levels:
@@ -283,6 +296,8 @@ Generalisation of what 7.4 needs locally. Three levels:
 2. **User override** when defaults are wrong (rate bands changed mid-year, AEA not claimed, etc.).
 3. **Prompt when no default exists** (UTR, allowable income, brought-forward losses for the first year of use).
 4. **Persist user inputs** so they're not re-entered next year. Probably a new `tax_inputs` table keyed by `(profile_id, tax_year)`.
+
+**Sourcing the defaults without a code change.** The statutory tables (AEA, rate bands, the mid-year split date) should be *data*, not code, so an HMRC/Budget change doesn't need a frontend/Rust edit and redeploy. Options, roughly in order of preference: a seeded `tax_config` table the user/admin can edit in Settings; a checked-in config file (e.g. `config/uk_tax.yaml`) loaded at startup; or an on-demand fetch from an authoritative source (the "curl for it" idea — the same lazy-fetch-and-cache pattern §7.10 uses for FX, pointed at a tax-rate feed). The hardcoded tables now in [`cgt_pdf_document.tsx`](../../frontend/src/pages/reports/cgt/cgt_pdf_document.tsx) are the temporary opposite of this and should be the first thing replaced when §7.4 lands.
 
 Worth designing once and reusing for tax-config, reliefs, UTR, etc.
 
@@ -356,6 +371,8 @@ Audit pass: walk every handler in `backend/src/server/routes/`, replace any "thi
 ### 7.10 Historical FX rates (the big rock)
 
 Engine takes one rate per currency and uses it for every event regardless of date. PLTR (USD) figures last tax year differ from the filing by ~£80k because of this alone.
+
+**Update (2026-06-26):** with the Shareworks ledger rebuilt (gross vests), static FX is now the *only* remaining reason the report doesn't tie to the filed return on the **gains** side (the losses gap is the deliberate sell-to-cover treatment). For 2024-25, fynance reports PLTR gains-before-losses of £31,877.80 vs the filed £34,702 (~£2.8k); HMRC converts each leg at its own date's rate while we convert every leg at one flat rate, and the configured 0.74 also runs below the ~0.78 GBP/USD average for the period. Confirmed cause, tracked here as the fix. Until it lands, USD positions will not tie to the penny and the report's FX footnote says so.
 
 `convert_as_of(amount, currency, date)` already exists in `fx.rs` but currently delegates to `convert`. Real impl needs a date-keyed `exchange_rates` cache (shared with multi-currency plan §V4):
 

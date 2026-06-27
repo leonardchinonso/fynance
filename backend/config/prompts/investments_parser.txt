@@ -5,12 +5,27 @@ a structured JSON format using the parse_investments tool.
 Rules:
 1. Each row represents one investment event.
 2. event_type: one of "vest", "buy", "sell", "transfer", "withhold", "split".
-   - "vest": receiving units from a vesting schedule (e.g. RSU or ESOP vesting)
+   - "vest": shares released to you from a vesting schedule (RSU/PRSU/ESOP/SAR).
+     Quantity is the GROSS shares released, BEFORE tax withholding — never the net
+     disbursed amount. See rule 2a.
    - "buy": acquiring units/shares by purchasing them
    - "sell": disposing of units/shares
    - "transfer": position moved between accounts
-   - "withhold": units withheld for tax (typically alongside a vest)
+   - "withhold": shares sold or withheld to cover tax at a vest ("sell to cover").
+     This is a disposal recorded alongside the vest.
    - "split": quantity change due to a stock split (price adjusts inversely)
+2a. RSU / equity-compensation releases (CRITICAL — gross, not net):
+    A single release produces TWO events: one "vest" and one "withhold".
+    - "vest" quantity = the GROSS shares released (the full vested amount before any
+      tax withholding). When the statement lists "released"/"vested", "sold to cover
+      tax"/"withheld", and "disbursed"/"net", set vest = released (gross) and
+      withhold = sold-to-cover.
+    - NEVER set "vest" to the net/disbursed shares. The shares you keep = vest minus
+      withhold. Booking the net as the vest while ALSO recording the withhold
+      double-counts the tax shares: it corrupts the cost basis and drives the CGT
+      disposal pool negative.
+    - SAR exercises follow the same shape: "vest" = appreciation shares delivered
+      before tax, "withhold" = shares withheld for tax.
 3. symbol: the ticker or fund code (e.g. "VUSA", "AAPL"). Use the currency code for
    cash amounts without a symbol (e.g. "GBP").
 4. date: ISO 8601 datetime string "YYYY-MM-DDTHH:MM:SS". Use "T00:00:00" if no time given.
