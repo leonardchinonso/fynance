@@ -2310,9 +2310,9 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <p class="endpoint-summary">Delete a document. Rejected with 409 if any row references it, unless <code>?force=true</code>, which first strips the id from every referencing row.</p>
   <h4>Query Parameters</h4>
   <table class="params-table">
-    <thead><tr><th>Param</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>force</code></td><td>boolean</td><td>No</td><td>When true, unlink from all referencing rows then delete. Default false.</td></tr>
+      <tr><td><code>force</code></td><td>query</td><td>boolean</td><td>No</td><td>When true, unlink from all referencing rows then delete. Default false.</td></tr>
     </tbody>
   </table>
   <h4>Example Response <span class="status-code">200</span></h4>
@@ -3327,6 +3327,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>as_at</code></td><td>query</td><td>string</td><td>No</td><td>Limit pooling to events on or before this date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; includes events from accounts whose profiles intersect this set. Omit for all profiles.</td></tr>
     </tbody>
   </table>
   <h4>Example Request</h4>
@@ -3365,6 +3366,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
       <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter disposals by account</td></tr>
       <tr><td><code>symbol</code></td><td>query</td><td>string</td><td>No</td><td>Filter by ticker symbol</td></tr>
       <tr><td><code>as_at</code></td><td>query</td><td>string</td><td>No</td><td>Limit calculations to events on or before this date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; includes events from accounts whose profiles intersect this set. Omit for all profiles.</td></tr>
     </tbody>
   </table>
   <h4>Example Request</h4>
