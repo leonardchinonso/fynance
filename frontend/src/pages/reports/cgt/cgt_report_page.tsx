@@ -43,6 +43,7 @@ export function CgtReportPage() {
     return {
       period: { kind: "tax-year", taxYear: previousUkTaxYearForDate(new Date()) },
       profileId: preselected,
+      higherRate: true,
     }
   }, [activeProfileId, profiles])
 

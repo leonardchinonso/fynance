@@ -86,6 +86,7 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
         taxYear,
         Number.parseFloat(response.summary.net_gain_loss),
         response.realized_events,
+        filters.higherRate ?? true,
       )
     : null
   return (
@@ -163,9 +164,10 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
               bold
             />
             <Text style={styles.footnote}>
-              Estimate only, not tax advice. Assumes a higher or additional-rate taxpayer and that
-              the full Annual Exempt Amount is available against these gains. Confirm with your
-              accountant before filing.
+              Estimate only, not tax advice. Computed at the{" "}
+              {(filters.higherRate ?? true) ? "higher/additional" : "basic"} rate for the whole
+              gain; a within-year basic/higher band split is not modelled. Assumes the full Annual
+              Exempt Amount is available. Confirm with your accountant before filing.
             </Text>
           </View>
         )}
@@ -304,8 +306,12 @@ function SummaryRow({ label, value, bold = false }: { label: string; value: stri
   )
 }
 
-// UK Capital Gains Tax Annual Exempt Amount by tax year. Frozen at £3,000 from
-// 2024-25; update this table when HMRC changes it.
+// TEMPORARY hardcoded tax tables. These are UK statutory values that change with
+// each Budget, so they are not expected to live in the frontend long-term: plan
+// 23 §7.4/§7.5 moves the rates, Annual Exempt Amount, and band split into
+// server-side, user-definable tax config. Until then, update these by hand when
+// HMRC changes them.
+// UK CGT Annual Exempt Amount by tax year (frozen at £3,000 from 2024-25).
 const AEA_BY_TAX_YEAR: Record<string, number> = {
   "2018-19": 11700,
   "2019-20": 12000,
@@ -332,20 +338,25 @@ interface TaxEstimate {
   totalTax: number
 }
 
-// Estimated CGT on share gains at the higher/additional rate. 2024-25 changed
-// mid-year (Autumn Budget 2024): 20% before 30 Oct 2024, 24% on or after; 24%
-// from 2025-26. The Annual Exempt Amount is applied to the higher-rate band
-// first, which minimises the charge and matches standard practice.
+// Estimated CGT on share gains. 2024-25 changed mid-year (Autumn Budget 2024):
+// before 30 Oct 2024 the rate is 10% (basic) / 20% (higher), on or after it is
+// 18% / 24%; from 2025-26 it is 18% / 24% flat. `higherRate` picks the band — we
+// don't know the taxpayer's income, so a single year can't be split across both
+// bands (see plan 23 §7.4). The Annual Exempt Amount is applied to the higher-
+// rate slice first, which minimises the charge and matches standard practice.
 function computeTaxEstimate(
   taxYear: string,
   netGain: number,
   realized: CgtRealizedEvent[],
+  higherRate: boolean,
 ): TaxEstimate | null {
   const aea = AEA_BY_TAX_YEAR[taxYear]
   if (aea === undefined) return null
   if (netGain <= 0) {
     return { aea, netGain, taxableGain: 0, bands: [], totalTax: 0 }
   }
+
+  const pctLabel = (r: number) => `${(r * 100).toFixed(0)}%`
 
   if (taxYear === "2024-25") {
     let pre = 0
@@ -370,19 +381,21 @@ function computeTaxEstimate(
     const aeaToPost = Math.min(aea, post)
     const postTaxable = post - aeaToPost
     const preTaxable = Math.max(0, pre - (aea - aeaToPost))
+    const preRate = higherRate ? 0.2 : 0.1
+    const postRate = higherRate ? 0.24 : 0.18
     const bands: TaxBand[] = []
     if (preTaxable > 0) {
       bands.push({
-        label: "Gains before 30 Oct 2024 @ 20%",
+        label: `Gains before 30 Oct 2024 @ ${pctLabel(preRate)}`,
         taxable: preTaxable,
-        tax: preTaxable * 0.2,
+        tax: preTaxable * preRate,
       })
     }
     if (postTaxable > 0) {
       bands.push({
-        label: "Gains on/after 30 Oct 2024 @ 24%",
+        label: `Gains on/after 30 Oct 2024 @ ${pctLabel(postRate)}`,
         taxable: postTaxable,
-        tax: postTaxable * 0.24,
+        tax: postTaxable * postRate,
       })
     }
     return {
@@ -394,12 +407,14 @@ function computeTaxEstimate(
     }
   }
 
-  const startYear = Number.parseInt(taxYear.slice(0, 4), 10)
-  const rate = startYear >= 2025 ? 0.24 : 0.2
+  const post2024 = Number.parseInt(taxYear.slice(0, 4), 10) >= 2025
+  let rate: number
+  if (higherRate) rate = post2024 ? 0.24 : 0.2
+  else rate = post2024 ? 0.18 : 0.1
   const taxable = Math.max(0, netGain - aea)
   const bands: TaxBand[] =
     taxable > 0
-      ? [{ label: `Taxable gains @ ${(rate * 100).toFixed(0)}%`, taxable, tax: taxable * rate }]
+      ? [{ label: `Taxable gains @ ${pctLabel(rate)}`, taxable, tax: taxable * rate }]
       : []
   return { aea, netGain, taxableGain: taxable, bands, totalTax: taxable * rate }
 }

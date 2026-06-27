@@ -77,6 +77,14 @@ export interface CgtFilters {
   period: CgtPeriod
   /** Exactly one profile — the report has no "all profiles" mode. */
   profileId: string
+  /**
+   * Whether the taxpayer is on the higher/additional CGT rate band. Drives the
+   * report's tax estimate only (basic 10/18% vs higher 20/24%). Optional for
+   * backward-compatibility with reports stored before this field existed; treat
+   * `undefined` as `true`. The rates themselves are still hardcoded — long-term
+   * this becomes server-side, user-definable tax config (see plan 23 §7.4/§7.5).
+   */
+  higherRate?: boolean
 }
 
 /**

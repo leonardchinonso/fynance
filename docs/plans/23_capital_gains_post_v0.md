@@ -226,6 +226,8 @@ Reorganised from the synthesis we did after the build. Each item lists what we h
 
 ### 7.4 Tax computation in the response
 
+**Status (2026-06-26): an interim, client-side version of this shipped.** The CGT PDF report now applies the Annual Exempt Amount, splits 2024-25 gains at the 30 Oct 2024 rate change, and estimates the tax due, with a higher-vs-basic rate toggle on the report filter bar (`CgtFilters.higherRate`). The AEA table and the rates are **hardcoded** in [`cgt_pdf_document.tsx`](../../frontend/src/pages/reports/cgt/cgt_pdf_document.tsx) and flagged temporary in-code. This section remains the target end-state: move the computation server-side, accept a `tax_config` input on the endpoint, and persist user-definable rates/allowances so a Budget change is a config edit, not a code change. The toggle's `higherRate` becomes the `tax_config` rate-band selector (or the `allowable_income_remaining` headroom) when this lands.
+
 **Today.** Engine returns raw `total_gains` / `total_losses` / `net_gain_loss` only. No tax number. WhatsApp thread with Timi (2026-06-07 evening) lands on adding tax — the user explicitly needs the "gan gan", not just the gains.
 
 **Proposed shape** (refined from the WhatsApp discussion):
@@ -283,6 +285,8 @@ Generalisation of what 7.4 needs locally. Three levels:
 2. **User override** when defaults are wrong (rate bands changed mid-year, AEA not claimed, etc.).
 3. **Prompt when no default exists** (UTR, allowable income, brought-forward losses for the first year of use).
 4. **Persist user inputs** so they're not re-entered next year. Probably a new `tax_inputs` table keyed by `(profile_id, tax_year)`.
+
+**Sourcing the defaults without a code change.** The statutory tables (AEA, rate bands, the mid-year split date) should be *data*, not code, so an HMRC/Budget change doesn't need a frontend/Rust edit and redeploy. Options, roughly in order of preference: a seeded `tax_config` table the user/admin can edit in Settings; a checked-in config file (e.g. `config/uk_tax.yaml`) loaded at startup; or an on-demand fetch from an authoritative source (the "curl for it" idea — the same lazy-fetch-and-cache pattern §7.10 uses for FX, pointed at a tax-rate feed). The hardcoded tables now in [`cgt_pdf_document.tsx`](../../frontend/src/pages/reports/cgt/cgt_pdf_document.tsx) are the temporary opposite of this and should be the first thing replaced when §7.4 lands.
 
 Worth designing once and reusing for tax-config, reliefs, UTR, etc.
 
