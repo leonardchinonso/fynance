@@ -294,7 +294,10 @@ async function runView(browser, view) {
 
   // 14. Investments tab — Overview dashboard (default) then the History ledger.
   await page.goto(`${BASE}/investments`, { waitUntil: "domcontentloaded" })
-  await page.getByRole("heading", { name: /^investments$/i }).waitFor({ timeout: 15000 })
+  // The shared header has no page title; anchor on the Overview/History view
+  // toggle and the persistent Accounts filter instead.
+  await page.getByRole("button", { name: /^overview$/i }).waitFor({ timeout: 15000 })
+  await page.getByRole("button", { name: /^accounts$/i }).waitFor({ timeout: 5000 })
   // Overview is the default view: assert the summary cards + the invested chart.
   await page.getByText(/^cost basis$/i).waitFor({ timeout: 10000 })
   await page.getByText(/cumulative invested/i).waitFor({ timeout: 5000 })

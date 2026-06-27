@@ -4,28 +4,21 @@ import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { RemoteData } from "@/lib/remote_data"
 import { useRemoteData } from "@/hooks/use_remote_data"
 
-export interface InvestmentFilters {
-  accountId?: string
-  symbol?: string
-  eventType?: string
-}
-
 /**
- * Fetches the investment-events ledger, optionally filtered.
+ * Fetches the full investment-events ledger for the profile, unfiltered.
  *
- * - Soft deps: `accountId`, `symbol`, `eventType` (filter changes keep the
- *   previous rows visible while reloading).
+ * All filtering (account, type, symbol, search, date) is done client-side by
+ * the History table, so the ledger is fetched once and reused. This keeps the
+ * History view from re-fetching on every filter change and lets it paginate
+ * the full result set locally.
  *
  * Returns `[data, reload]` — call `reload()` after creating, editing, or
- * deleting an event to refresh without changing any dep value.
+ * deleting an event to refresh.
  */
-export function useInvestments(
-  filters: InvestmentFilters = {},
-): [RemoteData<InvestmentEvent[]>, () => void] {
-  const { accountId, symbol, eventType } = filters
+export function useInvestments(): [RemoteData<InvestmentEvent[]>, () => void] {
   return useRemoteData(
-    () => api.listInvestments(accountId, symbol, eventType),
-    { hard: [], soft: [accountId, symbol, eventType] },
+    () => api.listInvestments(),
+    { hard: [], soft: [] },
   )
 }
 

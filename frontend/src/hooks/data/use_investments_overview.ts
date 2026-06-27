@@ -33,7 +33,13 @@ function preferredCode(currencies: Currency[]): string {
  * Composes the Investments Overview data set.
  *
  * - Hard dep: `profileId` (identity change — clears stale data on switch)
- * - Soft deps: `start`, `end` (scope the realised-gains period)
+ * - Soft deps: `start`, `end` (scope the realised-gains period), the selected
+ *   account ids (scope holdings + events).
+ *
+ * When `selectedAccountIds` is non-empty, holdings (current value + pie) and
+ * events (cost basis + invested line) are scoped to those accounts. Pools and
+ * realised gains stay profile-scoped: pools have no account_id, and the CGT
+ * report has no per-account filter.
  *
  * Realised gains are only fetched when a single `profileId` is selected; the
  * CGT report has no all-profiles mode, so it is left `null` otherwise and the
@@ -43,7 +49,9 @@ export function useInvestmentsOverview(
   start: string,
   end: string,
   profileId: string | undefined,
+  selectedAccountIds: string[] = [],
 ): RemoteData<InvestmentsOverviewData> {
+  const selectedKey = [...selectedAccountIds].sort().join(",")
   const [data] = useRemoteData(
     async (): Promise<InvestmentsOverviewData> => {
       const [accounts, pools, allEvents, currencies] = await Promise.all([
@@ -53,8 +61,10 @@ export function useInvestmentsOverview(
         api.getCurrencies(),
       ])
 
+      const selected = new Set(selectedAccountIds)
       const investmentAccountIds = accounts
         .filter((a: Account) => accountTypeToAssetClass(a.type) === "Investments")
+        .filter((a) => selected.size === 0 || selected.has(a.id))
         .map((a) => a.id)
       const accountIdSet = new Set(investmentAccountIds)
 
@@ -86,7 +96,7 @@ export function useInvestmentsOverview(
         preferredCurrency: preferredCode(currencies),
       }
     },
-    { hard: [profileId], soft: [start, end] },
+    { hard: [profileId], soft: [start, end, selectedKey] },
   )
   return data
 }

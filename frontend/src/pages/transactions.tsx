@@ -137,15 +137,6 @@ export function TransactionsPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search transactions..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-[200px] pl-8 text-sm"
-          />
-        </div>
         <MultiSelect label="Accounts" options={availableAccounts} selected={selectedAccounts} onChange={setAccounts} displayFn={(id) => accountNameMap[id] ?? id} />
         <MultiSelect
           label="Categories"
@@ -158,6 +149,19 @@ export function TransactionsPage() {
           <Button variant="ghost" size="sm" onClick={() => { setAccounts([]); setCategories([]); setSearch("") }}>
             Clear filters
           </Button>
+        )}
+        <div className="flex-1" />
+        {/* Search applies only to the table rows, so hide it on the charts view. */}
+        {view === "table" && (
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search transactions..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 w-[200px] pl-8 text-sm"
+            />
+          </div>
         )}
       </div>
 
