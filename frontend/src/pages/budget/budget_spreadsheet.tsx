@@ -206,7 +206,7 @@ function SectionBlock({
               const periodDisplay = (row.periods_display ?? {})[p] ?? null
               return (
                 <TableCell key={p} className={cn("text-right text-sm", row.section !== "Income" && cellColor(val, periodBudget))}>
-                  <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={periodDisplay} secondaryFirst />
+                  <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={periodDisplay} tooltip />
                 </TableCell>
               )
             })}

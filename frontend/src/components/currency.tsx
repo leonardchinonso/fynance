@@ -1,5 +1,6 @@
 import type { DisplayCurrency } from "@/types"
 import { cn, formatCurrency } from "@/lib/utils"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 interface MoneyDisplayProps {
   amount: string
@@ -43,9 +44,12 @@ interface DualAmountProps {
   /** When true, the muted secondary value appears to the LEFT of the primary.
    *  Use for right-aligned columns so the conversion doesn't push the main figure around. */
   secondaryFirst?: boolean
+  /** Table-cell variant: show only the native value (dotted-underlined) and reveal
+   *  the preferred-currency value on hover, to save horizontal space in dense tables. */
+  tooltip?: boolean
 }
 
-export function DualAmount({ value, preferredCurrency, display, className, secondaryFirst }: DualAmountProps) {
+export function DualAmount({ value, preferredCurrency, display, className, secondaryFirst, tooltip }: DualAmountProps) {
   const primary = display
     ? formatCurrency(display.value, display.currency)
     : formatCurrency(value, preferredCurrency)
@@ -53,6 +57,30 @@ export function DualAmount({ value, preferredCurrency, display, className, secon
   const secondary = display && display.currency !== preferredCurrency
     ? formatCurrency(value, preferredCurrency)
     : null
+
+  if (tooltip) {
+    // No conversion to show (already in the preferred currency): render plainly.
+    if (!secondary) return <span className={cn("tabular-nums", className)}>{primary}</span>
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          className={cn(
+            "tabular-nums cursor-default underline decoration-dotted decoration-muted-foreground/40 underline-offset-2",
+            className,
+          )}
+        >
+          {primary}
+        </TooltipTrigger>
+        <TooltipContent
+          side="left"
+          className="bg-popover text-popover-foreground ring-1 ring-foreground/10 px-3 py-2 text-xs tabular-nums"
+          arrowClassName="bg-popover fill-popover"
+        >
+          {secondary}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
 
   return (
     <span className={cn("tabular-nums inline-flex items-baseline gap-1.5", className)}>

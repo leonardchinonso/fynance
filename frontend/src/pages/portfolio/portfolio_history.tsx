@@ -178,13 +178,13 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
                     {formatPeriodLabel(row.month, granularity)}
                   </TableCell>
                   <TableCell className="text-right">
-                    <DualAmount value={row.available_wealth} preferredCurrency={preferredCurrency} display={row.available_wealth_display} secondaryFirst />
+                    <DualAmount value={row.available_wealth} preferredCurrency={preferredCurrency} display={row.available_wealth_display} tooltip />
                   </TableCell>
                   <TableCell className="text-right">
-                    <DualAmount value={row.unavailable_wealth} preferredCurrency={preferredCurrency} display={row.unavailable_wealth_display} secondaryFirst />
+                    <DualAmount value={row.unavailable_wealth} preferredCurrency={preferredCurrency} display={row.unavailable_wealth_display} tooltip />
                   </TableCell>
                   <TableCell className="text-right font-medium">
-                    <DualAmount value={row.total_wealth} preferredCurrency={preferredCurrency} display={row.total_wealth_display} secondaryFirst />
+                    <DualAmount value={row.total_wealth} preferredCurrency={preferredCurrency} display={row.total_wealth_display} tooltip />
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {change !== null ? (
