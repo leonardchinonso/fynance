@@ -11,7 +11,7 @@ import {
   Legend,
 } from "recharts"
 import { ChartTooltip, useClampedTooltipPosition } from "./chart_tooltip"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrencyCompact } from "@/lib/utils"
 
 const DEFAULT_COLORS = [
   "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
@@ -60,7 +60,7 @@ export function StyledBarChart({
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
           <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />
-          <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
+          <YAxis width={64} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrencyCompact(v)} />
           <Tooltip
             content={<ChartTooltip activeCategory={activeCatIndex !== null ? categories[activeCatIndex] : null} />}
             position={pos}
@@ -153,7 +153,7 @@ export function ColoredBarChart({
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
           <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />
-          <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
+          <YAxis width={64} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrencyCompact(v)} />
           <Tooltip
             content={<ChartTooltip />}
             position={pos}

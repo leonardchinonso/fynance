@@ -6,7 +6,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import {
-  cn, formatCurrency, categoryLeaf, formatPeriodKey, periodKeyForMonth,
+  cn, formatCurrency, categoryLeaf, formatPeriodKey, periodKeyForMonth, periodKeysFromRows,
 } from "@/lib/utils"
 import { DualAmount } from "@/components/currency"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
@@ -67,8 +67,9 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
   if (rows.length === 0) return <EmptyState />
 
   // The backend pre-buckets `periods` by granularity ("YYYY-MM" | "YYYY-Qn" |
-  // "YYYY"); use its keys directly instead of re-aggregating months.
-  const periods = Object.keys(rows[0].periods)
+  // "YYYY") and returns them sparsely per row, so take the union for the full
+  // (chronological) column set.
+  const periods = periodKeysFromRows(rows)
 
   function getPeriodBudget(monthlyBudget: string | null, periodKey: string): string | null {
     if (!monthlyBudget) return null

@@ -1,6 +1,6 @@
 import type { SpendingGridRow, Granularity } from "@/types"
 import { StyledLineChart } from "@/components/charts"
-import { formatPeriodKey } from "@/lib/utils"
+import { formatPeriodKey, periodKeysFromRows } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useResolveCategoryName } from "@/context/category_names_context"
@@ -22,13 +22,13 @@ export function BudgetLineChart({ rows, granularity }: BudgetLineChartProps) {
     new Set(spendingRows.map((r) => resolveName(r.category_id).split(":")[0].trim()))
   ).slice(0, 8)
 
-  // The backend pre-buckets `periods` by granularity; use its keys directly.
-  const periodKeys = rows[0] ? Object.keys(rows[0].periods) : []
-  const periodsWithData = periodKeys.filter((p) =>
-    spendingRows.some((r) => r.periods[p] !== null)
+  // Rows are sparse per period, so take the union of keys; a value missing for a
+  // category in a period reads as 0, never NaN (NaN corrupts the line series).
+  const periodKeys = periodKeysFromRows(rows).filter((p) =>
+    spendingRows.some((r) => r.periods[p] != null)
   )
 
-  const data = periodsWithData.map((p) => {
+  const data = periodKeys.map((p) => {
     const entry: Record<string, string | number> = {
       period: formatPeriodKey(p, granularity),
     }
@@ -38,8 +38,8 @@ export function BudgetLineChart({ rows, granularity }: BudgetLineChartProps) {
       )
       let total = 0
       for (const row of catRows) {
-        const val = row.periods[p]
-        if (val !== null) total += Math.abs(parseFloat(val))
+        const n = parseFloat(row.periods[p] ?? "")
+        if (Number.isFinite(n)) total += Math.abs(n)
       }
       entry[cat] = parseFloat(total.toFixed(2))
     }

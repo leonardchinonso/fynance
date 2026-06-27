@@ -1,6 +1,6 @@
 import type { SpendingGridRow, Granularity } from "@/types"
 import { StyledBarChart } from "@/components/charts"
-import { formatPeriodKey } from "@/lib/utils"
+import { formatPeriodKey, periodKeysFromRows } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useResolveCategoryName } from "@/context/category_names_context"
@@ -22,14 +22,14 @@ export function BudgetStackedBar({ rows, granularity }: BudgetStackedBarProps) {
     new Set(spendingRows.map((r) => resolveName(r.category_id).split(":")[0].trim()))
   )
 
-  // The backend pre-buckets `periods` by granularity ("YYYY-MM" | "YYYY-Qn" |
-  // "YYYY"); use its keys directly instead of re-aggregating months.
-  const periodKeys = rows[0] ? Object.keys(rows[0].periods) : []
-  const periodsWithData = periodKeys.filter((p) =>
-    spendingRows.some((r) => r.periods[p] !== null)
+  // Rows are sparse per granularity period, so take the union of keys. A value
+  // missing for a category in a period must read as 0, never NaN — NaN breaks the
+  // Recharts stacked-bar baseline and makes every bar render full-height.
+  const periodKeys = periodKeysFromRows(rows).filter((p) =>
+    spendingRows.some((r) => r.periods[p] != null)
   )
 
-  const data = periodsWithData.map((p) => {
+  const data = periodKeys.map((p) => {
     const entry: Record<string, string | number> = {
       period: formatPeriodKey(p, granularity),
     }
@@ -39,8 +39,8 @@ export function BudgetStackedBar({ rows, granularity }: BudgetStackedBarProps) {
       )
       let total = 0
       for (const row of catRows) {
-        const val = row.periods[p]
-        if (val !== null) total += Math.abs(parseFloat(val))
+        const n = parseFloat(row.periods[p] ?? "")
+        if (Number.isFinite(n)) total += Math.abs(n)
       }
       entry[cat] = parseFloat(total.toFixed(2))
     }
