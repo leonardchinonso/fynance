@@ -164,6 +164,9 @@ fynance account add --id <id> --name <name> --institution <inst> --type <type> -
 fynance account set-balance <id> <amount> --date YYYY-MM-DD
 fynance account list
 fynance account delete <id> [--hard]         # soft-delete (deactivate); --hard removes the row
+fynance profile add --id <id> --name <name>  # create a profile (accounts need one)
+fynance profile list
+fynance profile delete <id>                  # refuses if any account still references it
 fynance transaction delete <id>... [--account <id>]   # hard-delete txns by id, or all for an account
 fynance budget set --month YYYY-MM --category <c> --amount N
 fynance budget status --month YYYY-MM

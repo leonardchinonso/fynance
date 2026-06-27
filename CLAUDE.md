@@ -129,13 +129,16 @@ See `backend/RUNNING.md` for the full setup and run guide: prerequisites, config
 ```bash
 fynance serve [--port 7433] [--no-open]      # Start local web UI
 fynance import <file|dir> --account <id>     # Import CSV statements (auto-detects bank format)
-fynance account add --id <id> --name <name> --institution <inst> --type <type>
+fynance account add --id <id> --name <name> --institution <inst> --type <type> --profile <id> [--currency GBP]
 fynance account set-balance <id> <amount> --date YYYY-MM-DD
 fynance account list
 fynance account delete <id> [--hard]         # soft-delete (deactivate); --hard removes the row. Refuses if it has transactions/holdings.
+fynance profile add --id <id> --name <name>  # create a profile (accounts require an existing profile)
+fynance profile list
+fynance profile delete <id>                  # refuses if any account still references it
 fynance transaction delete <id>... [--account <id>]   # hard-delete transactions by id, or all for an account (clears it before deletion)
 fynance budget set --month YYYY-MM --category <c> --amount N
-fynance budget status
+fynance budget status --month YYYY-MM
 fynance stats
 fynance token create --name <name>           # generate API token for programmatic access
 fynance token list
