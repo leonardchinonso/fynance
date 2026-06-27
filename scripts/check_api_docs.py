@@ -180,7 +180,17 @@ def main() -> int:
     if errors:
         for e in errors:
             print(f"::error::{e}")
-        print(f"\n{len(errors)} API-doc parity problem(s) found.")
+        print(f"\n{len(errors)} API-doc parity problem(s) found.\n")
+        print(
+            "How to fix: the Axum router (backend/src/server/mod.rs) is the source of\n"
+            "truth. Reproduce locally with:\n"
+            "    python3 scripts/check_api_docs.py\n"
+            "then update the two docs so both match the router:\n"
+            "  - docs/api.html            (each endpoint's <section> + its params table)\n"
+            "  - backend/src/server/routes/docs.rs  (the OpenAPI `paths` block)\n"
+            "Only method/path coverage and query/path param NAMES are checked here;\n"
+            "request/response body shapes are out of scope."
+        )
         return 1
 
     print(f"API-doc parity OK: {len(route_keys)} (method, path) routes match across "
