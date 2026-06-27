@@ -265,6 +265,9 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/accounts": {
                 "get": {
                     "summary": "List accounts",
+                    "parameters": [
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter accounts by profile." }
+                    ],
                     "responses": { "200": { "description": "Array of accounts" } }
                 },
                 "post": {
@@ -376,7 +379,9 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "summary": "Delete a category",
                     "security": [{ "bearerAuth": [] }],
                     "parameters": [
-                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+                        { "name": "hard", "in": "query", "schema": { "type": "boolean", "default": false },
+                          "description": "When true, permanently delete the row instead of soft-deleting." }
                     ],
                     "responses": { "200": { "description": "Category deleted" } }
                 }
@@ -396,12 +401,17 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 "get": {
                     "summary": "List transactions (paginated)",
                     "parameters": [
-                        { "name": "month", "in": "query", "schema": { "type": "string", "example": "2026-04" } },
-                        { "name": "category", "in": "query", "schema": { "type": "string" }, "description": "Filter by category id." },
-                        { "name": "account", "in": "query", "schema": { "type": "string" }, "description": "Filter by a single account id." },
+                        { "name": "start", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
+                        { "name": "end", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
                         { "name": "accounts", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account ids to include." },
+                        { "name": "categories", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category ids to include." },
+                        { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Free-text search over description / merchant." },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." },
+                        { "name": "category_source", "in": "query", "schema": { "type": "string", "enum": ["rule", "agent", "manual"] }, "description": "Filter by how the category was assigned." },
+                        { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["date", "amount", "category"] }, "description": "Sort column (default: date)." },
+                        { "name": "sort_dir", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"] }, "description": "Sort direction (default: desc)." },
                         { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
-                        { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } }
+                        { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 25 } }
                     ],
                     "responses": {
                         "200": {
@@ -441,6 +451,14 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/transactions/by-category": {
                 "get": {
                     "summary": "Transactions grouped/summarised by category",
+                    "parameters": [
+                        { "name": "start", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
+                        { "name": "end", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
+                        { "name": "accounts", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account ids." },
+                        { "name": "categories", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category ids." },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." },
+                        { "name": "direction", "in": "query", "schema": { "type": "string", "enum": ["outflow", "income"] }, "description": "outflow or income. Omit for signed net sums." }
+                    ],
                     "responses": { "200": { "description": "Per-category transaction breakdown" } }
                 }
             },
@@ -461,6 +479,9 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "summary": "Programmatic typed JSON import of transactions",
                     "description": "Current route for structured (non-CSV) imports by agents and scripts.",
                     "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "dry_run", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Preview without committing (returns TransactionImportPreview)." }
+                    ],
                     "requestBody": {
                         "required": true,
                         "content": {
@@ -558,6 +579,10 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 "post": {
                     "summary": "Upload a single CSV statement (auto-detects bank format)",
                     "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "account", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Target account ID." },
+                        { "name": "dry_run", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Preview without committing." }
+                    ],
                     "requestBody": {
                         "required": true,
                         "content": { "multipart/form-data": { "schema": { "type": "object" } } }
@@ -694,7 +719,10 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 "get": {
                     "summary": "List holdings for an account",
                     "parameters": [
-                        { "name": "account_id", "in": "query", "schema": { "type": "string" } }
+                        { "name": "account_id", "in": "query", "schema": { "type": "string" }, "description": "Single account ID." },
+                        { "name": "account_ids", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account IDs." },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile (investment accounts only)." },
+                        { "name": "include_closed", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Include closed positions." }
                     ],
                     "responses": { "200": { "description": "Array of holdings" } }
                 }
@@ -702,12 +730,22 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/holdings/summary": {
                 "get": {
                     "summary": "Portfolio summary: net worth, by_asset_class, by_type, by_institution",
+                    "parameters": [
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." },
+                        { "name": "as_of", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Date (YYYY-MM-DD). Default: today." }
+                    ],
                     "responses": { "200": { "description": "HoldingsSummaryResponse" } }
                 }
             },
             "/api/holdings/history": {
                 "get": {
                     "summary": "Net worth history over time (available/unavailable/total)",
+                    "parameters": [
+                        { "name": "start", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
+                        { "name": "end", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
+                        { "name": "granularity", "in": "query", "required": true, "schema": { "type": "string", "enum": ["monthly", "quarterly", "yearly"] }, "description": "monthly, quarterly, or yearly." },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." }
+                    ],
                     "responses": { "200": { "description": "Net worth history series" } }
                 }
             },
@@ -726,12 +764,24 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/holdings/balances": {
                 "get": {
                     "summary": "Per-account balances derived from holdings SUM",
+                    "parameters": [
+                        { "name": "start", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
+                        { "name": "end", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
+                        { "name": "summary", "in": "query", "schema": { "type": "string" }, "description": "\"true\" for BalanceDelta[] instead of AccountSnapshot[]." }
+                    ],
                     "responses": { "200": { "description": "Per-account balances" } }
                 }
             },
             "/api/holdings/cash-flow": {
                 "get": {
                     "summary": "Income/spending cash flow",
+                    "parameters": [
+                        { "name": "start", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
+                        { "name": "end", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
+                        { "name": "granularity", "in": "query", "required": true, "schema": { "type": "string", "enum": ["monthly", "quarterly", "yearly"] }, "description": "monthly, quarterly, or yearly." },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." },
+                        { "name": "exclude_category_ids", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category IDs to exclude." }
+                    ],
                     "responses": { "200": { "description": "Cash flow series" } }
                 }
             },
@@ -739,6 +789,9 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 "post": {
                     "summary": "Bulk import holdings",
                     "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "dry_run", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Preview without committing." }
+                    ],
                     "responses": { "200": { "description": "Holdings import summary" } }
                 }
             },
@@ -777,7 +830,9 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         { "name": "account_id", "in": "path", "required": true, "schema": { "type": "string" } },
                         { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } },
                         { "name": "as_of", "in": "query", "schema": { "type": "string", "format": "date" },
-                          "description": "Delete the snapshot effective on this date." }
+                          "description": "Delete the snapshot effective on this date." },
+                        { "name": "sub_account", "in": "query", "schema": { "type": "string" },
+                          "description": "Sub-account label (further scoping)." }
                     ],
                     "responses": { "200": { "description": "Holding deleted" } }
                 }

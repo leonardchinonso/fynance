@@ -51,7 +51,7 @@ Several backend behaviours key off category *display names* hardcoded in Rust, i
 - [ ] `GET /api/export?year=YYYY&format=csv`: full-year transaction CSV export (from Phase 5.2)
 - [ ] `GET /api/export?month=YYYY-MM&format=md`: single-month Obsidian-compatible markdown (from Phase 5.2)
 - [ ] `GET /api/export?year=YYYY&format=md`: full-year markdown (from Phase 5.2)
-- [ ] Per-view/table export from the UI: optionally export the current table or chart (CSV / Markdown / image). A non-functional Export dropdown (CSV / Image / Markdown) was removed from the Transactions / Budget / Portfolio headers (PR #86); reintroduce it once it is backed by a real export. Part of Batch 6.
+- [ ] Per-view/table export from the UI: optionally export the current table or chart (CSV / Markdown / image). A non-functional Export dropdown (CSV / Image / Markdown) was removed from the Transactions / Budget / Portfolio headers (PR #86); reintroduce it once it is backed by a real export.
 
 ### Document Import Enhancements
 

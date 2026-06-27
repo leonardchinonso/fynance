@@ -26,3 +26,7 @@ frontend/.vite/
 
 # Local Capital Gains real data verification test
 backend/tests/capital_gains_real_data.rs
+
+# Python bytecode cache (e.g. from scripts/check_api_docs.py)
+__pycache__/
+*.pyc
