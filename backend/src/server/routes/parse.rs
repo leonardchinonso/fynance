@@ -15,7 +15,7 @@ use crate::importers::document_parser::{
     run_multi_file_pipeline,
 };
 use crate::importers::provider::{
-    self, ProgressEvent, ProgressTx, ParsePhase, ProviderError, create_provider_with_auth,
+    self, ParsePhase, ProgressEvent, ProgressTx, ProviderError, create_provider_with_auth,
     emit_progress,
 };
 use crate::importers::unified_parser::{
@@ -42,14 +42,10 @@ pub async fn parse_documents(
     let mut hints: Option<ParseHints> = None;
     let mut parse_id: Option<String> = None;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "parse: multipart parse error");
-            AppError::bad_request(format!("multipart error: {e}"), "invalid_multipart")
-        })?
-    {
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!(error = %e, "parse: multipart parse error");
+        AppError::bad_request(format!("multipart error: {e}"), "invalid_multipart")
+    })? {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "files[]" | "file" => {
@@ -504,23 +500,29 @@ async fn run_unified_path(
     };
 
     let llm_started = std::time::Instant::now();
-    let unified = unified_extract_all(&files, &hints, &account_id, provider_for_call.as_ref(), &ctx)
-        .await
-        .map_err(|e| {
-            tracing::error!(
-                error = %e,
-                elapsed_ms = llm_started.elapsed().as_millis() as u64,
-                "parse: unified LLM call failed"
-            );
-            emit_progress(
-                &progress_tx,
-                ProgressEvent::Error {
-                    code: "parse_error".to_string(),
-                    message: e.to_string(),
-                },
-            );
-            provider_err_to_app_error(e)
-        })?;
+    let unified = unified_extract_all(
+        &files,
+        &hints,
+        &account_id,
+        provider_for_call.as_ref(),
+        &ctx,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            error = %e,
+            elapsed_ms = llm_started.elapsed().as_millis() as u64,
+            "parse: unified LLM call failed"
+        );
+        emit_progress(
+            &progress_tx,
+            ProgressEvent::Error {
+                code: "parse_error".to_string(),
+                message: e.to_string(),
+            },
+        );
+        provider_err_to_app_error(e)
+    })?;
 
     tracing::info!(
         model = %unified.call.model,
@@ -681,9 +683,7 @@ fn provider_err_to_app_error(e: anyhow::Error) -> AppError {
             ProviderError::RateLimit { detail, .. } => {
                 AppError::too_many_requests(detail.clone(), "upstream_rate_limit")
             }
-            ProviderError::AuthRejected(msg) => {
-                AppError::bad_gateway(msg.clone(), "upstream_auth")
-            }
+            ProviderError::AuthRejected(msg) => AppError::bad_gateway(msg.clone(), "upstream_auth"),
             ProviderError::UpstreamServerError { body, .. } => {
                 AppError::bad_gateway(body.clone(), "upstream_error")
             }

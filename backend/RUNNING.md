@@ -90,7 +90,7 @@ All runtime configuration is done via environment variables. The binary loads `.
 | `FYNANCE_LOG_LEVEL`              | `info`                      | Log verbosity: `trace`, `debug`, `info`, `warn`, `error`. Also respected via `RUST_LOG` |
 | `FYNANCE_ANTHROPIC_API_KEY`      | —                           | Anthropic Console API key for LLM parsing (`fynance import` / `/api/parse`). Pay-per-token. One of this or the OAuth token is required to import |
 | `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`| —                           | Claude Pro/Max subscription token (`claude setup-token`). Preferred over the API key when both are set; the API key is the fallback              |
-| `FYNANCE_IMPORT_LLM_MODEL`       | `claude-haiku-4-5-20251001` | Claude model used by the CSV/statement parser                                          |
+| `FYNANCE_IMPORT_LLM_MODEL`       | `claude-sonnet-4-6`         | Claude model used by the CSV/statement parser (Haiku can be set to cut cost)            |
 | `FYNANCE_IMPORT_MIN_DETECT_CONF` | `0.80`                      | File-level confidence threshold. Import fails hard below this                           |
 | `FYNANCE_IMPORT_MIN_ROW_CONF`    | `0.70`                      | Row-level confidence threshold. Rows below this are skipped with a warning              |
 | `FYNANCE_PARSE_PDF_MODEL`        | `claude-sonnet-4-6`         | More capable model for PDF/visual document parsing in `/api/parse`                     |
