@@ -3,7 +3,6 @@ import { useUrlFilters } from "@/hooks/use_url_filters"
 import { usePageSizeParam } from "@/hooks/use_page_size"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
-import { ExportButton } from "@/components/export_button"
 import { TransactionTable } from "./transactions/transaction_table"
 import { TransactionBarChart } from "./transactions/transaction_bar_chart"
 import { TransactionPieChart } from "./transactions/transaction_pie_chart"
@@ -131,7 +130,6 @@ export function TransactionsPage() {
         <DateRangeSelector />
         <div className="flex-1" />
         <ViewModeSwitcher modes={VIEW_MODES} value={view} onChange={setView} />
-        <ExportButton />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

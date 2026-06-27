@@ -4,7 +4,6 @@ import { useUrlFilters } from "@/hooks/use_url_filters"
 import { useProfiles } from "@/context/profile_context"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
-import { ExportButton } from "@/components/export_button"
 import { PortfolioOverview } from "./portfolio/portfolio_overview"
 import { AccountsGrid } from "./portfolio/accounts_grid"
 import { InvestmentsDetail } from "./portfolio/investments_detail"
@@ -78,7 +77,6 @@ export function PortfolioPage() {
         <DateRangeSelector showGranularity={activeView === "history"} />
         <div className="flex-1" />
         <ViewModeSwitcher modes={VIEW_MODES} value={activeView} onChange={setView} />
-        <ExportButton />
       </div>
 
       {activeView === "overview" && (
