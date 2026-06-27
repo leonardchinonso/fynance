@@ -79,6 +79,15 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
     (sum, e) => sum + Number.parseFloat(e.proceeds),
     0,
   )
+  // Allowances and a tax estimate only make sense for a whole UK tax year.
+  const taxYear = filters.period.kind === "tax-year" ? filters.period.taxYear : null
+  const taxEstimate = taxYear
+    ? computeTaxEstimate(
+        taxYear,
+        Number.parseFloat(response.summary.net_gain_loss),
+        response.realized_events,
+      )
+    : null
   return (
     <Document
       title={`Capital Gains Tax Report — ${periodLabel(filters.period)}`}
@@ -109,11 +118,25 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
             value={fmt(response.summary.net_gain_loss, cur)}
             bold
           />
+          {taxEstimate && (
+            <>
+              <SummaryRow
+                label={`Annual Exempt Amount (${taxYear})`}
+                value={`-${fmt(String(taxEstimate.aea), cur)}`}
+              />
+              <SummaryRow
+                label="Taxable gain after allowance"
+                value={fmt(String(taxEstimate.taxableGain), cur)}
+                bold
+              />
+            </>
+          )}
         </View>
         <Text style={styles.footnote}>
-          Figures are pre-relief. Annual Exempt Amount, brought-forward losses, and
-          tax-year rate adjustments are not applied. Foreign-currency disposals are
-          converted to {cur} at the configured exchange rate.
+          {taxEstimate
+            ? `Annual Exempt Amount applied for tax year ${taxYear}; brought-forward losses and any other disposals in the year are not included.`
+            : "Figures are pre-relief; choose a tax year to apply the Annual Exempt Amount and estimate tax."}{" "}
+          Foreign-currency disposals are converted to {cur} at the configured exchange rate.
         </Text>
 
         {unmatched.length > 0 && (
@@ -126,6 +149,32 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
               so the gain above is overstated. Review the ledger before filing.
             </Text>
           </View>
+        )}
+
+        {taxEstimate && taxEstimate.bands.length > 0 && (
+          <View style={styles.block}>
+            <Text style={styles.h2}>Estimated Capital Gains Tax</Text>
+            {taxEstimate.bands.map((b) => (
+              <SummaryRow key={b.label} label={b.label} value={fmt(String(b.tax), cur)} />
+            ))}
+            <SummaryRow
+              label="Estimated CGT due"
+              value={fmt(String(taxEstimate.totalTax), cur)}
+              bold
+            />
+            <Text style={styles.footnote}>
+              Estimate only, not tax advice. Assumes a higher or additional-rate taxpayer and that
+              the full Annual Exempt Amount is available against these gains. Confirm with your
+              accountant before filing.
+            </Text>
+          </View>
+        )}
+
+        {taxEstimate && taxEstimate.netGain > 0 && taxEstimate.bands.length === 0 && (
+          <Text style={styles.footnote}>
+            No Capital Gains Tax estimated for {taxYear}: the taxable gain falls within the Annual
+            Exempt Amount.
+          </Text>
         )}
 
         {response.symbol_summaries.length > 0 && (
@@ -253,6 +302,106 @@ function SummaryRow({ label, value, bold = false }: { label: string; value: stri
       <Text style={[styles.value, bold ? styles.bold : {}]}>{value}</Text>
     </View>
   )
+}
+
+// UK Capital Gains Tax Annual Exempt Amount by tax year. Frozen at £3,000 from
+// 2024-25; update this table when HMRC changes it.
+const AEA_BY_TAX_YEAR: Record<string, number> = {
+  "2018-19": 11700,
+  "2019-20": 12000,
+  "2020-21": 12300,
+  "2021-22": 12300,
+  "2022-23": 12300,
+  "2023-24": 6000,
+  "2024-25": 3000,
+  "2025-26": 3000,
+  "2026-27": 3000,
+}
+
+interface TaxBand {
+  label: string
+  taxable: number
+  tax: number
+}
+
+interface TaxEstimate {
+  aea: number
+  netGain: number
+  taxableGain: number
+  bands: TaxBand[]
+  totalTax: number
+}
+
+// Estimated CGT on share gains at the higher/additional rate. 2024-25 changed
+// mid-year (Autumn Budget 2024): 20% before 30 Oct 2024, 24% on or after; 24%
+// from 2025-26. The Annual Exempt Amount is applied to the higher-rate band
+// first, which minimises the charge and matches standard practice.
+function computeTaxEstimate(
+  taxYear: string,
+  netGain: number,
+  realized: CgtRealizedEvent[],
+): TaxEstimate | null {
+  const aea = AEA_BY_TAX_YEAR[taxYear]
+  if (aea === undefined) return null
+  if (netGain <= 0) {
+    return { aea, netGain, taxableGain: 0, bands: [], totalTax: 0 }
+  }
+
+  if (taxYear === "2024-25") {
+    let pre = 0
+    let post = 0
+    for (const e of realized) {
+      const g = Number.parseFloat(e.gain_loss)
+      if (!Number.isFinite(g)) continue
+      if (e.disposal_date.slice(0, 10) < "2024-10-30") pre += g
+      else post += g
+    }
+    // A net-loss band relieves the other band before rates apply.
+    if (post < 0) {
+      pre += post
+      post = 0
+    }
+    if (pre < 0) {
+      post += pre
+      pre = 0
+    }
+    pre = Math.max(0, pre)
+    post = Math.max(0, post)
+    const aeaToPost = Math.min(aea, post)
+    const postTaxable = post - aeaToPost
+    const preTaxable = Math.max(0, pre - (aea - aeaToPost))
+    const bands: TaxBand[] = []
+    if (preTaxable > 0) {
+      bands.push({
+        label: "Gains before 30 Oct 2024 @ 20%",
+        taxable: preTaxable,
+        tax: preTaxable * 0.2,
+      })
+    }
+    if (postTaxable > 0) {
+      bands.push({
+        label: "Gains on/after 30 Oct 2024 @ 24%",
+        taxable: postTaxable,
+        tax: postTaxable * 0.24,
+      })
+    }
+    return {
+      aea,
+      netGain,
+      taxableGain: preTaxable + postTaxable,
+      bands,
+      totalTax: bands.reduce((s, b) => s + b.tax, 0),
+    }
+  }
+
+  const startYear = Number.parseInt(taxYear.slice(0, 4), 10)
+  const rate = startYear >= 2025 ? 0.24 : 0.2
+  const taxable = Math.max(0, netGain - aea)
+  const bands: TaxBand[] =
+    taxable > 0
+      ? [{ label: `Taxable gains @ ${(rate * 100).toFixed(0)}%`, taxable, tax: taxable * rate }]
+      : []
+  return { aea, netGain, taxableGain: taxable, bands, totalTax: taxable * rate }
 }
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
