@@ -18,7 +18,7 @@ interface CgtFilterBarProps {
   profiles: Profile[]
   initial: CgtFilters
   loading: boolean
-  onGenerate: (filters: CgtFilters) => void
+  onGenerate: (filters: CgtFilters, higherRate: boolean) => void
 }
 
 export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilterBarProps) {
@@ -26,7 +26,9 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
   const [startDate, setStartDate] = useState(initialStart(initial.period))
   const [endDate, setEndDate] = useState(initialEnd(initial.period))
   const [profileId, setProfileId] = useState(initial.profileId)
-  const [higherRate, setHigherRate] = useState(initial.higherRate ?? true)
+  // Frontend-only: the rate band drives the client-side tax estimate, not the
+  // backend query, so it is not part of CgtFilters / the service contract.
+  const [higherRate, setHigherRate] = useState(true)
 
   const period: CgtPeriod = buildPeriod(preset, startDate, endDate)
   const canGenerate = !loading && profileId !== ""
@@ -89,7 +91,7 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
 
       <Button
         className="ml-auto"
-        onClick={() => onGenerate({ period, profileId, higherRate })}
+        onClick={() => onGenerate({ period, profileId }, higherRate)}
         disabled={!canGenerate}
       >
         {loading ? "Generating…" : "Generate"}

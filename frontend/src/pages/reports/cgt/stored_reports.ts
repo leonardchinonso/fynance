@@ -10,6 +10,13 @@ export interface StoredCgtReport {
   id: string
   generatedAt: string
   filters: CgtFilters
+  /**
+   * Higher/additional vs basic CGT rate band chosen at generation. Frontend-only:
+   * the tax estimate is computed client-side, so this is not part of the backend
+   * contract (`CgtFilters`). Optional for reports stored before this field
+   * existed — treat `undefined` as `true`.
+   */
+  higherRate?: boolean
   response: CapitalGainsResponse
 }
 
