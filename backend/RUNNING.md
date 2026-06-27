@@ -181,6 +181,21 @@ fynance token revoke --name my-agent
 
 Tokens are generated as random strings (prefix `fyn_`) and stored as SHA-256 hashes in the database. The plaintext token is only shown once at creation time. Use `token list` to see which tokens are active; use `token revoke` to invalidate a token without deleting it (it remains in the DB but is marked revoked).
 
+### `fynance profile`
+
+Profiles are the logical owners that accounts belong to (e.g. `personal`, `joint`). An account requires at least one existing profile, so create profiles before accounts.
+
+```bash
+# Create a profile
+fynance profile add --id personal --name "Personal"
+
+# List all profiles
+fynance profile list
+
+# Delete a profile (refuses if any account still references it)
+fynance profile delete personal
+```
+
 ### `fynance account`
 
 Register and inspect accounts. An account must exist before transactions can be imported into it.

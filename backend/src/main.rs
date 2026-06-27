@@ -5,9 +5,9 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use fynance::cli::{
-    AccountCommand, BudgetCommand, Cli, Commands, TokenCommand, TransactionCommand,
+    AccountCommand, BudgetCommand, Cli, Commands, ProfileCommand, TokenCommand, TransactionCommand,
 };
-use fynance::commands::{account, budget, import, serve, stats, token, transaction};
+use fynance::commands::{account, budget, import, profile, serve, stats, token, transaction};
 use fynance::storage::Db;
 use fynance::storage::db::default_db_path;
 
@@ -57,6 +57,11 @@ fn main() -> Result<()> {
             }
             AccountCommand::List => account::list(&db),
             AccountCommand::Delete { id, hard } => account::delete(&db, &id, hard),
+        },
+        Commands::Profile { command } => match command {
+            ProfileCommand::Add { id, name } => profile::add(&db, &id, &name),
+            ProfileCommand::List => profile::list(&db),
+            ProfileCommand::Delete { id } => profile::delete(&db, &id),
         },
         Commands::Budget { command } => match command {
             BudgetCommand::Set {
