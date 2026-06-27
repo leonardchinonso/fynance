@@ -171,10 +171,7 @@ pub async fn update_account(
         .as_deref()
         .map(|s| {
             AccountType::parse(s).ok_or_else(|| {
-                AppError::bad_request(
-                    format!("invalid account type: {s}"),
-                    "invalid_account_type",
-                )
+                AppError::bad_request(format!("invalid account type: {s}"), "invalid_account_type")
             })
         })
         .transpose()?;

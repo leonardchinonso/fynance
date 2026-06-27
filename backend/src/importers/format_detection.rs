@@ -202,8 +202,14 @@ mod tests {
 
     #[test]
     fn test_detect_image_by_magic_bytes() {
-        assert_eq!(detect_format("unknown", b"\x89PNG\r\n\x1a\nrest"), FileFormat::Image);
-        assert_eq!(detect_format("unknown", b"\xFF\xD8\xFF\xE0rest"), FileFormat::Image);
+        assert_eq!(
+            detect_format("unknown", b"\x89PNG\r\n\x1a\nrest"),
+            FileFormat::Image
+        );
+        assert_eq!(
+            detect_format("unknown", b"\xFF\xD8\xFF\xE0rest"),
+            FileFormat::Image
+        );
         assert_eq!(detect_format("unknown", b"GIF89arest"), FileFormat::Image);
     }
 

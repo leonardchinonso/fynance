@@ -14,16 +14,15 @@ use rusqlite::{Connection, OptionalExtension, params};
 use rust_decimal::Decimal;
 
 use crate::model::{
-    AccountHoldingHistoryRow, AccountHoldingSeries, AccountHoldingValue,
-    Account, AccountSnapshot, AccountType, AssetClass, BalanceDelta, BudgetRow, Category,
-    CategoryNode, CategorySource, CategoryTotal, ChecklistItem, ChecklistStatus,
-    CreateCategoryPayload, CreateInvestmentEventBody, Currency, Document, DocumentReferences,
-    DocumentSummary, Granularity, Holding,
-    HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow,
-    ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentEvent,
-    InvestmentEventType, InvestmentMetrics, PatchCategoryPayload, PatchInvestmentEventBody,
-    Profile, SectionMapping, SpendingGridRow, StandingBudget, Transaction, TransactionPreviewRow,
-    TransactionPreviewStatus,
+    Account, AccountHoldingHistoryRow, AccountHoldingSeries, AccountHoldingValue, AccountSnapshot,
+    AccountType, AssetClass, BalanceDelta, BudgetRow, Category, CategoryNode, CategorySource,
+    CategoryTotal, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
+    CreateInvestmentEventBody, Currency, Document, DocumentReferences, DocumentSummary,
+    Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth,
+    HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome,
+    InvestmentEvent, InvestmentEventType, InvestmentMetrics, PatchCategoryPayload,
+    PatchInvestmentEventBody, Profile, SectionMapping, SpendingGridRow, StandingBudget,
+    Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -543,9 +542,7 @@ impl Db {
         match result {
             Ok(mut a) => {
                 let today = chrono::Local::now().date_naive();
-                if let Some((sum, max_as_of)) =
-                    self.balance_for_account_as_of(&a.id, today)?
-                {
+                if let Some((sum, max_as_of)) = self.balance_for_account_as_of(&a.id, today)? {
                     a.balance = Some(sum);
                     a.balance_date = Some(max_as_of);
                 }
@@ -605,9 +602,7 @@ impl Db {
         account_id: &str,
         as_of: NaiveDate,
     ) -> Result<Option<(Decimal, NaiveDateTime)>> {
-        Ok(self
-            .balances_from_holdings_as_of(as_of)?
-            .remove(account_id))
+        Ok(self.balances_from_holdings_as_of(as_of)?.remove(account_id))
     }
 
     pub fn account_exists(&self, id: &str) -> Result<bool> {
@@ -857,7 +852,13 @@ impl Db {
         // On a duplicate (INSERT ignored) the row already exists; union any new
         // source documents into it so re-imports keep the audit trail complete.
         if !body.source_document_ids.is_empty() {
-            merge_source_documents(&self.conn, "investments", "fingerprint", &fingerprint, &source_ids_json)?;
+            merge_source_documents(
+                &self.conn,
+                "investments",
+                "fingerprint",
+                &fingerprint,
+                &source_ids_json,
+            )?;
         }
 
         let event = self.conn.query_row(
@@ -1060,7 +1061,13 @@ impl Db {
             // the existing row so the audit trail stays complete across
             // re-imports of overlapping statements.
             if !tx.source_document_ids.is_empty() {
-                merge_source_documents(&self.conn, "transactions", "fingerprint", &tx.fingerprint, &source_ids_json)?;
+                merge_source_documents(
+                    &self.conn,
+                    "transactions",
+                    "fingerprint",
+                    &tx.fingerprint,
+                    &source_ids_json,
+                )?;
             }
             Ok(InsertOutcome::Duplicate)
         }
@@ -1931,9 +1938,9 @@ impl Db {
     // ── Budgets (standing + overrides) ───────────────────────────────────────
 
     pub fn get_standing_budgets(&self) -> Result<Vec<StandingBudget>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT category_id, amount FROM standing_budgets ORDER BY category_id",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT category_id, amount FROM standing_budgets ORDER BY category_id")?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(StandingBudget {
@@ -2836,17 +2843,14 @@ impl Db {
             // symbol -> converted value summed across sub-accounts.
             let mut by_symbol: BTreeMap<String, Decimal> = BTreeMap::new();
 
-            let mapped = stmt.query_map(
-                rusqlite::params![account_id, period_end_str],
-                |row| {
-                    let symbol: String = row.get(0)?;
-                    let name: String = row.get(1)?;
-                    let short_name: Option<String> = row.get(2)?;
-                    let value: String = row.get(3)?;
-                    let currency: String = row.get(4)?;
-                    Ok((symbol, name, short_name, value, currency))
-                },
-            )?;
+            let mapped = stmt.query_map(rusqlite::params![account_id, period_end_str], |row| {
+                let symbol: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let short_name: Option<String> = row.get(2)?;
+                let value: String = row.get(3)?;
+                let currency: String = row.get(4)?;
+                Ok((symbol, name, short_name, value, currency))
+            })?;
 
             for r in mapped {
                 let (symbol, name, short_name, value_str, currency) = r?;
@@ -3228,13 +3232,13 @@ impl Db {
             }
         }
 
-        let (profile_filter, profile_arg): (String, Option<String>) =
-            if let Some(pid) = profile_id {
-                let pattern = format!("%\"{pid}\"%");
-                ("AND a.profile_ids LIKE ?1".to_string(), Some(pattern))
-            } else {
-                (String::new(), None)
-            };
+        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
+        {
+            let pattern = format!("%\"{pid}\"%");
+            ("AND a.profile_ids LIKE ?1".to_string(), Some(pattern))
+        } else {
+            (String::new(), None)
+        };
 
         let sql = format!(
             r"SELECT a.id, a.name, a.institution, a.type, a.currency,
@@ -3248,13 +3252,11 @@ impl Db {
         let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<Account> {
             let id: String = row.get(0)?;
             let type_str: String = row.get(3)?;
-            let profile_ids_str: String =
-                row.get(7).unwrap_or_else(|_| "[]".to_string());
+            let profile_ids_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
             let profile_ids: Vec<String> = serde_json::from_str(&profile_ids_str)
                 .unwrap_or_else(|_| vec!["default".to_string()]);
 
-            let account_type =
-                AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
+            let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
             let is_available = is_available_account(&account_type);
 
             let (balance, balance_date) = match agg.get(&id) {
@@ -3311,7 +3313,11 @@ impl Db {
 
         // Only place is_closed is filtered: a user-facing list with an
         // explicit `include_closed` API flag, not net-worth math.
-        let closed_filter = if include_closed { "" } else { "AND h.is_closed = 0" };
+        let closed_filter = if include_closed {
+            ""
+        } else {
+            "AND h.is_closed = 0"
+        };
         let sql = format!(
             r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
                      h.quantity, h.price_per_unit, h.value, h.currency,
@@ -3741,16 +3747,13 @@ impl Db {
 
             let fingerprint = sha256_hex(&format!(
                 "{}|{}|{}|{}|{}|{}",
-                account_id,
-                row.symbol,
-                date_str,
-                quantity,
-                price_per_share,
-                row.event_type,
+                account_id, row.symbol, date_str, quantity, price_per_share, row.event_type,
             ));
 
             let existing_id: Option<String> = stmt
-                .query_row(rusqlite::params![fingerprint], |row| row.get::<_, String>(0))
+                .query_row(rusqlite::params![fingerprint], |row| {
+                    row.get::<_, String>(0)
+                })
                 .ok();
 
             let status = if existing_id.is_some() {
@@ -4595,10 +4598,7 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
     // Balances are now sourced at read time from SUM(holdings.value) per account
     // (see Db::get_accounts and Db::accounts_as_of). Any historical column data
     // was already mirrored to a `_CASH` holding by set_account_balance.
-    if conn
-        .prepare("SELECT balance FROM accounts LIMIT 0")
-        .is_ok()
-    {
+    if conn.prepare("SELECT balance FROM accounts LIMIT 0").is_ok() {
         conn.execute_batch("ALTER TABLE accounts DROP COLUMN balance")?;
     }
     if conn
@@ -4970,7 +4970,13 @@ mod consolidation_tests {
         let dt2 = naive_dt(2025, 1, 20);
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt2)],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(0),
+                dt2,
+            )],
         )
         .unwrap();
         db.close_holding("t212", "AAPL", None, dt2).unwrap();
@@ -5174,7 +5180,13 @@ mod consolidation_tests {
         let dt = naive_dt(2026, 4, 15);
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "VWRL", HoldingType::Etf, dec!(8000), dt)],
+            &[make_holding(
+                "t212",
+                "VWRL",
+                HoldingType::Etf,
+                dec!(8000),
+                dt,
+            )],
         )
         .unwrap();
 
@@ -5183,7 +5195,13 @@ mod consolidation_tests {
         let previews = db
             .dry_run_holdings(
                 "t212",
-                &[make_holding("t212", "VWRL", HoldingType::Etf, dec!(8000), dt)],
+                &[make_holding(
+                    "t212",
+                    "VWRL",
+                    HoldingType::Etf,
+                    dec!(8000),
+                    dt,
+                )],
             )
             .unwrap();
 
@@ -5269,7 +5287,13 @@ mod consolidation_tests {
 
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt)],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(0),
+                dt,
+            )],
         )
         .unwrap();
         db.close_holding("t212", "AAPL", None, dt).unwrap();
@@ -5368,22 +5392,46 @@ mod consolidation_tests {
         // pension once. Different dates per symbol.
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2025, 1, 15),
+            )],
         )
         .unwrap();
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "MSFT", HoldingType::Stock, dec!(50), naive_dt(2025, 2, 5))],
+            &[make_holding(
+                "t212",
+                "MSFT",
+                HoldingType::Stock,
+                dec!(50),
+                naive_dt(2025, 2, 5),
+            )],
         )
         .unwrap();
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(120), naive_dt(2025, 3, 10))],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(120),
+                naive_dt(2025, 3, 10),
+            )],
         )
         .unwrap();
         db.upsert_holdings(
             "pension",
-            &[make_holding("pension", "PEN", HoldingType::Fund, dec!(1000), naive_dt(2025, 1, 31))],
+            &[make_holding(
+                "pension",
+                "PEN",
+                HoldingType::Fund,
+                dec!(1000),
+                naive_dt(2025, 1, 31),
+            )],
         )
         .unwrap();
 
@@ -5427,12 +5475,24 @@ mod consolidation_tests {
 
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2025, 1, 15),
+            )],
         )
         .unwrap();
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), naive_dt(2025, 4, 10))],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(0),
+                naive_dt(2025, 4, 10),
+            )],
         )
         .unwrap();
         db.close_holding("t212", "AAPL", None, naive_dt(2025, 4, 10))
@@ -5441,14 +5501,22 @@ mod consolidation_tests {
         // February: position still active at its open value.
         let feb = db.accounts_as_of(naive_date(2025, 2, 15), None).unwrap();
         assert_eq!(
-            feb.iter().find(|a| a.id == "t212").unwrap().balance.unwrap(),
+            feb.iter()
+                .find(|a| a.id == "t212")
+                .unwrap()
+                .balance
+                .unwrap(),
             dec!(100)
         );
 
         // May: latest snapshot is the closed £0 one -> contributes nothing.
         let may = db.accounts_as_of(naive_date(2025, 5, 1), None).unwrap();
         assert_eq!(
-            may.iter().find(|a| a.id == "t212").unwrap().balance.unwrap(),
+            may.iter()
+                .find(|a| a.id == "t212")
+                .unwrap()
+                .balance
+                .unwrap(),
             dec!(0)
         );
     }
@@ -5461,7 +5529,13 @@ mod consolidation_tests {
         let dt = naive_dt(2025, 1, 15);
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(5000), dt)],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(5000),
+                dt,
+            )],
         )
         .unwrap();
         assert!(
@@ -5476,8 +5550,7 @@ mod consolidation_tests {
         db.create_account(&make_account("t212", AccountType::Investment))
             .unwrap();
         let dt = naive_dt(2025, 1, 15);
-        let mut closed_nonzero =
-            make_holding("t212", "AAPL", HoldingType::Stock, dec!(5000), dt);
+        let mut closed_nonzero = make_holding("t212", "AAPL", HoldingType::Stock, dec!(5000), dt);
         closed_nonzero.is_closed = true;
 
         assert!(
@@ -5492,8 +5565,7 @@ mod consolidation_tests {
         );
 
         // A closed zeroed holding is allowed.
-        let mut closed_zero =
-            make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt);
+        let mut closed_zero = make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), dt);
         closed_zero.is_closed = true;
         assert!(db.upsert_holdings("t212", &[closed_zero]).is_ok());
     }
@@ -5510,22 +5582,45 @@ mod consolidation_tests {
 
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2025, 1, 15),
+            )],
         )
         .unwrap();
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "MSFT", HoldingType::Stock, dec!(50), naive_dt(2025, 2, 5))],
+            &[make_holding(
+                "t212",
+                "MSFT",
+                HoldingType::Stock,
+                dec!(50),
+                naive_dt(2025, 2, 5),
+            )],
         )
         .unwrap();
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(120), naive_dt(2025, 3, 10))],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(120),
+                naive_dt(2025, 3, 10),
+            )],
         )
         .unwrap();
 
         let m = db
-            .compute_investment_metrics(naive_date(2025, 1, 1), naive_date(2025, 4, 30), None, &gbp_fx())
+            .compute_investment_metrics(
+                naive_date(2025, 1, 1),
+                naive_date(2025, 4, 30),
+                None,
+                &gbp_fx(),
+            )
             .unwrap();
         // Jan 1: no snapshots yet.
         assert_eq!(m.start_value, dec!(0));
@@ -5548,19 +5643,37 @@ mod consolidation_tests {
 
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(100), naive_dt(2025, 1, 15))],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2025, 1, 15),
+            )],
         )
         .unwrap();
         // A checking account holding must not count toward investment metrics.
         db.upsert_holdings(
             "monzo",
-            &[make_holding("monzo", "_CASH", HoldingType::Cash, dec!(9999), naive_dt(2025, 1, 15))],
+            &[make_holding(
+                "monzo",
+                "_CASH",
+                HoldingType::Cash,
+                dec!(9999),
+                naive_dt(2025, 1, 15),
+            )],
         )
         .unwrap();
         // Zero out + close AAPL in March.
         db.upsert_holdings(
             "t212",
-            &[make_holding("t212", "AAPL", HoldingType::Stock, dec!(0), naive_dt(2025, 3, 1))],
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(0),
+                naive_dt(2025, 3, 1),
+            )],
         )
         .unwrap();
         db.close_holding("t212", "AAPL", None, naive_dt(2025, 3, 1))
@@ -5568,13 +5681,23 @@ mod consolidation_tests {
 
         // February: AAPL still open at 100; checking ignored.
         let feb = db
-            .compute_investment_metrics(naive_date(2025, 1, 1), naive_date(2025, 2, 15), None, &gbp_fx())
+            .compute_investment_metrics(
+                naive_date(2025, 1, 1),
+                naive_date(2025, 2, 15),
+                None,
+                &gbp_fx(),
+            )
             .unwrap();
         assert_eq!(feb.end_value, dec!(100));
 
         // April: AAPL latest snapshot is the closed £0 one -> 0.
         let apr = db
-            .compute_investment_metrics(naive_date(2025, 1, 1), naive_date(2025, 4, 30), None, &gbp_fx())
+            .compute_investment_metrics(
+                naive_date(2025, 1, 1),
+                naive_date(2025, 4, 30),
+                None,
+                &gbp_fx(),
+            )
             .unwrap();
         assert_eq!(apr.end_value, dec!(0));
     }
@@ -5604,9 +5727,21 @@ mod consolidation_tests {
         ])
         .unwrap();
 
-        let mut usd = make_holding("t212", "AAPL", HoldingType::Stock, dec!(1000), naive_dt(2025, 1, 15));
+        let mut usd = make_holding(
+            "t212",
+            "AAPL",
+            HoldingType::Stock,
+            dec!(1000),
+            naive_dt(2025, 1, 15),
+        );
         usd.currency = "USD".to_string();
-        let gbp = make_holding("t212", "VWRP", HoldingType::Stock, dec!(200), naive_dt(2025, 1, 15));
+        let gbp = make_holding(
+            "t212",
+            "VWRP",
+            HoldingType::Stock,
+            dec!(200),
+            naive_dt(2025, 1, 15),
+        );
         db.upsert_holdings("t212", &[usd, gbp]).unwrap();
 
         let m = db
@@ -6074,7 +6209,10 @@ mod category_delete_tests {
         let id = new_cat(&db, "Temp Cat", None);
 
         db.soft_delete_category(&id).expect("soft delete");
-        let after_soft = db.get_category_by_id(&id).expect("get").expect("still present");
+        let after_soft = db
+            .get_category_by_id(&id)
+            .expect("get")
+            .expect("still present");
         assert!(!after_soft.is_active, "soft delete only clears is_active");
 
         db.hard_delete_category(&id).expect("hard delete");
@@ -6094,7 +6232,8 @@ mod category_delete_tests {
         assert!(err.contains("child categories"), "unexpected error: {err}");
 
         db.hard_delete_category(&child).expect("delete child");
-        db.hard_delete_category(&parent).expect("delete parent now childless");
+        db.hard_delete_category(&parent)
+            .expect("delete parent now childless");
         assert!(db.get_category_by_id(&parent).expect("get").is_none());
     }
 }

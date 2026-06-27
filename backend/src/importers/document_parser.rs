@@ -22,8 +22,7 @@ use crate::model::{
     Agent, AuthSource, BankFormat, CategorySource, CreateInvestmentEventBody, Holding, HoldingType,
     HoldingsImportPayload, HoldingsIngestionResult, ImportPayload, ImportTransaction,
     IngestionMetadata, IngestionPreview, IngestionStatus, InvestmentIngestionResult,
-    InvestmentsImportPayload, KnownHolding, TransactionIngestionResult,
-    TransactionPreviewStatus,
+    InvestmentsImportPayload, KnownHolding, TransactionIngestionResult, TransactionPreviewStatus,
 };
 use crate::storage::Db;
 
@@ -113,9 +112,7 @@ impl ParseHints {
     }
 
     pub fn auth(&self) -> AuthSource {
-        self.experimental
-            .and_then(|e| e.auth)
-            .unwrap_or_default()
+        self.experimental.and_then(|e| e.auth).unwrap_or_default()
     }
 }
 
@@ -602,8 +599,7 @@ async fn extract_all_parallel(
     let mut completed: usize = 0;
 
     while let Some(joined) = join_set.join_next().await {
-        let (filename, ct, res) =
-            joined.map_err(|e| anyhow!("extraction task panicked: {e}"))?;
+        let (filename, ct, res) = joined.map_err(|e| anyhow!("extraction task panicked: {e}"))?;
         match res {
             Ok(mut extraction) => {
                 completed += 1;

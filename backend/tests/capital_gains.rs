@@ -613,16 +613,70 @@ async fn test_cgt_tax_sheltered_exclusion() {
         setup_account(&db_lock, "pension", AccountType::Pension);
 
         // GIA (Taxable): Buy 100 @ 10, Sell 50 @ 15 -> Taxable CGT proceeds 750, cost 500, gain 250
-        insert_event(&db_lock, "gia", "buy", "AAPL", "2026-05-01T10:00:00", "100", "10.00", None);
-        insert_event(&db_lock, "gia", "sell", "AAPL", "2026-05-10T10:00:00", "50", "15.00", None);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "50",
+            "15.00",
+            None,
+        );
 
         // ISA (Tax-Sheltered): Buy 100 @ 10, Sell 50 @ 20 -> Ignored completely
-        insert_event(&db_lock, "isa", "buy", "AAPL", "2026-05-01T10:00:00", "100", "10.00", None);
-        insert_event(&db_lock, "isa", "sell", "AAPL", "2026-05-10T10:00:00", "50", "20.00", None);
+        insert_event(
+            &db_lock,
+            "isa",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "isa",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "50",
+            "20.00",
+            None,
+        );
 
         // Pension (Tax-Sheltered): Buy 100 @ 10, Sell 50 @ 30 -> Ignored completely
-        insert_event(&db_lock, "pension", "buy", "AAPL", "2026-05-01T10:00:00", "100", "10.00", None);
-        insert_event(&db_lock, "pension", "sell", "AAPL", "2026-05-10T10:00:00", "50", "30.00", None);
+        insert_event(
+            &db_lock,
+            "pension",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "pension",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "50",
+            "30.00",
+            None,
+        );
     }
 
     let response = app
@@ -790,14 +844,41 @@ async fn test_cgt_multi_account_pooling() {
         db_lock.create_account(&account).unwrap();
 
         // gia_1: Buy 50 AAPL @ 10 -> allowable expenditure = 500
-        insert_event(&db_lock, "gia_1", "buy", "AAPL", "2026-05-01T10:00:00", "50", "10.00", None);
+        insert_event(
+            &db_lock,
+            "gia_1",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "50",
+            "10.00",
+            None,
+        );
 
         // gia_2: Buy 50 AAPL @ 20 -> allowable expenditure = 1000
         // Global symbol S104 pool AAPL = 100 shares at 1500 total cost (Avg cost = 15.00)
-        insert_event(&db_lock, "gia_2", "buy", "AAPL", "2026-05-05T10:00:00", "50", "20.00", None);
+        insert_event(
+            &db_lock,
+            "gia_2",
+            "buy",
+            "AAPL",
+            "2026-05-05T10:00:00",
+            "50",
+            "20.00",
+            None,
+        );
 
         // gia_1: Sell 50 AAPL @ 25 -> Proceeds = 1250. Cost matched = 50 * 15 = 750. Gain = 500
-        insert_event(&db_lock, "gia_1", "sell", "AAPL", "2026-05-10T10:00:00", "50", "25.00", None);
+        insert_event(
+            &db_lock,
+            "gia_1",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "50",
+            "25.00",
+            None,
+        );
     }
 
     let response = app
@@ -838,13 +919,40 @@ async fn test_cgt_point_in_time_filtering() {
         setup_account(&db_lock, "gia", AccountType::Investment);
 
         // Buy 100 AAPL @ 10 on May 1st -> allowable expenditure = 1000
-        insert_event(&db_lock, "gia", "buy", "AAPL", "2026-05-01T10:00:00", "100", "10.00", None);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
 
         // Buy 100 AAPL @ 20 on May 10th -> allowable expenditure = 2000
-        insert_event(&db_lock, "gia", "buy", "AAPL", "2026-05-10T10:00:00", "100", "20.00", None);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "20.00",
+            None,
+        );
 
         // Sell 100 AAPL @ 25 on May 20th
-        insert_event(&db_lock, "gia", "sell", "AAPL", "2026-05-20T10:00:00", "100", "25.00", None);
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-20T10:00:00",
+            "100",
+            "25.00",
+            None,
+        );
     }
 
     // 1. Query point-in-time `as_at=2026-05-05`
@@ -859,7 +967,9 @@ async fn test_cgt_point_in_time_filtering() {
         .unwrap();
 
     assert_eq!(response_pit.status(), StatusCode::OK);
-    let body_pit = to_bytes(response_pit.into_body(), usize::MAX).await.unwrap();
+    let body_pit = to_bytes(response_pit.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let res_pit: serde_json::Value = serde_json::from_slice(&body_pit).unwrap();
 
     assert_eq!(res_pit["realized_events"].as_array().unwrap().len(), 0);
@@ -881,7 +991,9 @@ async fn test_cgt_point_in_time_filtering() {
         .unwrap();
 
     assert_eq!(response_range.status(), StatusCode::OK);
-    let body_range = to_bytes(response_range.into_body(), usize::MAX).await.unwrap();
+    let body_range = to_bytes(response_range.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let res_range: serde_json::Value = serde_json::from_slice(&body_range).unwrap();
 
     let realized_range = res_range["realized_events"].as_array().unwrap();
@@ -995,7 +1107,12 @@ async fn test_cgt_profile_ids_filter() {
 
     let realized_alice = res_alice["realized_events"].as_array().unwrap();
     assert_eq!(realized_alice.len(), 1, "alice scope returns one disposal");
-    assert!(!realized_alice[0]["disposal_id"].as_str().unwrap().is_empty());
+    assert!(
+        !realized_alice[0]["disposal_id"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(realized_alice[0]["proceeds"], "2000.00");
     assert_eq!(realized_alice[0]["cost_basis"], "1000.00");
     assert_eq!(realized_alice[0]["gain_loss"], "1000.00");
