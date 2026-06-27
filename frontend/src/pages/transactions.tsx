@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react"
 import { useUrlFilters } from "@/hooks/use_url_filters"
+import { usePageSizeParam } from "@/hooks/use_page_size"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { ExportButton } from "@/components/export_button"
@@ -75,10 +76,7 @@ export function TransactionsPage() {
     txSort, txDir, cycleTxSort,
   } = useUrlFilters()
 
-  const [pageSize, setPageSize] = useState(() => {
-    try { return parseInt(localStorage.getItem("fynance-page-size") ?? "25", 10) || 25 }
-    catch { return 25 }
-  })
+  const [pageSize, setPageSize] = usePageSizeParam("limit", "page")
 
   const transactionsData = useTransactions(
     start, end, selectedAccounts, selectedCategories, search, page, pageSize, profileId, txSort, txDir,
@@ -171,7 +169,7 @@ export function TransactionsPage() {
           page={page}
           pageSize={pageSize}
           onPageChange={setPage}
-          onPageSizeChange={(s) => { setPageSize(s); setPage(1) }}
+          onPageSizeChange={setPageSize}
           accountNames={accountNameMap}
           categoryColors={categoryColors}
           categoryOptions={categoryOptions}

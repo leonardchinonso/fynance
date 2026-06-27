@@ -31,7 +31,6 @@ import { SourceChips, type SourceDocMeta } from "@/components/source_chips"
 import { EventDialog } from "./event_dialog"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
-const PAGE_SIZE_KEY = "fynance-page-size"
 const COLUMNS_KEY = "fynance-inv-columns"
 
 export type InvSortColumn = "date" | "symbol" | "quantity" | "price"
@@ -81,6 +80,8 @@ interface Props {
   search: string
   page: number
   onPageChange: (page: number) => void
+  pageSize: number
+  onPageSizeChange: (size: number) => void
   sort: InvSortColumn
   sortDir: SortDir
   onSort: (col: InvSortColumn) => void
@@ -91,13 +92,8 @@ interface Props {
 export function EventsHistory({
   data, accounts, accountLabel, reload, start, end,
   selectedAccounts, selectedTypes, search,
-  page, onPageChange, sort, sortDir, onSort, onResetFilters,
+  page, onPageChange, pageSize, onPageSizeChange, sort, sortDir, onSort, onResetFilters,
 }: Props) {
-  const [pageSize, setPageSize] = useState(() => {
-    try { return parseInt(localStorage.getItem(PAGE_SIZE_KEY) ?? "25", 10) || 25 }
-    catch { return 25 }
-  })
-
   const [editing, setEditing] = useState<InvestmentEvent | null>(null)
   const [deleting, setDeleting] = useState<InvestmentEvent | null>(null)
 
@@ -133,7 +129,7 @@ export function EventsHistory({
               page={page}
               onPageChange={onPageChange}
               pageSize={pageSize}
-              onPageSizeChange={(s) => { setPageSize(s); onPageChange(1) }}
+              onPageSizeChange={onPageSizeChange}
               sort={sort}
               sortDir={sortDir}
               onSort={onSort}

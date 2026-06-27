@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useSearchParams } from "react-router-dom"
+import { usePageSizeParam } from "@/hooks/use_page_size"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { useProfiles } from "@/context/profile_context"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
@@ -83,6 +84,7 @@ export function InvestmentsPage() {
   const sort: InvSortColumn =
     sortRaw === "symbol" || sortRaw === "quantity" || sortRaw === "price" ? sortRaw : "date"
   const sortDir: SortDir = searchParams.get("inv_dir") === "asc" ? "asc" : "desc"
+  const [pageSize, setPageSize] = usePageSizeParam("inv_limit", "inv_page")
 
   // Overview is the default; "history" is the only non-default view value.
   const activeView = view === "history" ? "history" : "overview"
@@ -210,6 +212,8 @@ export function InvestmentsPage() {
           search={search}
           page={page}
           onPageChange={setPage}
+          pageSize={pageSize}
+          onPageSizeChange={setPageSize}
           sort={sort}
           sortDir={sortDir}
           onSort={cycleSort}
@@ -222,7 +226,6 @@ export function InvestmentsPage() {
           rangeLabel={`${start} to ${end}`}
           start={start}
           end={end}
-          hasProfile={profileId !== undefined}
         />
       )}
 

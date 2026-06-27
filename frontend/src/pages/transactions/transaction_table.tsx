@@ -101,7 +101,7 @@ export function TransactionTable({
   categoryOptions = [], sort, sortDir, onSort, onResetFilters,
 }: TransactionTableOuterProps) {
   return visitRemoteData(data, {
-    notLoaded: () => <TableSkeleton rows={25} cols={5} />,
+    notLoaded: () => <TableSkeleton rows={pageSize} cols={5} actions={false} />,
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: ({ result }) => (
       <div className="relative">

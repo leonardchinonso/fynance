@@ -32,17 +32,15 @@ interface Props {
   /** Selected range start/end (YYYY-MM-DD); scopes the invested time series. */
   start: string
   end: string
-  /** True when exactly one profile is selected (gates the realised-gains card). */
-  hasProfile: boolean
 }
 
-export function InvestmentsOverview({ data, rangeLabel, start, end, hasProfile }: Props) {
+export function InvestmentsOverview({ data, rangeLabel, start, end }: Props) {
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioOverviewSkeleton />,
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: (value) => (
       <div className="relative">
-        <InvestmentsOverviewInternal value={value} rangeLabel={rangeLabel} start={start} end={end} hasProfile={hasProfile} />
+        <InvestmentsOverviewInternal value={value} rangeLabel={rangeLabel} start={start} end={end} />
         <ReloadingOverlay active={data.status === "reloading"} />
       </div>
     ),
@@ -54,13 +52,11 @@ function InvestmentsOverviewInternal({
   rangeLabel,
   start,
   end,
-  hasProfile,
 }: {
   value: InvestmentsOverviewData
   rangeLabel: string
   start: string
   end: string
-  hasProfile: boolean
 }) {
   const { holdings, pools, events, currencies, realisedGains, preferredCurrency } = value
 
@@ -129,9 +125,9 @@ function InvestmentsOverviewInternal({
         <SummaryCard
           icon={<Coins className="h-4 w-4" />}
           label="Realised P/L"
-          hint={hasProfile ? rangeLabel : undefined}
+          hint={rangeLabel}
         >
-          <RealisedValue summary={realisedGains} hasProfile={hasProfile} />
+          <RealisedValue summary={realisedGains} />
         </SummaryCard>
       </div>
 
@@ -230,14 +226,7 @@ function SummaryCard({
   )
 }
 
-function RealisedValue({ summary, hasProfile }: { summary: CgtSummary | null; hasProfile: boolean }) {
-  if (!hasProfile) {
-    return (
-      <span className="text-sm font-normal text-muted-foreground">
-        Select a profile to see realised gains
-      </span>
-    )
-  }
+function RealisedValue({ summary }: { summary: CgtSummary | null }) {
   if (!summary) {
     return <span className="text-sm font-normal text-muted-foreground">-</span>
   }

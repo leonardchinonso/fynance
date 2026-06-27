@@ -13,6 +13,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Settings2,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react"
 import { api } from "@/api/client"
 import { DocumentReferencedError } from "@/api/service"
@@ -57,14 +60,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { TableSkeleton } from "@/components/skeletons"
+import { usePageSizeParam, PAGE_SIZE_OPTIONS } from "@/hooks/use_page_size"
 import { formatDate } from "@/lib/utils"
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
-const PAGE_SIZE_KEY = "fynance-page-size"
 const COLUMNS_KEY = "fynance-doc-columns"
 
 // Sentinel option for documents with no associated account.
 const NO_ACCOUNT = "__none__"
+
+type DocSortColumn = "file" | "uploaded"
+type SortDir = "asc" | "desc"
 
 interface Column {
   id: string
@@ -89,11 +94,6 @@ function getStoredColumns(): Set<string> {
     if (v) return new Set(JSON.parse(v))
   } catch { /* ignore */ }
   return new Set(ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.id))
-}
-
-function getStoredPageSize(): number {
-  try { return parseInt(localStorage.getItem(PAGE_SIZE_KEY) ?? "25", 10) || 25 }
-  catch { return 25 }
 }
 
 function formatBytes(bytes: number): string {
@@ -156,6 +156,36 @@ function MultiSelect({
         </Command>
       </PopoverContent>
     </Popover>
+  )
+}
+
+function SortableHead({
+  label, column, active, dir, onClick, className,
+}: {
+  label: string
+  column: DocSortColumn
+  active: DocSortColumn
+  dir: SortDir
+  onClick: (col: DocSortColumn) => void
+  className?: string
+}) {
+  const isActive = active === column
+  const Icon = !isActive ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown
+  return (
+    <TableHead className={className}>
+      <button
+        type="button"
+        onClick={() => onClick(column)}
+        className={cn(
+          "inline-flex items-center gap-1 select-none cursor-pointer rounded-md px-1 py-0.5 -mx-1 hover:bg-muted transition-colors",
+          isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+        )}
+        aria-label={`Sort by ${label}`}
+      >
+        <span>{label}</span>
+        <Icon className={cn("h-3 w-3", isActive ? "opacity-100" : "opacity-50")} />
+      </button>
+    </TableHead>
   )
 }
 
@@ -260,8 +290,10 @@ export function DocumentsPage() {
 
   // Table view state.
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
-  const [pageSize, setPageSize] = useState(getStoredPageSize)
+  const [pageSize, setPageSize] = usePageSizeParam("doc_limit")
   const [page, setPage] = useState(1)
+  const [sort, setSort] = useState<DocSortColumn>("uploaded")
+  const [sortDir, setSortDir] = useState<SortDir>("desc")
 
   // The document pending a force-delete confirmation, plus its reference breakdown.
   const [confirm, setConfirm] = useState<{ doc: DocumentSummary; references: References } | null>(null)
@@ -324,13 +356,33 @@ export function DocumentsPage() {
 
   const hasFilters = orphanFilter !== "all" || selectedAccounts.length > 0 || search.length > 0
 
-  const total = filtered.length
+  const sorted = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      const cmp = sort === "file"
+        ? a.filename.localeCompare(b.filename)
+        : a.uploaded_at.localeCompare(b.uploaded_at)
+      // Stable tiebreak by upload time so equal keys keep a deterministic order.
+      return (cmp || a.uploaded_at.localeCompare(b.uploaded_at)) * dir
+    })
+  }, [filtered, sort, sortDir])
+
+  const total = sorted.length
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const currentPage = Math.min(page, totalPages)
-  const pageRows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const pageRows = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
-  // Reset to the first page whenever the working set or page size changes.
-  useEffect(() => { setPage(1) }, [orphanFilter, selectedAccounts, search, pageSize])
+  // Reset to the first page whenever the working set, sort, or page size changes.
+  useEffect(() => { setPage(1) }, [orphanFilter, selectedAccounts, search, sort, sortDir, pageSize])
+
+  function cycleSort(col: DocSortColumn) {
+    if (sort === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+    } else {
+      setSort(col)
+      setSortDir(col === "uploaded" ? "desc" : "asc")
+    }
+  }
 
   function toggleColumn(colId: string) {
     setVisibleColumns((prev) => {
@@ -497,7 +549,7 @@ export function DocumentsPage() {
       </div>
 
       {loading ? (
-        <TableSkeleton rows={Math.min(pageSize, 10)} cols={5} />
+        <TableSkeleton rows={pageSize} cols={visibleColumns.size} bordered />
       ) : docs.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
           No documents yet. Files you import appear here automatically, or upload one above.
@@ -507,13 +559,17 @@ export function DocumentsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                {isVisible("file") && <TableHead>File</TableHead>}
+                {isVisible("file") && (
+                  <SortableHead label="File" column="file" active={sort} dir={sortDir} onClick={cycleSort} />
+                )}
                 {isVisible("links") && <TableHead className="text-right">Links</TableHead>}
                 {isVisible("type") && <TableHead>Type</TableHead>}
                 {isVisible("size") && <TableHead className="text-right">Size</TableHead>}
                 {isVisible("origin") && <TableHead>Origin</TableHead>}
                 {isVisible("account") && <TableHead>Account</TableHead>}
-                {isVisible("uploaded") && <TableHead>Uploaded</TableHead>}
+                {isVisible("uploaded") && (
+                  <SortableHead label="Uploaded" column="uploaded" active={sort} dir={sortDir} onClick={cycleSort} />
+                )}
                 <TableHead className="text-right">Actions</TableHead>
                 <TableHead className="w-8">
                   <ColumnSettings columns={ALL_COLUMNS} visible={visibleColumns} onToggle={toggleColumn} />
@@ -609,9 +665,7 @@ export function DocumentsPage() {
                   value={pageSize.toString()}
                   onValueChange={(v) => {
                     if (v == null) return
-                    const newSize = parseInt(v, 10)
-                    localStorage.setItem(PAGE_SIZE_KEY, v)
-                    setPageSize(newSize)
+                    setPageSize(parseInt(v, 10))
                   }}
                 >
                   <SelectTrigger className="h-7 w-[65px] text-xs">

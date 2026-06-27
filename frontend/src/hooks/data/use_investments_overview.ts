@@ -18,8 +18,9 @@ export interface InvestmentsOverviewData {
   /** FX rates keyed by currency code, for converting holding values. */
   currencies: Currency[]
   /**
-   * Realised gains for the selected period. `null` when no single profile is
-   * selected (the CGT report has no "all profiles" mode).
+   * Realised gains for the selected period. For a single profile this is its CGT
+   * summary; for "all profiles" it is every profile's summary summed. `null` only
+   * when there are no profiles or no disposals in range.
    */
   realisedGains: CgtSummary | null
   preferredCurrency: string
@@ -27,6 +28,21 @@ export interface InvestmentsOverviewData {
 
 function preferredCode(currencies: Currency[]): string {
   return currencies.find((c) => c.is_preferred)?.code ?? "GBP"
+}
+
+/** Sum CGT summaries field-by-field (realised gains are additive across profiles). */
+function sumCgtSummaries(items: CgtSummary[]): CgtSummary | null {
+  if (items.length === 0) return null
+  const sum = (pick: (s: CgtSummary) => string) =>
+    items.reduce((acc, s) => acc + (parseFloat(pick(s)) || 0), 0).toFixed(2)
+  return {
+    total_proceeds: sum((s) => s.total_proceeds),
+    total_allowable_costs: sum((s) => s.total_allowable_costs),
+    total_gains: sum((s) => s.total_gains),
+    total_losses: sum((s) => s.total_losses),
+    net_gain_loss: sum((s) => s.net_gain_loss),
+    base_currency: items[0].base_currency,
+  }
 }
 
 /**
@@ -41,9 +57,9 @@ function preferredCode(currencies: Currency[]): string {
  * realised gains stay profile-scoped: pools have no account_id, and the CGT
  * report has no per-account filter.
  *
- * Realised gains are only fetched when a single `profileId` is selected; the
- * CGT report has no all-profiles mode, so it is left `null` otherwise and the
- * caller renders a "select a profile" hint.
+ * Realised gains come from the CGT report, which is per-profile: for a single
+ * profile we fetch its summary; for "all profiles" we fetch each profile's
+ * summary and sum them (realised gains are additive across profiles).
  */
 export function useInvestmentsOverview(
   start: string,
@@ -78,13 +94,23 @@ export function useInvestmentsOverview(
         ? await api.getHoldingsBatch(investmentAccountIds)
         : []
 
+      const cgtPeriod = { kind: "range" as const, startDate: start, endDate: end }
       let realisedGains: CgtSummary | null = null
       if (profileId) {
-        const cgt = await api.getCapitalGains({
-          period: { kind: "range", startDate: start, endDate: end },
-          profileId,
-        })
+        const cgt = await api.getCapitalGains({ period: cgtPeriod, profileId })
         realisedGains = cgt.summary
+      } else {
+        // "All profiles": the CGT report is per-profile, so fetch each profile's
+        // summary and sum them.
+        const profiles = await api.getProfiles()
+        const summaries = await Promise.all(
+          profiles.map((p) =>
+            api.getCapitalGains({ period: cgtPeriod, profileId: p.id })
+              .then((c) => c.summary)
+              .catch(() => null),
+          ),
+        )
+        realisedGains = sumCgtSummaries(summaries.filter((s): s is CgtSummary => s !== null))
       }
 
       return {
