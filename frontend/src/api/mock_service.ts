@@ -648,6 +648,7 @@ export class MockApiService implements ApiService {
       symbol: h.symbol,
       name: h.name,
       short_name: h.short_name,
+      holding_type: h.holding_type,
     }))
 
     // account_id -> "YYYY-MM" -> balance, carried forward across gaps.

@@ -885,6 +885,7 @@ pub struct AccountHoldingSeries {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub short_name: Option<String>,
+    pub holding_type: String,
 }
 
 /// Value of one holding at a period end, converted to the preferred currency.

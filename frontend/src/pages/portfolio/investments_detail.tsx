@@ -55,6 +55,23 @@ const PIE_COLORS = [
 // Holding types that are investments (shown in the allocation pie)
 const INVESTMENT_HOLDING_TYPES: HoldingType[] = ["stock", "etf", "fund", "bond", "crypto"]
 
+// Normalized holdings-table row, unified across live (current holdings) and
+// hover (as-of a past period) modes. Fields that aren't tracked historically
+// are null in hover mode and render as "-".
+interface DisplayRow {
+  key: string
+  symbol: string
+  name: string
+  holdingType: string
+  valueAmount: string
+  valueCurrency: string
+  pct: string
+  quantity: string | null
+  pricePerUnit: string | null
+  priceCurrency: string | null
+  convertedAmount: string | null
+}
+
 interface InvestmentsDetailProps {
   accountId: string | null
   account: Account | null
@@ -170,6 +187,41 @@ function HoldingsContent({
   // Only treat a hover as active while the history chart is the visible chart.
   const activeHover = !showPie || chartView === "history" ? hoverPeriod : null
 
+  // The rows to render: the positions open at the hovered period (so rows are
+  // added/removed as the cursor moves), or the current holdings otherwise.
+  // Qty/price/converted aren't tracked historically, so they're null in hover
+  // mode and render as "-".
+  const displayRows: DisplayRow[] = activeHover
+    ? activeHover.holdings.map((h) => ({
+        key: h.symbol,
+        symbol: h.symbol,
+        name: h.name,
+        holdingType: h.holdingType,
+        valueAmount: h.value.toFixed(2),
+        valueCurrency: preferredCurrency,
+        pct: activeHover.total > 0 ? ((h.value / activeHover.total) * 100).toFixed(1) : "0",
+        quantity: null,
+        pricePerUnit: null,
+        priceCurrency: null,
+        convertedAmount: null,
+      }))
+    : sorted.map((h) => {
+        const valueInPreferred = toPreferred(parseFloat(h.value), h.currency)
+        return {
+          key: `${h.account_id}-${h.symbol}`,
+          symbol: h.symbol,
+          name: h.name,
+          holdingType: h.holding_type,
+          valueAmount: h.value,
+          valueCurrency: h.currency,
+          pct: totalPreferred > 0 ? ((valueInPreferred / totalPreferred) * 100).toFixed(1) : "0",
+          quantity: h.quantity,
+          pricePerUnit: h.price_per_unit ?? null,
+          priceCurrency: h.currency,
+          convertedAmount: showConvertedCol ? valueInPreferred.toFixed(2) : null,
+        }
+      })
+
   const pieData = investmentPositions.map((h) => ({
     name: h.short_name ?? h.symbol,
     fullName: h.name,
@@ -196,49 +248,39 @@ function HoldingsContent({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sorted.map((h) => {
-              const valueInPreferred = toPreferred(parseFloat(h.value), h.currency)
-              const typeColor = HOLDING_TYPE_COLORS[h.holding_type as HoldingType] ?? "#78716c"
-              // When hovering the history chart, show that period's as-of value
-              // (preferred currency, from the history series). Qty/price aren't
-              // tracked historically, so they show "-" in that mode.
-              const rowValue = activeHover ? (activeHover.values.get(h.symbol) ?? 0) : valueInPreferred
-              const denom = activeHover ? activeHover.total : totalPreferred
+            {displayRows.map((r) => {
+              const typeColor = HOLDING_TYPE_COLORS[r.holdingType as HoldingType] ?? "#78716c"
               return (
-                <TableRow key={`${h.account_id}-${h.symbol}`}>
-                  <TableCell className="font-medium">{h.symbol}</TableCell>
-                  <TableCell className="text-sm">{h.name}</TableCell>
+                <TableRow key={r.key}>
+                  <TableCell className="font-medium">{r.symbol}</TableCell>
+                  <TableCell className="text-sm">{r.name}</TableCell>
                   <TableCell>
                     <Badge
                       variant="outline"
                       className="text-xs"
                       style={{ borderColor: typeColor, color: typeColor }}
                     >
-                      {HOLDING_TYPE_LABELS[h.holding_type as HoldingType] ?? h.holding_type}
+                      {HOLDING_TYPE_LABELS[r.holdingType as HoldingType] ?? r.holdingType}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{activeHover ? "-" : h.quantity}</TableCell>
+                  <TableCell className="text-right tabular-nums">{r.quantity ?? "-"}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {activeHover
-                      ? "-"
-                      : h.price_per_unit
-                        ? <MoneyDisplay amount={h.price_per_unit} currency={h.currency} colorize={false} />
-                        : "-"}
+                    {r.pricePerUnit
+                      ? <MoneyDisplay amount={r.pricePerUnit} currency={r.priceCurrency!} colorize={false} />
+                      : "-"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums font-medium">
-                    {activeHover
-                      ? <MoneyDisplay amount={rowValue.toFixed(2)} currency={preferredCurrency} colorize={false} />
-                      : <MoneyDisplay amount={h.value} currency={h.currency} colorize={false} />}
+                    <MoneyDisplay amount={r.valueAmount} currency={r.valueCurrency} colorize={false} />
                   </TableCell>
                   {showConvertedCol && (
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {activeHover
-                        ? "-"
-                        : <MoneyDisplay amount={valueInPreferred.toFixed(2)} currency={preferredCurrency} colorize={false} />}
+                      {r.convertedAmount
+                        ? <MoneyDisplay amount={r.convertedAmount} currency={preferredCurrency} colorize={false} />
+                        : "-"}
                     </TableCell>
                   )}
                   <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {denom > 0 ? ((rowValue / denom) * 100).toFixed(1) : "0"}%
+                    {r.pct}%
                   </TableCell>
                 </TableRow>
               )

@@ -21,12 +21,23 @@ const HOLDING_COLORS = [
 // Cap the number of individual holding lines; the rest collapse into "Other".
 const TOP_N = 8
 
-/** The period the cursor is over, with each holding's value at that period
- * (preferred currency). Emitted so the holdings table can show as-of values. */
+/** One holding present at the hovered period, with its as-of value (preferred
+ * currency) and the display metadata needed to render a table row. */
+export interface HoverHolding {
+  symbol: string
+  name: string
+  shortName: string | null
+  holdingType: string
+  value: number
+}
+
+/** The period the cursor is over. `holdings` is exactly the set of positions
+ * open at that period (sorted by value, descending), so the holdings table can
+ * add/remove rows as the cursor moves, not just restate the current set. */
 export interface HoverPeriod {
   label: string
   total: number
-  values: Map<string, number>
+  holdings: HoverHolding[]
 }
 
 interface AccountHistoryChartProps {
@@ -70,6 +81,8 @@ function AccountHistoryChartInternal({
 
   const hasData = symbols.length > 0 && rows.some((r) => parseFloat(r.total) !== 0)
   if (!hasData) return <EmptyState />
+
+  const seriesBySymbol = new Map(symbols.map((s) => [s.symbol, s]))
 
   // Rank holdings by their value in the latest period; keep the top N as their
   // own lines, collapse the rest into a single "Other" line.
@@ -141,10 +154,22 @@ function AccountHistoryChartInternal({
             return
           }
           const row = rows[i]
+          const holdings = row.values
+            .map((v) => {
+              const meta = seriesBySymbol.get(v.symbol)
+              return {
+                symbol: v.symbol,
+                name: meta?.name ?? v.symbol,
+                shortName: meta?.short_name ?? null,
+                holdingType: meta?.holding_type ?? "stock",
+                value: parseFloat(v.value),
+              }
+            })
+            .sort((a, b) => b.value - a.value)
           onHoverPeriod({
             label: formatPeriodLabel(row.period, granularity),
             total: parseFloat(row.total),
-            values: new Map(row.values.map((v) => [v.symbol, parseFloat(v.value)])),
+            holdings,
           })
         }}
       />

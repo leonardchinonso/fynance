@@ -2820,7 +2820,7 @@ impl Db {
         // snapshot is a close, the position drops out and the chart shows a gap
         // rather than carrying a stale value forward.
         let mut stmt = self.conn.prepare(
-            r"SELECT h.symbol, h.name, h.short_name, h.value, h.currency
+            r"SELECT h.symbol, h.name, h.short_name, h.value, h.currency, h.holding_type
               FROM holdings h
               WHERE h.account_id = ?1
                 AND h.is_closed = 0
@@ -2852,11 +2852,12 @@ impl Db {
                 let short_name: Option<String> = row.get(2)?;
                 let value: String = row.get(3)?;
                 let currency: String = row.get(4)?;
-                Ok((symbol, name, short_name, value, currency))
+                let holding_type: String = row.get(5)?;
+                Ok((symbol, name, short_name, value, currency, holding_type))
             })?;
 
             for r in mapped {
-                let (symbol, name, short_name, value_str, currency) = r?;
+                let (symbol, name, short_name, value_str, currency, holding_type) = r?;
                 let value = value_str.parse::<Decimal>().unwrap_or_default();
                 let converted = fx.convert(value, &currency);
                 *by_symbol.entry(symbol.clone()).or_insert(Decimal::ZERO) += converted;
@@ -2866,6 +2867,7 @@ impl Db {
                         symbol,
                         name,
                         short_name,
+                        holding_type,
                     });
                 }
             }
