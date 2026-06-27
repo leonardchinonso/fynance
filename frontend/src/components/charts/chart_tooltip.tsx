@@ -1,6 +1,75 @@
+import { useCallback, useLayoutEffect, useRef, useState } from "react"
+import type React from "react"
 import type { TooltipProps } from "recharts"
 import { formatCurrency } from "@/lib/utils"
 import type { PieDataItem } from "./interactive_pie"
+
+const CURSOR_OFFSET = 15 // gap between the cursor and the tooltip
+const EDGE_MARGIN = 8 // keep the tooltip this far inside the container edges
+
+/**
+ * Positions a Recharts custom tooltip so it tracks the cursor but never escapes
+ * its chart container: it flips to the left of the cursor near the right edge,
+ * and is clamped to the container box on every side. Shared by every chart so
+ * the behaviour is defined once instead of duplicated per chart.
+ *
+ * Pass the element the tooltip must stay inside (the chart's container, or just
+ * the plot area for charts with a side legend). Spread the returned handlers on
+ * that hover target and pass `pos` to `<Tooltip position={pos} />`.
+ */
+export function useClampedTooltipPosition(
+  containerRef: React.RefObject<HTMLElement | null>,
+) {
+  const rawRef = useRef<{ x: number; y: number } | null>(null)
+  const [pos, setPos] = useState<{ x: number; y: number } | undefined>(undefined)
+
+  const recompute = useCallback(() => {
+    const container = containerRef.current
+    const raw = rawRef.current
+    if (!container || !raw) return
+    const wrapper = container.querySelector<HTMLElement>(".recharts-tooltip-wrapper")
+    const tw = wrapper?.offsetWidth ?? 0
+    const th = wrapper?.offsetHeight ?? 0
+    const cw = container.clientWidth
+    const ch = container.clientHeight
+
+    let x = raw.x + CURSOR_OFFSET
+    // Flip to the left of the cursor when the tooltip would spill past the right edge.
+    if (tw > 0 && x + tw > cw - EDGE_MARGIN) x = raw.x - CURSOR_OFFSET - tw
+    if (tw > 0) x = Math.min(Math.max(EDGE_MARGIN, x), Math.max(EDGE_MARGIN, cw - tw - EDGE_MARGIN))
+
+    let y = raw.y + CURSOR_OFFSET
+    if (th > 0) y = Math.min(Math.max(EDGE_MARGIN, y), Math.max(EDGE_MARGIN, ch - th - EDGE_MARGIN))
+
+    setPos((prev) =>
+      prev && Math.abs(prev.x - x) < 0.5 && Math.abs(prev.y - y) < 0.5 ? prev : { x, y },
+    )
+  }, [containerRef])
+
+  const onMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      const container = containerRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      rawRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+      recompute()
+    },
+    [containerRef, recompute],
+  )
+
+  const onMouseLeave = useCallback(() => {
+    rawRef.current = null
+    setPos(undefined)
+  }, [])
+
+  // The tooltip's size is only known once it has rendered, so re-clamp after
+  // each render (cheap, and guarded so it can't loop).
+  useLayoutEffect(() => {
+    if (rawRef.current) recompute()
+  })
+
+  return { pos, onMouseMove, onMouseLeave }
+}
 
 /**
  * Styled tooltip matching Tremor's visual design.

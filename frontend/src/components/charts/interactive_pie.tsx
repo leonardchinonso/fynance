@@ -9,7 +9,7 @@ import {
   Sector,
 } from "recharts"
 import type { PieSectorDataItem } from "recharts/types/polar/Pie"
-import { PieTooltip } from "./chart_tooltip"
+import { PieTooltip, useClampedTooltipPosition } from "./chart_tooltip"
 import { ChartLegend } from "@/components/chart_legend"
 import { formatCurrency, cn } from "@/lib/utils"
 import { ChevronDown, ChevronUp } from "lucide-react"
@@ -54,12 +54,17 @@ export function InteractivePie({
   legendPosition = "bottom",
 }: InteractivePieProps) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined)
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const chartAreaRef = useRef<HTMLDivElement>(null)
   const legendRef = useRef<HTMLDivElement>(null)
   const [canScrollUp, setCanScrollUp] = useState(false)
   const [canScrollDown, setCanScrollDown] = useState(false)
+
+  // Clamp the tooltip to the area the mouse coords are relative to: the plot
+  // area when the legend is on the left, otherwise the whole container.
+  const { pos, onMouseMove, onMouseLeave } = useClampedTooltipPosition(
+    legendPosition === "left" ? chartAreaRef : containerRef,
+  )
 
   const total = data.reduce((sum, d) => sum + d.value, 0)
 
@@ -71,21 +76,10 @@ export function InteractivePie({
     color: getColor(d.name, i),
   }))
 
-  // Mouse position relative to the chart area only (not the legend column)
-  function handleMouseMove(e: React.MouseEvent) {
-    const ref = legendPosition === "left" ? chartAreaRef.current : containerRef.current
-    if (!ref) return
-    const rect = ref.getBoundingClientRect()
-    setMousePos({
-      x: e.clientX - rect.left + 15,
-      y: e.clientY - rect.top + 15,
-    })
-  }
-
   const clearHover = useCallback(() => {
     setActiveIndex(undefined)
-    setMousePos(null)
-  }, [])
+    onMouseLeave()
+  }, [onMouseLeave])
 
   // Legend scroll indicators
   function updateScrollIndicators() {
@@ -148,7 +142,7 @@ export function InteractivePie({
         </Pie>
         <Tooltip
           content={pieTooltip}
-          position={mousePos ?? undefined}
+          position={pos}
           wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
           isAnimationActive={false}
         />
@@ -169,7 +163,7 @@ export function InteractivePie({
 
   if (legendPosition === "left") {
     return (
-      <div className={cn("flex w-full", className)} ref={containerRef} onMouseMove={handleMouseMove}>
+      <div className={cn("flex w-full", className)} ref={containerRef} onMouseMove={onMouseMove}>
         {/* Legend column */}
         <div className="shrink-0 flex flex-col min-w-0">
           {/* Up arrow — hover to scroll up continuously */}
@@ -218,7 +212,7 @@ export function InteractivePie({
   }
 
   return (
-    <div className={className} ref={containerRef} onMouseMove={handleMouseMove}>
+    <div className={className} ref={containerRef} onMouseMove={onMouseMove}>
       {chart}
       <ChartLegend items={legendItems} className="mt-2 justify-center" />
     </div>
