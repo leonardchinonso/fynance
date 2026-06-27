@@ -24,10 +24,10 @@ use crate::util::fx::FxRateMap;
 pub struct CapitalGainsQuery {
     pub account_id: Option<String>,
     pub symbol: Option<String>,
-    pub start_date: Option<String>, // YYYY-MM-DD
-    pub end_date: Option<String>,   // YYYY-MM-DD
-    pub tax_year: Option<String>,   // e.g. "2024-25" -> 6 Apr 2024 to 5 Apr 2025
-    pub as_at: Option<String>,      // YYYY-MM-DD (limit calculations to this date)
+    pub start_date: Option<String>,  // YYYY-MM-DD
+    pub end_date: Option<String>,    // YYYY-MM-DD
+    pub tax_year: Option<String>,    // e.g. "2024-25" -> 6 Apr 2024 to 5 Apr 2025
+    pub as_at: Option<String>,       // YYYY-MM-DD (limit calculations to this date)
     pub profile_ids: Option<String>, // comma-separated; scope to accounts whose profile_ids JSON intersects this set
 }
 
@@ -60,10 +60,7 @@ fn resolve_profile_ids_to_account_ids(
 /// `FxRateMap::convert` returns the amount unchanged, and totals quietly skew —
 /// surfacing it as an actionable 400 lets the user add the missing rows under
 /// Settings → Currencies before they look at numbers that pretend to be correct.
-fn check_required_currencies(
-    events: &[InvestmentEvent],
-    fx: &FxRateMap,
-) -> Result<(), AppError> {
+fn check_required_currencies(events: &[InvestmentEvent], fx: &FxRateMap) -> Result<(), AppError> {
     let preferred = fx.preferred();
     let mut missing: Vec<String> = events
         .iter()
@@ -568,12 +565,14 @@ fn run_cgt_engine(
         for (idx, e) in events.iter().enumerate() {
             let date = e.date.date();
             let group = daily_groups.entry(date).or_default();
-            
+
             match e.event_type {
                 InvestmentEventType::Buy | InvestmentEventType::Vest => group.incoming.push(idx),
                 // Sell and Withhold are both treated as disposals. Withhold (sell-to-cover or net settlement)
                 // represents shares immediately sold at vest to cover taxes, which is a disposal under UK CGT.
-                InvestmentEventType::Sell | InvestmentEventType::Withhold => group.outgoing.push(idx),
+                InvestmentEventType::Sell | InvestmentEventType::Withhold => {
+                    group.outgoing.push(idx)
+                }
                 _ => {}
             }
         }

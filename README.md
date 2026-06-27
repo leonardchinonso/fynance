@@ -125,7 +125,7 @@ Configuration is managed through a `.env` file at the project root. The repo inc
 | `FYNANCE_LOG_LEVEL` | `info` | No | Log verbosity. Options: `trace`, `debug`, `info`, `warn`, `error` |
 | `FYNANCE_ANTHROPIC_API_KEY` | (none) | One of these two | Console API key (`sk-ant-api...`) from [console.anthropic.com](https://console.anthropic.com/). Pay-per-token billing |
 | `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN` | (none) | One of these two | Claude Pro/Max subscription token (`sk-ant-oat01...`) from `claude setup-token`. Billed against your subscription's Agent SDK credit pool, not per-token |
-| `FYNANCE_IMPORT_LLM_MODEL` | `claude-haiku-4-5-20251001` | No | Claude model used by the CSV/statement parser |
+| `FYNANCE_IMPORT_LLM_MODEL` | `claude-sonnet-4-6` | No | Claude model used by the CSV/statement parser (Haiku can be set to cut cost) |
 | `FYNANCE_IMPORT_MIN_DETECT_CONF` | `0.80` | No | File-level detection confidence threshold (0.0 to 1.0). Import fails hard below this |
 | `FYNANCE_IMPORT_MIN_ROW_CONF` | `0.70` | No | Row-level confidence threshold (0.0 to 1.0). Rows below this are skipped with a warning |
 | `FYNANCE_PARSE_PDF_MODEL` | `claude-sonnet-4-6` | No | More capable model used for PDF/visual document parsing |
@@ -164,6 +164,9 @@ fynance account add --id <id> --name <name> --institution <inst> --type <type> -
 fynance account set-balance <id> <amount> --date YYYY-MM-DD
 fynance account list
 fynance account delete <id> [--hard]         # soft-delete (deactivate); --hard removes the row
+fynance profile add --id <id> --name <name>  # create a profile (accounts need one)
+fynance profile list
+fynance profile delete <id>                  # refuses if any account still references it
 fynance transaction delete <id>... [--account <id>]   # hard-delete txns by id, or all for an account
 fynance budget set --month YYYY-MM --category <c> --amount N
 fynance budget status --month YYYY-MM

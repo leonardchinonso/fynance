@@ -41,6 +41,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: AccountCommand,
     },
+    /// Manage profiles (logical owners that accounts belong to).
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommand,
+    },
     /// Manage monthly budgets.
     Budget {
         #[command(subcommand)]
@@ -135,6 +140,24 @@ pub enum AccountCommand {
         /// Permanently remove the row instead of deactivating it.
         #[arg(long)]
         hard: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProfileCommand {
+    /// Create a new profile. Accounts must reference an existing profile.
+    Add {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: String,
+    },
+    /// Print all profiles.
+    List,
+    /// Delete a profile. Refuses if any account still references it.
+    Delete {
+        /// Profile id to delete.
+        id: String,
     },
 }
 

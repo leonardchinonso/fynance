@@ -8,11 +8,11 @@
 //! Auth mirrors the import endpoints: loopback browser requests pass without a
 //! token; non-loopback (Docker / remote) requires a bearer token.
 
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -250,13 +250,11 @@ pub async fn delete_document(
             });
             Ok((StatusCode::CONFLICT, Json(body)).into_response())
         }
-        DeleteDocumentOutcome::Deleted(unlinked) => {
-            Ok(Json(DocumentDeleteResult {
-                deleted: true,
-                unlinked,
-            })
-            .into_response())
-        }
+        DeleteDocumentOutcome::Deleted(unlinked) => Ok(Json(DocumentDeleteResult {
+            deleted: true,
+            unlinked,
+        })
+        .into_response()),
     }
 }
 
