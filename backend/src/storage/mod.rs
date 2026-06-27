@@ -1,3 +1,3 @@
 pub mod db;
 
-pub use db::{DeleteDocumentOutcome, Db, SortDir, TransactionFilters, TransactionSort};
+pub use db::{Db, DeleteDocumentOutcome, SortDir, TransactionFilters, TransactionSort};

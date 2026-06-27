@@ -64,9 +64,9 @@ pub async fn update_profile(
     Path(id): Path<String>,
     Json(body): Json<PatchProfileBody>,
 ) -> Result<Json<Profile>, AppError> {
-    let name = body.name.ok_or_else(|| {
-        AppError::bad_request("name is required", "empty_body")
-    })?;
+    let name = body
+        .name
+        .ok_or_else(|| AppError::bad_request("name is required", "empty_body"))?;
     if name.trim().is_empty() {
         return Err(AppError::bad_request(
             "name must not be empty",
@@ -94,7 +94,9 @@ pub async fn delete_profile(
     let referencing = db.count_accounts_referencing_profile(&id)?;
     if referencing > 0 {
         return Err(AppError::conflict(
-            format!("{referencing} account(s) still reference profile {id}; remove them from those accounts first"),
+            format!(
+                "{referencing} account(s) still reference profile {id}; remove them from those accounts first"
+            ),
             "profile_in_use",
         ));
     }

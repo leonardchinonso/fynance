@@ -129,13 +129,16 @@ See `backend/RUNNING.md` for the full setup and run guide: prerequisites, config
 ```bash
 fynance serve [--port 7433] [--no-open]      # Start local web UI
 fynance import <file|dir> --account <id>     # Import CSV statements (auto-detects bank format)
-fynance account add --id <id> --name <name> --institution <inst> --type <type>
+fynance account add --id <id> --name <name> --institution <inst> --type <type> --profile <id> [--currency GBP]
 fynance account set-balance <id> <amount> --date YYYY-MM-DD
 fynance account list
 fynance account delete <id> [--hard]         # soft-delete (deactivate); --hard removes the row. Refuses if it has transactions/holdings.
+fynance profile add --id <id> --name <name>  # create a profile (accounts require an existing profile)
+fynance profile list
+fynance profile delete <id>                  # refuses if any account still references it
 fynance transaction delete <id>... [--account <id>]   # hard-delete transactions by id, or all for an account (clears it before deletion)
 fynance budget set --month YYYY-MM --category <c> --amount N
-fynance budget status
+fynance budget status --month YYYY-MM
 fynance stats
 fynance token create --name <name>           # generate API token for programmatic access
 fynance token list
@@ -149,21 +152,40 @@ Note: `fynance export` and `fynance monthly` are not yet implemented.
 Browser UI requests from localhost need no auth. Programmatic access (scripts, agents) uses bearer token auth: `Authorization: Bearer fyn_...`
 
 ```
-GET    /api/transactions?month=&category=&account=&page=&limit=
+GET    /api/transactions?month=&category=&account=&accounts=&page=&limit=   # account= single, accounts= comma-separated
+GET    /api/transactions/by-category         # spending grouped by category (?start=&end=&direction=outflow|income)
 GET    /api/transactions/categories
 GET    /api/transactions/accounts
+POST   /api/transactions/import              # typed JSON import for structured transaction data (agents, scripts)
 PATCH  /api/transactions/:id                 # edit category, notes
 DELETE /api/transactions/:id                 # hard-delete one transaction
 DELETE /api/transactions                     # bulk hard-delete: body { ids: [...] } OR { account_id } (clear an account)
-POST   /api/import                           # typed JSON API for structured transaction data (agents, scripts)
+POST   /api/import                           # DEPRECATED alias of /api/transactions/import (sends Deprecation/Link headers)
 POST   /api/import/csv                       # upload CSV (single file)
 POST   /api/import/bulk                      # upload multiple CSVs
 
+POST   /api/parse                            # Stage 1: extract structured txns/holdings from uploaded CSV/PDF/images (no DB writes)
+GET    /api/parse/progress/:parse_id         # progress stream for an in-flight parse
+
+GET    /api/documents                        # list stored source documents (provenance: ref count, orphan flag)
+POST   /api/documents                        # upload standalone source document(s), deduped by content hash
+GET    /api/documents/:id                    # document metadata
+DELETE /api/documents/:id                    # delete (?force=true unlinks referencing rows first)
+GET    /api/documents/:id/download           # stream the raw stored file bytes
+
 GET    /api/budget/spending-grid?start=&end=&granularity=&profile_id=   # multi-month spending vs budget grid; returns { preferred_currency, rows: SpendingGridRow[] }
 GET    /api/budget/:month                    # per-month budget view (effective budget + actual spend per category)
-POST   /api/budget                           # set standing monthly budget: { category_id, amount } — applies every month unless overridden
+POST   /api/budget                           # set standing monthly budget: { category_id, amount } (applies every month unless overridden)
 POST   /api/budget/override                  # set per-month override: { month (YYYY-MM), category_id, amount }
-GET    /api/income/:month                    # derived from Income-category transactions
+
+GET    /api/categories                       # full category tree
+POST   /api/categories                       # create a category
+GET    /api/categories/resolve?name=         # resolve a category name to its id
+GET    /api/categories/:id
+PATCH  /api/categories/:id
+DELETE /api/categories/:id
+GET    /api/sections                         # section mappings (Income, Bills, Spending, Irregular, Transfers)
+PUT    /api/sections                         # replace section mappings
 
 GET    /api/holdings                         # list holdings for an account (?account_id=)
 GET    /api/holdings/summary                 # portfolio summary: net worth, by_asset_class, by_type, by_institution
@@ -171,22 +193,39 @@ GET    /api/holdings/history                 # net worth history over time (avai
 GET    /api/holdings/account-history?account_id=&start=&end=&granularity=   # per-account, per-holding value series over time
 GET    /api/holdings/balances               # per-account balances derived from holdings SUM
 GET    /api/holdings/cash-flow              # income/spending cash flow
-POST   /api/holdings                        # upsert holdings for an account
-PATCH  /api/holdings/:id                    # update a single holding
 POST   /api/holdings/import                 # bulk import holdings
+POST   /api/holdings/:account_id            # upsert holdings for one account
+GET    /api/holdings/:account_id/:symbol    # value history for one holding
+PATCH  /api/holdings/:account_id/:symbol    # update a single holding snapshot
+DELETE /api/holdings/:account_id/:symbol    # delete a holding (?as_of= to drop one snapshot)
+
+GET    /api/accounts
 POST   /api/accounts
+PATCH  /api/accounts/:id
 PATCH  /api/accounts/:id/balance
 DELETE /api/accounts/:id?hard=true           # delete account (soft/deactivate by default; ?hard=true removes the row). Refuses if it still has transactions/holdings.
 
+GET    /api/profiles                         # list profiles
+POST   /api/profiles                         # create a profile (accounts require an existing profile)
+PATCH  /api/profiles/:id
+DELETE /api/profiles/:id
+
+GET    /api/currencies                       # list currencies + FX rates to the base currency
+POST   /api/currencies
+PATCH  /api/currencies/:code
+DELETE /api/currencies/:code
+
 GET    /api/investments                      # list investment events (?account_id=&symbol=&event_type=)
 POST   /api/investments                      # create one investment event
+POST   /api/investments/import               # bulk import investment events
 PATCH  /api/investments/:id                 # update an investment event
 DELETE /api/investments/:id                 # delete an investment event
 GET    /api/investments/pools?as_at=         # S104 average-cost pool snapshot per symbol
 GET    /api/investments/capital-gains        # UK CGT report (?tax_year=YYYY-YY | start_date=&end_date=, account_id, symbol, as_at)
 
-GET    /api/reports/:month
-GET    /api/export?year=&format=             # csv or md (Obsidian-compatible)
+GET    /api/ingestion/checklist/:month        # per-month ingestion checklist status
+POST   /api/ingestion/checklist/:month/:account_id   # mark an account complete for a month
+
 GET    /api/docs                             # OpenAPI spec
 GET    /api/health
 ```
@@ -206,9 +245,9 @@ See `docs/design/05_security_isolation.md` for details.
 
 ## CI/CD
 
-- **ci.yml**: Runs on every push and PR to master. Jobs: `actionlint` (workflow linting), `frontend` (tsc + build + upload artifact), `backend` (clippy + tests, needs frontend artifact), `docker-dry-run` (build only, no push).
+- **ci.yml**: Runs on every push and PR to master. Jobs: `actionlint` (workflow linting), `frontend` (tsc + build + upload artifact), `backend` (clippy + tests, needs frontend artifact), `api-docs-coverage` (every route in `mod.rs` must have a matching `data-path` in `docs/api.html`), `docker-dry-run` (build only, no push).
 - **release.yml**: Manual trigger only (`workflow_dispatch`). Computes/pushes a version tag, builds Linux binary (always), macOS/Windows (opt-in), pushes Docker image to GHCR, creates GitHub Release with binaries attached.
-- **vercel-deploy** (job inside ci.yml): Runs on every push to master after the `frontend` job succeeds, reusing its build artifact. Deploys to Vercel (https://fynance-3c.vercel.app) via `vercel deploy --prebuilt` using three GitHub repo secrets: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
+- **vercel-deploy.yml**: Separate workflow. Runs on push to master only when `frontend/**` changes (path-filtered). Builds the frontend itself (`npm install`) and deploys to Vercel (https://fynance-3c.vercel.app) via `npx vercel deploy --prod --yes`, using three GitHub repo secrets: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
 
 ### Vercel Token Renewal
 

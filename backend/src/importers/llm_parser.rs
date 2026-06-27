@@ -391,7 +391,10 @@ mod tests {
             rows: vec![make_row("2026-03-10", "Test", "-1.00", 0.9)],
         };
         let mock = MockStatementParser { result: stmt };
-        let (parsed, _call) = mock.parse("anything", "test.csv", None, None).await.unwrap();
+        let (parsed, _call) = mock
+            .parse("anything", "test.csv", None, None)
+            .await
+            .unwrap();
         assert_eq!(parsed.detected_bank, BankFormat::Unknown);
         assert_eq!(parsed.rows.len(), 1);
     }
