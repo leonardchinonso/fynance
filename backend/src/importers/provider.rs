@@ -292,8 +292,12 @@ impl AnthropicProvider {
     }
 
     fn with_auth(auth: AnthropicAuth) -> Result<Self> {
+        // Default to Sonnet for reliable structured extraction. Haiku can be
+        // opted into via FYNANCE_IMPORT_LLM_MODEL but is never the default: it
+        // intermittently drops required empty arrays (e.g. `rows: []`) from
+        // tool_use output, which aborts a parse (see issue #55).
         let standard_model = std::env::var("FYNANCE_IMPORT_LLM_MODEL")
-            .unwrap_or_else(|_| "claude-haiku-4-5-20251001".to_string());
+            .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
         let advanced_model = std::env::var("FYNANCE_PARSE_PDF_MODEL")
             .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
 
@@ -326,11 +330,7 @@ impl AnthropicProvider {
         }
     }
 
-    pub fn clone_with_progress(
-        &self,
-        tx: ProgressTx,
-        task_id: Option<String>,
-    ) -> Self {
+    pub fn clone_with_progress(&self, tx: ProgressTx, task_id: Option<String>) -> Self {
         Self {
             client: self.client.clone(),
             auth: self.auth.clone(),
@@ -413,8 +413,9 @@ impl SseAccumulator {
                     }
                 }
                 if let Some(usage) = event.get("usage") {
-                    self.output_tokens =
-                        usage["output_tokens"].as_u64().unwrap_or(self.output_tokens);
+                    self.output_tokens = usage["output_tokens"]
+                        .as_u64()
+                        .unwrap_or(self.output_tokens);
                 }
             }
             _ => {}
@@ -494,13 +495,12 @@ impl SseAccumulator {
                 tool_name: expected_tool.to_string(),
             })?;
 
-        let value: serde_json::Value =
-            serde_json::from_str(&tool_json).map_err(|e| {
-                ProviderError::ResponseUnreadable(format!(
-                    "invalid JSON for tool {expected_tool}: {e} (preview: {})",
-                    &tool_json[..tool_json.len().min(200)]
-                ))
-            })?;
+        let value: serde_json::Value = serde_json::from_str(&tool_json).map_err(|e| {
+            ProviderError::ResponseUnreadable(format!(
+                "invalid JSON for tool {expected_tool}: {e} (preview: {})",
+                &tool_json[..tool_json.len().min(200)]
+            ))
+        })?;
 
         Ok(ProviderCallResult {
             value,
@@ -640,8 +640,7 @@ impl AnthropicProvider {
         let mut last_progress_emit = std::time::Instant::now();
 
         while let Some(chunk) = stream.next().await {
-            let chunk =
-                chunk.map_err(|e| ProviderError::StreamInterrupted(format!("{e}")))?;
+            let chunk = chunk.map_err(|e| ProviderError::StreamInterrupted(format!("{e}")))?;
             let text = std::str::from_utf8(&chunk)
                 .map_err(|e| ProviderError::ResponseUnreadable(format!("{e}")))?;
 
@@ -658,11 +657,7 @@ impl AnthropicProvider {
                     match serde_json::from_str::<serde_json::Value>(data) {
                         Ok(event) => {
                             accumulator.handle_event(&event);
-                            self.emit_sse_progress(
-                                &accumulator,
-                                &event,
-                                &mut last_progress_emit,
-                            );
+                            self.emit_sse_progress(&accumulator, &event, &mut last_progress_emit);
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -700,9 +695,7 @@ impl AnthropicProvider {
                     task_id: task_id.clone(),
                 });
             }
-            "content_block_delta"
-                if last_emit.elapsed() >= std::time::Duration::from_secs(1) =>
-            {
+            "content_block_delta" if last_emit.elapsed() >= std::time::Duration::from_secs(1) => {
                 let (section, items) = acc.extraction_progress();
                 let _ = tx.send(ProgressEvent::LlmProgress {
                     output_tokens: acc.output_tokens(),
@@ -1718,7 +1711,10 @@ mod tests {
         let msg = result.unwrap_err().to_string();
         // Names both env vars so the user knows either one resolves it.
         assert!(msg.contains("FYNANCE_ANTHROPIC_API_KEY"), "got: {msg}");
-        assert!(msg.contains("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN"), "got: {msg}");
+        assert!(
+            msg.contains("FYNANCE_CLAUDE_CODE_OAUTH_TOKEN"),
+            "got: {msg}"
+        );
     }
 
     #[test]
