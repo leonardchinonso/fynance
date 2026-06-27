@@ -1,6 +1,8 @@
 HOLDINGS (requested)
 A holding is a snapshot of an account balance or asset position at a point in time — e.g. £500 in a savings account on 2026-03-31, or 50 shares of VUSA on 2026-03-15.
 
+Scan the ENTIRE document and emit a snapshot for every distinct holding in EVERY positions/holdings table. A single statement often has more than one positions table — for example one per sub-account or section (a "Stocks ISA" table and an "Invest"/"GIA" table), or per-currency/per-pot blocks. Do not stop after the first table; a silently dropped table loses a whole sub-account's holdings. Use `sub_account` to record which section/pot each row came from when there is more than one.
+
 Each entry has this shape:
 ```
 {
@@ -20,9 +22,17 @@ Each entry has this shape:
 
 `holding_type` is one of: `stock`, `etf`, `fund`, `bond`, `crypto`, `cash`, `property`, `loan`, `credit`.
 
+PREFER quantity + price over a bare value for securities. For `stock`, `etf`, `fund`, `bond`, and `crypto`, whenever the statement shows BOTH a share/unit count and a price per unit (it almost always does), emit `quantity` AND `price_per_unit`, and set `value` to their product. A bare `value` with no quantity/price has no internal cross-check, so a mis-scaled price sails through; quantity x price is self-checking. Only fall back to a bare `value` (with `quantity`/`price_per_unit` null) when the statement genuinely gives no share count or unit price — e.g. cash, property, or a loan balance. For `cash`, `property`, `loan`, and `credit`, emit `value` only (no quantity/price).
+
+UNIT SCALE — read the price's currency tag literally and normalise pence to pounds. UK/LSE-listed instruments are frequently quoted in GBX (pence), shown as "GBX", "GBp", or "p" — e.g. `GBX 5965.5` means £59.655 per unit. When the price tag is GBX/GBp/pence, divide the price by 100 and set `currency` to `GBP`. Never emit a GBX price as if it were GBP (that overstates the holding ~100x). USD/EUR prices are used as-is with their own currency code.
+
+KEY THE SYMBOL ON THE ISIN WHEN PRESENT. Statement tables often misalign the ticker-label column (the label can sit a row off from its real data), so do NOT trust the visible short label alone. When the row shows an ISIN (e.g. `IE00B3XXRP09`), resolve the symbol/ticker from the ISIN and put the canonical ticker in `symbol`. If you cannot confidently resolve a ticker, put the ISIN itself in `symbol` rather than guessing a wrong ticker.
+
 `derived` is a hard boolean: set it `false` when the snapshot value at this `as_of` is read directly from the document, and `true` when you computed or inferred it (e.g. interpolated a missing month-end from neighbouring snapshots and transactions). Do not conflate this with `row_confidence` — a derived value can still be high-confidence.
 
 `as_of` is REQUIRED and must be the date the snapshot is valid for — the statement closing date for a balance, or the position date for a holding. Read it from the document: the statement period end, the "balance as of" / "statement date" printed on the file, or the snapshot date. Do NOT use today's date or the date you are processing this import; use the date that belongs to the data. If a document covers a period, use that period's closing date. For a derived snapshot, use the date it represents (e.g. the month-end you interpolated). Omitting `as_of` or defaulting to today creates a misdated snapshot that will not line up with the user's existing data and will look like a brand-new position on every re-import.
+
+Fallback when NO date can be found: only if the document truly carries no usable date for this snapshot (no statement date, no period end, no "as of" line, nothing derivable), set `as_of` to today's date AND set `row_confidence` very low (below 0.3) so the user is prompted to fix it. A guessed/"now" date must always be flagged with low confidence; never emit a fallback date at high confidence.
 
 Continuity context — these are the user's most recent existing snapshots for each open holding on this account (JSON). Use them to maintain the same `symbol` and `name` spelling, and to anchor amounts where the documents are silent:
 {{LAST_HOLDINGS_JSON}}
