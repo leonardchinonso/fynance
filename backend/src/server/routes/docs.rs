@@ -1,12 +1,14 @@
 //! `GET /api/docs` — hand-crafted OpenAPI 3.1 spec.
 //!
 //! This endpoint is the self-describing contract external AI agents
-//! use to discover the API without any out-of-band documentation. The
-//! spec intentionally embeds the full category taxonomy from
+//! use to discover the API without any out-of-band documentation. It
+//! is a complete inventory of the API surface: every route under
+//! `/api` is listed here with its method, params, auth, and response.
+//! The spec intentionally embeds the full category taxonomy from
 //! `backend/config/categories.yaml` so an agent can categorize new
-//! transactions with zero extra fetches. Phases 3+ will extend this
-//! with concrete request/response schemas as routes land; the shape
-//! defined here is forward-compatible.
+//! transactions with zero extra fetches. The rich human-readable
+//! contract, with full field-level schemas for every request and
+//! response, lives in `docs/api.html`.
 
 use std::sync::OnceLock;
 
@@ -37,12 +39,15 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
         "openapi": "3.1.0",
         "info": {
             "title": "fynance API",
-            "version": "0.1.0",
+            "version": env!("CARGO_PKG_VERSION"),
             "description": concat!(
                 "Local-first personal finance tracker. All routes live under `/api`. ",
                 "Browser requests from `127.0.0.1` need no auth. Programmatic clients ",
                 "(scripts, agents) must supply `Authorization: Bearer fyn_...`. ",
-                "Tokens are generated via `fynance token create`.",
+                "Tokens are generated via `fynance token create`. ",
+                "This spec is a complete inventory of the API surface; the rich ",
+                "human-readable contract with full field-level schemas lives in ",
+                "`docs/api.html`.",
             ),
         },
         "servers": [
@@ -60,19 +65,22 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "schemas": {
                 "Transaction": {
                     "type": "object",
-                    "required": ["id", "date", "description", "amount", "currency", "account_id"],
+                    "required": ["id", "date", "description", "amount", "currency", "account_id", "fingerprint", "is_recurring", "exclude_from_summary"],
                     "properties": {
                         "id": { "type": "string" },
-                        "date": { "type": "string", "format": "date" },
+                        "date": { "type": "string", "format": "date-time", "description": "ISO 8601 datetime (`YYYY-MM-DDTHH:MM:SS`)." },
                         "description": { "type": "string" },
-                        "normalized": { "type": "string" },
+                        "normalized": { "type": "string", "description": "Normalized merchant/description used for matching." },
                         "amount": {
                             "type": "string",
                             "description": "Decimal as string. Negative = money out, positive = money in."
                         },
                         "currency": { "type": "string", "example": "GBP" },
                         "account_id": { "type": "string" },
-                        "category": { "type": ["string", "null"] },
+                        "category_id": {
+                            "type": ["string", "null"],
+                            "description": "FK to categories.id (a category UUID); only leaf nodes are valid. Resolve the display name from the categories list."
+                        },
                         "category_source": {
                             "type": ["string", "null"],
                             "enum": ["rule", "agent", "manual", null],
@@ -85,22 +93,50 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         },
                         "confidence": { "type": ["number", "null"] },
                         "notes": { "type": ["string", "null"] },
-                        "is_recurring": { "type": "boolean" }
+                        "is_recurring": { "type": "boolean" },
+                        "exclude_from_summary": {
+                            "type": "boolean",
+                            "description": "When true, the transaction is omitted from spending/budget summaries (e.g. transfers)."
+                        },
+                        "fingerprint": {
+                            "type": "string",
+                            "description": "Stable dedup hash: sha256(datetime, amount, account_id)."
+                        },
+                        "fitid": {
+                            "type": ["string", "null"],
+                            "description": "Financial institution transaction id from the source statement, when present."
+                        },
+                        "source_document_ids": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "IDs of the source documents (`documents.id`) this transaction was extracted from. Empty for manual / CSV / API imports with no document."
+                        }
                     }
                 },
                 "ImportTransaction": {
                     "type": "object",
                     "required": ["date", "description", "amount"],
                     "properties": {
-                        "date": { "type": "string", "format": "date" },
+                        "date": { "type": "string", "format": "date-time", "description": "ISO 8601 datetime; date-only values are accepted and stored at `T00:00:00`." },
                         "description": { "type": "string" },
-                        "amount": { "type": "string", "description": "Decimal string, signed." },
-                        "currency": { "type": "string", "default": "GBP" },
-                        "category": { "type": ["string", "null"] },
+                        "amount": { "type": "string", "description": "Decimal string, signed. Negative = money out, positive = money in." },
+                        "currency": { "type": ["string", "null"], "default": "GBP" },
+                        "category_id": {
+                            "type": ["string", "null"],
+                            "description": "FK to categories.id (a leaf category UUID)."
+                        },
                         "category_source": {
-                            "type": "string",
-                            "enum": ["rule", "agent", "manual"],
+                            "type": ["string", "null"],
+                            "enum": ["rule", "agent", "manual", null],
                             "default": "agent"
+                        },
+                        "notes": { "type": ["string", "null"] },
+                        "is_recurring": { "type": ["boolean", "null"] },
+                        "exclude_from_summary": { "type": ["boolean", "null"] },
+                        "source_document_ids": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "IDs of the source documents (`documents.id`) this row was extracted from. Empty for manual rows."
                         }
                     }
                 },
@@ -226,22 +262,204 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "responses": { "200": { "description": "OpenAPI 3.1 document" } }
                 }
             },
+            "/api/accounts": {
+                "get": {
+                    "summary": "List accounts",
+                    "responses": { "200": { "description": "Array of accounts" } }
+                },
+                "post": {
+                    "summary": "Create an account",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Created account" } }
+                }
+            },
+            "/api/accounts/{id}": {
+                "patch": {
+                    "summary": "Update an account",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Updated account" } }
+                },
+                "delete": {
+                    "summary": "Delete an account (soft-delete by default; ?hard=true removes the row)",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+                        { "name": "hard", "in": "query", "schema": { "type": "boolean", "default": false },
+                          "description": "Hard-delete the row instead of deactivating. Refuses if the account still has transactions or holdings." }
+                    ],
+                    "responses": {
+                        "200": { "description": "Account deleted or deactivated" },
+                        "409": { "description": "Account still has transactions or holdings" }
+                    }
+                }
+            },
+            "/api/accounts/{id}/balance": {
+                "patch": {
+                    "summary": "Set an account's balance as of a date",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Balance updated" } }
+                }
+            },
+            "/api/profiles": {
+                "get": {
+                    "summary": "List profiles",
+                    "responses": { "200": { "description": "Array of profiles" } }
+                },
+                "post": {
+                    "summary": "Create a profile",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Created profile" } }
+                }
+            },
+            "/api/profiles/{id}": {
+                "patch": {
+                    "summary": "Update a profile",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Updated profile" } }
+                },
+                "delete": {
+                    "summary": "Delete a profile",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Profile deleted" } }
+                }
+            },
+            "/api/categories": {
+                "get": {
+                    "summary": "List categories (the full hierarchical taxonomy)",
+                    "responses": { "200": { "description": "Array of categories" } }
+                },
+                "post": {
+                    "summary": "Create a category",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Created category" } }
+                }
+            },
+            "/api/categories/resolve": {
+                "get": {
+                    "summary": "Resolve a category id by name",
+                    "parameters": [
+                        { "name": "name", "in": "query", "required": true, "schema": { "type": "string" },
+                          "description": "Category name to resolve to its id." }
+                    ],
+                    "responses": { "200": { "description": "Resolved category" }, "404": { "description": "No matching category" } }
+                }
+            },
+            "/api/categories/{id}": {
+                "get": {
+                    "summary": "Get a category by id",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Category" }, "404": { "description": "Not found" } }
+                },
+                "patch": {
+                    "summary": "Update a category",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Updated category" } }
+                },
+                "delete": {
+                    "summary": "Delete a category",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Category deleted" } }
+                }
+            },
+            "/api/sections": {
+                "get": {
+                    "summary": "List section mappings (category-to-report-section assignments)",
+                    "responses": { "200": { "description": "Section mappings" } }
+                },
+                "put": {
+                    "summary": "Replace all section mappings",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Updated section mappings" } }
+                }
+            },
             "/api/transactions": {
                 "get": {
-                    "summary": "List transactions (Phase 3)",
+                    "summary": "List transactions (paginated)",
                     "parameters": [
                         { "name": "month", "in": "query", "schema": { "type": "string", "example": "2026-04" } },
-                        { "name": "category", "in": "query", "schema": { "type": "string" } },
-                        { "name": "account_id", "in": "query", "schema": { "type": "string" } },
+                        { "name": "category", "in": "query", "schema": { "type": "string" }, "description": "Filter by category id." },
+                        { "name": "account", "in": "query", "schema": { "type": "string" }, "description": "Filter by a single account id." },
+                        { "name": "accounts", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account ids to include." },
                         { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
                         { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } }
                     ],
-                    "responses": { "200": { "description": "Paginated transaction list" } }
+                    "responses": {
+                        "200": {
+                            "description": "Paginated transaction list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/Transaction" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "delete": {
+                    "summary": "Bulk hard-delete transactions",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "description": "Either `{ ids: [...] }` to delete specific transactions, or `{ account_id }` to clear an account.",
+                                    "properties": {
+                                        "ids": { "type": "array", "items": { "type": "string" } },
+                                        "account_id": { "type": "string" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Count of deleted transactions" } }
                 }
             },
-            "/api/import": {
+            "/api/transactions/by-category": {
+                "get": {
+                    "summary": "Transactions grouped/summarised by category",
+                    "responses": { "200": { "description": "Per-category transaction breakdown" } }
+                }
+            },
+            "/api/transactions/categories": {
+                "get": {
+                    "summary": "Distinct categories present in the transaction set",
+                    "responses": { "200": { "description": "Array of category ids/names" } }
+                }
+            },
+            "/api/transactions/accounts": {
+                "get": {
+                    "summary": "Distinct accounts present in the transaction set",
+                    "responses": { "200": { "description": "Array of accounts" } }
+                }
+            },
+            "/api/transactions/import": {
                 "post": {
-                    "summary": "Programmatic bulk import (Phase 3)",
+                    "summary": "Programmatic typed JSON import of transactions",
+                    "description": "Current route for structured (non-CSV) imports by agents and scripts.",
                     "security": [{ "bearerAuth": [] }],
                     "requestBody": {
                         "required": true,
@@ -273,6 +491,121 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     }
                 }
             },
+            "/api/transactions/{id}": {
+                "patch": {
+                    "summary": "Edit a transaction (category, notes, flags)",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Updated transaction",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/Transaction" }
+                                }
+                            }
+                        }
+                    }
+                },
+                "delete": {
+                    "summary": "Hard-delete one transaction",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Transaction deleted" } }
+                }
+            },
+            "/api/import": {
+                "post": {
+                    "summary": "Deprecated: programmatic typed JSON import",
+                    "deprecated": true,
+                    "description": "Deprecated. Use `POST /api/transactions/import` instead. This legacy route returns a `Deprecation` / `Link` header pointing at the successor.",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["account_id", "transactions"],
+                                    "properties": {
+                                        "account_id": { "type": "string" },
+                                        "transactions": {
+                                            "type": "array",
+                                            "items": { "$ref": "#/components/schemas/ImportTransaction" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Import summary",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ImportResult" }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/import/csv": {
+                "post": {
+                    "summary": "Upload a single CSV statement (auto-detects bank format)",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": { "multipart/form-data": { "schema": { "type": "object" } } }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Import summary",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ImportResult" }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/import/bulk": {
+                "post": {
+                    "summary": "Upload multiple CSV statements in one request",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": { "multipart/form-data": { "schema": { "type": "object" } } }
+                    },
+                    "responses": { "200": { "description": "Array of per-file ImportResult" } }
+                }
+            },
+            "/api/parse": {
+                "post": {
+                    "summary": "Stage 1 parse: extract transactions from uploaded documents (PDF/CSV)",
+                    "description": "Accepts a multipart upload (50 MB total, 10 MB per file). Kicks off LLM extraction; track progress via `GET /api/parse/progress/{parse_id}`.",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": { "multipart/form-data": { "schema": { "type": "object" } } }
+                    },
+                    "responses": { "200": { "description": "Parse result / parse_id for progress polling" } }
+                }
+            },
+            "/api/parse/progress/{parse_id}": {
+                "get": {
+                    "summary": "Poll progress of an in-flight parse",
+                    "parameters": [
+                        { "name": "parse_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Parse progress snapshot" } }
+                }
+            },
             "/api/documents": {
                 "get": {
                     "summary": "List stored source documents with reference count and orphan flag",
@@ -291,12 +624,16 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/documents/{id}": {
                 "get": {
                     "summary": "Document metadata (with reference count and orphan flag)",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
                     "responses": { "200": { "description": "DocumentSummary" }, "404": { "description": "Not found" } }
                 },
                 "delete": {
                     "summary": "Delete a document; 409 unless ?force=true unlinks referencing rows first",
                     "security": [{ "bearerAuth": [] }],
                     "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
                         { "name": "force", "in": "query", "schema": { "type": "boolean", "default": false },
                           "description": "Strip the id from every referencing row, then delete." }
                     ],
@@ -310,7 +647,230 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/documents/{id}/download": {
                 "get": {
                     "summary": "Stream the raw stored file bytes back as an attachment",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
                     "responses": { "200": { "description": "File bytes" }, "404": { "description": "Not found or missing on disk" } }
+                }
+            },
+            "/api/budget/spending-grid": {
+                "get": {
+                    "summary": "Multi-month spending vs budget grid",
+                    "parameters": [
+                        { "name": "start", "in": "query", "schema": { "type": "string", "example": "2026-01" } },
+                        { "name": "end", "in": "query", "schema": { "type": "string", "example": "2026-06" } },
+                        { "name": "granularity", "in": "query", "schema": { "type": "string", "example": "month" } },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "{ preferred_currency, rows: SpendingGridRow[] }" } }
+                }
+            },
+            "/api/budget/{month}": {
+                "get": {
+                    "summary": "Per-month budget view (effective budget + actual spend per category)",
+                    "parameters": [
+                        { "name": "month", "in": "path", "required": true, "schema": { "type": "string", "example": "2026-04" } }
+                    ],
+                    "responses": { "200": { "description": "Budget vs actuals for the month" } }
+                }
+            },
+            "/api/budget": {
+                "post": {
+                    "summary": "Set a standing monthly budget for a category",
+                    "description": "Body `{ category_id, amount }`. Applies every month unless overridden.",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Standing budget set" } }
+                }
+            },
+            "/api/budget/override": {
+                "post": {
+                    "summary": "Set a per-month budget override for a category",
+                    "description": "Body `{ month (YYYY-MM), category_id, amount }`.",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Override set" } }
+                }
+            },
+            "/api/holdings": {
+                "get": {
+                    "summary": "List holdings for an account",
+                    "parameters": [
+                        { "name": "account_id", "in": "query", "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Array of holdings" } }
+                }
+            },
+            "/api/holdings/summary": {
+                "get": {
+                    "summary": "Portfolio summary: net worth, by_asset_class, by_type, by_institution",
+                    "responses": { "200": { "description": "HoldingsSummaryResponse" } }
+                }
+            },
+            "/api/holdings/history": {
+                "get": {
+                    "summary": "Net worth history over time (available/unavailable/total)",
+                    "responses": { "200": { "description": "Net worth history series" } }
+                }
+            },
+            "/api/holdings/account-history": {
+                "get": {
+                    "summary": "Per-account, per-holding value series over time",
+                    "parameters": [
+                        { "name": "account_id", "in": "query", "schema": { "type": "string" } },
+                        { "name": "start", "in": "query", "schema": { "type": "string", "format": "date" } },
+                        { "name": "end", "in": "query", "schema": { "type": "string", "format": "date" } },
+                        { "name": "granularity", "in": "query", "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Per-holding value series" } }
+                }
+            },
+            "/api/holdings/balances": {
+                "get": {
+                    "summary": "Per-account balances derived from holdings SUM",
+                    "responses": { "200": { "description": "Per-account balances" } }
+                }
+            },
+            "/api/holdings/cash-flow": {
+                "get": {
+                    "summary": "Income/spending cash flow",
+                    "responses": { "200": { "description": "Cash flow series" } }
+                }
+            },
+            "/api/holdings/import": {
+                "post": {
+                    "summary": "Bulk import holdings",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Holdings import summary" } }
+                }
+            },
+            "/api/holdings/{account_id}": {
+                "post": {
+                    "summary": "Upsert holdings for an account",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "account_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Holdings upserted" } }
+                }
+            },
+            "/api/holdings/{account_id}/{symbol}": {
+                "get": {
+                    "summary": "Value history for one holding (account + symbol)",
+                    "parameters": [
+                        { "name": "account_id", "in": "path", "required": true, "schema": { "type": "string" } },
+                        { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Holding value history" } }
+                },
+                "patch": {
+                    "summary": "Update a single holding snapshot",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "account_id", "in": "path", "required": true, "schema": { "type": "string" } },
+                        { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Updated holding" } }
+                },
+                "delete": {
+                    "summary": "Delete a holding",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "account_id", "in": "path", "required": true, "schema": { "type": "string" } },
+                        { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } },
+                        { "name": "as_of", "in": "query", "schema": { "type": "string", "format": "date" },
+                          "description": "Delete the snapshot effective on this date." }
+                    ],
+                    "responses": { "200": { "description": "Holding deleted" } }
+                }
+            },
+            "/api/ingestion/checklist/{month}": {
+                "get": {
+                    "summary": "Ingestion checklist for a month (per-account import status)",
+                    "parameters": [
+                        { "name": "month", "in": "path", "required": true, "schema": { "type": "string", "example": "2026-04" } }
+                    ],
+                    "responses": { "200": { "description": "Checklist items" } }
+                }
+            },
+            "/api/ingestion/checklist/{month}/{account_id}": {
+                "post": {
+                    "summary": "Mark an account's import complete for a month",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "month", "in": "path", "required": true, "schema": { "type": "string", "example": "2026-04" } },
+                        { "name": "account_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Checklist item updated" } }
+                }
+            },
+            "/api/currencies": {
+                "get": {
+                    "summary": "List currencies and their FX rates to the preferred currency",
+                    "responses": { "200": { "description": "Array of currencies" } }
+                },
+                "post": {
+                    "summary": "Add a currency",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Created currency" } }
+                }
+            },
+            "/api/currencies/{code}": {
+                "patch": {
+                    "summary": "Update a currency's rate/metadata",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "code", "in": "path", "required": true, "schema": { "type": "string", "example": "USD" } }
+                    ],
+                    "responses": { "200": { "description": "Updated currency" } }
+                },
+                "delete": {
+                    "summary": "Delete a currency",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "code", "in": "path", "required": true, "schema": { "type": "string", "example": "USD" } }
+                    ],
+                    "responses": { "200": { "description": "Currency deleted" } }
+                }
+            },
+            "/api/investments": {
+                "get": {
+                    "summary": "List investment events",
+                    "parameters": [
+                        { "name": "account_id", "in": "query", "schema": { "type": "string" } },
+                        { "name": "symbol", "in": "query", "schema": { "type": "string" } },
+                        { "name": "event_type", "in": "query", "schema": { "type": "string" },
+                          "description": "Filter by event type (e.g. buy, sell, vest)." }
+                    ],
+                    "responses": { "200": { "description": "Array of investment events" } }
+                },
+                "post": {
+                    "summary": "Create one investment event",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Created investment event" } }
+                }
+            },
+            "/api/investments/import": {
+                "post": {
+                    "summary": "Bulk import investment events",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Investment import summary" } }
+                }
+            },
+            "/api/investments/{id}": {
+                "patch": {
+                    "summary": "Update an investment event",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Updated investment event" } }
+                },
+                "delete": {
+                    "summary": "Delete an investment event",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Investment event deleted" } }
                 }
             },
             "/api/investments/pools": {

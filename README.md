@@ -101,7 +101,7 @@ docker compose down -v           # stop and delete all data
 
 #### Updating
 
-Pre-built images are published to GitHub Container Registry on every merge to master:
+Pre-built images are published to GitHub Container Registry on each tagged release:
 
 ```bash
 docker compose pull
@@ -125,7 +125,13 @@ Configuration is managed through a `.env` file at the project root. The repo inc
 | `FYNANCE_LOG_LEVEL` | `info` | No | Log verbosity. Options: `trace`, `debug`, `info`, `warn`, `error` |
 | `FYNANCE_ANTHROPIC_API_KEY` | (none) | One of these two | Console API key (`sk-ant-api...`) from [console.anthropic.com](https://console.anthropic.com/). Pay-per-token billing |
 | `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN` | (none) | One of these two | Claude Pro/Max subscription token (`sk-ant-oat01...`) from `claude setup-token`. Billed against your subscription's Agent SDK credit pool, not per-token |
-| `FYNANCE_ADDITIONAL_DOCS` | (none) | No | Path to additional documentation for AI agents building against this environment |
+| `FYNANCE_IMPORT_LLM_MODEL` | `claude-haiku-4-5-20251001` | No | Claude model used by the CSV/statement parser |
+| `FYNANCE_IMPORT_MIN_DETECT_CONF` | `0.80` | No | File-level detection confidence threshold (0.0 to 1.0). Import fails hard below this |
+| `FYNANCE_IMPORT_MIN_ROW_CONF` | `0.70` | No | Row-level confidence threshold (0.0 to 1.0). Rows below this are skipped with a warning |
+| `FYNANCE_PARSE_PDF_MODEL` | `claude-sonnet-4-6` | No | More capable model used for PDF/visual document parsing |
+| `FYNANCE_PARSE_PROVIDER` | `anthropic` | No | LLM provider for `/api/parse` and import: `anthropic` (default) or `openai` |
+| `FYNANCE_OPENAI_API_KEY` / `_TEXT_MODEL` / `_PDF_MODEL` | (none) | No | OpenAI credentials and models, used only when `FYNANCE_PARSE_PROVIDER=openai`. See `.env.example` |
+| `VITE_MOCK_ONLY` | (none) | No | Frontend build flag: force mock-data mode for demo/preview deployments |
 
 **LLM credentials.** Importing statements requires an Anthropic credential. You can use either a pay-per-token Console API key (`FYNANCE_ANTHROPIC_API_KEY`) or a Claude Pro/Max subscription token (`FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`, obtained by running `claude setup-token`). The subscription token draws from your plan's monthly Agent SDK credit instead of billing per token, which is much cheaper for large imports. When both are set, the subscription token is used first and the API key is an automatic fallback if it is rejected or its credit is exhausted. The model, prompts, output, streaming, and PDF support are identical either way.
 
@@ -147,20 +153,21 @@ FYNANCE_LOG_LEVEL=info
 
 ## Releases
 
-A new minor version is created automatically on every merge to master. The workflow builds and pushes the Docker image, compiles binaries for all platforms, increments the minor version tag (e.g., `v0.9.0` → `v0.10.0`), and publishes a GitHub Release with auto-generated notes and the compiled binaries attached. There is no manual release flow at this time.
+Releases are cut manually from the **Release** workflow (`workflow_dispatch`), not automatically on merge. The workflow tags the commit (an explicit version, or an auto-incremented minor from the latest tag), builds the Linux binary (macOS and Windows are opt-in to save Actions minutes), pushes the Docker image to GHCR with `latest` and the version tag, and publishes a GitHub Release with auto-generated notes and the compiled binaries attached.
 
 ## CLI
 
 ```bash
 fynance serve [--port 7433] [--no-open]      # Start local web UI
 fynance import <file|dir> --account <id>     # Import CSV statements
-fynance account add --id <id> --name <name> --institution <inst> --type <type>
+fynance account add --id <id> --name <name> --institution <inst> --type <type> --profile <id> [--currency GBP]
 fynance account set-balance <id> <amount> --date YYYY-MM-DD
 fynance account list
+fynance account delete <id> [--hard]         # soft-delete (deactivate); --hard removes the row
+fynance transaction delete <id>... [--account <id>]   # hard-delete txns by id, or all for an account
 fynance budget set --month YYYY-MM --category <c> --amount N
-fynance budget status
+fynance budget status --month YYYY-MM
 fynance stats
-fynance export --year YYYY --format csv
 fynance token create --name <name>           # generate API token for programmatic access
 fynance token list
 fynance token revoke --name <name>
