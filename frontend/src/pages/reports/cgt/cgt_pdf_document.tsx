@@ -342,15 +342,7 @@ interface TaxEstimate {
   totalTax: number
 }
 
-// TEMPORARY hardcoded tax table (same as AEA_BY_TAX_YEAR above). UK statutory
-// values that change with each Budget, so they are not expected to live in the
-// frontend long-term: plan 23 §7.4/§7.5 moves the rates, Annual Exempt Amount,
-// and band split into server-side, user-definable tax config. Until then, update
-// these by hand when HMRC changes them.
-// UK CGT rates on shares by disposal-date band. The Autumn Budget 2024 raised
-// them mid-year (30 Oct 2024). `start` is required (inclusive) and `end` optional
-// (exclusive; omitted = still current); a disposal before the earliest band gets
-// no rate rather than a silently wrong one, which is why `start` is mandatory.
+
 interface RateBand {
   start: string
   end?: string
@@ -358,6 +350,14 @@ interface RateBand {
   higher: number
 }
 
+// TEMPORARY hardcoded tax table (same as AEA_BY_TAX_YEAR above). UK statutory
+// values that change with each Budget, so they are not expected to live in the
+// frontend long-term: plan 23 §7.4/§7.5 moves the rates, Annual Exempt Amount,
+// and band split into server-side, user-definable tax config. Until then, update
+// these by hand when HMRC changes them.
+// UK CGT rates on shares by disposal-date band. The Autumn Budget 2024 raised
+// them mid-year (30 Oct 2024). `start` is required (inclusive) and `end` optional
+// (exclusive; omitted = still current);
 const CGT_RATE_BANDS: RateBand[] = [
   { start: "2016-04-06", end: "2024-10-30", basic: 0.1, higher: 0.2 },
   { start: "2024-10-30", basic: 0.18, higher: 0.24 },
