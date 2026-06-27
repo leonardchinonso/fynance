@@ -2580,20 +2580,33 @@ impl Db {
     /// `get_document`. Orphaned is still computed, but cheaply: `NOT EXISTS`
     /// short-circuits on the first referencing row instead of counting them all.
     pub fn list_documents(&self) -> Result<Vec<DocumentSummary>> {
+        // Collect every referenced document id in a single pass per table. The
+        // previous per-document correlated `NOT EXISTS` was O(docs x rows) and
+        // re-scanned/re-parsed every source_document_ids JSON array once per
+        // document; this scans each table's json arrays exactly once.
+        let referenced: std::collections::HashSet<String> = {
+            let mut stmt = self.conn.prepare(
+                r"SELECT j.value FROM transactions t, json_each(t.source_document_ids) j
+                  UNION
+                  SELECT j.value FROM holdings h, json_each(h.source_document_ids) j
+                  UNION
+                  SELECT j.value FROM investments i, json_each(i.source_document_ids) j",
+            )?;
+            let ids = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            ids.collect::<rusqlite::Result<std::collections::HashSet<String>>>()?
+        };
+
         let mut stmt = self.conn.prepare(
-            r"SELECT d.id, d.filename, d.mime_type, d.size_bytes, d.origin, d.account_id,
-                     d.uploaded_at,
-                       NOT EXISTS(SELECT 1 FROM transactions t, json_each(t.source_document_ids) j WHERE j.value = d.id)
-                   AND NOT EXISTS(SELECT 1 FROM holdings h, json_each(h.source_document_ids) j WHERE j.value = d.id)
-                   AND NOT EXISTS(SELECT 1 FROM investments i, json_each(i.source_document_ids) j WHERE j.value = d.id)
-                       AS orphaned
+            r"SELECT d.id, d.filename, d.mime_type, d.size_bytes, d.origin, d.account_id, d.uploaded_at
               FROM documents d
               ORDER BY d.uploaded_at DESC, d.filename",
         )?;
         let rows = stmt
             .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let orphaned = !referenced.contains(&id);
                 Ok(DocumentSummary {
-                    id: row.get(0)?,
+                    id,
                     filename: row.get(1)?,
                     mime_type: row.get(2)?,
                     size_bytes: row.get::<_, i64>(3)? as usize,
@@ -2601,7 +2614,7 @@ impl Db {
                     account_id: row.get(5)?,
                     uploaded_at: row.get(6)?,
                     reference_count: None,
-                    orphaned: row.get(7)?,
+                    orphaned,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
