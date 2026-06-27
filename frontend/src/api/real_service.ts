@@ -75,6 +75,10 @@ import type { HoldingWrite } from "@/bindings/HoldingWrite"
 import type { HoldingsWritePayload } from "@/bindings/HoldingsWritePayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
+import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
+import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
+import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
@@ -469,6 +473,37 @@ export class RealApiService implements ApiService {
   async getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse> {
     const params = cgtFiltersToParams(filters)
     return get<CapitalGainsResponse>(`${BASE}/investments/capital-gains`, params)
+  }
+
+  // ── Investments ───────────────────────────────────────────────────
+
+  async listInvestments(
+    accountId?: string,
+    symbol?: string,
+    eventType?: string
+  ): Promise<InvestmentEvent[]> {
+    const params: Record<string, string> = {}
+    if (accountId) params.account_id = accountId
+    if (symbol) params.symbol = symbol
+    if (eventType) params.event_type = eventType
+    return get<InvestmentEvent[]>(`${BASE}/investments`, params)
+  }
+
+  async createInvestment(body: CreateInvestmentEventBody): Promise<InvestmentEvent> {
+    return post<InvestmentEvent>(`${BASE}/investments`, body)
+  }
+
+  async updateInvestment(id: string, body: PatchInvestmentEventBody): Promise<InvestmentEvent> {
+    return patch<InvestmentEvent>(`${BASE}/investments/${encodeURIComponent(id)}`, body)
+  }
+
+  async deleteInvestment(id: string): Promise<void> {
+    return del(`${BASE}/investments/${encodeURIComponent(id)}`)
+  }
+
+  async getInvestmentPools(profileId?: string): Promise<S104PoolState[]> {
+    const qs = profileId ? `?profile_ids=${encodeURIComponent(profileId)}` : ""
+    return get<S104PoolState[]>(`${BASE}/investments/pools${qs}`)
   }
 
   // ── Currencies ────────────────────────────────────────────────────

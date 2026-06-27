@@ -292,6 +292,19 @@ async function runView(browser, view) {
   }
   await shot(page, `preview_${label}_12d_cash_account_history`)
 
+  // 14. Investments tab — Overview dashboard (default) then the History ledger.
+  await page.goto(`${BASE}/investments`, { waitUntil: "domcontentloaded" })
+  await page.getByRole("heading", { name: /^investments$/i }).waitFor({ timeout: 15000 })
+  // Overview is the default view: assert the summary cards + the invested chart.
+  await page.getByText(/^cost basis$/i).waitFor({ timeout: 10000 })
+  await page.getByText(/cumulative invested/i).waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_13_investments_overview`)
+  // Switch to the History ledger: assert the Add control + the events table.
+  await page.getByRole("button", { name: /^history$/i }).click()
+  await page.getByRole("button", { name: /add event/i }).waitFor({ timeout: 5000 })
+  await page.getByRole("columnheader", { name: /^symbol$/i }).waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_13b_investments_history`)
+
   await ctx.close()
   console.log(`[${label}] OK`)
 }
