@@ -43,7 +43,7 @@ fynance/
 │   │   │       ├── mod.rs    # Router setup
 │   │   │       ├── health.rs # GET /health
 │   │   │       ├── docs.rs   # GET /api/docs (OpenAPI 3.1 spec)
-│   │   │       └── (future)  # API routes (transactions, budget, etc.)
+│   │   │       └── (accounts, transactions, budget, holdings, investments, parse, …)
 │   │   └── storage/          # SQLite persistence (Db type)
 │   ├── config/
 │   │   ├── categories.yaml   # Spending category taxonomy
@@ -88,10 +88,13 @@ All runtime configuration is done via environment variables. The binary loads `.
 | `FYNANCE_PORT`                   | `7433`                      | HTTP server port                                                                        |
 | `FYNANCE_HOST`                   | `127.0.0.1`                 | HTTP bind address. Set to `0.0.0.0` in Docker                                           |
 | `FYNANCE_LOG_LEVEL`              | `info`                      | Log verbosity: `trace`, `debug`, `info`, `warn`, `error`. Also respected via `RUST_LOG` |
-| `FYNANCE_ANTHROPIC_API_KEY`      | —                           | Required for `fynance import`. Anthropic API key for LLM-based CSV parsing              |
-| `FYNANCE_IMPORT_LLM_MODEL`       | `claude-haiku-4-5-20251001` | Claude model used by the CSV parser                                                     |
+| `FYNANCE_ANTHROPIC_API_KEY`      | —                           | Anthropic Console API key for LLM parsing (`fynance import` / `/api/parse`). Pay-per-token. One of this or the OAuth token is required to import |
+| `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`| —                           | Claude Pro/Max subscription token (`claude setup-token`). Preferred over the API key when both are set; the API key is the fallback              |
+| `FYNANCE_IMPORT_LLM_MODEL`       | `claude-haiku-4-5-20251001` | Claude model used by the CSV/statement parser                                          |
 | `FYNANCE_IMPORT_MIN_DETECT_CONF` | `0.80`                      | File-level confidence threshold. Import fails hard below this                           |
 | `FYNANCE_IMPORT_MIN_ROW_CONF`    | `0.70`                      | Row-level confidence threshold. Rows below this are skipped with a warning              |
+| `FYNANCE_PARSE_PDF_MODEL`        | `claude-sonnet-4-6`         | More capable model for PDF/visual document parsing in `/api/parse`                     |
+| `FYNANCE_PARSE_PROVIDER`         | `anthropic`                 | LLM provider for `/api/parse` and import: `anthropic` (default) or `openai` (OpenAI keys live in `.env.example`) |
 
 ### Default database path
 
@@ -123,7 +126,7 @@ The server is started with `fynance serve`. It runs on `127.0.0.1:7433` by defau
 - Embedded React UI at `/` and `/app/*`
 - Health check at `GET /health`
 - OpenAPI documentation at `GET /api/docs` (machine-readable schema for agents)
-- API routes at `/api/*` (transaction, budget, portfolio endpoints — phase 2+)
+- API routes at `/api/*` (accounts, transactions, budget, holdings, investments, parse, documents, and more)
 
 ### Authentication
 
@@ -183,13 +186,15 @@ Tokens are generated as random strings (prefix `fyn_`) and stored as SHA-256 has
 Register and inspect accounts. An account must exist before transactions can be imported into it.
 
 ```bash
-# Register a new account (or update an existing one)
+# Register a new account (or update an existing one). --profile is required and
+# the profile must already exist (create one via the web UI or POST /api/profiles).
 fynance account add \
   --id monzo-current \
   --name "Monzo Current Account" \
   --institution Monzo \
   --type checking \
-  --currency GBP
+  --currency GBP \
+  --profile personal
 
 # Supported account types: checking, savings, investment, credit, cash, pension
 
@@ -198,11 +203,28 @@ fynance account set-balance monzo-current 2491.70 --date 2026-03-31
 
 # List all registered accounts
 fynance account list
+
+# Delete an account (refuses if it still has transactions or holdings).
+# Soft-delete (deactivate) by default; --hard removes the row.
+fynance account delete monzo-current
+fynance account delete monzo-current --hard
+```
+
+### `fynance transaction`
+
+Permanently delete transactions (hard delete).
+
+```bash
+# Delete specific transactions by id
+fynance transaction delete <id> <id> ...
+
+# Delete every transaction for an account (e.g. to clear it before deleting the account)
+fynance transaction delete --account monzo-current
 ```
 
 ### `fynance import`
 
-Import a CSV bank statement (or a directory of CSVs) into the database. Requires `FYNANCE_ANTHROPIC_API_KEY` to be set.
+Import a CSV bank statement (or a directory of CSVs) into the database. Requires an Anthropic credential (`FYNANCE_ANTHROPIC_API_KEY` or `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`).
 
 ```bash
 # Single file
@@ -220,7 +242,7 @@ The import pipeline:
 4. Applies two confidence gates:
    - **File-level**: if `detection_confidence` < `FYNANCE_IMPORT_MIN_DETECT_CONF` (default 0.80), the import fails hard with an error.
    - **Row-level**: rows with `row_confidence` < `FYNANCE_IMPORT_MIN_ROW_CONF` (default 0.70) are skipped with a warning; the rest of the file continues.
-5. Fingerprints each accepted row (`sha256(date|amount|description|account_id)`) and inserts it with `INSERT OR IGNORE`, so re-importing the same file is always idempotent.
+5. Fingerprints each accepted row (`sha256(datetime, amount, account_id)`; description is deliberately excluded so the same transaction imported via different channels still dedupes) and inserts it with `INSERT OR IGNORE`, so re-importing the same file is always idempotent.
 
 Output example:
 

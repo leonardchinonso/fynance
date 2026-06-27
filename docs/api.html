@@ -496,6 +496,7 @@ td code { font-size: 12px; }
       <tr><td><code>exclude_from_summary</code></td><td>boolean</td><td>Excluded from budget summaries</td></tr>
       <tr><td><code>fingerprint</code></td><td>string</td><td>SHA-256 dedup hash</td></tr>
       <tr><td><code>fitid</code></td><td>string | null</td><td>Financial institution transaction ID</td></tr>
+      <tr><td><code>source_document_ids</code></td><td>string[]</td><td>IDs of the source documents this transaction was extracted from (documents.id). Empty for manual / CSV / API imports with no document.</td></tr>
     </tbody>
   </table>
 </section>
@@ -517,6 +518,7 @@ td code { font-size: 12px; }
       <tr><td><code>profile_ids</code></td><td>string[]</td><td>Profiles this account belongs to (required; each must already exist)</td></tr>
       <tr><td><code>is_stale</code></td><td>boolean</td><td>Balance snapshot older than 45 days (portfolio context only)</td></tr>
       <tr><td><code>is_available</code></td><td>boolean</td><td>Counts toward available (liquid) wealth</td></tr>
+      <tr><td><code>source_document_ids</code></td><td>string[]</td><td>IDs of the source documents this account was extracted from (documents.id). Empty for manual / API imports.</td></tr>
     </tbody>
   </table>
 </section>
@@ -616,6 +618,7 @@ td code { font-size: 12px; }
       <tr><td><code>notes</code></td><td>string | null</td><td>Free-text notes</td></tr>
       <tr><td><code>fingerprint</code></td><td>string</td><td>Dedup hash</td></tr>
       <tr><td><code>created_at</code></td><td>string</td><td>ISO 8601 datetime</td></tr>
+      <tr><td><code>source_document_ids</code></td><td>string[]</td><td>IDs of the source documents this event was extracted from (documents.id). Empty for manual / API imports.</td></tr>
     </tbody>
   </table>
 </section>
@@ -2133,9 +2136,18 @@ td code { font-size: 12px; }
       <tr><td>400</td><td><code>invalid_return_type</code></td><td>No extraction type enabled</td></tr>
       <tr><td>400</td><td><code>account_not_found</code></td><td>Account does not exist</td></tr>
       <tr><td>400</td><td><code>provider_config</code></td><td>LLM provider not configured (missing API key)</td></tr>
-      <tr><td>502</td><td><code>upstream_unreachable</code></td><td>LLM service unreachable</td></tr>
-      <tr><td>504</td><td><code>upstream_timeout</code></td><td>LLM service timed out</td></tr>
-      <tr><td>429</td><td><code>upstream_rate_limit</code></td><td>LLM rate limited</td></tr>
+      <tr><td>400</td><td><code>response_truncated</code></td><td>Model hit its output limit and returned a truncated result; split the upload into smaller batches</td></tr>
+      <tr><td>504</td><td><code>upstream_timeout</code></td><td>LLM provider timed out (<code>ProviderError::Timeout</code>)</td></tr>
+      <tr><td>502</td><td><code>upstream_unreachable</code></td><td>Could not reach the LLM provider (<code>ProviderError::Unreachable</code>)</td></tr>
+      <tr><td>429</td><td><code>upstream_rate_limit</code></td><td>LLM provider rate limited the request (<code>ProviderError::RateLimit</code>)</td></tr>
+      <tr><td>502</td><td><code>upstream_auth</code></td><td>LLM provider rejected our credential (<code>ProviderError::AuthRejected</code>)</td></tr>
+      <tr><td>502</td><td><code>upstream_error</code></td><td>LLM provider returned a 5xx server error (<code>ProviderError::UpstreamServerError</code>)</td></tr>
+      <tr><td>400</td><td><code>upstream_rejected</code></td><td>LLM provider returned a 4xx client error, usually a malformed request (<code>ProviderError::UpstreamClientError</code>)</td></tr>
+      <tr><td>502</td><td><code>upstream_garbled</code></td><td>LLM provider response could not be read or decoded (<code>ProviderError::ResponseUnreadable</code>)</td></tr>
+      <tr><td>502</td><td><code>upstream_no_tool_use</code></td><td>LLM provider did not return the expected structured tool_use block (<code>ProviderError::NoToolUse</code>)</td></tr>
+      <tr><td>502</td><td><code>upstream_stream_interrupted</code></td><td>Streaming response was cut off mid-flight (<code>ProviderError::StreamInterrupted</code>)</td></tr>
+      <tr><td>400</td><td><code>provider_not_supported</code></td><td>Requested operation is not supported by the configured provider (<code>ProviderError::NotSupported</code>)</td></tr>
+      <tr><td>400</td><td><code>parse_error</code></td><td>Extraction or post-processing failure not attributable to a specific <code>ProviderError</code> variant</td></tr>
     </tbody>
   </table>
 </section>
