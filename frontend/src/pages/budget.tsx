@@ -1,7 +1,6 @@
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
-import { ExportButton } from "@/components/export_button"
 import { BudgetSpreadsheet } from "./budget/budget_spreadsheet"
 import { BudgetCharts } from "./budget/budget_charts"
 import { Grid3X3, BarChart3 } from "lucide-react"
@@ -30,7 +29,6 @@ export function BudgetPage() {
         <DateRangeSelector showGranularity />
         <div className="flex-1" />
         <ViewModeSwitcher modes={VIEW_MODES} value={activeView} onChange={setView} />
-        <ExportButton />
       </div>
 
       {activeView === "spreadsheet" ? (

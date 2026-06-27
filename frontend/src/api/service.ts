@@ -32,6 +32,10 @@ import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
+import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
+import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
+import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
@@ -214,9 +218,34 @@ export interface ApiService {
    */
   getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse>
 
+  // ── Investments ───────────────────────────────────────────────────
+  /** List investment events. Maps to `GET /api/investments`. */
+  listInvestments(
+    accountId?: string,
+    symbol?: string,
+    eventType?: string
+  ): Promise<InvestmentEvent[]>
+  /** Create one investment event. Maps to `POST /api/investments`. */
+  createInvestment(body: CreateInvestmentEventBody): Promise<InvestmentEvent>
+  /** Update an investment event. Maps to `PATCH /api/investments/:id`. */
+  updateInvestment(id: string, body: PatchInvestmentEventBody): Promise<InvestmentEvent>
+  /** Delete an investment event. Maps to `DELETE /api/investments/:id`. */
+  deleteInvestment(id: string): Promise<void>
+  /** S104 average-cost pool snapshot per symbol. Maps to `GET /api/investments/pools`. */
+  getInvestmentPools(profileId?: string): Promise<S104PoolState[]>
+
   // ── Documents ─────────────────────────────────────────────────────
-  /** List all stored source documents with reference count + orphan flag. */
+  /**
+   * List all stored source documents with their orphan flag. `reference_count`
+   * is `null` here (computed lazily); fetch the real count per doc via
+   * {@link getDocument}.
+   */
   listDocuments(): Promise<DocumentSummary[]>
+  /**
+   * Fetch one document with its computed `reference_count`. Maps to
+   * `GET /api/documents/:id`. Used to resolve the lazy per-row link count.
+   */
+  getDocument(id: string): Promise<DocumentSummary>
   /** Upload one or more standalone documents (origin = "manual"). */
   uploadDocuments(files: File[], accountId?: string): Promise<DocumentSummary[]>
   /**

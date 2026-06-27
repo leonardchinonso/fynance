@@ -885,6 +885,7 @@ pub struct AccountHoldingSeries {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub short_name: Option<String>,
+    pub holding_type: String,
 }
 
 /// Value of one holding at a period end, converted to the preferred currency.
@@ -1422,8 +1423,11 @@ pub struct DocumentSummary {
     pub account_id: Option<String>,
     pub uploaded_at: String,
     /// Total rows across transactions + holdings + investments linking this doc.
-    pub reference_count: usize,
-    /// True when `reference_count == 0`, regardless of `origin`.
+    /// `null` in the list view: it's not computed there (too slow over the whole
+    /// dataset). Fetch the real count via `GET /api/documents/:id`.
+    pub reference_count: Option<usize>,
+    /// True when zero rows reference this doc, regardless of `origin`. Computed
+    /// cheaply in both the list and single-doc views.
     pub orphaned: bool,
 }
 

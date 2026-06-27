@@ -4,4 +4,4 @@
  * Stable metadata for one holding line in an account's history chart.
  * Used by `GET /api/holdings/account-history`.
  */
-export type AccountHoldingSeries = { symbol: string, name: string, short_name: string | null, };
+export type AccountHoldingSeries = { symbol: string, name: string, short_name: string | null, holding_type: string, };

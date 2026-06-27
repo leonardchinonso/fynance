@@ -10,7 +10,7 @@ import {
   Cell,
   Legend,
 } from "recharts"
-import { ChartTooltip } from "./chart_tooltip"
+import { ChartTooltip, useClampedTooltipPosition } from "./chart_tooltip"
 import { formatCurrency } from "@/lib/utils"
 
 const DEFAULT_COLORS = [
@@ -40,19 +40,13 @@ export function StyledBarChart({
   className,
   showLegend = true,
 }: StyledBarChartProps) {
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const [activeBarIndex, setActiveBarIndex] = useState<number | null>(null)
   const [activeCatIndex, setActiveCatIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-
-  function handleMouseMove(e: React.MouseEvent) {
-    if (!containerRef.current) return
-    const rect = containerRef.current.getBoundingClientRect()
-    setMousePos({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top + 15 })
-  }
+  const { pos, onMouseMove, onMouseLeave } = useClampedTooltipPosition(containerRef)
 
   return (
-    <div className={className} ref={containerRef} onMouseMove={handleMouseMove} onMouseLeave={() => { setMousePos(null); setActiveBarIndex(null); setActiveCatIndex(null) }} onMouseDown={(e) => e.preventDefault()}>
+    <div className={className} ref={containerRef} onMouseMove={onMouseMove} onMouseLeave={() => { onMouseLeave(); setActiveBarIndex(null); setActiveCatIndex(null) }} onMouseDown={(e) => e.preventDefault()}>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart
           data={data}
@@ -69,7 +63,7 @@ export function StyledBarChart({
           <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
           <Tooltip
             content={<ChartTooltip activeCategory={activeCatIndex !== null ? categories[activeCatIndex] : null} />}
-            position={mousePos ?? undefined}
+            position={pos}
             wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
             isAnimationActive={false}
             cursor={false}
@@ -140,18 +134,12 @@ export function ColoredBarChart({
   height?: number
   className?: string
 }) {
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const [activeBarIndex, setActiveBarIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-
-  function handleMouseMove(e: React.MouseEvent) {
-    if (!containerRef.current) return
-    const rect = containerRef.current.getBoundingClientRect()
-    setMousePos({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top + 15 })
-  }
+  const { pos, onMouseMove, onMouseLeave } = useClampedTooltipPosition(containerRef)
 
   return (
-    <div className={className} ref={containerRef} onMouseMove={handleMouseMove} onMouseLeave={() => { setMousePos(null); setActiveBarIndex(null) }} onMouseDown={(e) => e.preventDefault()}>
+    <div className={className} ref={containerRef} onMouseMove={onMouseMove} onMouseLeave={() => { onMouseLeave(); setActiveBarIndex(null) }} onMouseDown={(e) => e.preventDefault()}>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart
           data={data}
@@ -168,7 +156,7 @@ export function ColoredBarChart({
           <YAxis tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
           <Tooltip
             content={<ChartTooltip />}
-            position={mousePos ?? undefined}
+            position={pos}
             wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
             isAnimationActive={false}
             cursor={false}

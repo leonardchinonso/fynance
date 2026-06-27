@@ -12,6 +12,7 @@ import { Navbar } from "@/components/navbar"
 import { TransactionsPage } from "@/pages/transactions"
 import { BudgetPage } from "@/pages/budget"
 import { PortfolioPage } from "@/pages/portfolio"
+import { InvestmentsPage } from "@/pages/investments"
 import { ReportsLanding } from "@/pages/reports/reports_landing"
 import { DocumentsPage } from "@/pages/reports/documents/documents_page"
 import {
@@ -48,6 +49,7 @@ function Layout() {
         <Routes>
           <Route path="/" element={<Navigate to={homepage} replace />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
+          <Route path="/investments" element={<InvestmentsPage />} />
           <Route path="/budget" element={<BudgetPage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
           <Route path="/reports" element={<ReportsLanding />} />

@@ -65,7 +65,7 @@ pub async fn get_document(
         origin: doc.origin,
         account_id: doc.account_id,
         uploaded_at: doc.uploaded_at,
-        reference_count: refs.total(),
+        reference_count: Some(refs.total()),
         orphaned: refs.total() == 0,
     }))
 }
@@ -197,7 +197,7 @@ pub async fn upload_document(
             origin: doc.origin,
             account_id: doc.account_id,
             uploaded_at: doc.uploaded_at,
-            reference_count: refs.total(),
+            reference_count: Some(refs.total()),
             orphaned: refs.total() == 0,
         });
     }

@@ -608,8 +608,8 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             },
             "/api/documents": {
                 "get": {
-                    "summary": "List stored source documents with reference count and orphan flag",
-                    "responses": { "200": { "description": "Array of DocumentSummary" } }
+                    "summary": "List stored source documents with orphan flag (reference_count is null here; fetch per-doc via GET /api/documents/{id})",
+                    "responses": { "200": { "description": "Array of DocumentSummary (reference_count null)" } }
                 },
                 "post": {
                     "summary": "Upload one or more standalone documents (origin=manual, deduped by content hash)",

@@ -2573,32 +2573,48 @@ impl Db {
             .map_err(Into::into)
     }
 
-    /// List every stored document with its computed reference count and orphan
-    /// flag. Orphaned means zero referencing rows, regardless of origin.
+    /// List every stored document with its orphan flag. The exact reference
+    /// count is intentionally NOT computed here: the three correlated `COUNT`s
+    /// over `json_each` are slow over the whole dataset and block the list.
+    /// `reference_count` is left `None`; clients fetch it lazily per row via
+    /// `get_document`. Orphaned is still computed, but cheaply: `NOT EXISTS`
+    /// short-circuits on the first referencing row instead of counting them all.
     pub fn list_documents(&self) -> Result<Vec<DocumentSummary>> {
+        // Collect every referenced document id in a single pass per table. The
+        // previous per-document correlated `NOT EXISTS` was O(docs x rows) and
+        // re-scanned/re-parsed every source_document_ids JSON array once per
+        // document; this scans each table's json arrays exactly once.
+        let referenced: std::collections::HashSet<String> = {
+            let mut stmt = self.conn.prepare(
+                r"SELECT j.value FROM transactions t, json_each(t.source_document_ids) j
+                  UNION
+                  SELECT j.value FROM holdings h, json_each(h.source_document_ids) j
+                  UNION
+                  SELECT j.value FROM investments i, json_each(i.source_document_ids) j",
+            )?;
+            let ids = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            ids.collect::<rusqlite::Result<std::collections::HashSet<String>>>()?
+        };
+
         let mut stmt = self.conn.prepare(
-            r"SELECT d.id, d.filename, d.mime_type, d.size_bytes, d.origin, d.account_id,
-                     d.uploaded_at,
-                       (SELECT COUNT(*) FROM transactions t, json_each(t.source_document_ids) j WHERE j.value = d.id)
-                     + (SELECT COUNT(*) FROM holdings h, json_each(h.source_document_ids) j WHERE j.value = d.id)
-                     + (SELECT COUNT(*) FROM investments i, json_each(i.source_document_ids) j WHERE j.value = d.id)
-                       AS reference_count
+            r"SELECT d.id, d.filename, d.mime_type, d.size_bytes, d.origin, d.account_id, d.uploaded_at
               FROM documents d
               ORDER BY d.uploaded_at DESC, d.filename",
         )?;
         let rows = stmt
             .query_map([], |row| {
-                let reference_count: i64 = row.get(7)?;
+                let id: String = row.get(0)?;
+                let orphaned = !referenced.contains(&id);
                 Ok(DocumentSummary {
-                    id: row.get(0)?,
+                    id,
                     filename: row.get(1)?,
                     mime_type: row.get(2)?,
                     size_bytes: row.get::<_, i64>(3)? as usize,
                     origin: row.get(4)?,
                     account_id: row.get(5)?,
                     uploaded_at: row.get(6)?,
-                    reference_count: reference_count as usize,
-                    orphaned: reference_count == 0,
+                    reference_count: None,
+                    orphaned,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -2817,7 +2833,7 @@ impl Db {
         // snapshot is a close, the position drops out and the chart shows a gap
         // rather than carrying a stale value forward.
         let mut stmt = self.conn.prepare(
-            r"SELECT h.symbol, h.name, h.short_name, h.value, h.currency
+            r"SELECT h.symbol, h.name, h.short_name, h.value, h.currency, h.holding_type
               FROM holdings h
               WHERE h.account_id = ?1
                 AND h.is_closed = 0
@@ -2849,11 +2865,12 @@ impl Db {
                 let short_name: Option<String> = row.get(2)?;
                 let value: String = row.get(3)?;
                 let currency: String = row.get(4)?;
-                Ok((symbol, name, short_name, value, currency))
+                let holding_type: String = row.get(5)?;
+                Ok((symbol, name, short_name, value, currency, holding_type))
             })?;
 
             for r in mapped {
-                let (symbol, name, short_name, value_str, currency) = r?;
+                let (symbol, name, short_name, value_str, currency, holding_type) = r?;
                 let value = value_str.parse::<Decimal>().unwrap_or_default();
                 let converted = fx.convert(value, &currency);
                 *by_symbol.entry(symbol.clone()).or_insert(Decimal::ZERO) += converted;
@@ -2863,6 +2880,7 @@ impl Db {
                         symbol,
                         name,
                         short_name,
+                        holding_type,
                     });
                 }
             }
@@ -6099,7 +6117,10 @@ mod document_tests {
             .unwrap();
         let summaries = db.list_documents().unwrap();
         let s = summaries.iter().find(|s| s.id == manual.id).unwrap();
-        assert_eq!(s.reference_count, 0);
+        assert_eq!(
+            s.reference_count, None,
+            "list view leaves the exact count unset (computed lazily per doc)"
+        );
         assert!(s.orphaned, "manual upload with zero refs is still orphaned");
     }
 
@@ -6142,7 +6163,10 @@ mod document_tests {
             .into_iter()
             .find(|s| s.id == doc.id)
             .unwrap();
-        assert_eq!(summary.reference_count, 2);
+        assert_eq!(
+            summary.reference_count, None,
+            "list view does not compute the exact count"
+        );
         assert!(!summary.orphaned);
 
         match db.delete_document(&doc.id, false).unwrap() {

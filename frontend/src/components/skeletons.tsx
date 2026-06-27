@@ -1,4 +1,7 @@
 import { cn } from "@/lib/utils"
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table"
 
 function Bone({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return <div className={cn("animate-pulse rounded-md bg-muted", className)} style={style} />
@@ -195,35 +198,61 @@ export function BudgetChartsSkeleton() {
 
 // ─── Transactions ────────────────────────────────────────────────────────────
 
-/** Transaction table: 25 rows matching default page size */
-export function TableSkeleton({ rows = 25, cols = 5 }: { rows?: number; cols?: number }) {
+// Cell-content widths cycled through the skeleton so rows look varied, not striped.
+const SKELETON_COL_WIDTHS = ["w-24", "w-16", "w-28", "w-20", "w-16", "w-24", "w-20", "w-16"]
+
+/**
+ * Generic loading state for a paginated table. Built from the real Table
+ * primitives so padding, borders and row height line up with the loaded table,
+ * with a matching pagination footer. `rows` should be the page size so the
+ * placeholder fills the same space the data will. `actions` renders an
+ * icon-button column (the dominant row-height driver on tables that have one);
+ * `bordered` wraps it in a card border for tables rendered inside one.
+ */
+export function TableSkeleton({
+  rows = 25,
+  cols = 5,
+  actions = true,
+  bordered = false,
+}: { rows?: number; cols?: number; actions?: boolean; bordered?: boolean }) {
   return (
-    <div>
-      <table className="w-full">
-        <thead>
-          <tr className="border-b">
+    <div className={cn(bordered && "rounded-xl border overflow-hidden")}>
+      <Table>
+        <TableHeader>
+          <TableRow>
             {Array.from({ length: cols }).map((_, i) => (
-              <th key={i} className="px-4 py-2 text-left">
-                <Bone className={cn("h-3", i === 0 ? "w-10" : i === 1 ? "w-16" : i === 2 ? "w-16" : "w-14")} />
-              </th>
+              <TableHead key={i}><Bone className="h-3 w-16" /></TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Array.from({ length: rows }).map((_, i) => (
-            <tr key={i} className="border-b">
-              <td className="px-4 py-2"><Bone className="h-3 w-20" /></td>
-              <td className="px-4 py-2"><Bone className={cn("h-3", i % 3 === 0 ? "w-24" : "w-20")} /></td>
-              <td className="px-4 py-2"><Bone className="h-5 w-28 rounded-full" /></td>
-              <td className="px-4 py-2 text-right"><Bone className="h-3 w-16 ml-auto" /></td>
-              <td className="px-4 py-2"><Bone className={cn("h-3", i % 2 === 0 ? "w-24" : "w-20")} /></td>
-            </tr>
+            {actions && <TableHead className="text-right"><Bone className="h-3 w-12 ml-auto" /></TableHead>}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {Array.from({ length: rows }).map((_, r) => (
+            <TableRow key={r}>
+              {Array.from({ length: cols }).map((_, c) => (
+                <TableCell key={c}>
+                  <Bone className={cn("h-4", SKELETON_COL_WIDTHS[(r + c) % SKELETON_COL_WIDTHS.length])} />
+                </TableCell>
+              ))}
+              {actions && (
+                <TableCell>
+                  <div className="flex items-center justify-end gap-1">
+                    <Bone className="h-8 w-8 rounded-md" />
+                    <Bone className="h-8 w-8 rounded-md" />
+                  </div>
+                </TableCell>
+              )}
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-      <div className="flex items-center justify-between border-t px-4 py-3">
-        <Bone className="h-3 w-28" />
-        <div className="flex items-center gap-2"><Bone className="h-3 w-20" /><Bone className="h-7 w-7 rounded-md" /><Bone className="h-7 w-7 rounded-md" /></div>
+        </TableBody>
+      </Table>
+      <div className="flex items-center justify-between border-t px-2 py-3">
+        <Bone className="h-4 w-28" />
+        <div className="flex items-center gap-2">
+          <Bone className="h-4 w-24" />
+          <Bone className="h-7 w-7 rounded-md" />
+          <Bone className="h-7 w-7 rounded-md" />
+        </div>
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react"
+import { useRef } from "react"
 import {
   LineChart,
   Line,
@@ -11,7 +11,7 @@ import {
   Brush,
   ReferenceLine,
 } from "recharts"
-import { ChartTooltip } from "./chart_tooltip"
+import { ChartTooltip, useClampedTooltipPosition } from "./chart_tooltip"
 import { formatCurrency } from "@/lib/utils"
 
 const DEFAULT_COLORS = [
@@ -52,14 +52,8 @@ export function StyledLineChart({
   onBrushChange,
   onActiveIndexChange,
 }: StyledLineChartProps) {
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-
-  function handleMouseMove(e: React.MouseEvent) {
-    if (!containerRef.current) return
-    const rect = containerRef.current.getBoundingClientRect()
-    setMousePos({ x: e.clientX - rect.left + 15, y: e.clientY - rect.top + 15 })
-  }
+  const { pos, onMouseMove, onMouseLeave } = useClampedTooltipPosition(containerRef)
 
   const highlightLabel =
     highlightIndex !== null && highlightIndex !== undefined
@@ -67,7 +61,7 @@ export function StyledLineChart({
       : undefined
 
   return (
-    <div className={className} ref={containerRef} onMouseMove={handleMouseMove} onMouseLeave={() => setMousePos(null)} onMouseDown={(e) => e.preventDefault()}>
+    <div className={className} ref={containerRef} onMouseMove={onMouseMove} onMouseLeave={onMouseLeave} onMouseDown={(e) => e.preventDefault()}>
       <ResponsiveContainer width="100%" height={height + (showBrush ? 40 : 0)}>
         <LineChart
           data={data}
@@ -84,7 +78,7 @@ export function StyledLineChart({
           <YAxis width={90} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrency(v.toString())} />
           <Tooltip
             content={<ChartTooltip />}
-            position={mousePos ?? undefined}
+            position={pos}
             wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
             isAnimationActive={false}
           />

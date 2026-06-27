@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect } from "react"
 import { useUrlFilters } from "@/hooks/use_url_filters"
+import { usePageSizeParam } from "@/hooks/use_page_size"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { ViewModeSwitcher } from "@/components/view_mode_switcher"
-import { ExportButton } from "@/components/export_button"
 import { TransactionTable } from "./transactions/transaction_table"
 import { TransactionBarChart } from "./transactions/transaction_bar_chart"
 import { TransactionPieChart } from "./transactions/transaction_pie_chart"
@@ -75,10 +75,7 @@ export function TransactionsPage() {
     txSort, txDir, cycleTxSort,
   } = useUrlFilters()
 
-  const [pageSize, setPageSize] = useState(() => {
-    try { return parseInt(localStorage.getItem("fynance-page-size") ?? "25", 10) || 25 }
-    catch { return 25 }
-  })
+  const [pageSize, setPageSize] = usePageSizeParam("limit", "page")
 
   const transactionsData = useTransactions(
     start, end, selectedAccounts, selectedCategories, search, page, pageSize, profileId, txSort, txDir,
@@ -133,19 +130,9 @@ export function TransactionsPage() {
         <DateRangeSelector />
         <div className="flex-1" />
         <ViewModeSwitcher modes={VIEW_MODES} value={view} onChange={setView} />
-        <ExportButton />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search transactions..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-[200px] pl-8 text-sm"
-          />
-        </div>
         <MultiSelect label="Accounts" options={availableAccounts} selected={selectedAccounts} onChange={setAccounts} displayFn={(id) => accountNameMap[id] ?? id} />
         <MultiSelect
           label="Categories"
@@ -159,6 +146,19 @@ export function TransactionsPage() {
             Clear filters
           </Button>
         )}
+        <div className="flex-1" />
+        {/* Search applies only to the table rows, so hide it on the charts view. */}
+        {view === "table" && (
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search transactions..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 w-[200px] pl-8 text-sm"
+            />
+          </div>
+        )}
       </div>
 
       {view === "table" || view === "table" ? (
@@ -167,7 +167,7 @@ export function TransactionsPage() {
           page={page}
           pageSize={pageSize}
           onPageChange={setPage}
-          onPageSizeChange={(s) => { setPageSize(s); setPage(1) }}
+          onPageSizeChange={setPageSize}
           accountNames={accountNameMap}
           categoryColors={categoryColors}
           categoryOptions={categoryOptions}

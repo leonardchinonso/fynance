@@ -351,13 +351,10 @@ function PortfolioOverviewInternal({
                 {!cashFlowSettingsOpen && (
                   <button
                     onClick={() => setCashFlowSettingsOpen(true)}
-                    className="rounded-md p-1 transition-colors hover:bg-muted relative shrink-0"
+                    className="rounded-md p-1 transition-colors hover:bg-muted shrink-0"
                     aria-label="Cash flow settings"
                   >
                     <Settings2 className="h-4 w-4" />
-                    {excludedCategories.length > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-orange-500" />
-                    )}
                   </button>
                 )}
               </div>
@@ -504,7 +501,7 @@ function PortfolioOverviewInternal({
                     </button>
                   )}
                 </div>
-                <div className="px-5 pb-5 flex-1 min-h-0 flex">
+                <div className="px-5 pb-5 flex-1 min-h-0 flex overflow-x-auto">
                   {pieData.length > 0 ? (
                     <InteractivePie
                       data={pieData}
@@ -514,7 +511,7 @@ function PortfolioOverviewInternal({
                       outerRadius={90}
                       label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
                       legendPosition="left"
-                      className="w-full h-full"
+                      className="w-full h-full min-w-[340px]"
                     />
                   ) : (
                     <div className="flex-1 flex items-center justify-center">

@@ -48,7 +48,6 @@ import { SourceChips, type SourceDocMeta } from "@/components/source_chips"
 import type { SortDir, TransactionSortColumn } from "@/types"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
-const PAGE_SIZE_KEY = "fynance-page-size"
 const COLUMNS_KEY = "fynance-tx-columns"
 
 interface Column {
@@ -101,7 +100,7 @@ export function TransactionTable({
   categoryOptions = [], sort, sortDir, onSort, onResetFilters,
 }: TransactionTableOuterProps) {
   return visitRemoteData(data, {
-    notLoaded: () => <TableSkeleton rows={25} cols={5} />,
+    notLoaded: () => <TableSkeleton rows={pageSize} cols={5} actions={false} />,
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: ({ result }) => (
       <div className="relative">
@@ -451,9 +450,7 @@ function TransactionTableInternal({
                 if (v == null){
                   return;
                 }
-                const newLimit = parseInt(v, 10)
-                localStorage.setItem(PAGE_SIZE_KEY, v)
-                onLimitChange(newLimit)
+                onLimitChange(parseInt(v, 10))
               }}
             >
               <SelectTrigger className="h-7 w-[65px] text-xs">

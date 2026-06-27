@@ -33,6 +33,10 @@ import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
+import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
+import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
+import type { InvestmentEventType } from "@/bindings/InvestmentEventType"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
 import type { S104PoolState } from "@/bindings/S104PoolState"
@@ -85,6 +89,8 @@ function classifyBalance(
 export class MockApiService implements ApiService {
   // In-memory document store so the Documents page renders in mock mode. One
   // referenced (orphaned = false) and one orphaned entry to exercise the badge.
+  // `reference_count` is null in the list (matching the real backend), so the
+  // page's lazy per-row count path is exercised; getDocument resolves it.
   private documents: DocumentSummary[] = [
     {
       id: "mock_doc_monzo_may",
@@ -94,7 +100,7 @@ export class MockApiService implements ApiService {
       origin: "parse",
       account_id: "monzo-alex",
       uploaded_at: "2026-05-31T09:14:02Z",
-      reference_count: 47,
+      reference_count: null,
       orphaned: false,
     },
     {
@@ -105,9 +111,27 @@ export class MockApiService implements ApiService {
       origin: "parse",
       account_id: "t212-isa",
       uploaded_at: "2026-06-02T18:40:00Z",
-      reference_count: 0,
+      reference_count: null,
       orphaned: true,
     },
+  ]
+
+  // Plausible per-document counts resolved lazily via getDocument. Mirrors the
+  // backend: the orphaned doc resolves to 0, the linked one to a non-zero count.
+  private documentRefCounts: Record<string, number> = {
+    mock_doc_monzo_may: 47,
+    mock_doc_orphan: 0,
+  }
+
+  // In-memory investment-events ledger so the Investments page renders and
+  // mutates in mock mode. Mirrors the CGT mock symbols (VUSA, AAPL).
+  private investments: InvestmentEvent[] = [
+    mockEvent("mock_inv_vusa_buy_1", "t212-isa-alex", "buy", "VUSA", "2024-03-04T09:00:00", "60.0000", "72.00", "1.00", "GBP"),
+    mockEvent("mock_inv_vusa_buy_2", "t212-isa-alex", "buy", "VUSA", "2024-08-12T09:30:00", "60.0000", "72.00", "1.00", "GBP"),
+    mockEvent("mock_inv_vusa_sell_1", "t212-isa-alex", "sell", "VUSA", "2024-09-15T10:00:00", "30.0000", "85.50", "1.00", "GBP"),
+    mockEvent("mock_inv_aapl_buy_1", "t212-isa-sam", "buy", "AAPL", "2024-06-20T14:30:00", "40.0000", "126.40", "0.00", "USD"),
+    mockEvent("mock_inv_aapl_vest_1", "t212-isa-sam", "vest", "AAPL", "2024-10-01T00:00:00", "25.0000", "150.00", null, "USD"),
+    mockEvent("mock_inv_aapl_sell_1", "t212-isa-sam", "sell", "AAPL", "2025-01-29T15:30:00", "10.0000", "150.00", "0.50", "USD"),
   ]
 
   async getProfiles(): Promise<Profile[]> {
@@ -624,6 +648,7 @@ export class MockApiService implements ApiService {
       symbol: h.symbol,
       name: h.name,
       short_name: h.short_name,
+      holding_type: h.holding_type,
     }))
 
     // account_id -> "YYYY-MM" -> balance, carried forward across gaps.
@@ -1103,18 +1128,95 @@ export class MockApiService implements ApiService {
     return mockCapitalGains(filters)
   }
 
+  // ── Investments ───────────────────────────────────────────────────
+
+  async listInvestments(
+    accountId?: string,
+    symbol?: string,
+    eventType?: string
+  ): Promise<InvestmentEvent[]> {
+    await delay(DELAY_MS)
+    return this.investments
+      .filter((e) => !accountId || e.account_id === accountId)
+      .filter((e) => !symbol || e.symbol === symbol)
+      .filter((e) => !eventType || e.event_type === eventType)
+      .slice()
+      .sort((a, b) => b.date.localeCompare(a.date))
+  }
+
+  async createInvestment(body: CreateInvestmentEventBody): Promise<InvestmentEvent> {
+    await delay(DELAY_MS)
+    const event = mockEvent(
+      `mock_inv_${Math.random().toString(36).slice(2, 10)}`,
+      body.account_id,
+      body.event_type as InvestmentEventType,
+      body.symbol,
+      body.date,
+      body.quantity,
+      body.price_per_share,
+      body.fee,
+      body.currency,
+      body.fee_currency,
+      body.notes,
+    )
+    this.investments.unshift(event)
+    return event
+  }
+
+  async updateInvestment(id: string, body: PatchInvestmentEventBody): Promise<InvestmentEvent> {
+    await delay(DELAY_MS)
+    const idx = this.investments.findIndex((e) => e.id === id)
+    if (idx === -1) throw new Error(`investment event ${id} not found`)
+    const cur = this.investments[idx]
+    const updated: InvestmentEvent = {
+      ...cur,
+      event_type: (body.event_type as InvestmentEventType | null) ?? cur.event_type,
+      symbol: body.symbol ?? cur.symbol,
+      date: body.date ?? cur.date,
+      quantity: body.quantity ?? cur.quantity,
+      price_per_share: body.price_per_share ?? cur.price_per_share,
+      fee: body.fee !== undefined ? body.fee : cur.fee,
+      currency: body.currency ?? cur.currency,
+      fee_currency: body.fee_currency !== undefined ? body.fee_currency : cur.fee_currency,
+      notes: body.notes !== undefined ? body.notes : cur.notes,
+    }
+    this.investments[idx] = updated
+    return updated
+  }
+
+  async deleteInvestment(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    this.investments = this.investments.filter((e) => e.id !== id)
+  }
+
+  async getInvestmentPools(_profileId?: string): Promise<S104PoolState[]> {
+    await delay(DELAY_MS)
+    return derivePools(this.investments)
+  }
+
   // ── Documents ─────────────────────────────────────────────────────
 
   async listDocuments(): Promise<DocumentSummary[]> {
     await delay(DELAY_MS)
-    return [...this.documents]
+    // Match the real backend: the list never carries the exact count.
+    return this.documents.map((d) => ({ ...d, reference_count: null }))
+  }
+
+  async getDocument(id: string): Promise<DocumentSummary> {
+    await delay(DELAY_MS)
+    const doc = this.documents.find((d) => d.id === id)
+    if (!doc) throw new Error(`document ${id} not found`)
+    const count = doc.orphaned ? 0 : (this.documentRefCounts[id] ?? 0)
+    return { ...doc, reference_count: count }
   }
 
   async uploadDocuments(files: File[], accountId?: string): Promise<DocumentSummary[]> {
     await delay(DELAY_MS)
     const created = files.map((f) => {
+      const id = `mock_doc_${Math.random().toString(36).slice(2, 10)}`
+      this.documentRefCounts[id] = 0
       const doc: DocumentSummary = {
-        id: `mock_doc_${Math.random().toString(36).slice(2, 10)}`,
+        id,
         filename: f.name,
         mime_type: f.type || "application/octet-stream",
         size_bytes: f.size,
@@ -1133,10 +1235,11 @@ export class MockApiService implements ApiService {
   async deleteDocument(id: string, force = false): Promise<DocumentDeleteResult> {
     await delay(DELAY_MS)
     const doc = this.documents.find((d) => d.id === id)
-    if (doc && doc.reference_count > 0 && !force) {
+    const refs = doc ? (doc.orphaned ? 0 : (this.documentRefCounts[id] ?? 0)) : 0
+    if (doc && refs > 0 && !force) {
       // Synthesize a plausible breakdown for the confirm dialog.
       throw new DocumentReferencedError({
-        transactions: doc.reference_count,
+        transactions: refs,
         holdings: 0,
         investments: 0,
       })
@@ -1144,7 +1247,7 @@ export class MockApiService implements ApiService {
     this.documents = this.documents.filter((d) => d.id !== id)
     return {
       deleted: true,
-      unlinked: { transactions: doc?.reference_count ?? 0, holdings: 0, investments: 0 },
+      unlinked: { transactions: refs, holdings: 0, investments: 0 },
     }
   }
 
@@ -1351,4 +1454,75 @@ function mockCapitalGains(filters: CgtFilters): CapitalGainsResponse {
     realized_events: events,
     pools: MOCK_POOLS,
   }
+}
+
+// ── Mock investment events ────────────────────────────────────────────────────
+
+function mockEvent(
+  id: string,
+  accountId: string,
+  eventType: InvestmentEventType,
+  symbol: string,
+  date: string,
+  quantity: string,
+  pricePerShare: string,
+  fee: string | null,
+  currency: string,
+  feeCurrency: string | null = null,
+  notes: string | null = null,
+): InvestmentEvent {
+  return {
+    id,
+    account_id: accountId,
+    event_type: eventType,
+    symbol,
+    date,
+    quantity,
+    price_per_share: pricePerShare,
+    fee,
+    currency,
+    fee_currency: feeCurrency,
+    notes,
+    fingerprint: `mock_fp_${id}`,
+    created_at: date,
+    source_document_ids: [],
+  }
+}
+
+/**
+ * Derives a plausible S104 pool snapshot from the mock events: average-cost
+ * accumulation on buy/vest/transfer-in, proportional cost removal on sell.
+ * Not the real HMRC engine, just enough for the Overview table to render.
+ */
+function derivePools(events: InvestmentEvent[]): S104PoolState[] {
+  const pools = new Map<string, { shares: number; cost: number }>()
+  const ordered = [...events].sort((a, b) => a.date.localeCompare(b.date))
+
+  for (const e of ordered) {
+    const pool = pools.get(e.symbol) ?? { shares: 0, cost: 0 }
+    const qty = parseFloat(e.quantity)
+    const price = parseFloat(e.price_per_share)
+    const fee = e.fee ? parseFloat(e.fee) : 0
+
+    if (e.event_type === "sell" || e.event_type === "withhold") {
+      const avg = pool.shares > 0 ? pool.cost / pool.shares : 0
+      const removed = Math.min(qty, pool.shares)
+      pool.shares -= removed
+      pool.cost -= avg * removed
+    } else {
+      pool.shares += qty
+      pool.cost += qty * price + fee
+    }
+    pools.set(e.symbol, pool)
+  }
+
+  return Array.from(pools.entries())
+    .filter(([, p]) => p.shares > 0.0001)
+    .map(([symbol, p]) => ({
+      symbol,
+      current_shares: p.shares.toFixed(4),
+      total_allowable_expenditure: p.cost.toFixed(2),
+      average_cost_per_share: (p.shares > 0 ? p.cost / p.shares : 0).toFixed(2),
+    }))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol))
 }

@@ -2220,7 +2220,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <span class="method-badge method-get">GET</span>
     <code class="endpoint-path">/api/documents</code>
   </div>
-  <p class="endpoint-summary">List all stored documents with their reference count and orphan flag.</p>
+  <p class="endpoint-summary">List all stored documents with their orphan flag. <code>reference_count</code> is <code>null</code> here: the exact per-document count is expensive over the whole dataset, so it is computed lazily. Fetch it per document via <code>GET /api/documents/:id</code>. <code>orphaned</code> is always populated.</p>
   <h4>Example Response <span class="status-code">200</span></h4>
   <pre class="example-response"><code>[
   {
@@ -2231,7 +2231,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     "origin": "parse",
     "account_id": "monzo-alex",
     "uploaded_at": "2026-05-31T09:14:02Z",
-    "reference_count": 47,
+    "reference_count": null,
     "orphaned": false
   }
 ]</code></pre>
@@ -2634,8 +2634,8 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <pre class="example-response"><code>{
   "preferred_currency": "GBP",
   "symbols": [
-    { "symbol": "VWRL", "name": "Vanguard FTSE All-World ETF", "short_name": "All-World" },
-    { "symbol": "VUSA", "name": "Vanguard S&P 500 ETF", "short_name": "S&P 500" }
+    { "symbol": "VWRL", "name": "Vanguard FTSE All-World ETF", "short_name": "All-World", "holding_type": "etf" },
+    { "symbol": "VUSA", "name": "Vanguard S&P 500 ETF", "short_name": "S&P 500", "holding_type": "etf" }
   ],
   "rows": [
     {

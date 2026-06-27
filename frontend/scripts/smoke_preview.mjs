@@ -228,8 +228,8 @@ async function runView(browser, view) {
   await page.getByText(/tax year/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9c_cgt_history`)
 
-  // 11. Reports → Documents page. Verify the table renders and the mock's
-  //     orphaned document shows the "Orphaned" badge.
+  // 11. Reports → Documents page. Verify the table + pagination footer render
+  //     and the mock's orphaned document shows the "Orphaned" badge.
   await page.goto(`${BASE}/reports`, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: /documents/i }).first().click()
   await page.waitForURL(/\/reports\/documents$/, { timeout: 5000 })
@@ -240,6 +240,9 @@ async function runView(browser, view) {
   if ((await orphanBadge.count()) === 0) {
     throw new Error("Orphaned badge missing on the Documents page")
   }
+  // Pagination footer (table is now paginated like Transactions).
+  await page.getByText(/page \d+ of \d+/i).first().waitFor({ timeout: 5000 })
+  await page.getByText(/\d+ documents?/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_10_documents`)
 
   // 12. Budget grid — verify the "Show empty categories" toggle and the
@@ -291,6 +294,22 @@ async function runView(browser, view) {
     throw new Error("Allocation toggle should not appear for a cash account with no investment holdings")
   }
   await shot(page, `preview_${label}_12d_cash_account_history`)
+
+  // 14. Investments tab — Overview dashboard (default) then the History ledger.
+  await page.goto(`${BASE}/investments`, { waitUntil: "domcontentloaded" })
+  // The shared header has no page title; anchor on the Overview/History view
+  // toggle and the persistent Accounts filter instead.
+  await page.getByRole("button", { name: /^overview$/i }).waitFor({ timeout: 15000 })
+  await page.getByRole("button", { name: /^accounts$/i }).waitFor({ timeout: 5000 })
+  // Overview is the default view: assert the summary cards + the invested chart.
+  await page.getByText(/^cost basis$/i).waitFor({ timeout: 10000 })
+  await page.getByText(/cumulative invested/i).waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_13_investments_overview`)
+  // Switch to the History ledger: assert the Add control + the events table.
+  await page.getByRole("button", { name: /^history$/i }).click()
+  await page.getByRole("button", { name: /add event/i }).waitFor({ timeout: 5000 })
+  await page.getByRole("columnheader", { name: /^symbol$/i }).waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_13b_investments_history`)
 
   await ctx.close()
   console.log(`[${label}] OK`)
