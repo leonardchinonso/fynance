@@ -31,6 +31,8 @@ interface StyledLineChartProps {
   curved?: boolean
   showLegend?: boolean
   connectNulls?: boolean
+  // Categories rendered as a dashed line (e.g. an aggregate "Total" overlay).
+  dashedKeys?: string[]
   showBrush?: boolean
   highlightIndex?: number | null
   onBrushChange?: (startIndex: number, endIndex: number) => void
@@ -47,6 +49,7 @@ export function StyledLineChart({
   curved = true,
   showLegend = true,
   connectNulls = false,
+  dashedKeys = [],
   showBrush = false,
   highlightIndex,
   onBrushChange,
@@ -98,6 +101,7 @@ export function StyledLineChart({
               dataKey={cat}
               stroke={colors[i % colors.length]}
               strokeWidth={2.5}
+              strokeDasharray={dashedKeys.includes(cat) ? "6 4" : undefined}
               dot={{ r: 3, fill: colors[i % colors.length], strokeWidth: 0 }}
               activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
               isAnimationActive={false}

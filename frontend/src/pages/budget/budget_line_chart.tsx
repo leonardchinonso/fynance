@@ -17,6 +17,8 @@ interface BudgetLineChartProps {
 
 const PALETTE = Object.values(CATEGORY_COLORS)
 const NEUTRAL = "#78716c"
+const TOTAL_LABEL = "Total"
+const TOTAL_COLOR = "#e5e7eb"
 
 export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: BudgetLineChartProps) {
   const { categoryColors } = useCategoryColorsContext()
@@ -36,32 +38,39 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
   }
 
   const labels = rows.map(seriesLabel)
-  const categories = Array.from(new Set(labels)).slice(0, 8)
-  const shown = new Set(categories)
+  const baseCategories = Array.from(new Set(labels)).slice(0, 8)
+  const shown = new Set(baseCategories)
 
   const periodKeys = periodKeysFromRows(rows)
 
+  // Total sums every filtered row per period, including categories beyond the
+  // top-8 drawn as individual lines, so it reflects the full filtered spend.
   const data = periodKeys.map((p) => {
     const entry: Record<string, string | number> = {
       period: formatPeriodKey(p, granularity),
     }
+    let total = 0
     rows.forEach((row, i) => {
-      const label = labels[i]
-      if (!shown.has(label)) return
       const n = parseFloat(row.periods[p] ?? "")
       const value = Number.isFinite(n) ? Math.abs(n) : 0
-      entry[label] = ((entry[label] as number) ?? 0) + value
+      total += value
+      const label = labels[i]
+      if (shown.has(label)) entry[label] = ((entry[label] as number) ?? 0) + value
     })
+    entry[TOTAL_LABEL] = total
     return entry
   })
 
   const colorByParent = (name: string) =>
     categoryColors[name] ?? CATEGORY_COLORS[name] ?? NEUTRAL
-  const colors = categories.map((label, i) => {
+  const baseColors = baseCategories.map((label, i) => {
     if (groupBy === "leaf_category") return colorByParent(categoryParent(label))
     if (groupBy === "parent_category") return colorByParent(label)
     return PALETTE[i % PALETTE.length] ?? NEUTRAL
   })
+
+  const categories = [TOTAL_LABEL, ...baseCategories]
+  const colors = [TOTAL_COLOR, ...baseColors]
 
   return (
     <div className="rounded-lg border p-4">
@@ -73,6 +82,7 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
         index="period"
         categories={categories}
         colors={colors}
+        dashedKeys={[TOTAL_LABEL]}
         height={340}
         curved
       />
