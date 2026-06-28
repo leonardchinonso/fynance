@@ -312,6 +312,9 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
                 <div key={child.id} className="flex items-center gap-3 rounded-lg border p-2.5 group">
                   <Tag className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                   <p className="flex-1 text-sm">{child.name}</p>
+                  <Badge variant="secondary" className="text-[10px] font-normal text-muted-foreground">
+                    {CATEGORY_TYPE_LABELS[child.category_type]}
+                  </Badge>
                   <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onEdit(child, parent.id)}>
                     <Pencil className="h-3 w-3" />
                   </Button>
