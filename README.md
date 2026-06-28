@@ -16,7 +16,11 @@ Personal finance tracker with a Rust backend and React web UI. Import bank CSV e
 
 **Prerequisites:** Nothing. Just download the binary and run it. No Rust, no Node.js, no Docker.
 
-Download the binary for your platform from [GitHub Releases](https://github.com/leonardchinonso/fynance/releases):
+This is the recommended option if you only want to run fynance on your own computer. The steps below assume no command-line experience.
+
+#### Step 1: Download the binary
+
+Download the file for your platform from [GitHub Releases](https://github.com/leonardchinonso/fynance/releases) (open the latest release and look under **Assets**):
 
 | Platform | File |
 |---|---|
@@ -24,28 +28,77 @@ Download the binary for your platform from [GitHub Releases](https://github.com/
 | macOS (Apple Silicon) | `fynance-macos-aarch64` |
 | Windows | `fynance-windows-x86_64.exe` |
 
+The whole app, the web interface and the command-line tool, is this single file. There is nothing else to install.
+
+#### Step 2: Unblock the file (first run only)
+
+The binaries are not signed by Apple or Microsoft, so your OS will warn you the first time you run a downloaded program. This is expected. You only have to do this once per downloaded file.
+
+**Windows:** Windows SmartScreen may show *"Windows protected your PC."* Click **More info**, then **Run anyway**. (Alternatively, right-click the file → **Properties** → tick **Unblock** at the bottom → **OK**.)
+
+**macOS:** Gatekeeper will say the file *"cannot be opened because the developer cannot be verified."* Clear the quarantine flag, then it will run normally:
+```bash
+xattr -d com.apple.quarantine fynance-macos-aarch64
+```
+(Alternatively, find the file in Finder, right-click it → **Open** → confirm in the dialog. You only need to do this once.)
+
+#### Step 3: Make it a command you can run from anywhere (recommended)
+
+This lets you type `fynance` instead of the full path to the file every time.
+
+**Windows (PowerShell):** rename the file to `fynance.exe` and move it into a folder, then add that folder to your PATH:
+```powershell
+# Create a folder for it and move the download there (adjust the source path)
+New-Item -ItemType Directory -Force "$HOME\bin"
+Move-Item "$HOME\Downloads\fynance-windows-x86_64.exe" "$HOME\bin\fynance.exe"
+
+# Add that folder to your user PATH (one time; restart the terminal afterwards)
+[Environment]::SetEnvironmentVariable(
+  "Path",
+  [Environment]::GetEnvironmentVariable("Path", "User") + ";$HOME\bin",
+  "User")
+```
+
 **Linux / macOS:**
 ```bash
-chmod +x fynance-*        # make it executable
-sudo mv fynance-* /usr/local/bin/fynance   # put it on your PATH
-fynance serve
+chmod +x fynance-*                          # make it executable
+sudo mv fynance-* /usr/local/bin/fynance    # put it on your PATH (rename to "fynance")
 ```
 
-**Windows:**
+> Prefer not to move it? You can always run the file in place by giving its full path instead of `fynance`. On Windows PowerShell that looks like `& "C:\Users\you\Downloads\fynance-windows-x86_64.exe" serve`; on macOS/Linux, `./fynance-macos-aarch64 serve` from the folder it's in.
 
-Rename the downloaded file to `fynance.exe`, move it somewhere on your PATH (e.g. `C:\Users\<you>\bin\`), then run:
-```powershell
+#### Step 4: Start the app
+
+Open a terminal (PowerShell on Windows, Terminal on macOS) and run:
+```bash
 fynance serve
 ```
+This starts the local server and **opens the app automatically in your browser** at `http://localhost:7433`. Leave the terminal window open while you use fynance, closing it stops the server. Press `Ctrl+C` in that window to stop it.
 
-The app opens automatically in your browser at `http://localhost:7433`. Your data is stored in the OS default location:
+Useful options:
+```bash
+fynance serve --port 8080    # use a different port (default 7433)
+fynance serve --no-open      # start without auto-opening the browser
+```
+
+The app starts empty on first run. Your data lives in a single SQLite file at the OS default location:
 - Linux: `~/.local/share/fynance/fynance.db`
-- macOS: `~/Library/Application Support/fynance/`
-- Windows: `%APPDATA%\fynance\`
+- macOS: `~/Library/Application Support/fynance/fynance.db`
+- Windows: `%LOCALAPPDATA%\fynance\fynance.db` (i.e. `C:\Users\<you>\AppData\Local\fynance\`)
+
+To use a database file somewhere else (for example an existing one), point to it with `--db`:
+```bash
+fynance serve --db "C:\path\to\fynance.db"     # Windows
+fynance serve --db "/path/to/fynance.db"       # macOS / Linux
+```
+
+#### Step 5: Configure settings (optional)
+
+Most people never need to change anything, the defaults work. When you do (a different port, a custom database location, or an Anthropic key so the in-app statement importer works), see [Configuring the standalone binary](#configuring-the-standalone-binary) below for exactly where settings go. The full list of variables is in the [Environment Variables](#environment-variables) table.
 
 #### Updating
 
-Download the latest binary from [GitHub Releases](https://github.com/leonardchinonso/fynance/releases) and replace the existing one on your PATH.
+Download the latest binary from [GitHub Releases](https://github.com/leonardchinonso/fynance/releases) and replace the existing one (overwrite the `fynance` / `fynance.exe` file you put on your PATH). Your database is stored separately, so updating the binary never touches your data. On macOS you will need to clear the quarantine flag again (Step 2) on the new download.
 
 ### Option 2: Docker (always-on, self-hosted)
 
@@ -113,9 +166,47 @@ To pin to a specific release:
 image: ghcr.io/leonardchinonso/fynance:v0.9.0
 ```
 
+### Configuring the standalone binary
+
+Settings are read from **environment variables**. You do not edit anything inside the binary itself. There are three ways to set them, in order of how easy they are for non-developers. Real environment variables take precedence over a `.env` file, so anything you set on the command line wins.
+
+**1. Command-line flags (simplest, for the common settings).** The two settings people change most often have dedicated flags, so no configuration file is needed at all:
+```bash
+fynance serve --port 8080 --db "C:\path\to\fynance.db"
+```
+
+**2. A `.env` file.** Create a plain text file named exactly `.env` (no other extension) containing `NAME=value` lines, one per setting:
+```env
+FYNANCE_PORT=8080
+FYNANCE_LOG_LEVEL=info
+FYNANCE_DB_PATH=C:\Users\you\Documents\fynance.db
+FYNANCE_ANTHROPIC_API_KEY=sk-ant-...
+```
+**Important:** the binary looks for `.env` in the folder you are *in* when you run it (your current working directory), not the folder the binary lives in. The simplest reliable setup is to keep a dedicated folder, put the `.env` file in it, and always start fynance from that folder (`cd` into it first, then run `fynance serve`). On Windows, note that File Explorer hides file extensions by default, so a file you name `.env` can silently become `.env.txt`, double-check via **View → File name extensions**.
+
+**3. Real environment variables.** Set them in your shell or OS so they apply to every run.
+
+Windows, for the current PowerShell window only:
+```powershell
+$env:FYNANCE_PORT = "8080"
+fynance serve
+```
+Windows, permanently for your user account (set once, applies to every new terminal):
+```powershell
+[Environment]::SetEnvironmentVariable("FYNANCE_PORT", "8080", "User")
+```
+macOS / Linux, for the current terminal:
+```bash
+export FYNANCE_PORT=8080
+fynance serve
+```
+macOS / Linux, permanently: add the same `export` line to your shell profile (`~/.zshrc` on macOS, `~/.bashrc` on most Linux).
+
+> **Do I need an Anthropic key?** Only if you want to import bank statements *through the web UI or `fynance import`*, that feature uses Claude to read the statement. Browsing, budgeting, and viewing your portfolio do not need a key. If you import via an external agent instead, the key lives with that agent, not here. See the table below for `FYNANCE_ANTHROPIC_API_KEY` vs `FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`.
+
 ### Environment Variables
 
-Configuration is managed through a `.env` file at the project root. The repo includes a `.env.example` with safe defaults. Copy it to `.env` and fill in your values. The `.env` file is gitignored and should never be committed.
+The variables below can be set any of the three ways described in [Configuring the standalone binary](#configuring-the-standalone-binary) above. For local development from a cloned repo, the repo includes a `.env.example` with safe defaults, copy it to `.env` and fill in your values. The `.env` file is gitignored and should never be committed.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
@@ -217,14 +308,14 @@ cd frontend && npm run build && cd ..
 
 The recommended workflow for active development on both frontend and backend. Two dev servers run simultaneously: Vite for the frontend and Axum for the backend. The frontend proxies API calls to the backend so you interact with the real API while developing.
 
-**Terminal 1** — Backend with live reload:
+**Terminal 1**, backend with live reload:
 ```bash
 cd backend
 cargo watch -x 'run -- serve --no-open'
 ```
 The backend API starts on `http://localhost:7433` and auto-recompiles when `.rs` files change.
 
-**Terminal 2** — Frontend with hot module replacement:
+**Terminal 2**, frontend with hot module replacement:
 ```bash
 cd frontend
 npm run dev

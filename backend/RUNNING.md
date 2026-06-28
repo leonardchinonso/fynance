@@ -104,7 +104,7 @@ The binary resolves the database path from the OS-native data directory:
 | ------- | -------------------------------------------------- |
 | macOS   | `~/Library/Application Support/fynance/fynance.db` |
 | Linux   | `~/.local/share/fynance/fynance.db`                |
-| Windows | `%APPDATA%\fynance\fynance.db`                     |
+| Windows | `%LOCALAPPDATA%\fynance\fynance.db`                |
 
 Override with `--db <path>` (CLI flag) or `FYNANCE_DB_PATH` (env var). The CLI flag takes precedence.
 
