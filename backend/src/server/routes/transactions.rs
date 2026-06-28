@@ -22,6 +22,8 @@ pub struct ListTransactionsQuery {
     pub end: Option<String>,
     pub accounts: Option<String>,
     pub categories: Option<String>,
+    /// Comma-separated category_type values (e.g. "spending,income_taxable").
+    pub category_types: Option<String>,
     pub search: Option<String>,
     pub profile_id: Option<String>,
     /// Filter by category source: "rule" | "agent" | "manual"
@@ -85,6 +87,7 @@ pub async fn list_transactions(
         end,
         accounts: q.accounts.as_deref().and_then(split_csv_param),
         categories: q.categories.as_deref().and_then(split_csv_param),
+        category_types: q.category_types.as_deref().and_then(split_csv_param),
         search: q.search.filter(|s| !s.is_empty()),
         profile_id: q.profile_id.filter(|s| !s.is_empty()),
         category_source,
@@ -115,6 +118,8 @@ pub struct ByCategoryQuery {
     pub end: Option<String>,
     pub accounts: Option<String>,
     pub categories: Option<String>,
+    /// Comma-separated category_type values.
+    pub category_types: Option<String>,
     pub profile_id: Option<String>,
     /// Optional sign filter: `outflow` or `income`. When omitted the
     /// aggregation returns signed net sums per category.
@@ -146,6 +151,7 @@ pub async fn transactions_by_category(
         end,
         accounts: q.accounts.as_deref().and_then(split_csv_param),
         categories: q.categories.as_deref().and_then(split_csv_param),
+        category_types: q.category_types.as_deref().and_then(split_csv_param),
         profile_id: q.profile_id.filter(|s| !s.is_empty()),
         ..TransactionFilters::default()
     };

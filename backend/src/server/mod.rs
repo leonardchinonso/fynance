@@ -13,7 +13,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     middleware,
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, patch, post},
 };
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -67,9 +67,6 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/categories/:id",
             delete(routes::categories::delete_category),
         )
-        // ── Section mappings ───────────────────────────────────────────────
-        .route("/sections", get(routes::sections::list_sections))
-        .route("/sections", put(routes::sections::replace_sections))
         // ── Transactions ───────────────────────────────────────────────────
         .route(
             "/transactions",
@@ -135,6 +132,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route(
             "/budget/spending-grid",
             get(routes::budget::get_spending_grid),
+        )
+        .route(
+            "/budget/cash-summary",
+            get(routes::budget::get_cash_summary),
         )
         .route("/budget/:month", get(routes::budget::get_budget_for_month))
         .route("/budget", post(routes::budget::set_standing_budget))

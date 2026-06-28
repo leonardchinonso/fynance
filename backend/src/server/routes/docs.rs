@@ -386,17 +386,6 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "responses": { "200": { "description": "Category deleted" } }
                 }
             },
-            "/api/sections": {
-                "get": {
-                    "summary": "List section mappings (category-to-report-section assignments)",
-                    "responses": { "200": { "description": "Section mappings" } }
-                },
-                "put": {
-                    "summary": "Replace all section mappings",
-                    "security": [{ "bearerAuth": [] }],
-                    "responses": { "200": { "description": "Updated section mappings" } }
-                }
-            },
             "/api/transactions": {
                 "get": {
                     "summary": "List transactions (paginated)",
@@ -405,6 +394,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         { "name": "end", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
                         { "name": "accounts", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account ids to include." },
                         { "name": "categories", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category ids to include." },
+                        { "name": "category_types", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category_type values to include." },
                         { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Free-text search over description / merchant." },
                         { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." },
                         { "name": "category_source", "in": "query", "schema": { "type": "string", "enum": ["rule", "agent", "manual"] }, "description": "Filter by how the category was assigned." },
@@ -456,6 +446,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         { "name": "end", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
                         { "name": "accounts", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account ids." },
                         { "name": "categories", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category ids." },
+                        { "name": "category_types", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category_type values." },
                         { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." },
                         { "name": "direction", "in": "query", "schema": { "type": "string", "enum": ["outflow", "income"] }, "description": "outflow or income. Omit for signed net sums." }
                     ],
@@ -685,9 +676,24 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         { "name": "start", "in": "query", "schema": { "type": "string", "example": "2026-01" } },
                         { "name": "end", "in": "query", "schema": { "type": "string", "example": "2026-06" } },
                         { "name": "granularity", "in": "query", "schema": { "type": "string", "example": "month" } },
-                        { "name": "profile_id", "in": "query", "schema": { "type": "string" } }
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" } },
+                        { "name": "accounts", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account ids." },
+                        { "name": "categories", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category ids." },
+                        { "name": "category_types", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated category_type values." },
+                        { "name": "group_by", "in": "query", "schema": { "type": "string", "enum": ["leaf_category", "parent_category", "category_type", "account"] }, "description": "Grouping dimension (default leaf_category)." }
                     ],
                     "responses": { "200": { "description": "{ preferred_currency, rows: SpendingGridRow[] }" } }
+                }
+            },
+            "/api/budget/cash-summary": {
+                "get": {
+                    "summary": "Category-type cash summary (income, spending, savings growth, new cash invested, investment metrics)",
+                    "parameters": [
+                        { "name": "start", "in": "query", "schema": { "type": "string", "example": "2026-01-01" } },
+                        { "name": "end", "in": "query", "schema": { "type": "string", "example": "2026-06-30" } },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "CashSummaryResponse" } }
                 }
             },
             "/api/budget/{month}": {

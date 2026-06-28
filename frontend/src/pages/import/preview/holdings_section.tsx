@@ -369,7 +369,7 @@ function SourceBadge({ derived }: { derived: boolean }) {
 }
 
 const HOLDING_TYPES: HoldingType[] = [
-  "stock", "etf", "fund", "bond", "crypto", "cash", "property", "loan", "credit",
+  "stock", "etf", "fund", "bond", "crypto", "cash", "savings", "property", "loan", "credit",
 ]
 
 const DECIMAL_RE = /^-?\d*\.?\d*$/

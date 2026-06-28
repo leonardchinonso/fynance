@@ -14,5 +14,4 @@ pub mod ingestion;
 pub mod investments;
 pub mod parse;
 pub mod profiles;
-pub mod sections;
 pub mod transactions;

@@ -83,6 +83,7 @@ pub async fn update_category(
         && body.display_order.is_none()
         && body.is_active.is_none()
         && body.description.is_none()
+        && body.category_type.is_none()
     {
         return Err(AppError::bad_request(
             "at least one field must be provided",

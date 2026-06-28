@@ -72,6 +72,7 @@ pub struct Category {
     /// to disambiguate categories that share similar names (e.g. "Bills:
     /// utility bills like internet, water, electricity" vs "Subscriptions").
     pub description: Option<String>,
+    pub category_type: CategoryType,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -84,6 +85,7 @@ pub struct CategoryNode {
     pub name: String,
     /// Optional free-text description. Same role as on `Category`.
     pub description: Option<String>,
+    pub category_type: CategoryType,
     pub children: Vec<CategoryNode>,
 }
 
@@ -93,6 +95,8 @@ pub struct CreateCategoryPayload {
     pub parent_id: Option<String>,
     pub display_order: Option<i32>,
     pub description: Option<String>,
+    /// Required: every category must be classified explicitly on creation.
+    pub category_type: CategoryType,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -102,6 +106,136 @@ pub struct PatchCategoryPayload {
     pub display_order: Option<i32>,
     pub is_active: Option<bool>,
     pub description: Option<String>,
+    /// Omitted = leave unchanged (standard PATCH semantics).
+    pub category_type: Option<CategoryType>,
+}
+
+/// Semantic classification of a category, used to drive filtering and the
+/// income/spending/transfer logic across budgets, charts and the portfolio
+/// card. Every category has exactly one;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum CategoryType {
+    Spending,
+    IncomeTaxable,
+    IncomeNonTaxable,
+    InterestTaxable,
+    InterestNonTaxable,
+    InternalTransfer,
+    DonationTaxable,
+    DonationNonTaxable,
+}
+
+impl CategoryType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Spending => "spending",
+            Self::IncomeTaxable => "income_taxable",
+            Self::IncomeNonTaxable => "income_non_taxable",
+            Self::InterestTaxable => "interest_taxable",
+            Self::InterestNonTaxable => "interest_non_taxable",
+            Self::InternalTransfer => "internal_transfer",
+            Self::DonationTaxable => "donation_taxable",
+            Self::DonationNonTaxable => "donation_non_taxable",
+        }
+    }
+
+    /// Human-facing label (single source for the FE dropdowns/legends).
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Spending => "Spending",
+            Self::IncomeTaxable => "Income (taxable)",
+            Self::IncomeNonTaxable => "Income (non-taxable)",
+            Self::InterestTaxable => "Interest (taxable)",
+            Self::InterestNonTaxable => "Interest (non-taxable)",
+            Self::InternalTransfer => "Internal transfer",
+            Self::DonationTaxable => "Donation (taxable)",
+            Self::DonationNonTaxable => "Donation (non-taxable)",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "spending" => Some(Self::Spending),
+            "income_taxable" => Some(Self::IncomeTaxable),
+            "income_non_taxable" => Some(Self::IncomeNonTaxable),
+            "interest_taxable" => Some(Self::InterestTaxable),
+            "interest_non_taxable" => Some(Self::InterestNonTaxable),
+            "internal_transfer" => Some(Self::InternalTransfer),
+            "donation_taxable" => Some(Self::DonationTaxable),
+            "donation_non_taxable" => Some(Self::DonationNonTaxable),
+            _ => None,
+        }
+    }
+
+    /// All variants in declaration order (drives the generated TS binding set).
+    pub const ALL: &'static [CategoryType] = &[
+        Self::Spending,
+        Self::IncomeTaxable,
+        Self::IncomeNonTaxable,
+        Self::InterestTaxable,
+        Self::InterestNonTaxable,
+        Self::InternalTransfer,
+        Self::DonationTaxable,
+        Self::DonationNonTaxable,
+    ];
+
+    /// Types summed into the portfolio card's "Income" headline.
+    pub const INCOME: &'static [CategoryType] = &[Self::IncomeTaxable, Self::IncomeNonTaxable];
+
+    /// Types summed into the portfolio card's "Spending" headline (outflows + donations).
+    pub const SPENDING: &'static [CategoryType] = &[
+        Self::Spending,
+        Self::DonationTaxable,
+        Self::DonationNonTaxable,
+    ];
+
+    /// Always excluded from charts and the portfolio cash card.
+    pub const CHART_EXCLUDED: &'static [CategoryType] = &[Self::InternalTransfer];
+}
+
+#[cfg(test)]
+mod category_type_groups_export {
+    use super::CategoryType;
+
+    fn ts_list(name: &str, items: &[CategoryType]) -> String {
+        let body = items
+            .iter()
+            .map(|c| format!("\"{}\"", c.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("export const {name}: readonly CategoryType[] = [{body}]\n")
+    }
+
+    /// Regenerates `frontend/src/bindings/category_type_groups.ts` from the
+    /// Rust `CategoryType` constants so the frontend never hand-maintains the
+    /// income/spending/excluded sets or the display labels. Runs with the other
+    /// ts-rs exports under `cargo test`; the output must be committed.
+    #[test]
+    fn export_category_type_groups() {
+        let mut out = String::new();
+        out.push_str("// AUTO-GENERATED from backend CategoryType (cargo test). Do not edit.\n");
+        out.push_str("import type { CategoryType } from \"./CategoryType\"\n\n");
+        out.push_str(&ts_list("ALL_CATEGORY_TYPES", CategoryType::ALL));
+        out.push_str(&ts_list("INCOME_TYPES", CategoryType::INCOME));
+        out.push_str(&ts_list("SPENDING_TYPES", CategoryType::SPENDING));
+        out.push_str(&ts_list(
+            "CHART_EXCLUDED_TYPES",
+            CategoryType::CHART_EXCLUDED,
+        ));
+        out.push_str("\nexport const CATEGORY_TYPE_LABELS: Record<CategoryType, string> = {\n");
+        for c in CategoryType::ALL {
+            out.push_str(&format!("  {}: \"{}\",\n", c.as_str(), c.label()));
+        }
+        out.push_str("}\n");
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../frontend/src/bindings/category_type_groups.ts"
+        );
+        std::fs::write(path, out).expect("write category_type_groups.ts");
+    }
 }
 
 /// Where a transaction's category came from. Phase 1 only writes `Rule`
@@ -246,16 +380,49 @@ impl Granularity {
     }
 }
 
+/// Dimension the spending grid groups rows by. The spreadsheet uses
+/// `LeafCategory` (per-leaf rows it can budget on); charts offer all four.
+/// Not exposed to TS as a type (the frontend just sends the string param).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpendingGroupBy {
+    #[default]
+    LeafCategory,
+    ParentCategory,
+    CategoryType,
+    Account,
+}
+
+impl SpendingGroupBy {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "leaf_category" | "subcategory" | "leaf" => Some(Self::LeafCategory),
+            "parent_category" | "category" | "parent" => Some(Self::ParentCategory),
+            "category_type" | "type" => Some(Self::CategoryType),
+            "account" => Some(Self::Account),
+            _ => None,
+        }
+    }
+}
+
 /// One row in the spending-grid response. `periods` maps period strings
 /// (e.g. "2026-01", "2026-Q1", "2026") to the spending total as a Decimal
 /// string, or null if there were no transactions in that period.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct SpendingGridRow {
-    /// FK to categories.id (leaf). Display name resolved client-side.
+    /// FK to categories.id (leaf). Set only when grouping by leaf category;
+    /// display name resolved client-side. Budget editing keys on this.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_id: Option<String>,
-    pub section: String,
+    /// Parent category id of `category_id` (leaf grouping only). Lets the
+    /// frontend group/order the spreadsheet by parent without string-splitting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// The grouping dimension's value when grouping by parent/type/account
+    /// (the parent id, the category_type string, or the account id). Charts read
+    /// `group_key ?? category_id` as the series key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_key: Option<String>,
     /// Period key -> decimal string (or null). Amounts are signed:
     /// negative = expense, positive = income/credit.
     #[ts(type = "Record<string, string | null>")]
@@ -374,16 +541,6 @@ impl TransactionDirection {
             _ => None,
         }
     }
-}
-
-/// Maps one parent budget category to a spending-grid section.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../frontend/src/bindings/")]
-pub struct SectionMapping {
-    /// One of: Income | Bills | Spending | Irregular | Transfers
-    pub section: String,
-    /// FK to parent categories.id
-    pub category_id: Option<String>,
 }
 
 /// A standing monthly budget target for one category.
@@ -703,6 +860,7 @@ pub enum HoldingType {
     Bond,
     Crypto,
     Cash,
+    Savings,
     Property,
     Loan,
     Credit,
@@ -717,6 +875,7 @@ impl HoldingType {
             Self::Bond => "bond",
             Self::Crypto => "crypto",
             Self::Cash => "cash",
+            Self::Savings => "savings",
             Self::Property => "property",
             Self::Loan => "loan",
             Self::Credit => "credit",
@@ -731,6 +890,7 @@ impl HoldingType {
             "bond" => Some(Self::Bond),
             "crypto" => Some(Self::Crypto),
             "cash" => Some(Self::Cash),
+            "savings" => Some(Self::Savings),
             "property" => Some(Self::Property),
             "loan" => Some(Self::Loan),
             "credit" => Some(Self::Credit),
@@ -968,6 +1128,32 @@ pub struct InvestmentMetrics {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub market_growth: Decimal,
+}
+
+/// Category-type-driven cash summary for the portfolio "Income, Spending &
+/// Investments" card. Returned by `GET /api/budget/cash-summary`, range-aware.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct CashSummaryResponse {
+    pub preferred_currency: String,
+    /// Sum of income_taxable + income_non_taxable transactions in range.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub income: Decimal,
+    /// Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub spending: Decimal,
+    /// Period-over-period growth of `savings`-type holdings.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub savings_growth: Decimal,
+    /// Sum of `buy` investment events in range.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub new_cash_invested: Decimal,
+    /// Range-aware investment performance (total/market growth, start/end value).
+    pub investment_metrics: InvestmentMetrics,
 }
 
 // ── Investments ───────────────────────────────────────────────────────────────

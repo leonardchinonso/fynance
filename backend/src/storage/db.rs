@@ -16,12 +16,12 @@ use rust_decimal::Decimal;
 use crate::model::{
     Account, AccountHoldingHistoryRow, AccountHoldingSeries, AccountHoldingValue, AccountSnapshot,
     AccountType, AssetClass, BalanceDelta, BudgetRow, Category, CategoryNode, CategorySource,
-    CategoryTotal, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
+    CategoryTotal, CategoryType, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
     CreateInvestmentEventBody, Currency, Document, DocumentReferences, DocumentSummary,
     Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth,
     HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome,
     InvestmentEvent, InvestmentEventType, InvestmentMetrics, PatchCategoryPayload,
-    PatchInvestmentEventBody, Profile, SectionMapping, SpendingGridRow, StandingBudget,
+    PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy, StandingBudget,
     Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
 
@@ -29,25 +29,9 @@ use crate::model::{
 /// create a fresh DB on a new machine with no files on disk beside itself.
 const SCHEMA_SQL: &str = include_str!("../../../db/sql/schema.sql");
 
-/// Embedded categories for default section-mapping seed.
+/// Embedded default category taxonomy (names, types, descriptions). Seeded on
+/// first run and used to backfill `category_type` on pre-existing categories.
 const CATEGORIES_YAML: &str = include_str!("../../config/categories.yaml");
-
-/// Maps parent category name -> section. Used during seeding.
-const PARENT_SECTION_MAP: &[(&str, &str)] = &[
-    ("Income", "Income"),
-    ("Housing", "Bills"),
-    ("Food", "Spending"),
-    ("Transport", "Spending"),
-    ("Health", "Spending"),
-    ("Shopping", "Spending"),
-    ("Entertainment", "Spending"),
-    ("Travel", "Irregular"),
-    ("Finance", "Transfers"),
-    ("Personal Care", "Spending"),
-    ("Gifts & Donations", "Spending"),
-    ("Education", "Spending"),
-    ("Other", "Spending"),
-];
 
 /// Resolve the default DB path. On Linux this is
 /// `~/.local/share/fynance/fynance.db`; on macOS it's
@@ -67,6 +51,8 @@ pub struct TransactionFilters {
     pub accounts: Option<Vec<String>>,
     /// Multi-select category names or IDs. Empty vec = no filter.
     pub categories: Option<Vec<String>>,
+    /// Multi-select category_type values (e.g. "spending"). Empty vec = no filter.
+    pub category_types: Option<Vec<String>>,
     /// Free-text search across normalized, description, category, notes.
     pub search: Option<String>,
     pub profile_id: Option<String>,
@@ -128,6 +114,7 @@ impl Default for TransactionFilters {
             end: None,
             accounts: None,
             categories: None,
+            category_types: None,
             search: None,
             profile_id: None,
             category_source: None,
@@ -1288,6 +1275,7 @@ impl Db {
         let mut conditions: Vec<String> = vec!["1=1".to_string()];
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut need_account_join = false;
+        let mut need_category_join = false;
 
         if let Some(start) = filters.start {
             args.push(Box::new(start.format("%Y-%m-%dT00:00:00").to_string()));
@@ -1347,6 +1335,19 @@ impl Db {
                 }
             }
         }
+        if let Some(ctypes) = &filters.category_types {
+            if !ctypes.is_empty() {
+                need_category_join = true;
+                let placeholders: Vec<String> = ctypes
+                    .iter()
+                    .map(|v| {
+                        args.push(Box::new(v.clone()));
+                        format!("?{}", args.len())
+                    })
+                    .collect();
+                conditions.push(format!("c.category_type IN ({})", placeholders.join(",")));
+            }
+        }
         if let Some(ref source) = filters.category_source {
             args.push(Box::new(source.as_str().to_string()));
             conditions.push(format!("t.category_source = ?{}", args.len()));
@@ -1371,9 +1372,17 @@ impl Db {
         } else {
             ""
         };
+        // The data query always LEFT JOINs `categories c`; the count query only
+        // needs it when a category_type filter references `c`.
+        let cat_join = if need_category_join {
+            "LEFT JOIN categories c ON c.id = t.category_id"
+        } else {
+            ""
+        };
         let where_clause = conditions.join(" AND ");
 
-        let count_sql = format!("SELECT COUNT(*) FROM transactions t {join} WHERE {where_clause}");
+        let count_sql =
+            format!("SELECT COUNT(*) FROM transactions t {join} {cat_join} WHERE {where_clause}");
         let total: i64 = self.conn.query_row(
             &count_sql,
             rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
@@ -1490,6 +1499,20 @@ impl Db {
                 conditions.push(format!("t.category_id IN ({ph})"));
             }
         }
+        let mut need_category_join = false;
+        if let Some(ctypes) = &filters.category_types {
+            if !ctypes.is_empty() {
+                need_category_join = true;
+                let placeholders: Vec<String> = ctypes
+                    .iter()
+                    .map(|v| {
+                        args.push(Box::new(v.clone()));
+                        format!("?{}", args.len())
+                    })
+                    .collect();
+                conditions.push(format!("c.category_type IN ({})", placeholders.join(",")));
+            }
+        }
         if let Some(pid) = &filters.profile_id {
             need_account_join = true;
             let pattern = format!("%\"{pid}\"%");
@@ -1515,12 +1538,18 @@ impl Db {
         } else {
             ""
         };
+        let cat_join = if need_category_join {
+            "LEFT JOIN categories c ON c.id = t.category_id"
+        } else {
+            ""
+        };
         let where_clause = conditions.join(" AND ");
 
         let sql = format!(
             r"SELECT t.category_id, t.currency, {sum_expr} AS total
               FROM transactions t
               {join}
+              {cat_join}
               WHERE {where_clause}
               GROUP BY t.category_id, t.currency"
         );
@@ -1558,7 +1587,7 @@ impl Db {
     }
 
     /// Returns the hierarchical category tree grouped by section.
-    pub fn get_all_categories(&self) -> Result<HashMap<String, Vec<CategoryNode>>> {
+    pub fn get_all_categories(&self) -> Result<Vec<CategoryNode>> {
         self.get_categories_tree()
     }
 
@@ -1685,9 +1714,9 @@ impl Db {
         let display_order = payload.display_order.unwrap_or(0);
 
         self.conn.execute(
-            "INSERT INTO categories (id, name, parent_id, display_order, is_active, description, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?6)",
-            params![id, payload.name, payload.parent_id, display_order, payload.description, now],
+            "INSERT INTO categories (id, name, parent_id, display_order, is_active, description, category_type, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?7)",
+            params![id, payload.name, payload.parent_id, display_order, payload.description, payload.category_type.as_str(), now],
         )?;
 
         self.get_category_by_id(&id)?
@@ -1696,16 +1725,19 @@ impl Db {
 
     pub fn get_category_by_id(&self, id: &str) -> Result<Option<Category>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, parent_id, display_order, is_active, description, created_at, updated_at
+            "SELECT id, name, parent_id, display_order, is_active, description, category_type, created_at, updated_at
              FROM categories WHERE id = ?1",
         )?;
         let result = stmt.query_row(params![id], row_to_category).optional()?;
         Ok(result)
     }
 
-    pub fn get_categories_tree(&self) -> Result<HashMap<String, Vec<CategoryNode>>> {
+    /// Active categories as a flat list of parent nodes, each with its leaf
+    /// children, ordered by `display_order`. (Sections were removed; the
+    /// frontend groups by parent.)
+    pub fn get_categories_tree(&self) -> Result<Vec<CategoryNode>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, parent_id, display_order, is_active, description, created_at, updated_at
+            "SELECT id, name, parent_id, display_order, is_active, description, category_type, created_at, updated_at
              FROM categories WHERE is_active = 1
              ORDER BY display_order, name",
         )?;
@@ -1713,47 +1745,32 @@ impl Db {
             .query_map([], row_to_category)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let section_map: HashMap<String, String> = {
-            let mut stmt = self.conn.prepare(
-                "SELECT category_id, section FROM section_mappings WHERE category_id IS NOT NULL",
-            )?;
-            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-                .into_iter()
-                .collect()
-        };
-
         let parents: Vec<&Category> = all.iter().filter(|c| c.parent_id.is_none()).collect();
         let children: Vec<&Category> = all.iter().filter(|c| c.parent_id.is_some()).collect();
 
-        let mut tree: HashMap<String, Vec<CategoryNode>> = HashMap::new();
-
-        for parent in parents {
-            let section = section_map
-                .get(&parent.id)
-                .cloned()
-                .unwrap_or_else(|| "Spending".to_string());
-
-            let child_nodes: Vec<CategoryNode> = children
-                .iter()
-                .filter(|c| c.parent_id.as_deref() == Some(&parent.id))
-                .map(|c| CategoryNode {
-                    id: c.id.clone(),
-                    name: c.name.clone(),
-                    description: c.description.clone(),
-                    children: vec![],
-                })
-                .collect();
-
-            let node = CategoryNode {
-                id: parent.id.clone(),
-                name: parent.name.clone(),
-                description: parent.description.clone(),
-                children: child_nodes,
-            };
-
-            tree.entry(section).or_default().push(node);
-        }
+        let tree = parents
+            .into_iter()
+            .map(|parent| {
+                let child_nodes: Vec<CategoryNode> = children
+                    .iter()
+                    .filter(|c| c.parent_id.as_deref() == Some(&parent.id))
+                    .map(|c| CategoryNode {
+                        id: c.id.clone(),
+                        name: c.name.clone(),
+                        description: c.description.clone(),
+                        category_type: c.category_type,
+                        children: vec![],
+                    })
+                    .collect();
+                CategoryNode {
+                    id: parent.id.clone(),
+                    name: parent.name.clone(),
+                    description: parent.description.clone(),
+                    category_type: parent.category_type,
+                    children: child_nodes,
+                }
+            })
+            .collect();
 
         Ok(tree)
     }
@@ -1802,11 +1819,12 @@ impl Db {
             Some(s) => Some(s.clone()),
             None => existing.description.clone(),
         };
+        let category_type = payload.category_type.unwrap_or(existing.category_type);
 
         self.conn.execute(
-            "UPDATE categories SET name = ?1, parent_id = ?2, display_order = ?3, is_active = ?4, description = ?5, updated_at = ?6
-             WHERE id = ?7",
-            params![name, parent_id, display_order, is_active, description, now, id],
+            "UPDATE categories SET name = ?1, parent_id = ?2, display_order = ?3, is_active = ?4, description = ?5, category_type = ?6, updated_at = ?7
+             WHERE id = ?8",
+            params![name, parent_id, display_order, is_active, description, category_type.as_str(), now, id],
         )?;
 
         self.get_category_by_id(id)?
@@ -1857,10 +1875,6 @@ impl Db {
             "DELETE FROM budget_overrides WHERE category_id = ?1",
             params![id],
         )?;
-        self.conn.execute(
-            "DELETE FROM section_mappings WHERE category_id = ?1",
-            params![id],
-        )?;
 
         let deleted = self
             .conn
@@ -1875,7 +1889,7 @@ impl Db {
         let result = self
             .conn
             .query_row(
-                "SELECT id, name, parent_id, display_order, is_active, description, created_at, updated_at
+                "SELECT id, name, parent_id, display_order, is_active, description, category_type, created_at, updated_at
              FROM categories WHERE name = ?1 AND is_active = 1",
                 params![name],
                 row_to_category,
@@ -1890,7 +1904,7 @@ impl Db {
             let result = self
                 .conn
                 .query_row(
-                    "SELECT id, name, parent_id, display_order, is_active, description, created_at, updated_at
+                    "SELECT id, name, parent_id, display_order, is_active, description, category_type, created_at, updated_at
                  FROM categories WHERE name = ?1 AND is_active = 1",
                     params![child_name.trim()],
                     row_to_category,
@@ -1900,39 +1914,6 @@ impl Db {
         }
 
         Ok(None)
-    }
-
-    // ── Section mappings ──────────────────────────────────────────────────────
-
-    pub fn get_section_mappings(&self) -> Result<Vec<SectionMapping>> {
-        let mut stmt = self.conn.prepare(
-            r"SELECT sm.section, sm.category_id
-              FROM section_mappings sm
-              ORDER BY sm.section, sm.category_id",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(SectionMapping {
-                    section: row.get(0)?,
-                    category_id: row.get(1)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    /// Full replacement: delete all rows and insert the new set.
-    pub fn update_section_mappings(&self, mappings: &[SectionMapping]) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute_batch("DELETE FROM section_mappings")?;
-        for m in mappings {
-            tx.execute(
-                "INSERT INTO section_mappings (section, category_id) VALUES (?1, ?2)",
-                params![m.section, m.category_id],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
     }
 
     // ── Budgets (standing + overrides) ───────────────────────────────────────
@@ -2125,12 +2106,17 @@ impl Db {
 
     /// Spending grid: aggregated spending per category per time period.
     /// Excludes transactions with `exclude_from_summary = 1`.
+    #[allow(clippy::too_many_arguments)]
     pub fn get_spending_grid(
         &self,
         start: NaiveDate,
         end: NaiveDate,
         granularity: &Granularity,
         profile_id: Option<&str>,
+        accounts: &[String],
+        categories: &[String],
+        category_types: &[String],
+        group_by: SpendingGroupBy,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<SpendingGridRow>> {
         use crate::util::fx::CurrencyAggregator;
@@ -2151,18 +2137,56 @@ impl Db {
             Granularity::Yearly => "substr(t.date, 1, 4)".to_string(),
         };
 
+        // The dimension each row is grouped by.
+        let key_expr = match group_by {
+            SpendingGroupBy::LeafCategory => "t.category_id",
+            SpendingGroupBy::ParentCategory => "COALESCE(c.parent_id, c.id)",
+            SpendingGroupBy::CategoryType => "c.category_type",
+            SpendingGroupBy::Account => "t.account_id",
+        };
+
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
+
         let mut conditions = vec![
-            "t.date >= ?1".to_string(),
-            "t.date <= ?2".to_string(),
             "t.category_id IS NOT NULL".to_string(),
             "t.exclude_from_summary = 0".to_string(),
         ];
-        let mut extra_args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        args.push(Box::new(start_str));
+        conditions.push(format!("t.date >= ?{}", args.len()));
+        args.push(Box::new(end_str));
+        conditions.push(format!("t.date <= ?{}", args.len()));
+
+        let push_in = |col: &str,
+                       vals: &[String],
+                       conds: &mut Vec<String>,
+                       args: &mut Vec<Box<dyn rusqlite::ToSql>>| {
+            if vals.is_empty() {
+                return;
+            }
+            let placeholders: Vec<String> = vals
+                .iter()
+                .map(|v| {
+                    args.push(Box::new(v.clone()));
+                    format!("?{}", args.len())
+                })
+                .collect();
+            conds.push(format!("{col} IN ({})", placeholders.join(",")));
+        };
+        push_in("t.account_id", accounts, &mut conditions, &mut args);
+        push_in("t.category_id", categories, &mut conditions, &mut args);
+        push_in(
+            "c.category_type",
+            category_types,
+            &mut conditions,
+            &mut args,
+        );
 
         let join = if let Some(pid) = profile_id {
-            let pattern = format!("%\"{pid}\"%");
-            extra_args.push(Box::new(pattern));
-            conditions.push(format!("a.profile_ids LIKE ?{}", 2 + extra_args.len()));
+            args.push(Box::new(format!("%\"{pid}\"%")));
+            conditions.push(format!("a.profile_ids LIKE ?{}", args.len()));
             "JOIN accounts a ON a.id = t.account_id"
         } else {
             ""
@@ -2172,32 +2196,24 @@ impl Db {
 
         let sql = format!(
             r"SELECT
+                {key_expr} AS gkey,
                 t.category_id,
-                COALESCE(sm_child.section, sm_parent.section, 'Spending') AS section,
+                c.parent_id,
                 {period_expr} AS period,
                 t.currency,
                 SUM(CAST(t.amount AS REAL)) AS period_total
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
-              LEFT JOIN section_mappings sm_child  ON sm_child.category_id  = c.id
-              LEFT JOIN section_mappings sm_parent ON sm_parent.category_id = COALESCE(c.parent_id, c.id)
               {join}
               WHERE {where_clause}
-              GROUP BY t.category_id, period, t.currency
-              ORDER BY t.category_id, period, t.currency"
+              GROUP BY {key_expr}, period, t.currency
+              ORDER BY {key_expr}, period, t.currency"
         );
 
-        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
-        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
-
-        let mut base_args: Vec<Box<dyn rusqlite::ToSql>> =
-            vec![Box::new(start_str), Box::new(end_str)];
-        base_args.extend(extra_args);
-
         let mut stmt = self.conn.prepare(&sql)?;
-        let raw: Vec<(Option<String>, String, String, String, f64)> = stmt
+        let raw: Vec<SpendingGridRawRow> = stmt
             .query_map(
-                rusqlite::params_from_iter(base_args.iter().map(|b| b.as_ref())),
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
                 |row| {
                     Ok((
                         row.get(0)?,
@@ -2205,6 +2221,7 @@ impl Db {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 },
             )?
@@ -2232,14 +2249,18 @@ impl Db {
                 HashMap<String, CurrencyAggregator>,
             ),
         > = HashMap::new();
-        for (category_id, section, period, currency, total_f64) in raw {
+        for (gkey, cat_id, parent_id, period, currency, total_f64) in raw {
             let total_dec = Decimal::try_from(total_f64).unwrap_or_default();
-            let key = category_id.clone().unwrap_or_default();
-            let entry = grid.entry(key).or_insert_with(|| {
+            let entry = grid.entry(gkey.clone()).or_insert_with(|| {
+                let (category_id, parent_id_field, group_key) = match group_by {
+                    SpendingGroupBy::LeafCategory => (cat_id.clone(), parent_id.clone(), None),
+                    _ => (None, None, Some(gkey.clone())),
+                };
                 (
                     SpendingGridRow {
-                        category_id: category_id.clone(),
-                        section: section.clone(),
+                        category_id,
+                        parent_id: parent_id_field,
+                        group_key,
                         periods: HashMap::new(),
                         periods_display: HashMap::new(),
                         average: None,
@@ -2306,7 +2327,11 @@ impl Db {
             })
             .collect();
 
-        result.sort_by(|a, b| a.category_id.cmp(&b.category_id));
+        result.sort_by(|a, b| {
+            a.group_key
+                .cmp(&b.group_key)
+                .then(a.category_id.cmp(&b.category_id))
+        });
         Ok(result)
     }
 
@@ -3431,8 +3456,9 @@ impl Db {
     /// Investment performance for `[start, end]`. Start/end values reduce
     /// `get_holdings_for_summary` (Investment accounts only), FX-converted via
     /// `fx` per holding/transaction currency, so they stay consistent with
-    /// net worth. `new_cash_invested` = signed sum of
-    /// `Finance: Investment Transfer` transactions.
+    /// net worth. `new_cash_invested` = sum of `buy` investment events in range
+    /// (see [`Self::compute_new_cash_invested`]). `market_growth` strips that
+    /// out of the total value change to isolate price movement.
     pub fn compute_investment_metrics(
         &self,
         start: NaiveDate,
@@ -3452,30 +3478,7 @@ impl Db {
         let start_value = sum_carry_forward(start)?;
         let end_value = sum_carry_forward(end)?;
 
-        let new_cash_invested: Decimal = {
-            let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
-            let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
-            let mut stmt = self.conn.prepare(
-                r"SELECT amount, currency FROM transactions
-                  WHERE category_id IN (
-                          SELECT c.id FROM categories c
-                          LEFT JOIN categories pc ON pc.id = c.parent_id
-                          WHERE c.name = 'Investment Transfer'
-                             OR (pc.name || ': ' || c.name) = 'Finance: Investment Transfer'
-                        )
-                    AND date >= ?1 AND date <= ?2",
-            )?;
-            let rows = stmt
-                .query_map(rusqlite::params![start_str, end_str], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows.into_iter()
-                .map(|(amount, currency)| {
-                    fx.convert(amount.parse::<Decimal>().unwrap_or_default(), &currency)
-                })
-                .sum()
-        };
+        let new_cash_invested = self.compute_new_cash_invested(start, end, profile_id, fx)?;
 
         let total_growth = end_value - start_value;
         let market_growth = total_growth - new_cash_invested;
@@ -3487,6 +3490,164 @@ impl Db {
             new_cash_invested,
             market_growth,
         })
+    }
+
+    /// Cash deployed via `buy` investment events in `[start, end]`, FX-converted
+    /// to the preferred currency. The trade leg (`quantity * price_per_share` in
+    /// `currency`) and the fee (in `fee_currency`, falling back to `currency`)
+    /// are converted independently. Profile-scoped via the owning account.
+    pub fn compute_new_cash_invested(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<Decimal> {
+        use crate::util::fx::CurrencyAggregator;
+
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
+
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(start_str), Box::new(end_str)];
+        let join = if let Some(pid) = profile_id {
+            args.push(Box::new(format!("%\"{pid}\"%")));
+            "JOIN accounts a ON a.id = i.account_id"
+        } else {
+            ""
+        };
+        let profile_filter = if profile_id.is_some() {
+            "AND a.profile_ids LIKE ?3"
+        } else {
+            ""
+        };
+
+        let sql = format!(
+            r"SELECT i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
+              FROM investments i {join}
+              WHERE i.event_type = 'buy'
+                AND i.date >= ?1 AND i.date <= ?2 {profile_filter}"
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut agg = CurrencyAggregator::default();
+        for (qty, price, fee, currency, fee_currency) in rows {
+            let q = qty.parse::<Decimal>().unwrap_or_default();
+            let p = price.parse::<Decimal>().unwrap_or_default();
+            agg.add(q * p, &currency, fx);
+            if let Some(fee) = fee {
+                let f = fee.parse::<Decimal>().unwrap_or_default();
+                if !f.is_zero() {
+                    agg.add(f, fee_currency.as_deref().unwrap_or(&currency), fx);
+                }
+            }
+        }
+        Ok(agg.converted_sum())
+    }
+
+    /// Net savings growth over `[start, end]`: the FX-converted value of all
+    /// `savings`-type holdings as of `end` minus their value as of `start`.
+    pub fn compute_savings_growth(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<Decimal> {
+        let sum_savings = |date: NaiveDate| -> Result<Decimal> {
+            Ok(self
+                .get_holdings_for_summary(date, profile_id)?
+                .iter()
+                .filter(|r| r.holding.holding_type == HoldingType::Savings)
+                .map(|r| fx.convert(r.holding.value, &r.holding.currency))
+                .sum())
+        };
+        Ok(sum_savings(end)? - sum_savings(start)?)
+    }
+
+    /// `(income, spending)` over `[start, end]`, bucketed by category_type and
+    /// FX-converted. Income sums the income_taxable and income_non_taxable types
+    /// (signed, normally positive). Spending sums the absolute value of the
+    /// spending, donation_taxable and donation_non_taxable types. The
+    /// internal_transfer and interest_* types are excluded. Skips
+    /// `exclude_from_summary` rows; profile-scoped via the owning account.
+    pub fn compute_category_type_cash(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<(Decimal, Decimal)> {
+        use crate::util::fx::CurrencyAggregator;
+
+        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
+        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
+
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(start_str), Box::new(end_str)];
+        let join = if let Some(pid) = profile_id {
+            args.push(Box::new(format!("%\"{pid}\"%")));
+            "JOIN accounts a ON a.id = t.account_id"
+        } else {
+            ""
+        };
+        let profile_filter = if profile_id.is_some() {
+            "AND a.profile_ids LIKE ?3"
+        } else {
+            ""
+        };
+
+        let sql = format!(
+            r"SELECT c.category_type, t.currency, SUM(CAST(t.amount AS REAL))
+              FROM transactions t
+              JOIN categories c ON c.id = t.category_id
+              {join}
+              WHERE t.date >= ?1 AND t.date <= ?2
+                AND t.exclude_from_summary = 0 {profile_filter}
+              GROUP BY c.category_type, t.currency"
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut income = CurrencyAggregator::default();
+        let mut spending = CurrencyAggregator::default();
+        for (ctype_str, currency, total_f64) in rows {
+            let Some(ctype) = CategoryType::parse(&ctype_str) else {
+                continue;
+            };
+            let amount = Decimal::try_from(total_f64).unwrap_or_default();
+            if CategoryType::INCOME.contains(&ctype) {
+                income.add(amount, &currency, fx);
+            } else if CategoryType::SPENDING.contains(&ctype) {
+                spending.add(amount.abs(), &currency, fx);
+            }
+        }
+        Ok((income.converted_sum(), spending.converted_sum()))
     }
 
     // ── Holdings close / reopen / dry-run ──────────────────────────────────
@@ -3900,8 +4061,10 @@ fn row_to_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {
         display_order: row.get(3)?,
         is_active: row.get::<_, i64>(4)? != 0,
         description: row.get(5)?,
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
+        category_type: CategoryType::parse(&row.get::<_, String>(6)?)
+            .unwrap_or(CategoryType::Spending),
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
     })
 }
 
@@ -4268,9 +4431,66 @@ fn seed_defaults(conn: &Connection) -> Result<()> {
     // deleted across restarts instead of being resurrected on every open.
     seed_categories(conn)?;
     migrate_category_data(conn)?;
-    seed_section_mappings(conn)?;
     seed_currencies(conn)?;
     Ok(())
+}
+
+/// One leaf in the default taxonomy: name, its `category_type` string, optional description.
+type DefaultLeaf = (String, String, Option<String>);
+
+/// One raw spending-grid row from SQL: (group key, category_id, parent_id,
+/// period, currency, summed amount).
+type SpendingGridRawRow = (String, Option<String>, Option<String>, String, String, f64);
+
+/// Parse the embedded `categories.yaml` into `(parent_name, [leaf...])`. Leaf
+/// children may be bare strings (type defaults to `spending`, no description)
+/// or maps `{ name, category_type?, description? }`.
+fn parse_default_categories() -> Vec<(String, Vec<DefaultLeaf>)> {
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(CATEGORIES_YAML).unwrap_or(serde_yaml::Value::Null);
+    let mut out: Vec<(String, Vec<DefaultLeaf>)> = Vec::new();
+    let Some(cats) = value.get("categories").and_then(|v| v.as_sequence()) else {
+        return out;
+    };
+    for cat in cats {
+        let parent_name = cat
+            .get("parent")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if parent_name.is_empty() {
+            continue;
+        }
+        let mut leaves: Vec<DefaultLeaf> = Vec::new();
+        if let Some(children) = cat.get("children").and_then(|v| v.as_sequence()) {
+            for child in children {
+                if let Some(name) = child.as_str() {
+                    leaves.push((name.to_string(), "spending".to_string(), None));
+                } else if child.is_mapping() {
+                    let name = child
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let ctype = child
+                        .get("category_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("spending")
+                        .to_string();
+                    let desc = child
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    leaves.push((name, ctype, desc));
+                }
+            }
+        }
+        out.push((parent_name, leaves));
+    }
+    out
 }
 
 fn seed_categories(conn: &Connection) -> Result<()> {
@@ -4279,74 +4499,22 @@ fn seed_categories(conn: &Connection) -> Result<()> {
         return Ok(());
     }
 
-    let value: serde_yaml::Value =
-        serde_yaml::from_str(CATEGORIES_YAML).unwrap_or(serde_yaml::Value::Null);
-    let cats = match value.get("categories").and_then(|v| v.as_sequence()) {
-        Some(c) => c,
-        None => return Ok(()),
-    };
-
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let mut order = 0i32;
 
-    for cat in cats {
-        let parent_name = cat
-            .get("parent")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        if parent_name.is_empty() {
-            continue;
-        }
-
+    for (order, (parent_name, children)) in parse_default_categories().into_iter().enumerate() {
         let parent_id = uuid::Uuid::new_v4().to_string();
         conn.execute(
-            "INSERT INTO categories (id, name, parent_id, display_order, is_active, created_at, updated_at)
-             VALUES (?1, ?2, NULL, ?3, 1, ?4, ?4)",
-            params![parent_id, parent_name, order, now],
+            "INSERT INTO categories (id, name, parent_id, display_order, is_active, category_type, created_at, updated_at)
+             VALUES (?1, ?2, NULL, ?3, 1, 'spending', ?4, ?4)",
+            params![parent_id, parent_name, order as i32, now],
         )?;
-        order += 1;
 
-        if let Some(children) = cat.get("children").and_then(|v| v.as_sequence()) {
-            let mut child_order = 0i32;
-            for child in children {
-                if let Some(child_name) = child.as_str() {
-                    let child_id = uuid::Uuid::new_v4().to_string();
-                    conn.execute(
-                        "INSERT INTO categories (id, name, parent_id, display_order, is_active, created_at, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
-                        params![child_id, child_name, parent_id, child_order, now],
-                    )?;
-                    child_order += 1;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn seed_section_mappings(conn: &Connection) -> Result<()> {
-    let has_new_mappings: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM section_mappings WHERE category_id IS NOT NULL",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_new_mappings > 0 {
-        return Ok(());
-    }
-
-    for (parent_name, section) in PARENT_SECTION_MAP {
-        let parent_id: Option<String> = conn
-            .query_row(
-                "SELECT id FROM categories WHERE name = ?1 AND parent_id IS NULL",
-                params![parent_name],
-                |r| r.get(0),
-            )
-            .optional()?;
-
-        if let Some(pid) = parent_id {
+        for (child_order, (child_name, ctype, desc)) in children.into_iter().enumerate() {
+            let child_id = uuid::Uuid::new_v4().to_string();
             conn.execute(
-                "INSERT OR IGNORE INTO section_mappings (section, category, category_id) VALUES (?1, ?2, ?3)",
-                params![section, parent_name, pid],
+                "INSERT INTO categories (id, name, parent_id, display_order, is_active, description, category_type, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?7)",
+                params![child_id, child_name, parent_id, child_order as i32, desc, ctype, now],
             )?;
         }
     }
@@ -4469,37 +4637,6 @@ fn migrate_category_data(conn: &Connection) -> Result<()> {
         }
     }
 
-    // ── Section mappings: update existing rows to set category_id ──
-    let mappings: Vec<(String, String)> = {
-        let mut stmt = conn.prepare(
-            "SELECT section, category FROM section_mappings WHERE category IS NOT NULL AND category_id IS NULL"
-        )?;
-        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-    };
-
-    for (section, category_str) in &mappings {
-        let parent_name = category_str
-            .split_once(": ")
-            .map(|(parent, _)| parent.trim())
-            .unwrap_or(category_str.trim());
-
-        let parent_id: Option<String> = conn
-            .query_row(
-                "SELECT id FROM categories WHERE name = ?1 AND parent_id IS NULL AND is_active = 1",
-                params![parent_name],
-                |r| r.get(0),
-            )
-            .optional()?;
-
-        if let Some(pid) = parent_id {
-            conn.execute(
-                "UPDATE section_mappings SET category_id = ?1 WHERE section = ?2 AND category = ?3",
-                params![pid, section, category_str],
-            )?;
-        }
-    }
-
     Ok(())
 }
 
@@ -4560,15 +4697,10 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         )?;
     }
 
-    // ── 6. Add category_id to section_mappings ──
-    if conn
-        .prepare("SELECT category_id FROM section_mappings LIMIT 0")
-        .is_err()
-    {
-        conn.execute_batch(
-            "ALTER TABLE section_mappings ADD COLUMN category_id TEXT REFERENCES categories(id)",
-        )?;
-    }
+    // ── 6. Drop the removed `sections` concept ──
+    // Sections were only ever used to group the budget spreadsheet; the UI now
+    // groups by parent category, so the table (and its data) is obsolete.
+    conn.execute_batch("DROP TABLE IF EXISTS section_mappings")?;
 
     // ── 8. Convert mortgage account type to property ──
     let mortgage_count: i64 = conn
@@ -4580,36 +4712,6 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         .unwrap_or(0);
     if mortgage_count > 0 {
         conn.execute_batch("UPDATE accounts SET type = 'property' WHERE type = 'mortgage'")?;
-    }
-
-    // ── 7. Make section_mappings.category nullable on old databases ──
-    // SQLite can't ALTER COLUMN, so we recreate the table if category is still NOT NULL.
-    let needs_nullable: bool = {
-        let mut stmt = conn.prepare("PRAGMA table_info(section_mappings)")?;
-        stmt.query_map([], |row| {
-            let name: String = row.get(1)?;
-            let notnull: i64 = row.get(3)?;
-            Ok((name, notnull))
-        })?
-        .filter_map(|r| r.ok())
-        .any(|(name, notnull)| name == "category" && notnull == 1)
-    };
-
-    if needs_nullable {
-        conn.execute_batch(
-            r"
-            CREATE TABLE IF NOT EXISTS section_mappings_new (
-                section     TEXT NOT NULL,
-                category    TEXT,
-                category_id TEXT UNIQUE,
-                FOREIGN KEY (category_id) REFERENCES categories(id)
-            );
-            INSERT INTO section_mappings_new (section, category, category_id)
-                SELECT section, category, category_id FROM section_mappings;
-            DROP TABLE section_mappings;
-            ALTER TABLE section_mappings_new RENAME TO section_mappings;
-        ",
-        )?;
     }
 
     // ── 9. Drop denormalised accounts.balance / accounts.balance_date ──
@@ -4664,12 +4766,30 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         )?;
     }
 
+    // ── 13. Add category_type to categories + backfill from the default taxonomy ──
+    // New column defaults every existing row to 'spending'; then any category
+    // whose name matches a default (case-insensitive) inherits that default's
+    // type, so unchanged default categories map automatically. Custom-named
+    // categories stay 'spending'. Guarded, so the backfill runs exactly once.
+    if conn
+        .prepare("SELECT category_type FROM categories LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch(
+            "ALTER TABLE categories ADD COLUMN category_type TEXT NOT NULL DEFAULT 'spending'",
+        )?;
+        for (_parent, leaves) in parse_default_categories() {
+            for (name, ctype, _desc) in leaves {
+                conn.execute(
+                    "UPDATE categories SET category_type = ?1 WHERE LOWER(name) = LOWER(?2)",
+                    params![ctype, name],
+                )?;
+            }
+        }
+    }
+
     Ok(())
 }
-
-// Keep HoldingType referenced to avoid dead_code warning.
-#[allow(dead_code)]
-const _: Option<HoldingType> = None;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -6222,6 +6342,7 @@ mod category_delete_tests {
             parent_id: parent_id.map(|s| s.to_string()),
             display_order: None,
             description: None,
+            category_type: CategoryType::Spending,
         })
         .expect("create category")
         .id

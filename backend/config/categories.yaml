@@ -1,66 +1,73 @@
-# Category taxonomy for fynance. Two-level hierarchy encoded as
-# "Parent: Child" strings. This file is the source of truth at MVP.
-# Matches docs/design/03_data_model.md.
+# Category taxonomy for fynance. Two-level hierarchy (parent -> leaf children).
+# Each leaf carries a `category_type` (drives budget/chart/portfolio logic) and
+# an optional `description` (guidance for the LLM categorisation agents).
+# category_type is one of: spending | income_taxable | income_non_taxable |
+# interest_taxable | interest_non_taxable | internal_transfer |
+# donation_taxable | donation_non_taxable. Parents are always grouping-only and
+# implicitly `spending`. This file is the source of truth at MVP and is also
+# used to backfill category_type on pre-existing categories by name.
 
 categories:
   - parent: Income
     children:
-      - Salary
-      - Freelance
-      - Investments
-      - Other Income
+      - { name: Salary, category_type: income_taxable, description: "Employment income (PAYE / wages / bonuses)." }
+      - { name: Freelance, category_type: income_taxable, description: "Self-employed or contract income." }
+      - { name: Investments, category_type: interest_taxable, description: "Taxable dividends, distributions and interest from investments." }
+      - { name: Tax-Free Interest, category_type: interest_non_taxable, description: "Tax-free interest such as ISA interest or Premium Bond prizes." }
+      - { name: Other Income, category_type: income_non_taxable, description: "Non-taxable income: refunds, reimbursements, cash gifts received." }
   - parent: Housing
     children:
-      - Rent / Mortgage
-      - Utilities
-      - Internet & Phone
-      - Home Maintenance
+      - { name: Rent / Mortgage, category_type: spending, description: "Rent or mortgage payments." }
+      - { name: Utilities, category_type: spending, description: "Gas, water, electricity and council tax." }
+      - { name: Internet & Phone, category_type: spending, description: "Broadband and mobile/phone bills." }
+      - { name: Home Maintenance, category_type: spending, description: "Repairs, furnishings and upkeep of the home." }
   - parent: Food
     children:
-      - Groceries
-      - Dining & Bars
-      - Coffee & Cafes
+      - { name: Groceries, category_type: spending, description: "Supermarket and grocery shopping." }
+      - { name: Dining & Bars, category_type: spending, description: "Restaurants, pubs and bars." }
+      - { name: Coffee & Cafes, category_type: spending, description: "Coffee shops and cafes." }
   - parent: Transport
     children:
-      - Public Transit
-      - Taxi & Rideshare
-      - Fuel
-      - Car Maintenance
+      - { name: Public Transit, category_type: spending, description: "Buses, trains, tube and trams." }
+      - { name: Taxi & Rideshare, category_type: spending, description: "Taxis, Uber and other rideshare." }
+      - { name: Fuel, category_type: spending, description: "Petrol and diesel." }
+      - { name: Car Maintenance, category_type: spending, description: "Servicing, repairs, MOT and parking." }
   - parent: Health
     children:
-      - Gym & Fitness
-      - Medical & Dental
-      - Pharmacy
+      - { name: Gym & Fitness, category_type: spending, description: "Gym memberships and fitness classes." }
+      - { name: Medical & Dental, category_type: spending, description: "Doctor, dentist and medical costs." }
+      - { name: Pharmacy, category_type: spending, description: "Prescriptions and pharmacy purchases." }
   - parent: Shopping
     children:
-      - Clothing
-      - Electronics
-      - General
+      - { name: Clothing, category_type: spending, description: "Clothes, shoes and accessories." }
+      - { name: Electronics, category_type: spending, description: "Gadgets, devices and electronics." }
+      - { name: General, category_type: spending, description: "General retail and miscellaneous shopping." }
   - parent: Entertainment
     children:
-      - Streaming Services
-      - Events & Concerts
-      - Hobbies
+      - { name: Streaming Services, category_type: spending, description: "Netflix, Spotify and other subscriptions." }
+      - { name: Events & Concerts, category_type: spending, description: "Tickets for events, concerts and cinema." }
+      - { name: Hobbies, category_type: spending, description: "Hobby and leisure spending." }
   - parent: Travel
     children:
-      - Flights
-      - Accommodation
-      - Holiday Spending
+      - { name: Flights, category_type: spending, description: "Air travel." }
+      - { name: Accommodation, category_type: spending, description: "Hotels and lodging." }
+      - { name: Holiday Spending, category_type: spending, description: "General spending while on holiday." }
   - parent: Finance
     children:
-      - Savings Transfer
-      - Investment Transfer
-      - Fees & Charges
-      - Insurance
+      - { name: Savings Transfer, category_type: internal_transfer, description: "Money moved to your own savings account (excluded from summaries)." }
+      - { name: Investment Transfer, category_type: internal_transfer, description: "Money moved to your own investment account (excluded from summaries)." }
+      - { name: Fees & Charges, category_type: spending, description: "Bank fees, charges and interest paid." }
+      - { name: Insurance, category_type: spending, description: "Insurance premiums." }
   - parent: Personal Care
     children:
-      - Haircut & Beauty
+      - { name: Haircut & Beauty, category_type: spending, description: "Haircuts, grooming and beauty." }
   - parent: Gifts & Donations
     children:
-      - Gifts
+      - { name: Gifts, category_type: donation_non_taxable, description: "Gifts given to friends and family." }
+      - { name: Charitable Donations, category_type: donation_taxable, description: "Tax-deductible / Gift-Aid-eligible charitable donations." }
   - parent: Education
     children:
-      - Courses & Books
+      - { name: Courses & Books, category_type: spending, description: "Courses, books and learning materials." }
   - parent: Other
     children:
-      - Uncategorized
+      - { name: Uncategorized, category_type: spending, description: "Fallback for transactions that do not fit another category." }
