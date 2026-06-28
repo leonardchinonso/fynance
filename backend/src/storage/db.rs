@@ -2259,12 +2259,7 @@ impl Db {
                 )
             });
 
-            entry
-                .0
-                .periods
-                .insert(period.clone(), Some(total_dec.to_string()));
             entry.1.add(total_dec, &currency, fx);
-
             entry
                 .2
                 .entry(period)
@@ -2277,6 +2272,13 @@ impl Db {
             .into_values()
             .map(|(mut row, total_agg, period_aggs)| {
                 for (period, agg) in period_aggs {
+                    // `periods` holds the FX-converted (preferred-currency) sum;
+                    // `periods_display` keeps the original foreign amount for
+                    // single-currency periods so the UI can show "₦X (£Y)".
+                    // Without the conversion, foreign sums (e.g. NGN) render at
+                    // face value — a ~2000x overstatement for NGN.
+                    row.periods
+                        .insert(period.clone(), Some(agg.converted_sum().to_string()));
                     if let Some(display) = agg.display_currency(fx.preferred()) {
                         row.periods_display.insert(period, display);
                     }
