@@ -28,6 +28,8 @@ interface StyledBarChartProps {
   height?: number
   className?: string
   showLegend?: boolean
+  // Append a summed "Total" row to the hover tooltip (useful for stacked bars).
+  showTotal?: boolean
 }
 
 export function StyledBarChart({
@@ -39,6 +41,7 @@ export function StyledBarChart({
   height = 320,
   className,
   showLegend = true,
+  showTotal = false,
 }: StyledBarChartProps) {
   const [activeBarIndex, setActiveBarIndex] = useState<number | null>(null)
   const [activeCatIndex, setActiveCatIndex] = useState<number | null>(null)
@@ -62,7 +65,7 @@ export function StyledBarChart({
           <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />
           <YAxis width={64} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} tickFormatter={(v) => formatCurrencyCompact(v)} />
           <Tooltip
-            content={<ChartTooltip activeCategory={activeCatIndex !== null ? categories[activeCatIndex] : null} />}
+            content={<ChartTooltip activeCategory={activeCatIndex !== null ? categories[activeCatIndex] : null} showTotal={showTotal} />}
             position={pos}
             wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
             isAnimationActive={false}

@@ -72,6 +72,7 @@ export function BudgetStackedBar({ rows, granularity, groupBy, accountNameMap }:
         categories={categories}
         colors={colors}
         stack
+        showTotal
         height={340}
       />
     </div>

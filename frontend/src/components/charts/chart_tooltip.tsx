@@ -81,9 +81,11 @@ export function ChartTooltip({
   label,
   formatter,
   activeCategory,
+  showTotal,
 }: TooltipProps<number, string> & {
   formatter?: (value: number, name: string) => string
   activeCategory?: string | null
+  showTotal?: boolean
 }) {
   if (!active || !payload || payload.length === 0) return null
 
@@ -91,6 +93,8 @@ export function ChartTooltip({
   // tooltip doesn't try to render null entries.
   const visible = payload.filter((entry) => entry.value != null)
   if (visible.length === 0) return null
+
+  const total = visible.reduce((sum, entry) => sum + (entry.value as number), 0)
 
   // Sort: active category first, then by original order
   const sorted = activeCategory
@@ -129,6 +133,15 @@ export function ChartTooltip({
           )
         })}
       </div>
+      {showTotal && (
+        <div className="mt-1.5 flex items-center gap-2 border-t border-border/40 pt-1.5 text-sm">
+          <span className="inline-block h-2.5 w-2.5 shrink-0" />
+          <span className="font-semibold text-foreground">Total</span>
+          <span className="ml-auto tabular-nums font-bold text-foreground">
+            {formatter ? formatter(total, "Total") : formatCurrency(total.toFixed(2))}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
