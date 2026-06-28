@@ -109,6 +109,11 @@ All runtime config via environment variables (loaded from `.env` via `dotenvy`).
 
 See `backend/RUNNING.md` for the full setup and run guide: prerequisites, configuration, all CLI subcommands with examples, dev workflow, testing, logging, and troubleshooting.
 
+Two local-dev gotchas worth knowing:
+
+- Never pipe the dev server through a sink like `head`/`tail` (e.g. `cargo run -- serve | head -20`). When the sink exits it closes the pipe and the spawned `fynance` process dies with it, which looks identical to a silent startup crash. Run it backgrounded into a log file and `grep` the log afterwards instead.
+- On Windows, a full `cargo test` or `cargo build` cannot relink `backend/target/debug/fynance.exe` while a `cargo run -- serve` instance is using it ("failed to remove file"). While iterating with the server up, validate with `cargo clippy` and `cargo test --lib` (neither relinks the running binary) and restart the server only at deliberate checkpoints.
+
 ## Commands
 
 - Build backend: `cargo build --release`
@@ -245,7 +250,7 @@ See `docs/design/05_security_isolation.md` for details.
 
 ## CI/CD
 
-- **ci.yml**: Runs on every push and PR to master. Jobs: `actionlint` (workflow linting), `frontend` (tsc + build + upload artifact), `backend` (clippy + tests, needs frontend artifact), `api-docs-coverage` (every route in `mod.rs` must have a matching `data-path` in `docs/api.html`), `docker-dry-run` (build only, no push).
+- **ci.yml**: Runs on every push and PR to master. Jobs: `actionlint` (workflow linting), `frontend` (tsc + build + upload artifact), `backend` (clippy + tests, needs frontend artifact), `api-docs-coverage` (runs `python scripts/check_api_docs.py`: every `(method, path)` in `mod.rs` must match `docs/api.html` and the OpenAPI block in `routes/docs.rs`, with query/path param names in parity), `docker-dry-run` (build only, no push).
 - **release.yml**: Manual trigger only (`workflow_dispatch`). Computes/pushes a version tag, builds Linux binary (always), macOS/Windows (opt-in), pushes Docker image to GHCR, creates GitHub Release with binaries attached.
 - **vercel-deploy.yml**: Separate workflow. Runs on push to master only when `frontend/**` changes (path-filtered). Builds the frontend itself (`npm install`) and deploys to Vercel (https://fynance-3c.vercel.app) via `npx vercel deploy --prod --yes`, using three GitHub repo secrets: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
 
@@ -266,9 +271,9 @@ The `VERCEL_TOKEN` secret in the GitHub repo expires **2027-05-03**. To renew:
 
 ### Validate before you commit / push
 
-The PR is blocked from merging unless CI passes. The authoritative list of gating checks is `.github/workflows/ci.yml` (currently: frontend `tsc --noEmit` + `npm run build`; backend `cargo clippy --all-targets -- -D warnings` + `cargo test`; plus actionlint / docker-dry-run when those files change). Local equivalents are in the Commands section above. Read the workflow rather than assuming the commands here are current.
+The PR is blocked from merging unless CI passes. The authoritative list of gating checks is `.github/workflows/ci.yml` (currently: frontend `tsc --noEmit` + `npm run build`; backend `cargo clippy --all-targets -- -D warnings` + `cargo test`; `api-docs-coverage` via `python scripts/check_api_docs.py`; plus actionlint / docker-dry-run when those files change). Local equivalents are in the Commands section above. Read the workflow rather than assuming the commands here are current.
 
-Unless the user explicitly says otherwise, before committing or pushing run the checks relevant to what changed (backend changes → clippy + tests; frontend changes → tsc + build) and confirm they pass.
+Unless the user explicitly says otherwise, before committing or pushing run the checks relevant to what changed (backend changes → clippy + tests; frontend changes → tsc + build) and confirm they pass. The `api-docs-coverage` job is not exercised by clippy or tests, so when a change adds or renames a route or changes its query/path params (a merge that pulls in another branch's routes is the easy-to-miss case), also run `python scripts/check_api_docs.py` locally.
 
 - If they pass, commit and push.
 - If something fails: fix it inline when the fix is obvious and in scope; otherwise stop, report the failure, and propose the fix for the user to confirm before committing.

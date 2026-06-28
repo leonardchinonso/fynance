@@ -78,7 +78,7 @@ pub fn build_investments_tool_schema() -> Value {
                         },
                         "quantity": {
                             "type": "string",
-                            "description": "Number of units as a positive decimal string."
+                            "description": "Number of units as a decimal string. Positive for buy/sell/vest/withhold (event_type encodes direction). For `transfer`, the sign carries direction: negative when shares leave this account (journal/transfer OUT), positive when they arrive. Never drop a transfer-out's negative sign."
                         },
                         "price_per_share": {
                             "type": "string",
@@ -90,7 +90,7 @@ pub fn build_investments_tool_schema() -> Value {
                         },
                         "fee": {
                             "type": "string",
-                            "description": "Transaction fee as decimal string. '0' if no fee shown."
+                            "description": "Transaction fee as decimal string. NEVER drop fees (CGT-allowable). Sum all fee columns on the row (commission + FX fee + exchange/stamp/SEC fee). '0' only if the statement genuinely shows no fee."
                         },
                         "currency": {
                             "type": "string",

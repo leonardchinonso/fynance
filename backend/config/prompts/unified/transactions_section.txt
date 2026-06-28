@@ -23,5 +23,9 @@ Categorization: for each transaction, pick the best-matching category from the u
 
 When a category has a `description`, treat it as authoritative guidance on what does and does not belong in that category — including hints to avoid a catch-all/fallback category when a more specific one fits.
 
+Self-transfers vs money to people: the holder(s) of THIS account are named: {{ACCOUNT_HOLDER_NAMES}}. When a transfer's counterparty is the account holder themselves — money to or from ANOTHER account in the holder's OWN name (the same person, even when the name is formatted differently, abbreviated, or shown as surname + initials) — categorize it as a self-transfer (use the category whose description covers "moving your own money between your own accounts"), NOT a family/friends category. The holder moving their own money nets to ~0 across their accounts. Treat a same-surname counterparty as money to a person only when it is clearly a DIFFERENT individual (a relative with a different first name). If the holder name above is "(not provided)", fall back to normal description-based categorization without this rule.
+
+Distinct rows that share the same date AND amount: some statements legitimately list two or more separate transactions with the identical date and amount (e.g. two £50 prizes the same day, two identical top-ups, a recurring charge billed twice). These are NOT duplicates. When the source has no intra-day time to tell them apart, emit each as a full datetime (`YYYY-MM-DDTHH:MM:SS`) with an incrementing seconds value — the first at `T00:00:00`, the next `T00:00:01`, and so on — so each row stays distinct. Without distinct timestamps the importer's dedup will silently drop the repeats as duplicates. Rows whose date and amount already differ can stay date-only (`YYYY-MM-DD`).
+
 The user's active categories (JSON):
 {{CATEGORIES_JSON}}

@@ -1,7 +1,9 @@
 HOLDINGS PERIOD: monthly
 For every month covered by the documents, emit an end-of-month snapshot per distinct holding (`as_of` = last calendar day of that month).
 
-If the documents only give one snapshot in a month, work forwards or backwards using the transactions in that month to derive the other month-ends. Example: if the month ends with £50 and there were five outflow transactions of £5 each (£25 total) during that month, the previous month ended with £75. Reverse the sign for inflows.
+Anchor to labelled balances first. Many statements print an authoritative balance line for the period — "Opening Balance", "Closing Balance", "Balance brought/carried forward", "New Balance", "Statement balance". These are fixed, reliable anchors (the opening balance of month M equals the closing balance of month M-1). Pin every such labelled month-end as a `derived: false` snapshot, then only DERIVE the months that have no labelled balance by working through transactions between the anchors. A labelled balance always beats a figure reconstructed by summing transactions, so prefer it and never overwrite it with a derived value.
+
+If a month has no labelled balance, work forwards or backwards using the transactions in that month to derive the month-end. Example: if the month ends with £50 and there were five outflow transactions of £5 each (£25 total) during that month, the previous month ended with £75. Reverse the sign for inflows.
 
 Mark each derived snapshot with `row_confidence` reflecting how directly the value was supported by the data: 0.95+ when the document gave the balance explicitly, 0.75–0.95 when you derived it from neighbour months and complete transactions, below 0.75 when the chain has gaps.
 

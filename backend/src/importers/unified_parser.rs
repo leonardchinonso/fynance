@@ -41,6 +41,10 @@ const CLOSING: &str = include_str!("../../config/prompts/unified/closing.txt");
 pub struct UnifiedContext {
     pub categories: Vec<CategorySummary>,
     pub last_open_holdings: Vec<HoldingSummary>,
+    /// Display name(s) of the profile(s) that own the account being imported.
+    /// Lets the model recognise transfers to/from the holder's own other
+    /// accounts as self-transfers rather than money to other people.
+    pub account_holder_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -198,7 +202,14 @@ fn build_unified_prompt(hints: &ParseHints, ctx: &UnifiedContext) -> String {
     if hints.return_type.transactions {
         let categories_json =
             serde_json::to_string_pretty(&ctx.categories).unwrap_or_else(|_| "[]".to_string());
-        let section = TRANSACTIONS_SECTION.replace("{{CATEGORIES_JSON}}", &categories_json);
+        let holders = if ctx.account_holder_names.is_empty() {
+            "(not provided)".to_string()
+        } else {
+            ctx.account_holder_names.join(", ")
+        };
+        let section = TRANSACTIONS_SECTION
+            .replace("{{CATEGORIES_JSON}}", &categories_json)
+            .replace("{{ACCOUNT_HOLDER_NAMES}}", &holders);
         out.push_str(&section);
         out.push_str("\n\n");
     }

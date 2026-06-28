@@ -1,4 +1,4 @@
-import { useState, useRef, type DragEvent } from "react"
+import { useState, useRef, useEffect, type DragEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Upload, X, FileText, ChevronRight } from "lucide-react"
+import { Upload, X, FileText, ChevronRight, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ParseHints } from "@/bindings/ParseHints"
 import type { SnapshotPeriod } from "@/bindings/SnapshotPeriod"
@@ -33,10 +33,48 @@ const PERIOD_LABELS: Record<"none" | SnapshotPeriod, string> = {
   yearly: "Yearly snapshots",
 }
 
+// The parser returns a bounded number of rows per pass (~150-250), so very large
+// documents can truncate or misread. Warn before upload so the user can split.
+const CSV_ROW_WARN = 200
+const PDF_SIZE_WARN = 1.5 * 1024 * 1024
+const LARGE_FILE_WARN = 3 * 1024 * 1024
+const fmtMb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`
+
 export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmit, onSkip, submitting, accountName, accountInstitution }: Props) {
   const [dragOver, setDragOver] = useState(false)
   const [showContext, setShowContext] = useState(() => !!hints.hint)
+  const [sizeWarnings, setSizeWarnings] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Flag files likely to exceed the parser's per-pass row budget. CSV/TSV are
+  // measured by row count (read client-side); PDFs and other files by size.
+  useEffect(() => {
+    let cancelled = false
+    async function check() {
+      const warns: string[] = []
+      for (const f of files) {
+        const lower = f.name.toLowerCase()
+        if (lower.endsWith(".csv") || lower.endsWith(".tsv")) {
+          try {
+            const text = await f.text()
+            const rows = text.split(/\r?\n/).filter((l) => l.trim() !== "").length - 1
+            if (rows > CSV_ROW_WARN) warns.push(`${f.name} — ~${rows.toLocaleString()} rows`)
+          } catch {
+            if (f.size > LARGE_FILE_WARN) warns.push(`${f.name} — ${fmtMb(f.size)}`)
+          }
+        } else if (lower.endsWith(".pdf")) {
+          if (f.size > PDF_SIZE_WARN) warns.push(`${f.name} — ${fmtMb(f.size)} PDF`)
+        } else if (f.size > LARGE_FILE_WARN) {
+          warns.push(`${f.name} — ${fmtMb(f.size)}`)
+        }
+      }
+      if (!cancelled) setSizeWarnings(warns)
+    }
+    check()
+    return () => {
+      cancelled = true
+    }
+  }, [files])
 
   function addFiles(newFiles: FileList | null) {
     if (!newFiles) return
@@ -107,6 +145,28 @@ export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmi
               </Button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Large-document warning */}
+      {sizeWarnings.length > 0 && (
+        <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm dark:bg-amber-950/30">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="text-amber-800 dark:text-amber-200">
+            <p className="font-medium">
+              Large document{sizeWarnings.length > 1 ? "s" : ""} — may not parse fully
+            </p>
+            <p className="mt-1 text-xs">
+              The parser returns a limited number of rows per pass, so very large files can be
+              truncated or misread. For best results, split into smaller chunks (a few months, or
+              under ~200 rows, per file) before importing.
+            </p>
+            <ul className="mt-1 list-disc pl-4 text-xs">
+              {sizeWarnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
 

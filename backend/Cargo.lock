@@ -754,6 +754,7 @@ dependencies = [
  "csv",
  "dirs",
  "dotenvy",
+ "encoding_rs",
  "futures-util",
  "hex",
  "include_dir",

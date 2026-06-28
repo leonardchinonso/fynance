@@ -38,14 +38,33 @@ fn detect_from_magic_bytes(bytes: &[u8]) -> FileFormat {
     FileFormat::Csv
 }
 
+/// Decode CSV-like bytes to text. Prefers UTF-8; when the bytes aren't valid
+/// UTF-8 (common for bank exports saved as Windows-1252 / cp1252, e.g.
+/// Amex/Fidelity/Barclays) it transcodes from Windows-1252 instead of rejecting
+/// the upload. Windows-1252 maps every byte value, so this always succeeds.
+fn decode_text(bytes: Vec<u8>, filename: &str) -> String {
+    match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            let bytes = e.into_bytes();
+            tracing::warn!(
+                filename,
+                bytes = bytes.len(),
+                "CSV is not valid UTF-8; transcoding from Windows-1252 (cp1252)"
+            );
+            let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(&bytes);
+            decoded.into_owned()
+        }
+    }
+}
+
 pub fn preprocess_file(filename: &str, bytes: Vec<u8>) -> Result<DocumentInput> {
     let format = detect_format(filename, &bytes);
     let original_size = bytes.len();
 
     match format {
         FileFormat::Csv => {
-            let text_content = String::from_utf8(bytes)
-                .map_err(|_| anyhow!("file '{}' is not valid UTF-8 (expected CSV)", filename))?;
+            let text_content = decode_text(bytes, filename);
             Ok(DocumentInput {
                 filename: filename.to_string(),
                 format: FileFormat::Csv,
@@ -260,11 +279,18 @@ mod tests {
     }
 
     #[test]
-    fn test_preprocess_csv_invalid_utf8() {
-        let bytes = vec![0xFF, 0xFE, 0x00, 0x01];
-        let result = preprocess_file("bad.csv", bytes);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not valid UTF-8"));
+    fn test_preprocess_csv_cp1252_fallback() {
+        // 0xE9 is 'é' and 0xA3 is '£' in Windows-1252 but invalid as UTF-8.
+        // Bank exports (Amex/Fidelity/Barclays) are often cp1252, so rather than
+        // rejecting them we transcode instead of erroring.
+        let bytes = b"Date,Merchant,Amount\n2025-01-01,Caf\xe9,\xa35.00".to_vec();
+        let doc = preprocess_file("bad.csv", bytes).unwrap();
+        assert_eq!(doc.format, FileFormat::Csv);
+        assert_eq!(
+            doc.text_content,
+            "Date,Merchant,Amount\n2025-01-01,Café,£5.00"
+        );
+        assert!(doc.raw_bytes.is_empty());
     }
 
     #[test]

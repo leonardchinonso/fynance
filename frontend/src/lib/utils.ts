@@ -72,6 +72,26 @@ export function formatCurrency(amount: string, currency: string = "GBP"): string
   return _redacted ? result.replace(/\d/g, "•") : result
 }
 
+/**
+ * Compact currency for tight spaces (chart axes, legends): abbreviates large
+ * magnitudes to k / m / b so values never overflow and get squashed, e.g.
+ * £120k, £1.4m, -£950, £0. Use the full `formatCurrency` for tables/tooltips.
+ */
+export function formatCurrencyCompact(amount: string | number, currency: string = "GBP"): string {
+  const num = typeof amount === "number" ? amount : parseFloat(amount)
+  if (amount === "" || amount == null || isNaN(num)) return "-"
+  const symbol = CURRENCY_SYMBOLS[currency] ?? currency + " "
+  const abs = Math.abs(num)
+  const fmt = (n: number) => n.toLocaleString("en-GB", { maximumFractionDigits: 1 })
+  let body: string
+  if (abs >= 1e9) body = fmt(abs / 1e9) + "b"
+  else if (abs >= 1e6) body = fmt(abs / 1e6) + "m"
+  else if (abs >= 1e3) body = fmt(abs / 1e3) + "k"
+  else body = fmt(abs)
+  const result = (num < 0 ? "-" : "") + symbol + body
+  return _redacted ? result.replace(/\d/g, "•") : result
+}
+
 export function categoryLeaf(category: string): string {
   return category.split(": ").pop() ?? category
 }
@@ -86,11 +106,15 @@ export function formatDate(dateStr: string): string {
 
 export function formatMonth(month: string): string {
   const date = parse(month + "-01", "yyyy-MM-dd", new Date())
+  // A non-"YYYY-MM" label (e.g. a quarterly "YYYY-Qn") parses to Invalid Date;
+  // returning it unchanged is harmless and never throws in date-fns `format`.
+  if (Number.isNaN(date.getTime())) return month
   return format(date, "MMM yyyy")
 }
 
 export function formatMonthShort(month: string): string {
   const date = parse(month + "-01", "yyyy-MM-dd", new Date())
+  if (Number.isNaN(date.getTime())) return month
   return format(date, "MMM yy")
 }
 
@@ -185,7 +209,41 @@ export function formatPeriodKey(
   granularity: "monthly" | "quarterly" | "yearly"
 ): string {
   if (granularity === "monthly") return formatMonthShort(key)
-  return key // Q1 2024 or 2024 are already readable
+  // Backend quarterly keys are "YYYY-Qn"; render as "Qn YYYY". Yearly "YYYY"
+  // (and any already-readable label) passes through.
+  const q = key.match(/^(\d{4})-Q(\d)$/)
+  return q ? `Q${q[2]} ${q[1]}` : key
+}
+
+/**
+ * The backend period key a "YYYY-MM" month belongs to, matching the keys the
+ * spending grid returns in `SpendingGridRow.periods`: "YYYY-MM" (monthly),
+ * "YYYY-Qn" (quarterly), or "YYYY" (yearly). Used to map range months onto the
+ * backend's pre-bucketed periods (e.g. to scale a monthly budget per period).
+ */
+/**
+ * Ordered union of every period key present across spending-grid rows. The
+ * backend returns each row sparsely (only periods that category has data for),
+ * so taking one row's keys both drops columns and yields `undefined` lookups
+ * (→ NaN) for the rest. The union + chronological sort gives the full column set;
+ * lexicographic sort is chronological for "YYYY-MM" / "YYYY-Qn" / "YYYY".
+ */
+export function periodKeysFromRows(rows: { periods: Record<string, unknown> }[]): string[] {
+  const keys = new Set<string>()
+  for (const r of rows) for (const k of Object.keys(r.periods)) keys.add(k)
+  return Array.from(keys).sort()
+}
+
+export function periodKeyForMonth(
+  month: string,
+  granularity: "monthly" | "quarterly" | "yearly"
+): string {
+  if (granularity === "yearly") return month.slice(0, 4)
+  if (granularity === "quarterly") {
+    const [y, m] = month.split("-").map(Number)
+    return `${y}-Q${Math.ceil(m / 3)}`
+  }
+  return month
 }
 
 /**

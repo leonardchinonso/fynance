@@ -6,7 +6,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import {
-  cn, formatCurrency, categoryLeaf, groupMonthsByGranularity, getMonthsForPeriod, formatPeriodKey,
+  cn, formatCurrency, categoryLeaf, formatPeriodKey, periodKeyForMonth, periodKeysFromRows,
 } from "@/lib/utils"
 import { DualAmount } from "@/components/currency"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
@@ -66,23 +66,20 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
   }
   if (rows.length === 0) return <EmptyState />
 
-  const periods = groupMonthsByGranularity(months, granularity)
+  // The backend pre-buckets `periods` by granularity ("YYYY-MM" | "YYYY-Qn" |
+  // "YYYY") and returns them sparsely per row, so take the union for the full
+  // (chronological) column set.
+  const periods = periodKeysFromRows(rows)
 
   function getPeriodBudget(monthlyBudget: string | null, periodKey: string): string | null {
     if (!monthlyBudget) return null
-    const periodMonths = getMonthsForPeriod(months, periodKey, granularity)
-    return (parseFloat(monthlyBudget) * periodMonths.length).toFixed(2)
+    // Scale the monthly budget by how many of the range's months fall in this period.
+    const monthCount = months.filter((m) => periodKeyForMonth(m, granularity) === periodKey).length
+    return (parseFloat(monthlyBudget) * monthCount).toFixed(2)
   }
 
   function getPeriodValue(row: SpendingGridRow, periodKey: string): string | null {
-    const periodMonths = getMonthsForPeriod(months, periodKey, granularity)
-    let total = 0
-    let hasData = false
-    for (const m of periodMonths) {
-      const val = row.periods[m]
-      if (val != null) { total += parseFloat(val); hasData = true }
-    }
-    return hasData ? total.toFixed(2) : null
+    return row.periods[periodKey] ?? null
   }
 
   const isEmptyRow = (row: SpendingGridRow): boolean => {
@@ -140,7 +137,6 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
                 section={section}
                 rows={sectionRows}
                 periods={periods}
-                months={months}
                 granularity={granularity}
                 getPeriodValue={getPeriodValue}
                 getPeriodBudget={getPeriodBudget}
@@ -158,12 +154,11 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
 }
 
 function SectionBlock({
-  section, rows, periods, months, granularity, getPeriodValue, getPeriodBudget, preferredCurrency, onBudgetSaved,
+  section, rows, periods, granularity, getPeriodValue, getPeriodBudget, preferredCurrency, onBudgetSaved,
 }: {
   section: string
   rows: SpendingGridRow[]
   periods: string[]
-  months: string[]
   granularity: Granularity
   getPeriodValue: (row: SpendingGridRow, periodKey: string) => string | null
   getPeriodBudget: (budget: string | null, periodKey: string) => string | null
@@ -209,14 +204,10 @@ function SectionBlock({
                 <TableCell key={p} className="text-right text-sm text-muted-foreground/30">-</TableCell>
               )
               const periodBudget = getPeriodBudget(row.budget, p)
-              // periods_display is keyed by month; for aggregated periods find the first constituent month with a display entry
-              const display = row.periods_display ?? {}
-              const periodDisplay = display[p]
-                ?? getMonthsForPeriod(months, p, granularity).map(m => display[m]).find(d => d != null)
-                ?? null
+              const periodDisplay = (row.periods_display ?? {})[p] ?? null
               return (
                 <TableCell key={p} className={cn("text-right text-sm", row.section !== "Income" && cellColor(val, periodBudget))}>
-                  <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={periodDisplay} secondaryFirst />
+                  <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={periodDisplay} tooltip />
                 </TableCell>
               )
             })}

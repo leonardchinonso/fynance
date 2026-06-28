@@ -1,10 +1,6 @@
 import type { SpendingGridRow, Granularity } from "@/types"
 import { StyledBarChart } from "@/components/charts"
-import {
-  groupMonthsByGranularity,
-  getMonthsForPeriod,
-  formatPeriodKey,
-} from "@/lib/utils"
+import { formatPeriodKey, periodKeysFromRows } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useResolveCategoryName } from "@/context/category_names_context"
@@ -15,7 +11,7 @@ interface BudgetStackedBarProps {
   granularity: Granularity
 }
 
-export function BudgetStackedBar({ rows, months, granularity }: BudgetStackedBarProps) {
+export function BudgetStackedBar({ rows, granularity }: BudgetStackedBarProps) {
   const { categoryColors } = useCategoryColorsContext()
   const resolveName = useResolveCategoryName()
   const spendingRows = rows.filter(
@@ -26,18 +22,14 @@ export function BudgetStackedBar({ rows, months, granularity }: BudgetStackedBar
     new Set(spendingRows.map((r) => resolveName(r.category_id).split(":")[0].trim()))
   )
 
-  const periods = groupMonthsByGranularity(months, granularity)
+  // Rows are sparse per granularity period, so take the union of keys. A value
+  // missing for a category in a period must read as 0, never NaN — NaN breaks the
+  // Recharts stacked-bar baseline and makes every bar render full-height.
+  const periodKeys = periodKeysFromRows(rows).filter((p) =>
+    spendingRows.some((r) => r.periods[p] != null)
+  )
 
-  // Only include periods that have data
-  const periodsWithData = periods.filter((p) => {
-    const periodMonths = getMonthsForPeriod(months, p, granularity)
-    return spendingRows.some((r) =>
-      periodMonths.some((m) => r.periods[m] !== null)
-    )
-  })
-
-  const data = periodsWithData.map((p) => {
-    const periodMonths = getMonthsForPeriod(months, p, granularity)
+  const data = periodKeys.map((p) => {
     const entry: Record<string, string | number> = {
       period: formatPeriodKey(p, granularity),
     }
@@ -47,10 +39,8 @@ export function BudgetStackedBar({ rows, months, granularity }: BudgetStackedBar
       )
       let total = 0
       for (const row of catRows) {
-        for (const m of periodMonths) {
-          const val = row.periods[m]
-          if (val !== null) total += Math.abs(parseFloat(val))
-        }
+        const n = parseFloat(row.periods[p] ?? "")
+        if (Number.isFinite(n)) total += Math.abs(n)
       }
       entry[cat] = parseFloat(total.toFixed(2))
     }

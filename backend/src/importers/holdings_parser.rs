@@ -200,6 +200,10 @@ pub(crate) fn build_holdings_tool_schema() -> Value {
                             "type": ["string", "null"],
                             "description": "Sub-account or pot name if multiple of same currency exist."
                         },
+                        "as_of": {
+                            "type": ["string", "null"],
+                            "description": "ISO 8601 date (YYYY-MM-DD) this snapshot is valid for: the statement closing/period-end date or position date read from the document. Do NOT use today's date unless the document carries no usable date, in which case fall back to today AND set row_confidence below 0.3."
+                        },
                         "row_confidence": {
                             "type": "number",
                             "minimum": 0.0,

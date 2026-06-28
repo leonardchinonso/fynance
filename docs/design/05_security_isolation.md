@@ -35,7 +35,7 @@ pub fn default_db_path() -> PathBuf {
 |---|---|
 | macOS | `~/Library/Application Support/fynance/fynance.db` |
 | Linux | `~/.local/share/fynance/fynance.db` |
-| Windows | `%APPDATA%\fynance\fynance.db` |
+| Windows | `%LOCALAPPDATA%\fynance\fynance.db` |
 
 The directory is created with mode `700` (owner-only) on Unix:
 

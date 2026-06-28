@@ -19,8 +19,9 @@ Each entry has this shape:
   "quantity": "10",
   "price_per_share": "76.32",
   "total_value": "763.20",
-  "fee": "0",
+  "fee": "1.50",
   "currency": "GBP",
+  "fee_currency": null,
   "notes": null,
   "row_confidence": 0.97
 }
@@ -50,8 +51,11 @@ release price for that event.
 
 Field meanings:
 - `date`: the execution date/time of the trade.
-- `quantity`: the number of shares/units in this single trade (the position size of the disposal or purchase).
-- `price_per_share`: the execution price per share, in the instrument's native currency (use the EXECUTION PRICE column, not an average price or FX rate).
-- `fee`: broker / exchange / government fees on the trade. Use `"0"` only if the statement genuinely shows none.
+- `quantity`: the number of shares/units in this single trade. For `buy`, `sell`, `vest`, and `withhold` use a positive number (the event_type already encodes the direction). For `transfer`, the SIGN carries the direction: NEGATIVE when shares leave this account (a journal/transfer OUT, e.g. "Journaled Shares -45"), POSITIVE when shares arrive. Never coerce a transfer-out to positive — a dropped negative sign corrupts the share position.
+- `price_per_share`: the execution price per share, in the instrument's native currency (use the EXECUTION PRICE column, not an average price or FX rate). Apply the same GBX/pence -> GBP /100 normalisation as holdings: a "GBX"/"GBp"/pence price must be divided by 100 with `currency` set to `GBP`.
+- `fee`: broker / exchange / government fees on the trade. NEVER drop fees — they are CGT-allowable incidental costs and matter for tax. Capture every fee column shown (commission, FX fee, exchange/stamp/SEC fee); if a row shows more than one, sum them. Use `"0"` only when the statement genuinely shows no fee.
+- `fee_currency`: REQUIRED whenever the fee is in a DIFFERENT currency from `price_per_share` — e.g. a USD-priced US share with a GBP commission (`currency: "USD"`, `fee_currency: "GBP"`). Set it to `null` only when the fee is in the same currency as the price. Getting this wrong mis-converts the fee.
+
+SYMBOL FROM ISIN: statement trade tables often misalign the ticker-label column (one instrument can show several different labels down the page), so prefer the row's ISIN over the visible label. Resolve the canonical ticker from the ISIN when present; if you cannot resolve it confidently, put the ISIN in `symbol` rather than guessing.
 
 Dates use ISO 8601 datetime (`YYYY-MM-DDTHH:MM:SS`); use `T00:00:00` if only the date is given.
