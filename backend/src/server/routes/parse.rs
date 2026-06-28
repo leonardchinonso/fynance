@@ -275,7 +275,12 @@ pub async fn parse_documents(
         let names: Vec<String> = account
             .profile_ids
             .iter()
-            .filter_map(|pid| profiles.iter().find(|p| &p.id == pid).map(|p| p.name.clone()))
+            .filter_map(|pid| {
+                profiles
+                    .iter()
+                    .find(|p| &p.id == pid)
+                    .map(|p| p.name.clone())
+            })
             .collect();
         (account, names)
     };
