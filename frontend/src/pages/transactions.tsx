@@ -77,11 +77,13 @@ export function TransactionsPage() {
 
   const [pageSize, setPageSize] = usePageSizeParam("limit", "page")
 
+  // Demand-driven: the table and chart datasets fetch only on their own view.
   const transactionsData = useTransactions(
     start, end, selectedAccounts, selectedCategories, search, page, pageSize, profileId, txSort, txDir,
+    view === "table",
   )
   const chartData = useTransactionCharts(
-    start, end, selectedAccounts, selectedCategories, profileId,
+    start, end, selectedAccounts, selectedCategories, profileId, view === "charts",
   )
   const filterOptions = useFilterOptions(profileId)
 

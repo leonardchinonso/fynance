@@ -1,7 +1,7 @@
 import { api } from "@/api/client"
 import type { Account } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
-import { useRemoteData } from "@/hooks/use_remote_data"
+import { useQuery } from "@/hooks/use_query"
 
 /**
  * Fetches accounts, optionally filtered by profile.
@@ -15,8 +15,8 @@ import { useRemoteData } from "@/hooks/use_remote_data"
 export function useAccounts(
   profileId?: string,
 ): [RemoteData<Account[]>, () => void] {
-  return useRemoteData(
+  return useQuery(
     () => api.getAccounts(profileId),
-    { hard: [profileId], soft: [] },
+    { tag: "accounts", hard: [profileId], soft: [] },
   )
 }

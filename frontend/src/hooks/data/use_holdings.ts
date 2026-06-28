@@ -1,23 +1,19 @@
 import { api } from "@/api/client"
 import type { Holding } from "@/types"
-import { RemoteData } from "@/lib/remote_data"
-import { useRemoteData } from "@/hooks/use_remote_data"
+import type { RemoteData } from "@/lib/remote_data"
+import { useQuery } from "@/hooks/use_query"
 
 /**
  * Fetches holdings for a single account. Returns `idle` when `accountId` is null
- * (e.g. when no account is selected in the drill-down sheet).
+ * (e.g. when no account is selected in the drill-down sheet) — the query is
+ * disabled, so no request is issued.
  *
  * - Hard dep: `accountId` — switching accounts wipes holdings and shows a skeleton.
  */
 export function useHoldings(accountId: string | null): RemoteData<Holding[]> {
-  const [data] = useRemoteData(
-    () => {
-      if (!accountId) return Promise.resolve([])
-      return api.getHoldings(accountId)
-    },
-    { hard: [accountId], soft: [] },
+  const [data] = useQuery(
+    () => api.getHoldings(accountId as string),
+    { tag: "holdings", hard: [accountId], soft: [], enabled: accountId !== null },
   )
-
-  if (accountId === null) return RemoteData.idle<Holding[]>()
   return data
 }

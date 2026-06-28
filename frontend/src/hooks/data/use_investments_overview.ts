@@ -4,7 +4,7 @@ import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CgtSummary } from "@/bindings/CgtSummary"
 import type { RemoteData } from "@/lib/remote_data"
-import { useRemoteData } from "@/hooks/use_remote_data"
+import { useQuery } from "@/hooks/use_query"
 import { accountTypeToAssetClass } from "@/lib/account_type_utils"
 
 /** Everything the Investments Overview dashboard needs, fetched in parallel. */
@@ -66,9 +66,10 @@ export function useInvestmentsOverview(
   end: string,
   profileId: string | undefined,
   selectedAccountIds: string[] = [],
+  enabled = true,
 ): RemoteData<InvestmentsOverviewData> {
   const selectedKey = [...selectedAccountIds].sort().join(",")
-  const [data] = useRemoteData(
+  const [data] = useQuery(
     async (): Promise<InvestmentsOverviewData> => {
       const [accounts, pools, allEvents, currencies] = await Promise.all([
         api.getAccounts(profileId),
@@ -122,7 +123,7 @@ export function useInvestmentsOverview(
         preferredCurrency: preferredCode(currencies),
       }
     },
-    { hard: [profileId], soft: [start, end, selectedKey] },
+    { tag: "investments-overview", hard: [profileId], soft: [start, end, selectedKey], enabled },
   )
   return data
 }

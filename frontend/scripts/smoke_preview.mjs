@@ -194,7 +194,7 @@ async function runView(browser, view) {
   await page.getByRole("heading", { name: /^reports$/i }).waitFor({ timeout: 10000 })
   await page.getByText(/capital gains tax report/i).waitFor({ timeout: 5000 })
   await page.getByText(/^documents$/i).first().waitFor({ timeout: 5000 })
-  await page.getByText(/more reports coming soon/i).waitFor({ timeout: 5000 })
+  await page.getByText(/pick a report to generate/i).waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9_reports_landing`)
 
   await page.getByRole("button", { name: /capital gains tax report/i }).click()
@@ -264,6 +264,48 @@ async function runView(browser, view) {
   }
   await shot(page, `preview_${label}_11b_budget_trend_tooltip`)
 
+  // 12f. Demand-driven loading + request-keyed cache (issue #52).
+  //      Reads the dev-only per-key fetch counter the query cache exposes on
+  //      window.__queryFetchCounts. A full page.goto reboots the SPA (fresh
+  //      cache); the tab switches below are client-side so the cache persists.
+  await page.goto(`${BASE}/portfolio`, { waitUntil: "domcontentloaded" })
+  const viewSwitch = page.getByRole("button", { name: /^overview$/i })
+  await viewSwitch.waitFor({ timeout: 15000 })
+  await page.waitForTimeout(800) // let the Overview fetch start
+  const fetchCount = (tag) =>
+    page.evaluate((t) => {
+      const counts = window.__queryFetchCounts || {}
+      return Object.entries(counts)
+        .filter(([k]) => k.startsWith(t + "::"))
+        .reduce((n, [, v]) => n + v, 0)
+    }, tag)
+
+  // Unopened tabs must have issued zero requests for their data.
+  if ((await fetchCount("portfolio-accounts")) !== 0 || (await fetchCount("portfolio-history")) !== 0) {
+    throw new Error("Hidden Portfolio tabs fetched eagerly on Overview")
+  }
+  const summaryFetches = await fetchCount("portfolio-summary")
+  if (summaryFetches < 1) throw new Error("Overview did not fetch its summary")
+
+  // Overview -> Accounts -> History -> Overview, client-side.
+  await page.getByRole("button", { name: /^accounts$/i }).click()
+  await page.waitForTimeout(700)
+  await page.getByRole("button", { name: /^history$/i }).click()
+  await page.waitForTimeout(700)
+  await page.getByRole("button", { name: /^overview$/i }).click()
+  await page.waitForTimeout(700)
+
+  // Each underlying request fired at most once; returning to Overview is a cache hit.
+  const acc = await fetchCount("portfolio-accounts")
+  const hist = await fetchCount("portfolio-history")
+  const summaryAfter = await fetchCount("portfolio-summary")
+  if (acc !== 1) throw new Error(`Accounts fetched ${acc} times across one open, expected 1`)
+  if (hist !== 1) throw new Error(`History fetched ${hist} times across one open, expected 1`)
+  if (summaryAfter !== summaryFetches) {
+    throw new Error(`Returning to Overview refetched summary (${summaryFetches} -> ${summaryAfter}); cache not served`)
+  }
+  console.log(`[${label}] demand-driven cache OK (summary=${summaryAfter}, accounts=${acc}, history=${hist})`)
+
   // 13. Portfolio account drill-down → per-account holdings value-history chart.
   //     Investment account: Allocation/History toggle, then a line chart with a
   //     Total line + per-holding lines and a Monthly/Quarterly/Yearly toggle.
@@ -305,10 +347,18 @@ async function runView(browser, view) {
   await page.getByText(/^cost basis$/i).waitFor({ timeout: 10000 })
   await page.getByText(/cumulative invested/i).waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_13_investments_overview`)
-  // Switch to the History ledger: assert the Add control + the events table.
+  // Switch to the History ledger: assert the Add control, then the events table.
   await page.getByRole("button", { name: /^history$/i }).click()
   await page.getByRole("button", { name: /add event/i }).waitFor({ timeout: 5000 })
-  await page.getByRole("columnheader", { name: /^symbol$/i }).waitFor({ timeout: 5000 })
+  // The table's Symbol header renders when in-range events exist; otherwise the
+  // empty state shows. Accept either so the check is robust to mock-event dates
+  // ageing out of the default "last 12 months" window.
+  await Promise.race([
+    page.getByRole("columnheader", { name: /^symbol$/i }).waitFor({ timeout: 8000 }),
+    page.getByText(/no investment events/i).waitFor({ timeout: 8000 }),
+  ]).catch(() => {
+    throw new Error("Investments History rendered neither the events table nor the empty state")
+  })
   await shot(page, `preview_${label}_13b_investments_history`)
 
   await ctx.close()

@@ -58,27 +58,3 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Education: "#0ea5e9",
   Other: "#78716c",
 }
-
-export const BUDGET_STATUS_COLORS = {
-  green: "#22c55e", // < 80%
-  amber: "#f59e0b", // 80-110%
-  red: "#ef4444", // > 110%
-} as const
-
-export function getBudgetStatusColor(percent: number): string {
-  if (percent > 110) return BUDGET_STATUS_COLORS.red
-  if (percent >= 80) return BUDGET_STATUS_COLORS.amber
-  return BUDGET_STATUS_COLORS.green
-}
-
-export function getBudgetStatusClass(percent: number): string {
-  if (percent > 110) return "text-red-500"
-  if (percent >= 80) return "text-amber-500"
-  return "text-green-500"
-}
-
-export function getBudgetProgressClass(percent: number): string {
-  if (percent > 110) return "[&>div]:bg-red-500"
-  if (percent >= 80) return "[&>div]:bg-amber-500"
-  return "[&>div]:bg-green-500"
-}

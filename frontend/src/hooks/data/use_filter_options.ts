@@ -1,7 +1,7 @@
 import { api } from "@/api/client"
 import type { Account } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
-import { useRemoteData } from "@/hooks/use_remote_data"
+import { useQuery } from "@/hooks/use_query"
 
 /** Accounts and category names available for filter dropdowns. */
 export interface FilterOptions {
@@ -19,7 +19,7 @@ export interface FilterOptions {
 export function useFilterOptions(
   profileId: string | undefined,
 ): RemoteData<FilterOptions> {
-  const [data] = useRemoteData(
+  const [data] = useQuery(
     async () => {
       const [accounts, categories] = await Promise.all([
         api.getAccounts(profileId),
@@ -27,7 +27,7 @@ export function useFilterOptions(
       ])
       return { accounts, categories }
     },
-    { hard: [profileId], soft: [] },
+    { tag: "filter-options", hard: [profileId], soft: [] },
   )
   return data
 }
