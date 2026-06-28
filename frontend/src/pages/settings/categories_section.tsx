@@ -2,8 +2,13 @@ import { useState, useRef, useEffect } from "react"
 import { api } from "@/api/client"
 import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { CategoryType } from "@/bindings/CategoryType"
-import { ALL_CATEGORY_TYPES, CATEGORY_TYPE_LABELS } from "@/bindings/category_type_groups"
+import { CATEGORY_TYPE_LABELS } from "@/bindings/category_type_groups"
+import { CATEGORY_TYPE_GROUPS } from "@/lib/category_types"
 import { visitRemoteData } from "@/lib/remote_data"
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
+} from "@/components/ui/dropdown-menu"
 import { useCategories } from "@/hooks/data"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { COLOR_PALETTE } from "@/lib/colors"
@@ -15,7 +20,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Trash2, Pencil, Plus, Tag } from "lucide-react"
+import { Trash2, Pencil, Plus, Tag, ChevronDown } from "lucide-react"
 
 export function CategoriesSection() {
   const [categoriesData, refresh] = useCategories()
@@ -131,15 +136,38 @@ export function CategoriesSection() {
             </div>
             <div>
               <label className="text-sm font-medium">Category type</label>
-              <select
-                className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm"
-                value={form.category_type}
-                onChange={(e) => setForm(f => ({ ...f, category_type: e.target.value as CategoryType }))}
-              >
-                {ALL_CATEGORY_TYPES.map((t) => (
-                  <option key={t} value={t}>{CATEGORY_TYPE_LABELS[t]}</option>
-                ))}
-              </select>
+              <DropdownMenu>
+                <DropdownMenuTrigger className="w-full mt-1 flex items-center justify-between rounded-md border bg-background px-3 py-2 text-sm hover:bg-accent/50">
+                  <span>{CATEGORY_TYPE_LABELS[form.category_type]}</span>
+                  <ChevronDown className="h-4 w-4 opacity-50" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="min-w-[14rem]">
+                  {CATEGORY_TYPE_GROUPS.map((g) =>
+                    g.types.length === 1 ? (
+                      <DropdownMenuItem
+                        key={g.key}
+                        onClick={() => setForm((f) => ({ ...f, category_type: g.types[0] }))}
+                      >
+                        {g.label}
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuSub key={g.key}>
+                        <DropdownMenuSubTrigger>{g.label}</DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent>
+                          {g.types.map((t) => (
+                            <DropdownMenuItem
+                              key={t}
+                              onClick={() => setForm((f) => ({ ...f, category_type: t }))}
+                            >
+                              {CATEGORY_TYPE_LABELS[t]}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    ),
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <div>
               <label className="text-sm font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></label>

@@ -662,14 +662,31 @@ function BreakdownCard({
   colorFn?: (label: string) => string
   labelFn?: (label: string) => string
 }) {
+  // Roll up tiny positive slices (0–1%) into "Others" — but only when there is
+  // more than one, and never negatives (e.g. Credit) which stay listed.
+  const tiny = items.filter((i) => i.percentage > 0 && i.percentage < 1)
+  const displayItems: BreakdownItem[] = tiny.length > 1
+    ? [
+        ...items.filter((i) => !(i.percentage > 0 && i.percentage < 1)),
+        {
+          label: "Others",
+          value: tiny.reduce((s, i) => s + parseFloat(i.value), 0).toFixed(2),
+          percentage: tiny.reduce((s, i) => s + i.percentage, 0),
+          display_currency: null,
+        },
+      ].sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
+    : items
+
   return (
     <Card className="md:flex md:flex-col md:h-full md:min-h-0 md:overflow-hidden">
       <CardHeader className="pb-2 md:shrink-0">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 md:flex-1 md:min-h-0 md:overflow-y-auto">
-        {items.map((item, i) => {
-          const color = colorFn
+        {displayItems.map((item, i) => {
+          const color = item.label === "Others"
+            ? "#78716c"
+            : colorFn
             ? colorFn(item.label)
             : BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length]
           const displayLabel = labelFn ? labelFn(item.label) : item.label

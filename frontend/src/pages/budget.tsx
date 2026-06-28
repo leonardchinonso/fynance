@@ -19,9 +19,7 @@ import { useSpendingGrid, useTransactions, useFilterOptions } from "@/hooks/data
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { api } from "@/api/client"
 import type { CategoryType } from "@/bindings/CategoryType"
-import {
-  ALL_CATEGORY_TYPES, CHART_EXCLUDED_TYPES, CATEGORY_TYPE_LABELS,
-} from "@/bindings/category_type_groups"
+import { CATEGORY_TYPE_GROUPS, expandGroups, groupsForTypes } from "@/lib/category_types"
 
 const VIEW_MODES = [
   { value: "overview", label: "Overview",     icon: <Grid3X3 className="h-4 w-4" /> },
@@ -90,12 +88,15 @@ export function BudgetPage() {
 
   const months = getMonthsInRange(start, end)
 
-  // Charts always exclude internal_transfer; honour the user's type filter on
-  // top of that. Empty selection = all (non-excluded) types.
-  const chartTypes = (selectedCategoryTypes.length > 0
+  // Charts default to Spending only; the user can select any mix of types via
+  // the Types filter. The selection drives both the chart query and what the
+  // filter shows as checked (Overview/Table treat an empty filter as "all").
+  const chartTypes = selectedCategoryTypes.length > 0
     ? (selectedCategoryTypes as CategoryType[])
-    : [...ALL_CATEGORY_TYPES]
-  ).filter((t) => !CHART_EXCLUDED_TYPES.includes(t))
+    : (["spending"] as CategoryType[])
+  const typeFilterSelected = view === "charts" && selectedCategoryTypes.length === 0
+    ? ["spending"]
+    : groupsForTypes(selectedCategoryTypes)
 
   const sharedFilters = {
     accounts: selectedAccounts,
@@ -156,10 +157,10 @@ export function BudgetPage() {
         />
         <MultiSelect
           label="Types"
-          options={[...ALL_CATEGORY_TYPES]}
-          selected={selectedCategoryTypes}
-          onChange={setCategoryTypes}
-          displayFn={(t) => CATEGORY_TYPE_LABELS[t as CategoryType] ?? t}
+          options={CATEGORY_TYPE_GROUPS.map((g) => g.key)}
+          selected={typeFilterSelected}
+          onChange={(keys) => setCategoryTypes(expandGroups(keys))}
+          displayFn={(k) => CATEGORY_TYPE_GROUPS.find((g) => g.key === k)?.label ?? k}
         />
         {view === "charts" && (
           <div className="flex items-center gap-1.5">

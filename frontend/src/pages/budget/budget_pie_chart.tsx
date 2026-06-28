@@ -3,7 +3,7 @@ import type { CategoryType } from "@/bindings/CategoryType"
 import { InteractivePie } from "@/components/charts"
 import { formatCurrency, categoryParent } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
-import { CATEGORY_TYPE_LABELS } from "@/bindings/category_type_groups"
+import { groupLabelForType } from "@/lib/category_types"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useCategoryMeta } from "@/context/category_names_context"
 
@@ -27,7 +27,7 @@ export function BudgetPieChart({ rows, groupBy, accountNameMap }: BudgetPieChart
       case "leaf_category":
         return resolve(row.category_id)
       case "category_type":
-        return CATEGORY_TYPE_LABELS[row.group_key as CategoryType] ?? row.group_key ?? ""
+        return row.group_key ? groupLabelForType(row.group_key as CategoryType) : ""
       case "account":
         return accountNameMap[row.group_key ?? ""] ?? row.group_key ?? ""
       default:

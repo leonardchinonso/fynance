@@ -3479,13 +3479,15 @@ impl Db {
         })
     }
 
-    /// NET new cash invested over `[start, end]`: buys minus sells, FX-converted
-    /// to the preferred currency, so an intra-account fund switch (sell A, buy B)
-    /// nets to ~0 rather than counting the buy leg as fresh money. A buy is cash
-    /// out (`quantity * price_per_share + fee`); a sell is cash in
-    /// (`quantity * price_per_share - fee`); fees are always a cost. The trade
-    /// leg (`currency`) and fee (`fee_currency`, falling back to `currency`) are
-    /// converted independently. Profile-scoped via the owning account.
+    /// Net new contributions over `[start, end]` (cash AND equity added that is
+    /// not market movement), FX-converted to the preferred currency. So a fund
+    /// switch (sell A, buy B) nets to ~0, and RSU vests count as value in.
+    /// Sign by event: buy / vest = in (+), sell / withhold = out (-), transfer =
+    /// signed by quantity (negative quantity = shares out); split is excluded
+    /// (re-denomination, no value change). `quantity * price_per_share` is the
+    /// trade leg; fees are always a cost (+). Trade leg (`currency`) and fee
+    /// (`fee_currency`, falling back to `currency`) convert independently.
+    /// Profile-scoped via the owning account.
     pub fn compute_new_cash_invested(
         &self,
         start: NaiveDate,
@@ -3514,7 +3516,7 @@ impl Db {
         let sql = format!(
             r"SELECT i.event_type, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
               FROM investments i {join}
-              WHERE i.event_type IN ('buy', 'sell')
+              WHERE i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
                 AND i.date >= ?1 AND i.date <= ?2 {profile_filter}"
         );
 
@@ -3539,9 +3541,15 @@ impl Db {
         for (event_type, qty, price, fee, currency, fee_currency) in rows {
             let q = qty.parse::<Decimal>().unwrap_or_default();
             let p = price.parse::<Decimal>().unwrap_or_default();
-            // Buy = cash out (+), sell = cash in (-); fee is always a cost (+).
+            // In (+): buy, vest, transfer-in. Out (-): sell, withhold. transfer
+            // carries its direction in the quantity sign, so it is added as-is.
+            // Fee is always a cost (+).
             let principal = q * p;
-            let signed = if event_type == "sell" { -principal } else { principal };
+            let signed = if event_type == "sell" || event_type == "withhold" {
+                -principal
+            } else {
+                principal
+            };
             agg.add(signed, &currency, fx);
             if let Some(fee) = fee {
                 let f = fee.parse::<Decimal>().unwrap_or_default();
