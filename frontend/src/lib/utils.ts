@@ -9,7 +9,6 @@ import {
   eachMonthOfInterval,
   differenceInDays,
 } from "date-fns"
-import type { DisplayCurrency } from "@/bindings/DisplayCurrency"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -156,51 +155,6 @@ export function getYear(month: string): string {
 }
 
 /**
- * Group an array of months into period keys based on granularity.
- * Returns an ordered array of unique period keys.
- */
-export function groupMonthsByGranularity(
-  months: string[],
-  granularity: "monthly" | "quarterly" | "yearly"
-): string[] {
-  const keyFn =
-    granularity === "quarterly"
-      ? getQuarter
-      : granularity === "yearly"
-        ? getYear
-        : (m: string) => m
-
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const m of months) {
-    const key = keyFn(m)
-    if (!seen.has(key)) {
-      seen.add(key)
-      result.push(key)
-    }
-  }
-  return result
-}
-
-/**
- * Get which months belong to a given period key.
- */
-export function getMonthsForPeriod(
-  allMonths: string[],
-  periodKey: string,
-  granularity: "monthly" | "quarterly" | "yearly"
-): string[] {
-  const keyFn =
-    granularity === "quarterly"
-      ? getQuarter
-      : granularity === "yearly"
-        ? getYear
-        : (m: string) => m
-
-  return allMonths.filter((m) => keyFn(m) === periodKey)
-}
-
-/**
  * Format a period key for display.
  * Monthly: "Oct 25", Quarterly: "Q1 2024", Yearly: "2024"
  */
@@ -244,37 +198,4 @@ export function periodKeyForMonth(
     return `${y}-Q${Math.ceil(m / 3)}`
   }
   return month
-}
-
-/**
- * Format a monetary value for display.
- * Uses display_currency when present (foreign-currency single-source value),
- * otherwise falls back to the preferred currency.
- */
-export function formatMonetary(
-  value: string,
-  preferredCurrency: string,
-  display?: DisplayCurrency | null
-): string {
-  if (display) return formatCurrency(display.value, display.currency)
-  return formatCurrency(value, preferredCurrency)
-}
-
-/**
- * Returns a primary label and an optional secondary label (for tooltips).
- * When display_currency is present, primary shows the foreign value and
- * secondary shows the preferred-currency equivalent.
- */
-export function formatMonetaryWithFallback(
-  value: string,
-  preferredCurrency: string,
-  display?: DisplayCurrency | null
-): { primary: string; secondary?: string } {
-  if (display) {
-    return {
-      primary: formatCurrency(display.value, display.currency),
-      secondary: formatCurrency(value, preferredCurrency),
-    }
-  }
-  return { primary: formatCurrency(value, preferredCurrency) }
 }

@@ -39,9 +39,9 @@ export interface QueryOptions {
 /**
  * Demand-driven, request-keyed data hook built on the in-memory query cache.
  *
- * Drop-in replacement for `useRemoteData` that adds caching, in-flight
- * deduplication, an `enabled` gate, and explicit invalidation, while preserving
- * the `RemoteData` contract and the hard/soft (loading vs reloading) semantics.
+ * Adds caching, in-flight deduplication, an `enabled` gate, and explicit
+ * invalidation on top of the `RemoteData` contract, preserving the hard/soft
+ * (loading vs reloading) semantics.
  *
  * @returns `[data, refresh]` — `refresh()` forces a refetch ignoring freshness.
  */

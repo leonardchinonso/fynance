@@ -134,8 +134,3 @@ export function useRecentImports() {
 
   return { entries, add, updateEdits, remove, getById }
 }
-
-/** Reconstruct a Set<number> for deletion indices kept as arrays in storage. */
-export function deletedAsSet(arr: number[] | undefined): Set<number> {
-  return new Set(arr ?? [])
-}
