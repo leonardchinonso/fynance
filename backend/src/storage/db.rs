@@ -3443,7 +3443,7 @@ impl Db {
     /// Investment performance for `[start, end]`. Start/end values reduce
     /// `get_holdings_for_summary` (Investment accounts only), FX-converted via
     /// `fx` per holding/transaction currency, so they stay consistent with
-    /// net worth. `new_cash_invested` = sum of `buy` investment events in range
+    /// net worth. `new_cash_invested` = net buys minus sells in range
     /// (see [`Self::compute_new_cash_invested`]). `market_growth` strips that
     /// out of the total value change to isolate price movement.
     pub fn compute_investment_metrics(
@@ -3479,10 +3479,13 @@ impl Db {
         })
     }
 
-    /// Cash deployed via `buy` investment events in `[start, end]`, FX-converted
-    /// to the preferred currency. The trade leg (`quantity * price_per_share` in
-    /// `currency`) and the fee (in `fee_currency`, falling back to `currency`)
-    /// are converted independently. Profile-scoped via the owning account.
+    /// NET new cash invested over `[start, end]`: buys minus sells, FX-converted
+    /// to the preferred currency, so an intra-account fund switch (sell A, buy B)
+    /// nets to ~0 rather than counting the buy leg as fresh money. A buy is cash
+    /// out (`quantity * price_per_share + fee`); a sell is cash in
+    /// (`quantity * price_per_share - fee`); fees are always a cost. The trade
+    /// leg (`currency`) and fee (`fee_currency`, falling back to `currency`) are
+    /// converted independently. Profile-scoped via the owning account.
     pub fn compute_new_cash_invested(
         &self,
         start: NaiveDate,
@@ -3509,9 +3512,9 @@ impl Db {
         };
 
         let sql = format!(
-            r"SELECT i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
+            r"SELECT i.event_type, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
               FROM investments i {join}
-              WHERE i.event_type = 'buy'
+              WHERE i.event_type IN ('buy', 'sell')
                 AND i.date >= ?1 AND i.date <= ?2 {profile_filter}"
         );
 
@@ -3523,19 +3526,23 @@ impl Db {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut agg = CurrencyAggregator::default();
-        for (qty, price, fee, currency, fee_currency) in rows {
+        for (event_type, qty, price, fee, currency, fee_currency) in rows {
             let q = qty.parse::<Decimal>().unwrap_or_default();
             let p = price.parse::<Decimal>().unwrap_or_default();
-            agg.add(q * p, &currency, fx);
+            // Buy = cash out (+), sell = cash in (-); fee is always a cost (+).
+            let principal = q * p;
+            let signed = if event_type == "sell" { -principal } else { principal };
+            agg.add(signed, &currency, fx);
             if let Some(fee) = fee {
                 let f = fee.parse::<Decimal>().unwrap_or_default();
                 if !f.is_zero() {
