@@ -1,17 +1,18 @@
 import { api } from "@/api/client"
 import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { RemoteData } from "@/lib/remote_data"
-import { useRemoteData } from "@/hooks/use_remote_data"
+import { useQuery } from "@/hooks/use_query"
 
 /**
  * Fetches the full category tree for the Settings > Categories section.
  *
- * Returns `[data, refresh]` — call `refresh()` after a create/update/delete
- * mutation to reload without changing any dep value.
+ * Reference data, so it is cached session-stable; mutations to categories
+ * invalidate it explicitly via the api client. Returns `[data, refresh]` — call
+ * `refresh()` to force a reload without changing any dep value.
  */
 export function useCategories(): [RemoteData<CategoryNode[]>, () => void] {
-  return useRemoteData(
+  return useQuery(
     () => api.getCategoryDetails(),
-    { hard: [], soft: [] },
+    { tag: "categories", hard: [], soft: [], static: true },
   )
 }

@@ -115,8 +115,9 @@ export function InvestmentsPage() {
     return profs.length > 0 ? `${name} (${profs.join(", ")})` : name
   }
 
-  const [eventsData, reloadEvents] = useInvestments()
-  const overviewData = useInvestmentsOverview(start, end, profileId, selectedAccounts)
+  // Demand-driven: each tab fetches only when it is the active view.
+  const [eventsData, reloadEvents] = useInvestments(activeView === "history")
+  const overviewData = useInvestmentsOverview(start, end, profileId, selectedAccounts, activeView === "overview")
 
   function setParams(updates: Record<string, string | undefined>) {
     setSearchParams((prev) => {

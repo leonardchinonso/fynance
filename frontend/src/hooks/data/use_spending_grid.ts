@@ -1,7 +1,7 @@
 import { api } from "@/api/client"
 import type { Granularity, SpendingGridRow } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
-import { useRemoteData } from "@/hooks/use_remote_data"
+import { useQuery } from "@/hooks/use_query"
 
 /**
  * Fetches the spending grid (budget spreadsheet rows).
@@ -18,9 +18,10 @@ export function useSpendingGrid(
   end: string,
   granularity: Granularity,
   profileId: string | undefined,
+  enabled = true,
 ): [RemoteData<SpendingGridRow[]>, () => void] {
-  return useRemoteData(
+  return useQuery(
     () => api.getSpendingGrid(start, end, granularity, profileId),
-    { hard: [profileId], soft: [start, end, granularity] },
+    { tag: "spending-grid", hard: [profileId], soft: [start, end, granularity], enabled },
   )
 }

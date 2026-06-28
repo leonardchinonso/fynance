@@ -1,7 +1,7 @@
 import { api } from "@/api/client"
 import type { CashFlowMonth, Currency, Granularity, Holding, PortfolioHistoryRow, PortfolioResponse } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
-import { useRemoteData } from "@/hooks/use_remote_data"
+import { useQuery } from "@/hooks/use_query"
 
 /** Data needed by the Overview and Charts views. */
 export interface PortfolioSummaryData {
@@ -24,6 +24,8 @@ export interface PortfolioSummaryData {
  *
  * - Hard dep: `profileId`
  * - Soft deps: `start`, `end`, `granularity`, `excludeCategoryIds`
+ *
+ * `enabled` gates the fetch so the Overview tab issues no request until shown.
  */
 export function usePortfolioSummary(
   start: string,
@@ -31,9 +33,10 @@ export function usePortfolioSummary(
   granularity: Granularity,
   profileId: string | undefined,
   excludeCategoryIds: string[] = [],
+  enabled = true,
 ): RemoteData<PortfolioSummaryData> {
   const excludeKey = excludeCategoryIds.join(",")
-  const [data] = useRemoteData(
+  const [data] = useQuery(
     async () => {
       const [portfolio, history, cashFlow, currencies] = await Promise.all([
         api.getPortfolio(profileId),
@@ -49,7 +52,7 @@ export function usePortfolioSummary(
 
       return { portfolio, history, cashFlow, allHoldings, currencies }
     },
-    { hard: [profileId], soft: [start, end, granularity, excludeKey] },
+    { tag: "portfolio-summary", hard: [profileId], soft: [start, end, granularity, excludeKey], enabled },
   )
   return data
 }

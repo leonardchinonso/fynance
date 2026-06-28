@@ -1,6 +1,7 @@
 import type { ApiService } from "./service"
 import { MockApiService } from "./mock_service"
 import { RealApiService } from "./real_service"
+import { invalidateAll, invalidateVolatile, clearCache } from "@/lib/query_cache"
 
 const STORAGE_KEY = "fynance-api-mode"
 
@@ -23,14 +24,38 @@ const realService = new RealApiService()
 // switches which implementation handles the call.
 let currentMode: ApiMode = getStoredMode()
 
+// A write whose name starts with one of these mutates server state, so the
+// request-keyed cache must be invalidated once it commits. Reads (`get*`/`list*`)
+// and side-effect-free calls (`parseDocuments`, `exportData`) are left untouched.
+const MUTATION_PREFIX = /^(set|create|update|delete|patch|commit|upload|import)/
+// Categories, currencies and profiles ripple into every money figure and label,
+// so their writes invalidate static reference data too — not just volatile queries.
+const RIPPLE_ALL = /categor|currenc|profile/i
+
+function afterMutation(method: string): void {
+  if (RIPPLE_ALL.test(method)) invalidateAll()
+  else invalidateVolatile()
+}
+
 const handler: ProxyHandler<ApiService> = {
   get(_target, prop, receiver) {
     const service = currentMode === "live" ? realService : mockService
     const value = Reflect.get(service, prop, receiver)
-    if (typeof value === "function") {
-      return value.bind(service)
+    if (typeof value !== "function") return value
+
+    const fn = value.bind(service)
+    if (typeof prop !== "string" || !MUTATION_PREFIX.test(prop)) return fn
+
+    return (...args: unknown[]) => {
+      const result = fn(...args)
+      if (result && typeof (result as Promise<unknown>).then === "function") {
+        return (result as Promise<unknown>).then((v) => {
+          afterMutation(prop)
+          return v
+        })
+      }
+      return result
     }
-    return value
   },
 }
 
@@ -43,6 +68,9 @@ export function getApiMode(): ApiMode {
 export function setApiMode(mode: ApiMode) {
   currentMode = mode
   localStorage.setItem(STORAGE_KEY, mode)
+  // Mock and live return different data for the same request shape; drop
+  // everything so cached entries don't bleed across the switch.
+  clearCache()
 }
 
 export const AUTH_TOKEN_KEY = "fynance-auth-token"

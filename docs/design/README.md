@@ -10,6 +10,7 @@ These documents reflect the requirements from Prompt 1.1 — a rethink of the or
 | [04_portfolio_overview.md](04_portfolio_overview.md) | Portfolio and diversity view design |
 | [05_security_isolation.md](05_security_isolation.md) | Multi-user local isolation model |
 | [06_entity_relations.md](06_entity_relations.md) | Entity relationship diagrams for all data models |
+| [09_frontend_data_loading.md](09_frontend_data_loading.md) | FE data layer: demand-driven loads, request-keyed cache, LCA load placement |
 
 ## Requirements (Prompt 1.1)
 

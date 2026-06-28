@@ -1,7 +1,7 @@
 import { api } from "@/api/client"
 import type { CategoryTotal, CategoryTotalFilters, Paginated, SortDir, Transaction, TransactionFilters, TransactionSortColumn } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
-import { useRemoteData } from "@/hooks/use_remote_data"
+import { useQuery } from "@/hooks/use_query"
 
 /** Transaction rows plus a map of accountId → display name for the table. */
 export interface TransactionsData {
@@ -14,6 +14,8 @@ export interface TransactionsData {
  *
  * - Hard dep: `profileId`
  * - Soft deps: all filter values (date range, accounts, categories, search, pagination, sort)
+ *
+ * `enabled` gates the fetch so the Table view issues no request until shown.
  */
 export function useTransactions(
   start: string,
@@ -26,11 +28,12 @@ export function useTransactions(
   profileId: string | undefined,
   sort: TransactionSortColumn | undefined,
   sortDir: SortDir,
+  enabled = true,
 ): RemoteData<TransactionsData> {
   const accountsKey = selectedAccounts.join(",")
   const categoriesKey = selectedCategories.join(",")
 
-  const [data] = useRemoteData(
+  const [data] = useQuery(
     async () => {
       const filters: TransactionFilters = {
         start,
@@ -53,8 +56,10 @@ export function useTransactions(
       return { result, accountNameMap }
     },
     {
+      tag: "transactions",
       hard: [profileId],
       soft: [start, end, accountsKey, categoriesKey, search, page, pageSize, sort ?? "", sortDir],
+      enabled,
     },
   )
   return data
@@ -67,11 +72,12 @@ export function useTransactionCharts(
   selectedAccounts: string[],
   selectedCategories: string[],
   profileId: string | undefined,
+  enabled = true,
 ): RemoteData<CategoryTotal[]> {
   const accountsKey = selectedAccounts.join(",")
   const categoriesKey = selectedCategories.join(",")
 
-  const [data] = useRemoteData(
+  const [data] = useQuery(
     () => {
       const filters: CategoryTotalFilters = {
         start,
@@ -83,7 +89,7 @@ export function useTransactionCharts(
       }
       return api.getTransactionsByCategory(filters)
     },
-    { hard: [profileId], soft: [start, end, accountsKey, categoriesKey] },
+    { tag: "transaction-charts", hard: [profileId], soft: [start, end, accountsKey, categoriesKey], enabled },
   )
   return data
 }
