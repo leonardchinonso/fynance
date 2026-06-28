@@ -216,9 +216,13 @@ function PortfolioOverviewInternal({
   const pieTotal = pieData.reduce((s, d) => s + d.value, 0)
 
   return (
-    <div className="space-y-4">
+    // On desktop the overview fills the viewport (minus the navbar + filter row
+    // chrome) as a flex column: the top two rows keep their height and the
+    // breakdown row takes the rest, so its cards scroll internally instead of
+    // growing the page. Mobile keeps normal block flow / page scroll.
+    <div className="space-y-4 md:space-y-0 md:flex md:flex-col md:gap-4 md:h-[calc(100dvh-10rem)] md:min-h-0">
       {/* Top row: Net worth + Balance sheet */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 md:shrink-0">
         <Card className="md:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -336,7 +340,7 @@ function PortfolioOverviewInternal({
       </div>
 
       {/* Income/Outgoing + Portfolio pie */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 md:shrink-0">
         {/* Income, Spending & Investments card */}
         <Card className="overflow-hidden py-0 gap-0 min-h-[300px]">
           <div className="@container/cashflow flex-1 min-w-0 flex flex-col h-full">
@@ -544,7 +548,7 @@ function PortfolioOverviewInternal({
       {(portfolio.by_type.length > 0 ||
         portfolio.by_institution.length > 0 ||
         portfolio.by_asset_class.length > 0) && (
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-3 md:flex-1 md:min-h-0 md:grid-rows-1">
           {portfolio.by_type.length > 0 && (
             <BreakdownCard
               title="By Asset Type"
@@ -659,11 +663,11 @@ function BreakdownCard({
   labelFn?: (label: string) => string
 }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="md:flex md:flex-col md:h-full md:min-h-0 md:overflow-hidden">
+      <CardHeader className="pb-2 md:shrink-0">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 md:flex-1 md:min-h-0 md:overflow-y-auto">
         {items.map((item, i) => {
           const color = colorFn
             ? colorFn(item.label)
