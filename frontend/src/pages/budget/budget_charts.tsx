@@ -12,29 +12,67 @@ interface BudgetChartsProps {
   data: RemoteData<SpendingGridRow[]>
   months: string[]
   granularity: Granularity
+  groupBy: string
+  accountNameMap: Record<string, string>
 }
 
-export function BudgetCharts({ data, months, granularity }: BudgetChartsProps) {
+export function BudgetCharts({ data, months, granularity, groupBy, accountNameMap }: BudgetChartsProps) {
   return visitRemoteData(data, {
     notLoaded: () => <BudgetChartsSkeleton />,
     failed: (error) => <AuthAwareError error={error} />,
     hasValue: (rows) => (
       <div className="relative">
-        <BudgetChartsInternal rows={rows} months={months} granularity={granularity} />
+        <BudgetChartsInternal
+          rows={rows}
+          months={months}
+          granularity={granularity}
+          groupBy={groupBy}
+          accountNameMap={accountNameMap}
+        />
         <ReloadingOverlay active={data.status === "reloading"} />
       </div>
     ),
   })
 }
 
-function BudgetChartsInternal({ rows, months, granularity }: { rows: SpendingGridRow[]; months: string[]; granularity: Granularity }) {
+function BudgetChartsInternal({
+  rows,
+  months,
+  granularity,
+  groupBy,
+  accountNameMap,
+}: {
+  rows: SpendingGridRow[]
+  months: string[]
+  granularity: Granularity
+  groupBy: string
+  accountNameMap: Record<string, string>
+}) {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-2">
-        <BudgetStackedBar rows={rows} months={months} granularity={granularity} />
-        <BudgetPieChart rows={rows} />
+        <BudgetStackedBar
+          rows={rows}
+          months={months}
+          granularity={granularity}
+          groupBy={groupBy}
+          accountNameMap={accountNameMap}
+        />
+        <BudgetPieChart
+          rows={rows}
+          months={months}
+          granularity={granularity}
+          groupBy={groupBy}
+          accountNameMap={accountNameMap}
+        />
       </div>
-      <BudgetLineChart rows={rows} months={months} granularity={granularity} />
+      <BudgetLineChart
+        rows={rows}
+        months={months}
+        granularity={granularity}
+        groupBy={groupBy}
+        accountNameMap={accountNameMap}
+      />
     </div>
   )
 }

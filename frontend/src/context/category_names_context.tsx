@@ -1,40 +1,70 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react"
 import { api } from "@/api/client"
 import type { CategoryNode } from "@/bindings/CategoryNode"
+import type { CategoryType } from "@/bindings/CategoryType"
 
 /**
- * Resolves a `category_id` to its display name ("Parent: Child").
+ * Resolves a `category_id` to its display name ("Parent: Child"), its
+ * `category_type`, and parent grouping/ordering info.
  *
- * The API returns `category_id` only (the normalized FK); the human-readable
- * name lives in the categories table, which this context loads once. Unknown
- * ids fall through to the id verbatim — which is also how mock mode works, where
- * `category_id` carries the display-name string directly.
+ * The API returns ids only; the human-readable name, type and hierarchy live in
+ * the categories table, which this context loads once. Unknown ids fall through
+ * to the id verbatim — which is also how mock mode works, where `category_id`
+ * carries the display-name string directly.
  */
+interface CategoryMaps {
+  /** leaf/parent id -> "Parent: Child" (or "Parent" for a parent id) */
+  nameMap: Map<string, string>
+  /** leaf/parent id -> category_type */
+  typeMap: Map<string, CategoryType>
+  /** parent id -> parent name */
+  parentNameMap: Map<string, string>
+  /** parent ids in display order (drives spreadsheet group order) */
+  parentOrder: string[]
+}
+
 interface CategoryNamesContextValue {
   resolve: (id: string | null | undefined) => string
+  categoryType: (id: string | null | undefined) => CategoryType | undefined
+  parentName: (parentId: string | null | undefined) => string
+  parentOrder: string[]
   refresh: () => void
 }
 
 const CategoryNamesContext = createContext<CategoryNamesContextValue | null>(null)
 
-function buildNameMap(tree: CategoryNode[]): Map<string, string> {
-  const map = new Map<string, string>()
+function buildMaps(tree: CategoryNode[]): CategoryMaps {
+  const nameMap = new Map<string, string>()
+  const typeMap = new Map<string, CategoryType>()
+  const parentNameMap = new Map<string, string>()
+  const parentOrder: string[] = []
   for (const parent of tree) {
-    map.set(parent.id, parent.name)
+    nameMap.set(parent.id, parent.name)
+    typeMap.set(parent.id, parent.category_type)
+    parentNameMap.set(parent.id, parent.name)
+    parentOrder.push(parent.id)
     for (const child of parent.children) {
-      map.set(child.id, `${parent.name}: ${child.name}`)
+      nameMap.set(child.id, `${parent.name}: ${child.name}`)
+      typeMap.set(child.id, child.category_type)
     }
   }
-  return map
+  return { nameMap, typeMap, parentNameMap, parentOrder }
+}
+
+const EMPTY_MAPS: CategoryMaps = {
+  nameMap: new Map(),
+  typeMap: new Map(),
+  parentNameMap: new Map(),
+  parentOrder: [],
 }
 
 export function CategoryNamesProvider({ children }: { children: React.ReactNode }) {
-  const [nameMap, setNameMap] = useState<Map<string, string>>(new Map())
+  const [maps, setMaps] = useState<CategoryMaps>(EMPTY_MAPS)
 
   const load = useCallback(() => {
     api
       .getCategoryDetails()
-      .then((tree) => setNameMap(buildNameMap(tree)))
+      .then((tree) => setMaps(buildMaps(tree)))
       .catch(() => {})
   }, [])
 
@@ -45,26 +75,51 @@ export function CategoryNamesProvider({ children }: { children: React.ReactNode 
   const resolve = useCallback(
     (id: string | null | undefined): string => {
       if (!id) return "Uncategorized"
-      return nameMap.get(id) ?? id
+      return maps.nameMap.get(id) ?? id
     },
-    [nameMap],
+    [maps],
+  )
+
+  const categoryType = useCallback(
+    (id: string | null | undefined): CategoryType | undefined => {
+      if (!id) return undefined
+      return maps.typeMap.get(id)
+    },
+    [maps],
+  )
+
+  const parentName = useCallback(
+    (parentId: string | null | undefined): string => {
+      if (!parentId) return "Uncategorized"
+      return maps.parentNameMap.get(parentId) ?? parentId
+    },
+    [maps],
   )
 
   return (
-    <CategoryNamesContext.Provider value={{ resolve, refresh: load }}>
+    <CategoryNamesContext.Provider
+      value={{ resolve, categoryType, parentName, parentOrder: maps.parentOrder, refresh: load }}
+    >
       {children}
     </CategoryNamesContext.Provider>
   )
 }
 
-export function useResolveCategoryName(): (id: string | null | undefined) => string {
+function useCategoryNamesContext(): CategoryNamesContextValue {
   const ctx = useContext(CategoryNamesContext)
-  if (!ctx) throw new Error("useResolveCategoryName must be used inside CategoryNamesProvider")
-  return ctx.resolve
+  if (!ctx) throw new Error("useCategoryNamesContext must be used inside CategoryNamesProvider")
+  return ctx
+}
+
+export function useResolveCategoryName(): (id: string | null | undefined) => string {
+  return useCategoryNamesContext().resolve
 }
 
 export function useRefreshCategoryNames(): () => void {
-  const ctx = useContext(CategoryNamesContext)
-  if (!ctx) throw new Error("useRefreshCategoryNames must be used inside CategoryNamesProvider")
-  return ctx.refresh
+  return useCategoryNamesContext().refresh
+}
+
+/** Full category metadata: name resolution, type lookup, parent name/order. */
+export function useCategoryMeta(): CategoryNamesContextValue {
+  return useCategoryNamesContext()
 }

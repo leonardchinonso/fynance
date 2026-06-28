@@ -22,6 +22,7 @@ export function useTransactions(
   end: string,
   selectedAccounts: string[],
   selectedCategories: string[],
+  selectedCategoryTypes: string[],
   search: string,
   page: number,
   pageSize: number,
@@ -32,6 +33,7 @@ export function useTransactions(
 ): RemoteData<TransactionsData> {
   const accountsKey = selectedAccounts.join(",")
   const categoriesKey = selectedCategories.join(",")
+  const typesKey = selectedCategoryTypes.join(",")
 
   const [data] = useQuery(
     async () => {
@@ -40,6 +42,7 @@ export function useTransactions(
         end,
         accounts: selectedAccounts.length > 0 ? selectedAccounts : undefined,
         categories: selectedCategories.length > 0 ? selectedCategories : undefined,
+        category_types: selectedCategoryTypes.length > 0 ? selectedCategoryTypes : undefined,
         search: search || undefined,
         page,
         limit: pageSize,
@@ -58,7 +61,7 @@ export function useTransactions(
     {
       tag: "transactions",
       hard: [profileId],
-      soft: [start, end, accountsKey, categoriesKey, search, page, pageSize, sort ?? "", sortDir],
+      soft: [start, end, accountsKey, categoriesKey, typesKey, search, page, pageSize, sort ?? "", sortDir],
       enabled,
     },
   )
@@ -71,11 +74,13 @@ export function useTransactionCharts(
   end: string,
   selectedAccounts: string[],
   selectedCategories: string[],
+  selectedCategoryTypes: string[],
   profileId: string | undefined,
   enabled = true,
 ): RemoteData<CategoryTotal[]> {
   const accountsKey = selectedAccounts.join(",")
   const categoriesKey = selectedCategories.join(",")
+  const typesKey = selectedCategoryTypes.join(",")
 
   const [data] = useQuery(
     () => {
@@ -84,12 +89,13 @@ export function useTransactionCharts(
         end,
         accounts: selectedAccounts.length > 0 ? selectedAccounts : undefined,
         categories: selectedCategories.length > 0 ? selectedCategories : undefined,
+        category_types: selectedCategoryTypes.length > 0 ? selectedCategoryTypes : undefined,
         profile_id: profileId,
         direction: "outflow",
       }
       return api.getTransactionsByCategory(filters)
     },
-    { tag: "transaction-charts", hard: [profileId], soft: [start, end, accountsKey, categoriesKey], enabled },
+    { tag: "transaction-charts", hard: [profileId], soft: [start, end, accountsKey, categoriesKey, typesKey], enabled },
   )
   return data
 }

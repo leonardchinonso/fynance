@@ -61,6 +61,8 @@ import type {
   SetBudgetOverrideBody,
   SetStandingBudgetBody,
   SpendingGridRow,
+  SpendingGridFilters,
+  CashSummaryResponse,
   Transaction,
   TransactionFilters,
 } from "@/types"
@@ -204,6 +206,7 @@ export class RealApiService implements ApiService {
     if (filters.accounts?.length) params.accounts = filters.accounts.join(",")
     if (filters.categories?.length)
       params.categories = filters.categories.join(",")
+    if (filters.category_types?.length) params.category_types = filters.category_types.join(",")
     if (filters.search) params.search = filters.search
     if (filters.profile_id) params.profile_id = filters.profile_id
     if (filters.page) params.page = String(filters.page)
@@ -222,6 +225,7 @@ export class RealApiService implements ApiService {
     if (filters.accounts?.length) params.accounts = filters.accounts.join(",")
     if (filters.categories?.length)
       params.categories = filters.categories.join(",")
+    if (filters.category_types?.length) params.category_types = filters.category_types.join(",")
     if (filters.profile_id) params.profile_id = filters.profile_id
     if (filters.direction) params.direction = filters.direction
     const res = await get<{ preferred_currency: string; rows: CategoryTotal[] }>(`${BASE}/transactions/by-category`, params)
@@ -229,8 +233,8 @@ export class RealApiService implements ApiService {
   }
 
   async getCategories(): Promise<string[]> {
-    const grouped = await get<Record<string, { id: string; name: string; children?: { id: string; name: string }[] }[]>>(`${BASE}/transactions/categories`)
-    return Object.values(grouped).flat().flatMap(node => {
+    const nodes = await get<CategoryNode[]>(`${BASE}/transactions/categories`)
+    return nodes.flatMap(node => {
       const children = node.children ?? []
       if (children.length === 0) return [node.name]
       return children.map(c => `${node.name}: ${c.name}`)
@@ -238,8 +242,8 @@ export class RealApiService implements ApiService {
   }
 
   async getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>> {
-    const grouped = await get<Record<string, { id: string; name: string; children?: { id: string; name: string }[] }[]>>(`${BASE}/transactions/categories`)
-    return Object.values(grouped).flat().flatMap(node => {
+    const nodes = await get<CategoryNode[]>(`${BASE}/transactions/categories`)
+    return nodes.flatMap(node => {
       const children = node.children ?? []
       if (children.length === 0) return [{ id: node.id, name: node.name }]
       return children.map(c => ({ id: c.id, name: `${node.name}: ${c.name}` }))
@@ -261,12 +265,23 @@ export class RealApiService implements ApiService {
     start: string,
     end: string,
     granularity: Granularity,
-    profileId?: string
+    profileId?: string,
+    filters?: SpendingGridFilters
   ): Promise<SpendingGridRow[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
+    if (filters?.accounts?.length) params.accounts = filters.accounts.join(",")
+    if (filters?.categories?.length) params.categories = filters.categories.join(",")
+    if (filters?.categoryTypes?.length) params.category_types = filters.categoryTypes.join(",")
+    if (filters?.groupBy) params.group_by = filters.groupBy
     const res = await get<{ preferred_currency: string; rows: SpendingGridRow[] }>(`${BASE}/budget/spending-grid`, params)
     return res.rows
+  }
+
+  async getCashSummary(start: string, end: string, profileId?: string): Promise<CashSummaryResponse> {
+    const params: Record<string, string> = { start, end }
+    if (profileId) params.profile_id = profileId
+    return get<CashSummaryResponse>(`${BASE}/budget/cash-summary`, params)
   }
 
   async setStandingBudget(body: SetStandingBudgetBody): Promise<void> {
@@ -370,9 +385,7 @@ export class RealApiService implements ApiService {
   }
 
   async getCategoryDetails(): Promise<CategoryNode[]> {
-    // Backend returns HashMap<section, Vec<CategoryNode>> — flatten to a single array
-    const grouped = await get<Record<string, CategoryNode[]>>(`${BASE}/categories`)
-    return Object.values(grouped).flat()
+    return get<CategoryNode[]>(`${BASE}/categories`)
   }
 
   async createCategory(body: CreateCategoryBody): Promise<Category> {

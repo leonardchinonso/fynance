@@ -21,6 +21,8 @@ import type {
   SetBudgetOverrideBody,
   SetStandingBudgetBody,
   SpendingGridRow,
+  SpendingGridFilters,
+  CashSummaryResponse,
   Transaction,
   TransactionFilters,
 } from "@/types"
@@ -355,7 +357,8 @@ export class MockApiService implements ApiService {
     start: string,
     end: string,
     _granularity: Granularity,
-    profileId?: string
+    profileId?: string,
+    _filters?: SpendingGridFilters
   ): Promise<SpendingGridRow[]> {
     await delay(DELAY_MS)
 
@@ -369,44 +372,60 @@ export class MockApiService implements ApiService {
       )
     }
 
-    // Group transactions by category and month
-    const grid = new Map<string, Map<string, number>>()
+    // Build lookups from the mock category tree: "Parent: Child" -> type, and
+    // parent name -> parent id (so grouping aligns with the category context).
+    const leafType = new Map<string, string>()
+    const parentNameToId = new Map<string, string>()
+    for (const parent of this.mockCategoryTree) {
+      parentNameToId.set(parent.name, parent.id)
+      for (const child of parent.children) {
+        leafType.set(`${parent.name}: ${child.name}`, child.category_type)
+      }
+    }
+
+    const groupBy = _filters?.groupBy ?? "leaf_category"
+    const typeFilter = _filters?.categoryTypes && _filters.categoryTypes.length > 0
+      ? new Set(_filters.categoryTypes)
+      : null
+
+    // Aggregate transactions into the chosen grouping dimension, per month.
+    type Cell = { catId: string | null; parentId: string | null; groupKey: string | null; byMonth: Map<string, number> }
+    const grid = new Map<string, Cell>()
     for (const t of MOCK_TRANSACTIONS) {
       if (t.date < start || t.date > end) continue
       if (profileAccounts && !profileAccounts.has(t.account_id)) continue
       const cat = t.category_id ?? "Other: Uncategorized"
-      const month = getMonthFromDate(t.date)
-      if (!grid.has(cat)) grid.set(cat, new Map())
-      const catMap = grid.get(cat)!
-      catMap.set(month, (catMap.get(month) ?? 0) + parseFloat(t.amount))
-    }
+      const parentName = cat.split(": ")[0].trim()
+      const parentId = parentNameToId.get(parentName) ?? parentName
+      const ctype = leafType.get(cat) ?? "spending"
+      if (typeFilter && !typeFilter.has(ctype)) continue
 
-    // Determine section based on category
-    function getSection(cat: string): string {
-      if (cat.startsWith("Income")) return "Income"
-      if (
-        cat.startsWith("Housing") ||
-        cat.startsWith("Finance: Insurance") ||
-        cat.startsWith("Entertainment: Streaming")
-      )
-        return "Bills"
-      if (
-        cat.startsWith("Finance: Savings") ||
-        cat.startsWith("Finance: Investment")
-      )
-        return "Transfers"
-      if (cat.startsWith("Travel")) return "Irregular"
-      return "Spending"
+      let key: string
+      let cell: Cell
+      switch (groupBy) {
+        case "parent_category":
+          key = parentId; cell = { catId: null, parentId: null, groupKey: parentId, byMonth: new Map() }; break
+        case "category_type":
+          key = ctype; cell = { catId: null, parentId: null, groupKey: ctype, byMonth: new Map() }; break
+        case "account":
+          key = t.account_id; cell = { catId: null, parentId: null, groupKey: t.account_id, byMonth: new Map() }; break
+        default:
+          key = cat; cell = { catId: cat, parentId, groupKey: null, byMonth: new Map() }
+      }
+      if (!grid.has(key)) grid.set(key, cell)
+      const e = grid.get(key)!
+      const month = getMonthFromDate(t.date)
+      e.byMonth.set(month, (e.byMonth.get(month) ?? 0) + parseFloat(t.amount))
     }
 
     const rows: SpendingGridRow[] = []
-    for (const [cat, catMap] of grid) {
+    for (const [, e] of grid) {
       const monthValues: Record<string, string | null> = {}
       let total = 0
       let monthsWithData = 0
       for (const m of months) {
-        if (catMap.has(m)) {
-          const val = catMap.get(m)!
+        if (e.byMonth.has(m)) {
+          const val = e.byMonth.get(m)!
           monthValues[m] = val.toFixed(2)
           total += val
           monthsWithData++
@@ -415,13 +434,12 @@ export class MockApiService implements ApiService {
         }
       }
       const avg = monthsWithData > 0 ? total / monthsWithData : 0
-
-      // Find budget for this category
-      const budget = MOCK_BUDGETS.find((b) => b.category === cat)
+      const budget = e.catId ? MOCK_BUDGETS.find((b) => b.category === e.catId) : undefined
 
       rows.push({
-        category_id: cat,
-        section: getSection(cat),
+        category_id: e.catId,
+        parent_id: e.parentId,
+        group_key: e.groupKey,
         periods: monthValues,
         periods_display: {},
         average: avg.toFixed(2),
@@ -432,15 +450,29 @@ export class MockApiService implements ApiService {
       })
     }
 
-    // Sort by section order
-    const sectionOrder = ["Income", "Bills", "Spending", "Irregular", "Transfers"]
-    rows.sort(
-      (a, b) =>
-        sectionOrder.indexOf(a.section) - sectionOrder.indexOf(b.section) ||
-        (a.category_id ?? "").localeCompare(b.category_id ?? "")
+    rows.sort((a, b) =>
+      (a.group_key ?? a.category_id ?? "").localeCompare(b.group_key ?? b.category_id ?? ""),
     )
 
     return rows
+  }
+
+  async getCashSummary(_start: string, _end: string, _profileId?: string): Promise<CashSummaryResponse> {
+    await delay(DELAY_MS)
+    return {
+      preferred_currency: "GBP",
+      income: "32000.00",
+      spending: "18450.20",
+      savings_growth: "5000.00",
+      new_cash_invested: "8000.00",
+      investment_metrics: {
+        start_value: "100000.00",
+        end_value: "120000.00",
+        total_growth: "20000.00",
+        new_cash_invested: "8000.00",
+        market_growth: "12000.00",
+      },
+    }
   }
 
   /**
@@ -819,29 +851,29 @@ export class MockApiService implements ApiService {
   }
 
   private mockCategoryTree: CategoryNode[] = [
-    { id: "food", name: "Food", description: null, children: [
-      { id: "groceries", name: "Groceries", description: null, children: [] },
-      { id: "dining", name: "Dining & Bars", description: null, children: [] },
+    { id: "food", name: "Food", description: null, category_type: "spending", children: [
+      { id: "groceries", name: "Groceries", description: null, category_type: "spending", children: [] },
+      { id: "dining", name: "Dining & Bars", description: null, category_type: "spending", children: [] },
     ]},
-    { id: "housing", name: "Housing", description: null, children: [
-      { id: "rent", name: "Rent", description: null, children: [] },
-      { id: "utilities", name: "Utilities", description: null, children: [] },
+    { id: "housing", name: "Housing", description: null, category_type: "spending", children: [
+      { id: "rent", name: "Rent", description: null, category_type: "spending", children: [] },
+      { id: "utilities", name: "Utilities", description: null, category_type: "spending", children: [] },
     ]},
-    { id: "transport", name: "Transport", description: null, children: [
-      { id: "transport-general", name: "Transport", description: null, children: [] },
+    { id: "transport", name: "Transport", description: null, category_type: "spending", children: [
+      { id: "transport-general", name: "Transport", description: null, category_type: "spending", children: [] },
     ]},
-    { id: "lifestyle", name: "Lifestyle", description: null, children: [
-      { id: "entertainment", name: "Entertainment", description: null, children: [] },
-      { id: "shopping", name: "Shopping", description: null, children: [] },
+    { id: "lifestyle", name: "Lifestyle", description: null, category_type: "spending", children: [
+      { id: "entertainment", name: "Entertainment", description: null, category_type: "spending", children: [] },
+      { id: "shopping", name: "Shopping", description: null, category_type: "spending", children: [] },
     ]},
-    { id: "health", name: "Health", description: null, children: [
-      { id: "health-general", name: "Health", description: null, children: [] },
+    { id: "health", name: "Health", description: null, category_type: "spending", children: [
+      { id: "health-general", name: "Health", description: null, category_type: "spending", children: [] },
     ]},
-    { id: "income", name: "Income", description: null, children: [
-      { id: "salary", name: "Salary", description: null, children: [] },
+    { id: "income", name: "Income", description: null, category_type: "income_taxable", children: [
+      { id: "salary", name: "Salary", description: null, category_type: "income_taxable", children: [] },
     ]},
-    { id: "transfers", name: "Transfers", description: null, children: [
-      { id: "transfers-general", name: "Transfers", description: null, children: [] },
+    { id: "transfers", name: "Transfers", description: null, category_type: "internal_transfer", children: [
+      { id: "transfers-general", name: "Transfers", description: null, category_type: "internal_transfer", children: [] },
     ]},
   ]
 
@@ -860,14 +892,15 @@ export class MockApiService implements ApiService {
       display_order: body.display_order ?? 0,
       is_active: true,
       description: body.description ?? null,
+      category_type: body.category_type,
       created_at: now,
       updated_at: now,
     }
     if (!cat.parent_id) {
-      this.mockCategoryTree.push({ id: cat.id, name: cat.name, description: cat.description, children: [] })
+      this.mockCategoryTree.push({ id: cat.id, name: cat.name, description: cat.description, category_type: cat.category_type, children: [] })
     } else {
       const parent = this.mockCategoryTree.find(p => p.id === cat.parent_id)
-      if (parent) parent.children.push({ id: cat.id, name: cat.name, description: null, children: [] })
+      if (parent) parent.children.push({ id: cat.id, name: cat.name, description: null, category_type: cat.category_type, children: [] })
     }
     return cat
   }
@@ -878,12 +911,14 @@ export class MockApiService implements ApiService {
     for (const node of this.mockCategoryTree) {
       if (node.id === id) {
         if (body.name) node.name = body.name
-        return { id, name: node.name, parent_id: null, display_order: 0, is_active: true, description: null, created_at: now, updated_at: now }
+        if (body.category_type) node.category_type = body.category_type
+        return { id, name: node.name, parent_id: null, display_order: 0, is_active: true, description: null, category_type: node.category_type, created_at: now, updated_at: now }
       }
       for (const child of node.children) {
         if (child.id === id) {
           if (body.name) child.name = body.name
-          return { id, name: child.name, parent_id: node.id, display_order: 0, is_active: true, description: null, created_at: now, updated_at: now }
+          if (body.category_type) child.category_type = body.category_type
+          return { id, name: child.name, parent_id: node.id, display_order: 0, is_active: true, description: null, category_type: child.category_type, created_at: now, updated_at: now }
         }
       }
     }

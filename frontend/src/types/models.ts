@@ -11,6 +11,7 @@ export type { Transaction } from "@/bindings/Transaction"
 export type { AccountSnapshot } from "@/bindings/AccountSnapshot"
 export type { HoldingType } from "@/bindings/HoldingType"
 export type { Holding } from "@/bindings/Holding"
+import type { CategoryType } from "@/bindings/CategoryType"
 
 // ── From backend bindings (import-related) ─────────────────────────
 export type { ImportResult } from "@/bindings/ImportResult"
@@ -25,6 +26,7 @@ export interface CreateCategoryBody {
   parent_id?: string
   display_order?: number
   description?: string
+  category_type: CategoryType
 }
 
 /** Request body for PATCH /api/categories/:id. */
@@ -34,6 +36,7 @@ export interface PatchCategoryBody {
   display_order?: number
   /** Pass an empty string to clear; omit to leave unchanged. */
   description?: string
+  category_type?: CategoryType
 }
 
 /** Request body for PATCH /api/transactions/:id. */

@@ -1,4 +1,5 @@
 export { useSpendingGrid } from "./use_spending_grid"
+export { useCashSummary } from "./use_cash_summary"
 export { usePortfolioSummary } from "./use_portfolio_summary"
 export type { PortfolioSummaryData } from "./use_portfolio_summary"
 export { usePortfolioAccounts } from "./use_portfolio_accounts"

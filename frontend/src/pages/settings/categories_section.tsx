@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react"
 import { api } from "@/api/client"
 import type { CategoryNode } from "@/bindings/CategoryNode"
+import type { CategoryType } from "@/bindings/CategoryType"
+import { ALL_CATEGORY_TYPES, CATEGORY_TYPE_LABELS } from "@/bindings/category_type_groups"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useCategories } from "@/hooks/data"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
@@ -19,7 +21,9 @@ export function CategoriesSection() {
   const [categoriesData, refresh] = useCategories()
   const [showAdd, setShowAdd] = useState(false)
   const [editCat, setEditCat] = useState<{ id: string; name: string; parent_id: string | null; description: string | null } | null>(null)
-  const [form, setForm] = useState({ name: "", parent_id: "", description: "" })
+  const [form, setForm] = useState<{ name: string; parent_id: string; description: string; category_type: CategoryType }>(
+    { name: "", parent_id: "", description: "", category_type: "spending" },
+  )
   const [saving, setSaving] = useState(false)
 
   const tree = categoriesData.status === "succeeded" || categoriesData.status === "reloading"
@@ -44,12 +48,14 @@ export function CategoriesSection() {
           // value still round-trips because the API treats omitted as
           // "leave alone".
           description: form.description.trim(),
+          category_type: form.category_type,
         })
       } else {
         await api.createCategory({
           name: form.name.trim(),
           parent_id: form.parent_id || undefined,
           description: form.description.trim() || undefined,
+          category_type: form.category_type,
         })
       }
       setShowAdd(false)
@@ -67,7 +73,7 @@ export function CategoriesSection() {
 
   function openEdit(node: CategoryNode, parentId: string | null) {
     setEditCat({ id: node.id, name: node.name, parent_id: parentId, description: node.description ?? null })
-    setForm({ name: node.name, parent_id: parentId ?? "", description: node.description ?? "" })
+    setForm({ name: node.name, parent_id: parentId ?? "", description: node.description ?? "", category_type: node.category_type })
     setShowAdd(true)
   }
 
@@ -77,7 +83,7 @@ export function CategoriesSection() {
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">Categories</CardTitle>
           {(categoriesData.status === "succeeded" || categoriesData.status === "reloading") && (
-            <Button size="sm" className="gap-1.5" onClick={() => { setEditCat(null); setForm({ name: "", parent_id: "", description: "" }); setShowAdd(true) }}>
+            <Button size="sm" className="gap-1.5" onClick={() => { setEditCat(null); setForm({ name: "", parent_id: "", description: "", category_type: "spending" }); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" /> Add Category
             </Button>
           )}
@@ -120,6 +126,18 @@ export function CategoriesSection() {
                 <option value="">None (top-level)</option>
                 {tree.map(node => (
                   <option key={node.id} value={node.id}>{node.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Category type</label>
+              <select
+                className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm"
+                value={form.category_type}
+                onChange={(e) => setForm(f => ({ ...f, category_type: e.target.value as CategoryType }))}
+              >
+                {ALL_CATEGORY_TYPES.map((t) => (
+                  <option key={t} value={t}>{CATEGORY_TYPE_LABELS[t]}</option>
                 ))}
               </select>
             </div>

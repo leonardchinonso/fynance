@@ -21,8 +21,8 @@ use crate::model::{
     Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth,
     HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome,
     InvestmentEvent, InvestmentEventType, InvestmentMetrics, PatchCategoryPayload,
-    PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy, StandingBudget,
-    Transaction, TransactionPreviewRow, TransactionPreviewStatus,
+    PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy, Transaction,
+    TransactionPreviewRow, TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -1917,21 +1917,6 @@ impl Db {
     }
 
     // ── Budgets (standing + overrides) ───────────────────────────────────────
-
-    pub fn get_standing_budgets(&self) -> Result<Vec<StandingBudget>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT category_id, amount FROM standing_budgets ORDER BY category_id")?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(StandingBudget {
-                    category_id: row.get(0)?,
-                    amount: row.get(1)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
     pub fn set_standing_budget(&self, category_id: &str, amount: Decimal) -> Result<()> {
         self.conn.execute(

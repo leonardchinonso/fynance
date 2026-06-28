@@ -38,7 +38,6 @@ import {
 const NAV_ITEMS = [
   { to: "/portfolio", label: "Portfolio", shortLabel: "Portfolio" },
   { to: "/budget", label: "Budget", shortLabel: "Budget" },
-  { to: "/transactions", label: "Transactions", shortLabel: "Txns" },
   { to: "/investments", label: "Investments", shortLabel: "Invest" },
   { to: "/reports", label: "Reports", shortLabel: "Reports" },
 ]

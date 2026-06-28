@@ -8,9 +8,11 @@ import {
 import {
   cn, formatCurrency, categoryLeaf, formatPeriodKey, periodKeyForMonth, periodKeysFromRows,
 } from "@/lib/utils"
+import { INCOME_TYPES } from "@/bindings/category_type_groups"
+import type { CategoryType } from "@/bindings/CategoryType"
 import { DualAmount } from "@/components/currency"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
-import { useResolveCategoryName } from "@/context/category_names_context"
+import { useCategoryMeta } from "@/context/category_names_context"
 import { SpreadsheetSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -53,10 +55,15 @@ function cellColor(value: string, budget: string | null): string {
   return ""
 }
 
+function isIncomeType(t: CategoryType | undefined): boolean {
+  return t !== undefined && INCOME_TYPES.includes(t)
+}
+
 function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }: {
   rows: SpendingGridRow[]; months: string[]; granularity: Granularity; onBudgetSaved?: () => void
 }) {
   const preferredCurrency = usePreferredCurrency()
+  const meta = useCategoryMeta()
   const [showEmpty, setShowEmpty] = useState<boolean>(() => {
     try { return localStorage.getItem(SHOW_EMPTY_KEY) === "true" } catch { return false }
   })
@@ -92,13 +99,19 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
   }
   const visibleRows = showEmpty ? rows : rows.filter((r) => !isEmptyRow(r))
 
-  const sections = ["Income", "Bills", "Spending", "Irregular", "Transfers"]
+  // Group leaf rows under their parent category (sections were removed).
   const grouped = new Map<string, SpendingGridRow[]>()
-  for (const s of sections) grouped.set(s, [])
   for (const row of visibleRows) {
-    const arr = grouped.get(row.section)
+    const pid = row.parent_id ?? row.category_id ?? "__uncategorized__"
+    const arr = grouped.get(pid)
     if (arr) arr.push(row)
+    else grouped.set(pid, [row])
   }
+  // Order parents by the category tree, then any not in the tree (stable).
+  const orderedParents = [
+    ...meta.parentOrder.filter((p) => grouped.has(p)),
+    ...[...grouped.keys()].filter((p) => !meta.parentOrder.includes(p)),
+  ]
 
   return (
     <div className="space-y-2">
@@ -128,19 +141,21 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sections.map((section) => {
-            const sectionRows = grouped.get(section) ?? []
-            if (sectionRows.length === 0) return null
+          {orderedParents.map((parentId) => {
+            const parentRows = grouped.get(parentId) ?? []
+            if (parentRows.length === 0) return null
             return (
-              <SectionBlock
-                key={section}
-                section={section}
-                rows={sectionRows}
+              <ParentBlock
+                key={parentId}
+                parentLabel={meta.parentName(parentId)}
+                rows={parentRows}
                 periods={periods}
                 granularity={granularity}
                 getPeriodValue={getPeriodValue}
                 getPeriodBudget={getPeriodBudget}
                 preferredCurrency={preferredCurrency}
+                resolveName={meta.resolve}
+                categoryType={meta.categoryType}
                 onBudgetSaved={onBudgetSaved}
               />
             )
@@ -153,19 +168,21 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
   )
 }
 
-function SectionBlock({
-  section, rows, periods, granularity, getPeriodValue, getPeriodBudget, preferredCurrency, onBudgetSaved,
+function ParentBlock({
+  parentLabel, rows, periods, granularity, getPeriodValue, getPeriodBudget,
+  preferredCurrency, resolveName, categoryType, onBudgetSaved,
 }: {
-  section: string
+  parentLabel: string
   rows: SpendingGridRow[]
   periods: string[]
   granularity: Granularity
   getPeriodValue: (row: SpendingGridRow, periodKey: string) => string | null
   getPeriodBudget: (budget: string | null, periodKey: string) => string | null
   preferredCurrency: string
+  resolveName: (id: string | null | undefined) => string
+  categoryType: (id: string | null | undefined) => CategoryType | undefined
   onBudgetSaved?: () => void
 }) {
-  const resolveName = useResolveCategoryName()
   const totals: Record<string, number | null> = {}
   for (const p of periods) totals[p] = null
   for (const row of rows) {
@@ -183,7 +200,7 @@ function SectionBlock({
     <>
       <TableRow className="bg-muted/50">
         <TableCell colSpan={periods.length + 3} className="sticky left-0 font-semibold text-xs uppercase tracking-wider">
-          {section}
+          {parentLabel}
         </TableCell>
       </TableRow>
       {rows.map((row) => {
@@ -192,6 +209,7 @@ function SectionBlock({
         const rowAvg = nonNullValues.length > 0
           ? nonNullValues.reduce((s, v) => s + Math.abs(parseFloat(v)), 0) / nonNullValues.length
           : null
+        const income = isIncomeType(categoryType(row.category_id))
 
         return (
           <TableRow key={row.category_id ?? "uncategorized"}>
@@ -206,7 +224,7 @@ function SectionBlock({
               const periodBudget = getPeriodBudget(row.budget, p)
               const periodDisplay = (row.periods_display ?? {})[p] ?? null
               return (
-                <TableCell key={p} className={cn("text-right text-sm", row.section !== "Income" && cellColor(val, periodBudget))}>
+                <TableCell key={p} className={cn("text-right text-sm", !income && cellColor(val, periodBudget))}>
                   <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={periodDisplay} tooltip />
                 </TableCell>
               )
@@ -255,7 +273,7 @@ function SectionBlock({
       })}
       <TableRow className="border-t-2">
         <TableCell className="sticky left-0 bg-background font-medium text-sm z-10">
-          Total {section}
+          Total {parentLabel}
         </TableCell>
         {periods.map((p) => (
           <TableCell key={p} className="text-right text-sm tabular-nums font-medium">
