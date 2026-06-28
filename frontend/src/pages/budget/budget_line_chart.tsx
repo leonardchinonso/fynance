@@ -6,6 +6,7 @@ import { CATEGORY_COLORS } from "@/lib/colors"
 import { groupLabelForType } from "@/lib/category_types"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useCategoryMeta } from "@/context/category_names_context"
+import { useThemeContext } from "@/context/theme_context"
 
 interface BudgetLineChartProps {
   rows: SpendingGridRow[]
@@ -18,11 +19,14 @@ interface BudgetLineChartProps {
 const PALETTE = Object.values(CATEGORY_COLORS)
 const NEUTRAL = "#78716c"
 const TOTAL_LABEL = "Total"
-const TOTAL_COLOR = "#e5e7eb"
+// Muted gray so the aggregate overlay stays subtle in either theme rather than
+// a bright white line dominating the chart in dark mode.
+const TOTAL_COLOR = { dark: "#6b7280", light: "#9ca3af" }
 
 export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: BudgetLineChartProps) {
   const { categoryColors } = useCategoryColorsContext()
   const { resolve, parentName } = useCategoryMeta()
+  const { resolvedTheme } = useThemeContext()
 
   const seriesLabel = (row: SpendingGridRow): string => {
     switch (groupBy) {
@@ -70,7 +74,7 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
   })
 
   const categories = [TOTAL_LABEL, ...baseCategories]
-  const colors = [TOTAL_COLOR, ...baseColors]
+  const colors = [TOTAL_COLOR[resolvedTheme], ...baseColors]
 
   return (
     <div className="rounded-lg border p-4">
