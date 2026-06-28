@@ -1,12 +1,6 @@
 import { useRef, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
-export interface DragHandleProps {
-  "data-drag-handle": true
-  className: string
-  style: React.CSSProperties
-}
-
 export interface DraggableListProps<T extends { id: string }> {
   items: T[]
   onReorder: (fromIndex: number, toIndex: number) => void

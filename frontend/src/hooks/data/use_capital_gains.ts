@@ -6,7 +6,7 @@ import { RemoteData } from "@/lib/remote_data"
 
 /**
  * Imperative CGT report fetcher. The report only runs when the user clicks
- * "Generate", so unlike `useRemoteData` this hook does not auto-fetch on
+ * "Generate", so unlike the auto-fetching data hooks this one does not fetch on
  * filter changes — the caller drives it.
  *
  * `error` is preserved alongside `state` so callers can branch on `ApiError`
