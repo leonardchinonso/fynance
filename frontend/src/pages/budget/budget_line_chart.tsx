@@ -3,7 +3,7 @@ import type { CategoryType } from "@/bindings/CategoryType"
 import { StyledLineChart } from "@/components/charts"
 import { formatPeriodKey, periodKeysFromRows, categoryParent } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
-import { groupLabelForType } from "@/lib/category_types"
+import { groupLabelForType, colorForGroupLabel } from "@/lib/category_types"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useCategoryMeta } from "@/context/category_names_context"
 import { useThemeContext } from "@/context/theme_context"
@@ -70,6 +70,7 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
   const baseColors = baseCategories.map((label, i) => {
     if (groupBy === "leaf_category") return colorByParent(categoryParent(label))
     if (groupBy === "parent_category") return colorByParent(label)
+    if (groupBy === "category_type") return colorForGroupLabel(label)
     return PALETTE[i % PALETTE.length] ?? NEUTRAL
   })
 
