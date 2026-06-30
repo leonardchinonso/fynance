@@ -30,6 +30,12 @@ interface StyledBarChartProps {
   showLegend?: boolean
   // Append a summed "Total" row to the hover tooltip (useful for stacked bars).
   showTotal?: boolean
+  // Right-click on a bar: `index` is the period (x) index, `category` the hovered
+  // stacked segment (null if not over a specific segment).
+  onContextMenu?: (
+    e: { clientX: number; clientY: number; preventDefault: () => void },
+    ctx: { index: number | null; category: string | null },
+  ) => void
 }
 
 export function StyledBarChart({
@@ -42,6 +48,7 @@ export function StyledBarChart({
   className,
   showLegend = true,
   showTotal = false,
+  onContextMenu,
 }: StyledBarChartProps) {
   const [activeBarIndex, setActiveBarIndex] = useState<number | null>(null)
   const [activeCatIndex, setActiveCatIndex] = useState<number | null>(null)
@@ -49,7 +56,17 @@ export function StyledBarChart({
   const { pos, onMouseMove, onMouseLeave } = useClampedTooltipPosition(containerRef)
 
   return (
-    <div className={className} ref={containerRef} onMouseMove={onMouseMove} onMouseLeave={() => { onMouseLeave(); setActiveBarIndex(null); setActiveCatIndex(null) }} onMouseDown={(e) => e.preventDefault()}>
+    <div
+      className={className}
+      ref={containerRef}
+      onMouseMove={onMouseMove}
+      onMouseLeave={() => { onMouseLeave(); setActiveBarIndex(null); setActiveCatIndex(null) }}
+      onMouseDown={(e) => e.preventDefault()}
+      onContextMenu={(e) => onContextMenu?.(e, {
+        index: activeBarIndex,
+        category: activeCatIndex !== null ? categories[activeCatIndex] : null,
+      })}
+    >
       <ResponsiveContainer width="100%" height={height}>
         <BarChart
           data={data}

@@ -37,6 +37,11 @@ interface StyledLineChartProps {
   highlightIndex?: number | null
   onBrushChange?: (startIndex: number, endIndex: number) => void
   onActiveIndexChange?: (index: number | null) => void
+  // Right-click on the plot: `index` is the hovered period (x) index, or null.
+  onContextMenu?: (
+    e: { clientX: number; clientY: number; preventDefault: () => void },
+    ctx: { index: number | null },
+  ) => void
 }
 
 export function StyledLineChart({
@@ -54,8 +59,10 @@ export function StyledLineChart({
   highlightIndex,
   onBrushChange,
   onActiveIndexChange,
+  onContextMenu,
 }: StyledLineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const activeIndexRef = useRef<number | null>(null)
   const { pos, onMouseMove, onMouseLeave } = useClampedTooltipPosition(containerRef)
 
   const highlightLabel =
@@ -64,17 +71,25 @@ export function StyledLineChart({
       : undefined
 
   return (
-    <div className={className} ref={containerRef} onMouseMove={onMouseMove} onMouseLeave={onMouseLeave} onMouseDown={(e) => e.preventDefault()}>
+    <div
+      className={className}
+      ref={containerRef}
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
+      onMouseDown={(e) => e.preventDefault()}
+      onContextMenu={(e) => onContextMenu?.(e, { index: activeIndexRef.current })}
+    >
       <ResponsiveContainer width="100%" height={height + (showBrush ? 40 : 0)}>
         <LineChart
           data={data}
           margin={{ top: 8, right: 32, bottom: 0, left: 16 }}
           onMouseMove={(state) => {
-            if (onActiveIndexChange && state?.activeTooltipIndex !== undefined) {
-              onActiveIndexChange(state.activeTooltipIndex)
+            if (state?.activeTooltipIndex !== undefined) {
+              activeIndexRef.current = state.activeTooltipIndex
+              onActiveIndexChange?.(state.activeTooltipIndex)
             }
           }}
-          onMouseLeave={() => onActiveIndexChange?.(null)}
+          onMouseLeave={() => { activeIndexRef.current = null; onActiveIndexChange?.(null) }}
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
           <XAxis dataKey={index} tick={{ fontSize: 12 }} className="fill-muted-foreground text-xs" tickLine={false} axisLine={false} />

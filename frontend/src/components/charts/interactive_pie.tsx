@@ -40,6 +40,11 @@ interface InteractivePieProps {
   outerRadius?: number
   /** Where to render the legend. Defaults to "bottom" (horizontal wrap). "left" renders a vertical list. */
   legendPosition?: "bottom" | "left"
+  // Right-click on a slice: `index` is the hovered slice index (null if none).
+  onContextMenu?: (
+    e: { clientX: number; clientY: number; preventDefault: () => void },
+    ctx: { index: number | null },
+  ) => void
 }
 
 export function InteractivePie({
@@ -52,6 +57,7 @@ export function InteractivePie({
   innerRadius = 60,
   outerRadius = 100,
   legendPosition = "bottom",
+  onContextMenu,
 }: InteractivePieProps) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -163,7 +169,7 @@ export function InteractivePie({
 
   if (legendPosition === "left") {
     return (
-      <div className={cn("flex w-full", className)} ref={containerRef} onMouseMove={onMouseMove}>
+      <div className={cn("flex w-full", className)} ref={containerRef} onMouseMove={onMouseMove} onContextMenu={(e) => onContextMenu?.(e, { index: activeIndex ?? null })}>
         {/* Legend column */}
         <div className="shrink-0 flex flex-col min-w-0">
           {/* Up arrow — hover to scroll up continuously */}
@@ -212,7 +218,7 @@ export function InteractivePie({
   }
 
   return (
-    <div className={className} ref={containerRef} onMouseMove={onMouseMove}>
+    <div className={className} ref={containerRef} onMouseMove={onMouseMove} onContextMenu={(e) => onContextMenu?.(e, { index: activeIndex ?? null })}>
       {chart}
       <ChartLegend items={legendItems} className="mt-2 justify-center" />
     </div>

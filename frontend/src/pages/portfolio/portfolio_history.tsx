@@ -10,10 +10,12 @@ import { EmptyState } from "@/components/empty_state"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import { formatCurrency, formatMonth, getQuarter, getYear } from "@/lib/utils"
+import { formatCurrency, formatMonth, getQuarter, getYear, periodKeyToRange } from "@/lib/utils"
 import { DualAmount } from "@/components/currency"
 import { cn } from "@/lib/utils"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
+import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useChartContextMenu, ChartContextMenu } from "@/components/charts/chart_context_menu"
 
 /**
  * History view. Loads its own data: portfolio history has exactly one consumer
@@ -108,6 +110,8 @@ function aggregateHistory(
 function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProps) {
   const preferredCurrency = usePreferredCurrency()
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+  const { setFilter } = useUrlFilters()
+  const { menu, open, close } = useChartContextMenu()
 
   const aggregated = aggregateHistory(history, granularity)
 
@@ -142,6 +146,21 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
         ? "Quarter"
         : "Year"
 
+  const handleContextMenu = (
+    e: { clientX: number; clientY: number; preventDefault: () => void },
+    ctx: { index: number | null },
+  ) => {
+    if (ctx.index == null) return
+    const row = aggregated[ctx.index]
+    if (!row) return
+    const label = formatPeriodLabel(row.month, granularity)
+    const range = periodKeyToRange(row.month, granularity)
+    open(e, [{
+      label: `Open ${label} in Accounts`,
+      onSelect: () => setFilter({ view: "accounts", preset: "custom", start: range.start, end: range.end }),
+    }])
+  }
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border p-4">
@@ -159,7 +178,9 @@ function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProp
           curved
           highlightIndex={hoveredIndex}
           onActiveIndexChange={setHoveredIndex}
+          onContextMenu={handleContextMenu}
         />
+        <ChartContextMenu menu={menu} onClose={close} />
       </div>
 
       <div className="overflow-x-auto rounded-lg border">

@@ -1,11 +1,14 @@
 import type { SpendingGridRow, Granularity } from "@/types"
 import type { CategoryType } from "@/bindings/CategoryType"
 import { StyledBarChart } from "@/components/charts"
-import { formatPeriodKey, periodKeysFromRows, categoryParent } from "@/lib/utils"
+import { formatPeriodKey, periodKeysFromRows, categoryParent, periodKeyToRange } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { groupLabelForType, colorForGroupLabel } from "@/lib/category_types"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useCategoryMeta } from "@/context/category_names_context"
+import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useChartContextMenu, ChartContextMenu, type ContextMenuItem } from "@/components/charts/chart_context_menu"
+import { categoryFilterForSeries } from "./chart_drill"
 
 interface BudgetStackedBarProps {
   rows: SpendingGridRow[]
@@ -20,7 +23,9 @@ const NEUTRAL = "#78716c"
 
 export function BudgetStackedBar({ rows, granularity, groupBy, accountNameMap }: BudgetStackedBarProps) {
   const { categoryColors } = useCategoryColorsContext()
-  const { resolve, parentName } = useCategoryMeta()
+  const { resolve, parentName, childIdsOf } = useCategoryMeta()
+  const { setFilter } = useUrlFilters()
+  const { menu, open, close } = useChartContextMenu()
 
   const seriesLabel = (row: SpendingGridRow): string => {
     switch (groupBy) {
@@ -62,6 +67,32 @@ export function BudgetStackedBar({ rows, granularity, groupBy, accountNameMap }:
     return PALETTE[i % PALETTE.length] ?? NEUTRAL
   })
 
+  const handleContextMenu = (
+    e: { clientX: number; clientY: number; preventDefault: () => void },
+    ctx: { index: number | null; category: string | null },
+  ) => {
+    if (ctx.index == null) return
+    const key = periodKeys[ctx.index]
+    if (!key) return
+    const label = formatPeriodKey(key, granularity)
+    const range = periodKeyToRange(key, granularity)
+    const items: ContextMenuItem[] = []
+    if (ctx.category) {
+      const catFilter = categoryFilterForSeries(rows, ctx.category, groupBy, seriesLabel, childIdsOf)
+      if (catFilter) {
+        items.push({
+          label: `${ctx.category} in ${label}`,
+          onSelect: () => setFilter({ view: "table", page: "1", start: range.start, end: range.end, ...catFilter }),
+        })
+      }
+    }
+    items.push({
+      label: `All transactions in ${label}`,
+      onSelect: () => setFilter({ view: "table", page: "1", start: range.start, end: range.end }),
+    })
+    open(e, items)
+  }
+
   return (
     <div className="rounded-lg border p-4">
       <h3 className="mb-2 text-sm font-medium text-muted-foreground">
@@ -75,7 +106,9 @@ export function BudgetStackedBar({ rows, granularity, groupBy, accountNameMap }:
         stack
         showTotal
         height={340}
+        onContextMenu={handleContextMenu}
       />
+      <ChartContextMenu menu={menu} onClose={close} />
     </div>
   )
 }
