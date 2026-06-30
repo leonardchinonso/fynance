@@ -29,7 +29,7 @@ export function MultiSelect({
         {selected.length > 0 && <Badge variant="secondary" className="ml-1">{selected.length}</Badge>}
         <ChevronsUpDown className="ml-1 h-3 w-3 opacity-50" />
       </PopoverTrigger>
-      <PopoverContent className="w-[250px] p-0" align="start">
+      <PopoverContent className="w-[320px] p-0" align="start">
         <Command>
           <CommandInput placeholder={`Search ${label.toLowerCase()}...`} />
           <CommandList>
