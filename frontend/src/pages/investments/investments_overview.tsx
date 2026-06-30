@@ -58,7 +58,7 @@ function InvestmentsOverviewInternal({
   start: string
   end: string
 }) {
-  const { holdings, pools, events, currencies, realisedGains, preferredCurrency } = value
+  const { holdings, pools, events, investmentHistory, currencies, realisedGains, preferredCurrency } = value
 
   const toPreferred = makeFxConverter(currencies)
 
@@ -81,7 +81,14 @@ function InvestmentsOverviewInternal({
   const pieColorMap = new Map<string, string>()
   pieData.forEach((d, i) => pieColorMap.set(d.name, STOCK_COLORS[i % STOCK_COLORS.length]))
 
-  const series = invested.series
+  // Two lines from the backend series: cumulative net invested vs market value.
+  // Values are null where there's no data (gap, not a phantom zero).
+  const series = investmentHistory.map((r) => ({
+    period: formatMonthShort(r.period),
+    Invested: r.net_invested === null ? null : parseFloat(r.net_invested),
+    "Market value": r.market_value === null ? null : parseFloat(r.market_value),
+  }))
+  const hasSeriesData = series.some((s) => s.Invested !== null || s["Market value"] !== null)
 
   return (
     <div className="space-y-4">
@@ -169,15 +176,14 @@ function InvestmentsOverviewInternal({
             <CardTitle className="text-sm font-medium text-muted-foreground">Cumulative invested</CardTitle>
           </CardHeader>
           <CardContent className="h-[calc(100%-3rem)]">
-            {series.length > 0 ? (
+            {hasSeriesData ? (
               <StyledLineChart
                 data={series}
                 index="period"
-                categories={["Invested"]}
-                colors={["#a855f7"]}
+                categories={["Invested", "Market value"]}
+                colors={["#a855f7", "#3b82f6"]}
                 height={250}
                 curved
-                showLegend={false}
               />
             ) : (
               <div className="h-full flex items-center justify-center">

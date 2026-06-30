@@ -1,6 +1,7 @@
 import { api } from "@/api/client"
 import type { Account, Currency, Holding } from "@/types"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
+import type { InvestmentHistoryRow } from "@/bindings/InvestmentHistoryRow"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CgtSummary } from "@/bindings/CgtSummary"
 import type { RemoteData } from "@/lib/remote_data"
@@ -15,6 +16,8 @@ export interface InvestmentsOverviewData {
   pools: S104PoolState[]
   /** Full events ledger, for the cumulative-invested time series. */
   events: InvestmentEvent[]
+  /** Per-period net invested vs market value (investment + ISA), for the chart. */
+  investmentHistory: InvestmentHistoryRow[]
   /** FX rates keyed by currency code, for converting holding values. */
   currencies: Currency[]
   /**
@@ -71,11 +74,12 @@ export function useInvestmentsOverview(
   const selectedKey = [...selectedAccountIds].sort().join(",")
   const [data] = useQuery(
     async (): Promise<InvestmentsOverviewData> => {
-      const [accounts, pools, allEvents, currencies] = await Promise.all([
+      const [accounts, pools, allEvents, currencies, investmentHistory] = await Promise.all([
         api.getAccounts(profileId),
         api.getInvestmentPools(profileId),
         api.listInvestments(),
         api.getCurrencies(),
+        api.getInvestmentHistory(start, end, "monthly", profileId),
       ])
 
       const selected = new Set(selectedAccountIds)
@@ -118,6 +122,7 @@ export function useInvestmentsOverview(
         holdings,
         pools,
         events,
+        investmentHistory,
         currencies,
         realisedGains,
         preferredCurrency: preferredCode(currencies),

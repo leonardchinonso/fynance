@@ -78,6 +78,7 @@ import type { HoldingsWritePayload } from "@/bindings/HoldingsWritePayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
+import type { InvestmentHistoryRow } from "@/bindings/InvestmentHistoryRow"
 import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
 import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
 import type { S104PoolState } from "@/bindings/S104PoolState"
@@ -173,11 +174,16 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
-async function del(path: string): Promise<void> {
+async function del(path: string, body?: unknown): Promise<void> {
   const token = getAuthToken()
   const headers: Record<string, string> = {}
   if (token) headers["Authorization"] = `Bearer ${token}`
-  const res = await fetch(`${window.location.origin}${path}`, { method: "DELETE", headers })
+  if (body !== undefined) headers["Content-Type"] = "application/json"
+  const res = await fetch(`${window.location.origin}${path}`, {
+    method: "DELETE",
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
   if (res.status === 401) throw new AuthError(!!token)
   if (!res.ok) throw await parseError(res)
 }
@@ -294,10 +300,38 @@ export class RealApiService implements ApiService {
 
   // ── Portfolio endpoints (now backed by the real backend) ────────
 
-  async getPortfolio(profileId?: string): Promise<PortfolioResponse> {
+  async getPortfolio(profileId?: string, asOf?: string): Promise<PortfolioResponse> {
     const params: Record<string, string> = {}
     if (profileId) params.profile_id = profileId
+    if (asOf) params.as_of = asOf
     return get<PortfolioResponse>(`${BASE}/holdings/summary`, params)
+  }
+
+  async getInvestmentHistory(
+    start: string,
+    end: string,
+    granularity: Granularity = "monthly",
+    profileId?: string,
+  ): Promise<InvestmentHistoryRow[]> {
+    const params: Record<string, string> = { start, end, granularity }
+    if (profileId) params.profile_id = profileId
+    const res = await get<{ preferred_currency: string; rows: InvestmentHistoryRow[] }>(
+      `${BASE}/investments/history`,
+      params,
+    )
+    return res.rows
+  }
+
+  async deleteTransaction(id: string): Promise<void> {
+    return del(`${BASE}/transactions/${id}`)
+  }
+
+  async bulkDeleteTransactions(ids: string[]): Promise<void> {
+    return del(`${BASE}/transactions`, { ids })
+  }
+
+  async bulkSetCategory(ids: string[], categoryId: string): Promise<void> {
+    await patch<unknown>(`${BASE}/transactions`, { ids, category_id: categoryId })
   }
 
   async getPortfolioHistory(
