@@ -205,6 +205,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             post(routes::investments::import_investments),
         )
         .route(
+            "/investments/history",
+            get(routes::investments::get_investment_history),
+        )
+        .route(
             "/investments/pools",
             get(routes::capital_gains::get_s104_pools),
         )

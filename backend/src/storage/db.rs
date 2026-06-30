@@ -20,9 +20,9 @@ use crate::model::{
     CreateInvestmentEventBody, Currency, Document, DocumentReferences, DocumentSummary,
     Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth,
     HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome,
-    InvestmentEvent, InvestmentEventType, InvestmentMetrics, PatchCategoryPayload,
-    PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy, Transaction,
-    TransactionPreviewRow, TransactionPreviewStatus,
+    InvestmentEvent, InvestmentEventType, InvestmentHistoryRow, InvestmentMetrics,
+    PatchCategoryPayload, PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy,
+    Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -2856,6 +2856,129 @@ impl Db {
                 unavailable_wealth_display: unavailable_agg.display_currency(fx.preferred()),
                 total_wealth: available + unavailable,
                 total_wealth_display: None,
+            });
+        }
+
+        Ok(rows)
+    }
+
+    /// Per-period series for the "Cumulative invested" chart: cumulative net
+    /// contributions and the market value of investment + ISA holdings, both
+    /// FX-converted to the preferred currency. Each is `None` for a period with
+    /// no underlying data (before the first contribution event / no active
+    /// holdings) so the chart shows a gap instead of a phantom zero.
+    pub fn get_investment_history(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+        granularity: &Granularity,
+        profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<Vec<InvestmentHistoryRow>> {
+        use crate::util::fx::CurrencyAggregator;
+
+        // Contribution events on investment + ISA accounts, oldest first. Dates
+        // are ISO datetime strings, so lexicographic comparison against a
+        // period-end string is a valid chronological compare.
+        let to_str = to.format("%Y-%m-%dT23:59:59").to_string();
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(to_str)];
+        let profile_filter = if let Some(pid) = profile_id {
+            args.push(Box::new(format!("%\"{pid}\"%")));
+            "AND a.profile_ids LIKE ?2"
+        } else {
+            ""
+        };
+        let sql = format!(
+            r"SELECT i.date, i.event_type, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
+              FROM investments i
+              JOIN accounts a ON a.id = i.account_id
+              WHERE a.type IN ('investment', 'investment_isa')
+                AND i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
+                AND i.date <= ?1 {profile_filter}
+              ORDER BY i.date ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let raw: Vec<(
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+        )> = stmt
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        // (date_str, signed principal, currency, fee, fee_currency)
+        let events: Vec<(String, Decimal, String, Option<Decimal>, Option<String>)> = raw
+            .into_iter()
+            .filter_map(|(date, event_type, q, p, fee, currency, fee_currency)| {
+                let q: Decimal = q.parse().ok()?;
+                let p: Decimal = p.parse().ok()?;
+                let principal = q * p;
+                let signed = if event_type == "sell" || event_type == "withhold" {
+                    -principal
+                } else {
+                    principal
+                };
+                let fee = fee.and_then(|f| f.parse::<Decimal>().ok());
+                Some((date, signed, currency, fee, fee_currency))
+            })
+            .collect();
+
+        let periods = generate_period_end_dates(from, to, granularity);
+        let mut rows = Vec::with_capacity(periods.len());
+        let mut agg = CurrencyAggregator::default();
+        let mut ev_idx = 0usize;
+        let mut any_event = false;
+
+        for (label, period_end) in periods {
+            let period_end_str = period_end.format("%Y-%m-%dT23:59:59").to_string();
+
+            while ev_idx < events.len() && events[ev_idx].0 <= period_end_str {
+                let (_, signed, currency, fee, fee_currency) = &events[ev_idx];
+                agg.add(*signed, currency, fx);
+                if let Some(fee) = fee {
+                    agg.add(*fee, fee_currency.as_deref().unwrap_or(currency), fx);
+                }
+                any_event = true;
+                ev_idx += 1;
+            }
+            let net_invested = any_event.then(|| agg.converted_sum().to_string());
+
+            // Market value of active (unclosed) investment + ISA holdings.
+            let mut mv = CurrencyAggregator::default();
+            let mut has_active = false;
+            for r in self.get_holdings_for_summary(period_end, profile_id)? {
+                if matches!(
+                    r.account_type,
+                    AccountType::Investment | AccountType::InvestmentIsa
+                ) && !r.holding.is_closed
+                {
+                    mv.add(r.holding.value, &r.holding.currency, fx);
+                    has_active = true;
+                }
+            }
+            let market_value = has_active.then(|| mv.converted_sum().to_string());
+
+            rows.push(InvestmentHistoryRow {
+                period: label,
+                net_invested,
+                market_value,
             });
         }
 

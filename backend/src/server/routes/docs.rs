@@ -937,6 +937,18 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "responses": { "200": { "description": "Investment import summary" } }
                 }
             },
+            "/api/investments/history": {
+                "get": {
+                    "summary": "Cumulative net invested vs market value over time",
+                    "parameters": [
+                        { "name": "start", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
+                        { "name": "end", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
+                        { "name": "granularity", "in": "query", "schema": { "type": "string", "enum": ["monthly", "quarterly", "yearly"] } },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." }
+                    ],
+                    "responses": { "200": { "description": "Per-period { net_invested, market_value }, null where no data" } }
+                }
+            },
             "/api/investments/{id}": {
                 "patch": {
                     "summary": "Update an investment event",

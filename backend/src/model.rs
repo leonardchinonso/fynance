@@ -1036,6 +1036,21 @@ pub struct HoldingsHistoryRow {
     pub total_wealth_display: Option<DisplayCurrency>,
 }
 
+/// One period in the `GET /api/investments/history` response. Both values are
+/// `null` where the period has no underlying data (before the first
+/// contribution event, or no active holdings) so the chart shows a gap rather
+/// than a phantom zero. Values are decimal strings in the preferred currency.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentHistoryRow {
+    /// Period label: "YYYY-MM" / "YYYY-Qn" / "YYYY".
+    pub period: String,
+    /// Cumulative net contributions (buys/vests/transfers in, sells/withholds out, plus fees).
+    pub net_invested: Option<String>,
+    /// Market value of all active investment + ISA holdings.
+    pub market_value: Option<String>,
+}
+
 /// Stable metadata for one holding line in an account's history chart.
 /// Used by `GET /api/holdings/account-history`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
