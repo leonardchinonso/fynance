@@ -347,13 +347,13 @@ function EditAccountDialog({ account, profiles, onClose, onSaved }: {
             currencies={currencies}
             onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
           />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" onClick={handleSave} disabled={!form.name.trim() || !form.institution.trim() || saving}>
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          </div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={handleSave} disabled={!form.name.trim() || !form.institution.trim() || saving}>
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
@@ -434,7 +434,7 @@ function CurrencySelect({ value, options, onChange }: { value: string; options: 
   const [open, setOpen] = useState(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger className="w-full mt-1 flex h-9 items-center justify-between rounded-md border bg-background px-3 text-sm hover:bg-accent/50">
+      <PopoverTrigger className="w-full mt-1 flex h-8 items-center justify-between rounded-lg border border-input bg-transparent px-2.5 text-base md:text-sm transition-colors hover:bg-accent/50 dark:bg-input/30">
         <span>{value || "Select"}</span>
         <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
       </PopoverTrigger>
