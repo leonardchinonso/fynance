@@ -21,6 +21,8 @@ import type {
   SetBudgetOverrideBody,
   SetStandingBudgetBody,
   SpendingGridRow,
+  SpendingGridFilters,
+  CashSummaryResponse,
   Transaction,
   TransactionFilters,
 } from "@/types"
@@ -123,8 +125,10 @@ export interface ApiService {
     start: string,
     end: string,
     granularity: Granularity,
-    profileId?: string
+    profileId?: string,
+    filters?: SpendingGridFilters
   ): Promise<SpendingGridRow[]>
+  getCashSummary(start: string, end: string, profileId?: string): Promise<CashSummaryResponse>
   /**
    * Set the standing monthly budget for one category. Applies to every
    * month unless a per-month override is set via `setBudgetOverride`.

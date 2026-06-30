@@ -9,7 +9,6 @@ import { ProfileColorsProvider } from "@/context/profile_colors_context"
 import { RedactedProvider } from "@/context/redacted_context"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Navbar } from "@/components/navbar"
-import { TransactionsPage } from "@/pages/transactions"
 import { BudgetPage } from "@/pages/budget"
 import { PortfolioPage } from "@/pages/portfolio"
 import { InvestmentsPage } from "@/pages/investments"
@@ -51,7 +50,8 @@ function Layout() {
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/investments" element={<InvestmentsPage />} />
           <Route path="/budget" element={<BudgetPage />} />
-          <Route path="/transactions" element={<TransactionsPage />} />
+          {/* Transactions merged into the Budget tab as a view. */}
+          <Route path="/transactions" element={<Navigate to="/budget?view=table" replace />} />
           <Route path="/reports" element={<ReportsLanding />} />
           <Route path="/reports/documents" element={<DocumentsPage />} />
           <Route

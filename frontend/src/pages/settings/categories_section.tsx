@@ -1,7 +1,14 @@
 import { useState, useRef, useEffect } from "react"
 import { api } from "@/api/client"
 import type { CategoryNode } from "@/bindings/CategoryNode"
+import type { CategoryType } from "@/bindings/CategoryType"
+import { CATEGORY_TYPE_LABELS } from "@/bindings/category_type_groups"
+import { CATEGORY_TYPE_GROUPS, colorForType } from "@/lib/category_types"
 import { visitRemoteData } from "@/lib/remote_data"
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
+} from "@/components/ui/dropdown-menu"
 import { useCategories } from "@/hooks/data"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { COLOR_PALETTE } from "@/lib/colors"
@@ -13,13 +20,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Trash2, Pencil, Plus, Tag } from "lucide-react"
+import { Trash2, Pencil, Plus, Tag, ChevronDown } from "lucide-react"
 
 export function CategoriesSection() {
   const [categoriesData, refresh] = useCategories()
   const [showAdd, setShowAdd] = useState(false)
   const [editCat, setEditCat] = useState<{ id: string; name: string; parent_id: string | null; description: string | null } | null>(null)
-  const [form, setForm] = useState({ name: "", parent_id: "", description: "" })
+  const [form, setForm] = useState<{ name: string; parent_id: string; description: string; category_type: CategoryType }>(
+    { name: "", parent_id: "", description: "", category_type: "spending" },
+  )
   const [saving, setSaving] = useState(false)
 
   const tree = categoriesData.status === "succeeded" || categoriesData.status === "reloading"
@@ -44,12 +53,14 @@ export function CategoriesSection() {
           // value still round-trips because the API treats omitted as
           // "leave alone".
           description: form.description.trim(),
+          category_type: form.category_type,
         })
       } else {
         await api.createCategory({
           name: form.name.trim(),
           parent_id: form.parent_id || undefined,
           description: form.description.trim() || undefined,
+          category_type: form.category_type,
         })
       }
       setShowAdd(false)
@@ -67,7 +78,7 @@ export function CategoriesSection() {
 
   function openEdit(node: CategoryNode, parentId: string | null) {
     setEditCat({ id: node.id, name: node.name, parent_id: parentId, description: node.description ?? null })
-    setForm({ name: node.name, parent_id: parentId ?? "", description: node.description ?? "" })
+    setForm({ name: node.name, parent_id: parentId ?? "", description: node.description ?? "", category_type: node.category_type })
     setShowAdd(true)
   }
 
@@ -77,7 +88,7 @@ export function CategoriesSection() {
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">Categories</CardTitle>
           {(categoriesData.status === "succeeded" || categoriesData.status === "reloading") && (
-            <Button size="sm" className="gap-1.5" onClick={() => { setEditCat(null); setForm({ name: "", parent_id: "", description: "" }); setShowAdd(true) }}>
+            <Button size="sm" className="gap-1.5" onClick={() => { setEditCat(null); setForm({ name: "", parent_id: "", description: "", category_type: "spending" }); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" /> Add Category
             </Button>
           )}
@@ -122,6 +133,41 @@ export function CategoriesSection() {
                   <option key={node.id} value={node.id}>{node.name}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Category type</label>
+              <DropdownMenu>
+                <DropdownMenuTrigger className="w-full mt-1 flex items-center justify-between rounded-md border bg-background px-3 py-2 text-sm hover:bg-accent/50">
+                  <span>{CATEGORY_TYPE_LABELS[form.category_type]}</span>
+                  <ChevronDown className="h-4 w-4 opacity-50" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="min-w-[14rem]">
+                  {CATEGORY_TYPE_GROUPS.map((g) =>
+                    g.types.length === 1 ? (
+                      <DropdownMenuItem
+                        key={g.key}
+                        onClick={() => setForm((f) => ({ ...f, category_type: g.types[0] }))}
+                      >
+                        {g.label}
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuSub key={g.key}>
+                        <DropdownMenuSubTrigger>{g.label}</DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent>
+                          {g.types.map((t) => (
+                            <DropdownMenuItem
+                              key={t}
+                              onClick={() => setForm((f) => ({ ...f, category_type: t }))}
+                            >
+                              {CATEGORY_TYPE_LABELS[t]}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    ),
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <div>
               <label className="text-sm font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></label>
@@ -266,6 +312,16 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
                 <div key={child.id} className="flex items-center gap-3 rounded-lg border p-2.5 group">
                   <Tag className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                   <p className="flex-1 text-sm">{child.name}</p>
+                  <Badge
+                    variant="secondary"
+                    className="text-[10px] font-normal"
+                    style={{
+                      color: colorForType(child.category_type),
+                      backgroundColor: `${colorForType(child.category_type)}1f`,
+                    }}
+                  >
+                    {CATEGORY_TYPE_LABELS[child.category_type]}
+                  </Badge>
                   <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onEdit(child, parent.id)}>
                     <Pencil className="h-3 w-3" />
                   </Button>

@@ -76,6 +76,12 @@ export function useUrlFilters() {
   const categories = searchParams.get("categories")
     ? searchParams.get("categories")!.split(",")
     : []
+  // Category-type filter (shared across Budget views). Empty = all types.
+  const categoryTypes = searchParams.get("category_types")
+    ? searchParams.get("category_types")!.split(",").filter(Boolean)
+    : []
+  // Charts "Group by" dimension. Default (omitted) = parent category.
+  const groupBy = searchParams.get("group_by") || "parent_category"
   const search = searchParams.get("search") || ""
 
   // Transactions table sort. `txSort` unset = backend default (newest-first).
@@ -98,13 +104,6 @@ export function useUrlFilters() {
       }]
     })
   ) as AssetClassSettings
-
-  // Categories excluded from Income/Spending totals. May be a mix of leaf and
-  // parent category IDs as the user selected them; parents are expanded to
-  // their leaves at the call site before being sent to the backend.
-  const excludedCategories = searchParams.get("exclude_cats")
-    ? searchParams.get("exclude_cats")!.split(",").filter(Boolean)
-    : []
 
   const setFilter = useCallback(
     (updates: Record<string, string | undefined>) => {
@@ -170,9 +169,15 @@ export function useUrlFilters() {
     [setFilter]
   )
 
-  const setExcludedCategories = useCallback(
-    (ids: string[]) =>
-      setFilter({ exclude_cats: ids.length > 0 ? ids.join(",") : undefined }),
+  const setCategoryTypes = useCallback(
+    (types: string[]) =>
+      setFilter({ category_types: types.length > 0 ? types.join(",") : undefined }),
+    [setFilter]
+  )
+
+  const setGroupBy = useCallback(
+    // Omit the default from the URL to keep it clean.
+    (g: string) => setFilter({ group_by: g === "parent_category" ? undefined : g }),
     [setFilter]
   )
 
@@ -210,10 +215,11 @@ export function useUrlFilters() {
     page,
     accounts,
     categories,
+    categoryTypes,
+    groupBy,
     search,
     hideSmall,
     assetClassSettings,
-    excludedCategories,
     txSort,
     txDir,
     cycleTxSort,
@@ -226,6 +232,7 @@ export function useUrlFilters() {
     setProfileId,
     setAccounts,
     setCategories,
-    setExcludedCategories,
+    setCategoryTypes,
+    setGroupBy,
   }
 }

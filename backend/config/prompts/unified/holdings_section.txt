@@ -20,7 +20,7 @@ Each entry has this shape:
 }
 ```
 
-`holding_type` is one of: `stock`, `etf`, `fund`, `bond`, `crypto`, `cash`, `property`, `loan`, `credit`.
+`holding_type` is one of: `stock`, `etf`, `fund`, `bond`, `crypto`, `cash`, `savings`, `property`, `loan`, `credit`. Use `savings` for balances in a dedicated savings account/pot (distinct from `cash` current-account balances); the app derives "net savings" from period-over-period growth of `savings` holdings.
 
 PREFER quantity + price over a bare value for securities. For `stock`, `etf`, `fund`, `bond`, and `crypto`, whenever the statement shows BOTH a share/unit count and a price per unit (it almost always does), emit `quantity` AND `price_per_unit`, and set `value` to their product. A bare `value` with no quantity/price has no internal cross-check, so a mis-scaled price sails through; quantity x price is self-checking. Only fall back to a bare `value` (with `quantity`/`price_per_unit` null) when the statement genuinely gives no share count or unit price — e.g. cash, property, or a loan balance. For `cash`, `property`, `loan`, and `credit`, emit `value` only (no quantity/price).
 

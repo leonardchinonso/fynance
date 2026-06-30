@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::model::{CashSummaryResponse, SpendingGroupBy};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 use crate::server::validation::{
     parse_date, parse_decimal, parse_granularity, parse_month, require_non_negative,
-    validate_date_range,
+    split_csv_param, validate_date_range,
 };
 use crate::util::fx::FxRateMap;
 
@@ -44,6 +45,15 @@ pub struct SpendingGridQuery {
     pub end: Option<String>,
     pub granularity: Option<String>,
     pub profile_id: Option<String>,
+    /// Comma-separated account IDs.
+    pub accounts: Option<String>,
+    /// Comma-separated category IDs.
+    pub categories: Option<String>,
+    /// Comma-separated category_type values.
+    pub category_types: Option<String>,
+    /// Grouping dimension: parent_category | leaf_category | category_type |
+    /// account. Defaults to leaf_category (per-leaf rows for the spreadsheet).
+    pub group_by: Option<String>,
 }
 
 pub async fn get_spending_grid(
@@ -69,12 +79,46 @@ pub async fn get_spending_grid(
     let granularity = parse_granularity(gran_str)?;
 
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
+    let accounts = q
+        .accounts
+        .as_deref()
+        .and_then(split_csv_param)
+        .unwrap_or_default();
+    let categories = q
+        .categories
+        .as_deref()
+        .and_then(split_csv_param)
+        .unwrap_or_default();
+    let category_types = q
+        .category_types
+        .as_deref()
+        .and_then(split_csv_param)
+        .unwrap_or_default();
+    let group_by = q
+        .group_by
+        .as_deref()
+        .map(|s| {
+            SpendingGroupBy::parse(s)
+                .ok_or_else(|| AppError::bad_request("invalid group_by", "invalid_parameter"))
+        })
+        .transpose()?
+        .unwrap_or_default();
 
     let (rows, preferred_currency) = {
         let db = state.db.lock().expect("db mutex poisoned");
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
-        let rows = db.get_spending_grid(start, end, &granularity, profile_id, &fx)?;
+        let rows = db.get_spending_grid(
+            start,
+            end,
+            &granularity,
+            profile_id,
+            &accounts,
+            &categories,
+            &category_types,
+            group_by,
+            &fx,
+        )?;
         let preferred = fx.preferred().to_string();
         (rows, preferred)
     };
@@ -83,6 +127,49 @@ pub async fn get_spending_grid(
         "preferred_currency": preferred_currency,
         "rows": rows
     })))
+}
+
+// ── GET /api/budget/cash-summary ─────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CashSummaryQuery {
+    pub start: Option<String>,
+    pub end: Option<String>,
+    pub profile_id: Option<String>,
+}
+
+pub async fn get_cash_summary(
+    State(state): State<AppState>,
+    Query(q): Query<CashSummaryQuery>,
+) -> Result<Json<CashSummaryResponse>, AppError> {
+    let start = parse_date(q.start.as_deref().ok_or_else(|| {
+        AppError::bad_request("missing required parameter: start", "missing_parameter")
+    })?)?;
+    let end = parse_date(q.end.as_deref().ok_or_else(|| {
+        AppError::bad_request("missing required parameter: end", "missing_parameter")
+    })?)?;
+    validate_date_range(start, end)?;
+    let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
+
+    let resp = {
+        let db = state.db.lock().expect("db mutex poisoned");
+        let currencies = db.get_currencies()?;
+        let fx = FxRateMap::new(currencies)?;
+        let (income, spending) = db.compute_category_type_cash(start, end, profile_id, &fx)?;
+        let savings_growth = db.compute_savings_growth(start, end, profile_id, &fx)?;
+        let new_cash_invested = db.compute_new_cash_invested(start, end, profile_id, &fx)?;
+        let investment_metrics = db.compute_investment_metrics(start, end, profile_id, &fx)?;
+        CashSummaryResponse {
+            preferred_currency: fx.preferred().to_string(),
+            income,
+            spending,
+            savings_growth,
+            new_cash_invested,
+            investment_metrics,
+        }
+    };
+
+    Ok(Json(resp))
 }
 
 // ── POST /api/budget ──────────────────────────────────────────────────────────

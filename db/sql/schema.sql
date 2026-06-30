@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS categories (
     display_order INTEGER DEFAULT 0,
     is_active     INTEGER NOT NULL DEFAULT 1,
     description   TEXT,
+    -- Semantic classification (CategoryType): spending | income_taxable |
+    -- income_non_taxable | interest_taxable | interest_non_taxable |
+    -- internal_transfer | donation_taxable | donation_non_taxable.
+    category_type TEXT NOT NULL DEFAULT 'spending',
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (parent_id) REFERENCES categories(id)
@@ -189,17 +193,6 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 CREATE TABLE IF NOT EXISTS profiles (
     id   TEXT PRIMARY KEY,
     name TEXT NOT NULL
-);
-
--- ── section_mappings ──────────────────────────────────────────────────────────
--- Maps each parent budget category to a display section for the spending grid.
--- Valid sections: Income | Bills | Spending | Irregular | Transfers.
--- Seeded with defaults on first startup; user-customisable via PUT /api/sections.
-CREATE TABLE IF NOT EXISTS section_mappings (
-    section     TEXT NOT NULL,
-    category    TEXT,
-    category_id TEXT UNIQUE,
-    FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
 -- ── standing_budgets ──────────────────────────────────────────────────────────

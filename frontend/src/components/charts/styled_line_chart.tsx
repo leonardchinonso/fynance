@@ -31,6 +31,8 @@ interface StyledLineChartProps {
   curved?: boolean
   showLegend?: boolean
   connectNulls?: boolean
+  // Categories rendered as a dashed line (e.g. an aggregate "Total" overlay).
+  dashedKeys?: string[]
   showBrush?: boolean
   highlightIndex?: number | null
   onBrushChange?: (startIndex: number, endIndex: number) => void
@@ -47,6 +49,7 @@ export function StyledLineChart({
   curved = true,
   showLegend = true,
   connectNulls = false,
+  dashedKeys = [],
   showBrush = false,
   highlightIndex,
   onBrushChange,
@@ -91,19 +94,23 @@ export function StyledLineChart({
           {highlightLabel && (
             <ReferenceLine x={highlightLabel} stroke="#ffffff" strokeWidth={2} strokeDasharray="4 4" opacity={0.6} />
           )}
-          {categories.map((cat, i) => (
-            <Line
-              key={cat}
-              type={curved ? "monotone" : "linear"}
-              dataKey={cat}
-              stroke={colors[i % colors.length]}
-              strokeWidth={2.5}
-              dot={{ r: 3, fill: colors[i % colors.length], strokeWidth: 0 }}
-              activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
-              isAnimationActive={false}
-              connectNulls={connectNulls}
-            />
-          ))}
+          {categories.map((cat, i) => {
+            const dashed = dashedKeys.includes(cat)
+            return (
+              <Line
+                key={cat}
+                type={curved ? "monotone" : "linear"}
+                dataKey={cat}
+                stroke={colors[i % colors.length]}
+                strokeWidth={dashed ? 2 : 2.5}
+                strokeDasharray={dashed ? "6 4" : undefined}
+                dot={dashed ? false : { r: 3, fill: colors[i % colors.length], strokeWidth: 0 }}
+                activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
+                isAnimationActive={false}
+                connectNulls={connectNulls}
+              />
+            )
+          })}
           {showBrush && (
             <Brush
               dataKey={index}

@@ -8,9 +8,21 @@ import type { DisplayCurrency } from "./DisplayCurrency";
  */
 export type SpendingGridRow = { 
 /**
- * FK to categories.id (leaf). Display name resolved client-side.
+ * FK to categories.id (leaf). Set only when grouping by leaf category;
+ * display name resolved client-side. Budget editing keys on this.
  */
-category_id: string | null, section: string, 
+category_id: string | null, 
+/**
+ * Parent category id of `category_id` (leaf grouping only). Lets the
+ * frontend group/order the spreadsheet by parent without string-splitting.
+ */
+parent_id: string | null, 
+/**
+ * The grouping dimension's value when grouping by parent/type/account
+ * (the parent id, the category_type string, or the account id). Charts read
+ * `group_key ?? category_id` as the series key.
+ */
+group_key: string | null, 
 /**
  * Period key -> decimal string (or null). Amounts are signed:
  * negative = expense, positive = income/credit.

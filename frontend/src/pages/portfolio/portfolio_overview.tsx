@@ -2,13 +2,11 @@ import { useState } from "react"
 import type React from "react"
 import type {
   BreakdownItem,
-  CashFlowMonth,
+  CashSummaryResponse,
   Currency,
   Holding,
-  InvestmentMetrics,
   PortfolioResponse,
 } from "@/types"
-import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioSummaryData } from "@/hooks/data"
@@ -19,19 +17,16 @@ import { ReloadingOverlay } from "@/components/reloading_overlay"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Switch } from "@/components/ui/switch"
-import { Badge } from "@/components/ui/badge"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { MoneyDisplay, DualAmount } from "@/components/currency"
 import { InteractivePie } from "@/components/charts"
 import type { PieDataItem } from "@/components/charts/interactive_pie"
 import {
   TrendingUp, TrendingDown, Wallet, PiggyBank, Building2, Shield,
   ArrowUpRight, ArrowDownRight, BarChart3, Lock, CreditCard, Home,
-  Landmark, Banknote, Settings2, Check, ChevronsUpDown, X,
+  Landmark, Banknote, Settings2,
 } from "lucide-react"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, getMonthsInRange } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 import type { AssetClass } from "@/bindings/AssetClass"
 import { ASSET_CLASSES, type AssetClassSettings } from "@/hooks/use_url_filters"
@@ -85,24 +80,28 @@ function SettingsRow({ id, label, checked, onChange }: {
 export function PortfolioOverview({
   data,
   dateLabel,
+  start,
+  end,
+  cashSummary,
   assetClassSettings,
   hideSmall,
-  categoryTree,
-  excludedCategories,
-  setExcludedCategories,
 }: {
   data: RemoteData<PortfolioSummaryData>
   dateLabel?: string
+  start: string
+  end: string
+  cashSummary: RemoteData<CashSummaryResponse>
   assetClassSettings: AssetClassSettings
   hideSmall: boolean
-  categoryTree: CategoryNode[]
-  excludedCategories: string[]
-  setExcludedCategories: (ids: string[]) => void
 }) {
+  const cashSummaryValue =
+    cashSummary.status === "succeeded" || cashSummary.status === "reloading"
+      ? cashSummary.value
+      : undefined
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioOverviewSkeleton />,
     failed: (error) => <AuthAwareError error={error} />,
-    hasValue: ({ portfolio, history, cashFlow, allHoldings, currencies }) => {
+    hasValue: ({ portfolio, history, allHoldings, currencies }) => {
       const startNetWorth = history.length >= 1 ? history[0].total_wealth : undefined
       const endNetWorth = history.length >= 1 ? history[history.length - 1].total_wealth : undefined
       return (
@@ -112,15 +111,13 @@ export function PortfolioOverview({
             startNetWorth={startNetWorth}
             endNetWorth={endNetWorth}
             dateLabel={dateLabel}
-            cashFlow={cashFlow}
+            start={start}
+            end={end}
+            cashSummary={cashSummaryValue}
             holdings={allHoldings}
             currencies={currencies}
-            investmentMetrics={portfolio.investment_metrics}
             assetClassSettings={assetClassSettings}
             hideSmall={hideSmall}
-            categoryTree={categoryTree}
-            excludedCategories={excludedCategories}
-            setExcludedCategories={setExcludedCategories}
           />
           <ReloadingOverlay active={data.status === "reloading"} />
         </div>
@@ -134,34 +131,29 @@ interface PortfolioOverviewProps {
   startNetWorth?: string
   endNetWorth?: string
   dateLabel?: string
-  cashFlow?: CashFlowMonth[]
+  start: string
+  end: string
+  cashSummary?: CashSummaryResponse
   holdings?: Holding[]
   currencies?: Currency[]
-  investmentMetrics?: InvestmentMetrics
   assetClassSettings: AssetClassSettings
   hideSmall: boolean
-  categoryTree: CategoryNode[]
-  excludedCategories: string[]
-  setExcludedCategories: (ids: string[]) => void
 }
 
 function PortfolioOverviewInternal({
   portfolio,
   startNetWorth,
   endNetWorth,
-  cashFlow = [],
+  start,
+  end,
+  cashSummary,
   holdings = [],
   currencies = [] as Currency[],
-  investmentMetrics,
   assetClassSettings,
   hideSmall,
-  categoryTree,
-  excludedCategories,
-  setExcludedCategories,
 }: PortfolioOverviewProps) {
   const { setFilter } = useUrlFilters()
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [cashFlowSettingsOpen, setCashFlowSettingsOpen] = useState(false)
 
 
   const preferredCurrency = portfolio.preferred_currency
@@ -177,9 +169,15 @@ function PortfolioOverviewInternal({
   const available = parseFloat(portfolio.available_wealth)
   const availablePct = netWorth > 0 ? (available / netWorth) * 100 : 0
 
-  const totalIncome = cashFlow.reduce((s, m) => s + parseFloat(m.income), 0)
-  const totalSpending = cashFlow.reduce((s, m) => s + parseFloat(m.spending), 0)
-  const monthCount = cashFlow.length || 1
+  const totalIncome = cashSummary ? parseFloat(cashSummary.income) : 0
+  const totalSpending = cashSummary ? parseFloat(cashSummary.spending) : 0
+  const netSavings = cashSummary ? parseFloat(cashSummary.savings_growth) : 0
+  const newCashInvested = cashSummary ? parseFloat(cashSummary.new_cash_invested) : 0
+  const totalGrowth = cashSummary ? parseFloat(cashSummary.investment_metrics.total_growth) : 0
+  const marketGrowth = cashSummary ? parseFloat(cashSummary.investment_metrics.market_growth) : 0
+  const investStartValue = cashSummary ? parseFloat(cashSummary.investment_metrics.start_value) : 0
+  const cashCurrency = cashSummary?.preferred_currency ?? preferredCurrency
+  const monthCount = getMonthsInRange(start, end).length || 1
   const avgIncome = totalIncome / monthCount
   const avgSpending = totalSpending / monthCount
 
@@ -218,9 +216,13 @@ function PortfolioOverviewInternal({
   const pieTotal = pieData.reduce((s, d) => s + d.value, 0)
 
   return (
-    <div className="space-y-4">
+    // On desktop the overview fills the viewport (minus the navbar + filter row
+    // chrome) as a flex column: the top two rows keep their height and the
+    // breakdown row takes the rest, so its cards scroll internally instead of
+    // growing the page. Mobile keeps normal block flow / page scroll.
+    <div className="space-y-4 md:space-y-0 md:flex md:flex-col md:gap-4 md:h-[calc(100dvh-10rem)] md:min-h-0">
       {/* Top row: Net worth + Balance sheet */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 md:shrink-0">
         <Card className="md:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -338,26 +340,17 @@ function PortfolioOverviewInternal({
       </div>
 
       {/* Income/Outgoing + Portfolio pie */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 md:shrink-0">
         {/* Income, Spending & Investments card */}
         <Card className="overflow-hidden py-0 gap-0 min-h-[300px]">
-          <div className="flex h-full">
-            <div className="@container/cashflow flex-1 min-w-0 flex flex-col">
-              <div className="flex items-center justify-between pt-4 pl-4 pr-4 pb-2 @[380px]/cashflow:pt-5 @[380px]/cashflow:pl-5 @[380px]/cashflow:pr-5">
-                <p className="text-xs @[380px]/cashflow:text-sm font-medium text-muted-foreground flex items-center gap-1.5 @[380px]/cashflow:gap-2 min-w-0">
-                  <BarChart3 className="h-3.5 w-3.5 @[380px]/cashflow:h-4 @[380px]/cashflow:w-4 shrink-0" />
-                  <span className="truncate">Income, Spending & Investments</span>
-                </p>
-                {!cashFlowSettingsOpen && (
-                  <button
-                    onClick={() => setCashFlowSettingsOpen(true)}
-                    className="rounded-md p-1 transition-colors hover:bg-muted shrink-0"
-                    aria-label="Cash flow settings"
-                  >
-                    <Settings2 className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
+          <div className="@container/cashflow flex-1 min-w-0 flex flex-col h-full">
+            <div className="flex items-center justify-between pt-4 pl-4 pr-4 pb-2 @[380px]/cashflow:pt-5 @[380px]/cashflow:pl-5 @[380px]/cashflow:pr-5">
+              <p className="text-xs @[380px]/cashflow:text-sm font-medium text-muted-foreground flex items-center gap-1.5 @[380px]/cashflow:gap-2 min-w-0">
+                <BarChart3 className="h-3.5 w-3.5 @[380px]/cashflow:h-4 @[380px]/cashflow:w-4 shrink-0" />
+                <span className="truncate">Income, Spending & Investments</span>
+              </p>
+            </div>
+            <TooltipProvider>
               <div className="px-4 pb-4 @[380px]/cashflow:px-5 @[380px]/cashflow:pb-5 flex-1 min-h-0">
                 <div className="grid grid-cols-3 gap-2 @[380px]/cashflow:gap-4">
                   <div className="space-y-0.5 @[380px]/cashflow:space-y-1 min-w-0">
@@ -366,10 +359,10 @@ function PortfolioOverviewInternal({
                       <span className="truncate">Total Income</span>
                     </div>
                     <p className="text-sm @[300px]/cashflow:text-base @[380px]/cashflow:text-xl font-semibold text-green-500 tabular-nums truncate">
-                      {formatCurrency(totalIncome.toFixed(2), preferredCurrency)}
+                      {formatCurrency(totalIncome.toFixed(2), cashCurrency)}
                     </p>
                     <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
-                      ~{formatCurrency(avgIncome.toFixed(2), preferredCurrency)}/mo
+                      ~{formatCurrency(avgIncome.toFixed(2), cashCurrency)}/mo
                     </p>
                   </div>
                   <div className="space-y-0.5 @[380px]/cashflow:space-y-1 min-w-0">
@@ -378,108 +371,88 @@ function PortfolioOverviewInternal({
                       <span className="truncate">Total Spending</span>
                     </div>
                     <p className="text-sm @[300px]/cashflow:text-base @[380px]/cashflow:text-xl font-semibold text-red-500 tabular-nums truncate">
-                      {formatCurrency(totalSpending.toFixed(2), preferredCurrency)}
+                      {formatCurrency(totalSpending.toFixed(2), cashCurrency)}
                     </p>
                     <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
-                      ~{formatCurrency(avgSpending.toFixed(2), preferredCurrency)}/mo
+                      ~{formatCurrency(avgSpending.toFixed(2), cashCurrency)}/mo
                     </p>
                   </div>
                   <div className="space-y-0.5 @[380px]/cashflow:space-y-1 min-w-0">
                     <div className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">
                       Net Savings
                     </div>
-                    <p className={`text-sm @[300px]/cashflow:text-base @[380px]/cashflow:text-xl font-semibold tabular-nums truncate ${totalIncome - totalSpending >= 0 ? "text-green-500" : "text-red-500"}`}>
-                      {formatCurrency((totalIncome - totalSpending).toFixed(2), preferredCurrency)}
+                    <p className={`text-sm @[300px]/cashflow:text-base @[380px]/cashflow:text-xl font-semibold tabular-nums truncate ${netSavings >= 0 ? "text-green-500" : "text-red-500"}`}>
+                      {netSavings >= 0 ? "+" : ""}
+                      {formatCurrency(netSavings.toFixed(2), cashCurrency)}
                     </p>
                     <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
-                      ~{formatCurrency(((totalIncome - totalSpending) / monthCount).toFixed(2), preferredCurrency)}/mo
+                      ~{formatCurrency((netSavings / monthCount).toFixed(2), cashCurrency)}/mo
                     </p>
                   </div>
                 </div>
 
-                {investmentMetrics && (() => {
-                  const startValue = parseFloat(investmentMetrics.start_value)
-                  if (startValue <= 0) return null
-                  const totalGrowth = parseFloat(investmentMetrics.total_growth)
-                  const marketGrowth = parseFloat(investmentMetrics.market_growth)
-                  const newCashInvested = parseFloat(investmentMetrics.new_cash_invested)
-                  return (
-                    <div className="mt-3 @[380px]/cashflow:mt-4 border-t pt-2 @[380px]/cashflow:pt-3">
-                      <p className="text-[10px] @[380px]/cashflow:text-xs font-medium text-muted-foreground mb-1.5 @[380px]/cashflow:mb-2 uppercase tracking-wider">Investments</p>
-                      <div className="grid grid-cols-3 gap-2 @[380px]/cashflow:gap-4">
-                        <div className="space-y-0.5 min-w-0">
-                          <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">New Cash Invested</p>
-                          <p className="text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate">
-                            {formatCurrency(newCashInvested.toFixed(2), preferredCurrency)}
-                          </p>
-                        </div>
-                        <div className="space-y-0.5 min-w-0">
-                          <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">Total Growth</p>
-                          <p className={`text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate ${totalGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
-                            {totalGrowth >= 0 ? "+" : ""}
-                            {formatCurrency(totalGrowth.toFixed(2), preferredCurrency)}
-                          </p>
-                        </div>
-                        <div className="space-y-0.5 min-w-0">
-                          <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">Market Performance</p>
-                          <p className={`text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate ${marketGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
-                            {marketGrowth >= 0 ? "+" : ""}
-                            {formatCurrency(marketGrowth.toFixed(2), preferredCurrency)}
-                          </p>
-                          <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
-                            {((marketGrowth / startValue) * 100).toFixed(1)}% return
-                          </p>
-                        </div>
-                      </div>
+                <div className="mt-3 @[380px]/cashflow:mt-4 border-t pt-2 @[380px]/cashflow:pt-3">
+                  <p className="text-[10px] @[380px]/cashflow:text-xs font-medium text-muted-foreground mb-1.5 @[380px]/cashflow:mb-2 uppercase tracking-wider">Investments</p>
+                  <div className="grid grid-cols-3 gap-2 @[380px]/cashflow:gap-4">
+                    <div className="space-y-0.5 min-w-0">
+                      <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">New Cash Invested</p>
+                      <p className="text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate">
+                        {formatCurrency(newCashInvested.toFixed(2), cashCurrency)}
+                      </p>
                     </div>
-                  )
-                })()}
-              </div>
-            </div>
-
-            {/* Settings panel — slides in from the right */}
-            <div
-              className={cn(
-                "flex flex-col overflow-hidden transition-all duration-300 border-l bg-neutral-100 dark:bg-neutral-800",
-                cashFlowSettingsOpen ? "w-72 opacity-100" : "w-0 opacity-0 border-transparent",
-              )}
-            >
-              <div className="flex flex-col min-w-72 h-full overflow-hidden">
-                <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
-                  <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap">Cash Flow Settings</p>
-                  <button
-                    onClick={() => setCashFlowSettingsOpen(false)}
-                    className="rounded-md p-1 transition-colors hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400"
-                    aria-label="Close cash flow settings"
-                  >
-                    <Settings2 className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="flex flex-col gap-3 px-5 pb-5 overflow-y-auto">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs leading-tight text-neutral-700 dark:text-neutral-200">
-                      Exclude categories
-                    </label>
-                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-snug">
-                      Removes matching transactions from Income, Spending &amp; Net Savings. Selecting a parent excludes all its children.
-                    </p>
-                    <CategoryExcludePicker
-                      tree={categoryTree}
-                      selected={excludedCategories}
-                      onChange={setExcludedCategories}
-                    />
-                    {excludedCategories.length > 0 && (
-                      <button
-                        onClick={() => setExcludedCategories([])}
-                        className="self-start text-[11px] text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 underline underline-offset-2"
-                      >
-                        Clear all
-                      </button>
-                    )}
+                    <div className="space-y-0.5 min-w-0">
+                      <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">
+                        <Tooltip>
+                          <TooltipTrigger className="underline decoration-dotted underline-offset-2 cursor-default">
+                            Total Growth
+                          </TooltipTrigger>
+                          <RichTooltipContent side="top">
+                            <div className="flex items-center gap-2">
+                              <TrendingUp className="h-4 w-4 text-green-400 shrink-0" />
+                              <span className="font-semibold text-sm text-white">Total Growth</span>
+                            </div>
+                            <p className="text-xs text-white/70 leading-relaxed">
+                              The total change in your investment value over this period — including both market movement and any new money you added (or withdrew).
+                            </p>
+                          </RichTooltipContent>
+                        </Tooltip>
+                      </p>
+                      <p className={`text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate ${totalGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
+                        {totalGrowth >= 0 ? "+" : ""}
+                        {formatCurrency(totalGrowth.toFixed(2), cashCurrency)}
+                      </p>
+                    </div>
+                    <div className="space-y-0.5 min-w-0">
+                      <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">
+                        <Tooltip>
+                          <TooltipTrigger className="underline decoration-dotted underline-offset-2 cursor-default">
+                            Market Performance
+                          </TooltipTrigger>
+                          <RichTooltipContent side="top" align="end">
+                            <div className="flex items-center gap-2">
+                              <BarChart3 className="h-4 w-4 text-purple-400 shrink-0" />
+                              <span className="font-semibold text-sm text-white">Market Performance</span>
+                            </div>
+                            <p className="text-xs text-white/70 leading-relaxed">
+                              Investment growth from market movement only. It strips out the cash you added/withdrew (Total Growth minus New Cash Invested), so it reflects how your investments actually performed.
+                            </p>
+                          </RichTooltipContent>
+                        </Tooltip>
+                      </p>
+                      <p className={`text-sm @[380px]/cashflow:text-base font-semibold tabular-nums truncate ${marketGrowth >= 0 ? "text-green-500" : "text-red-500"}`}>
+                        {marketGrowth >= 0 ? "+" : ""}
+                        {formatCurrency(marketGrowth.toFixed(2), cashCurrency)}
+                      </p>
+                      {investStartValue > 0 && (
+                        <p className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground truncate">
+                          {((marketGrowth / investStartValue) * 100).toFixed(1)}% return
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            </TooltipProvider>
           </div>
         </Card>
 
@@ -575,7 +548,7 @@ function PortfolioOverviewInternal({
       {(portfolio.by_type.length > 0 ||
         portfolio.by_institution.length > 0 ||
         portfolio.by_asset_class.length > 0) && (
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-3 md:flex-1 md:min-h-0 md:grid-rows-1">
           {portfolio.by_type.length > 0 && (
             <BreakdownCard
               title="By Asset Type"
@@ -595,105 +568,6 @@ function PortfolioOverviewInternal({
           {portfolio.by_asset_class.length > 0 && (
             <BreakdownCard title="By Asset Class" items={portfolio.by_asset_class} preferredCurrency={preferredCurrency} />
           )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function CategoryExcludePicker({
-  tree,
-  selected,
-  onChange,
-}: {
-  tree: CategoryNode[]
-  selected: string[]
-  onChange: (ids: string[]) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const selectedSet = new Set(selected)
-
-  const idToLabel = new Map<string, string>()
-  for (const parent of tree) {
-    idToLabel.set(parent.id, parent.name)
-    for (const child of parent.children) {
-      idToLabel.set(child.id, `${parent.name}: ${child.name}`)
-    }
-  }
-
-  function toggle(id: string) {
-    const next = new Set(selectedSet)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    onChange(Array.from(next))
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger className="inline-flex items-center justify-between gap-1 rounded-md border bg-background px-3 py-1.5 text-xs font-medium shadow-xs hover:bg-accent hover:text-accent-foreground h-8">
-          <span className="text-neutral-500 dark:text-neutral-400">
-            {selected.length === 0 ? "Select categories…" : `${selected.length} selected`}
-          </span>
-          <ChevronsUpDown className="h-3 w-3 opacity-50" />
-        </PopoverTrigger>
-        <PopoverContent className="w-[280px] p-0" align="start" sideOffset={6}>
-          <Command>
-            <CommandInput placeholder="Search categories…" />
-            <CommandList>
-              <CommandEmpty>
-                {tree.length === 0 ? (
-                  <span className="text-muted-foreground">Loading categories…</span>
-                ) : (
-                  "No results."
-                )}
-              </CommandEmpty>
-              {tree.map(parent => (
-                <CommandGroup key={parent.id} heading={parent.name}>
-                  <CommandItem
-                    value={`${parent.name} (all)`}
-                    onSelect={() => toggle(parent.id)}
-                  >
-                    <Check className={cn("mr-2 h-4 w-4", selectedSet.has(parent.id) ? "opacity-100" : "opacity-0")} />
-                    <span className="font-medium">All {parent.name}</span>
-                  </CommandItem>
-                  {parent.children.map(child => {
-                    const isCheckedByParent = selectedSet.has(parent.id)
-                    const isCheckedDirectly = selectedSet.has(child.id)
-                    const isChecked = isCheckedByParent || isCheckedDirectly
-                    return (
-                      <CommandItem
-                        key={child.id}
-                        value={`${parent.name} ${child.name}`}
-                        disabled={isCheckedByParent}
-                        onSelect={() => { if (!isCheckedByParent) toggle(child.id) }}
-                      >
-                        <Check className={cn("mr-2 h-4 w-4", isChecked ? "opacity-100" : "opacity-0")} />
-                        <span className={cn("pl-3", isCheckedByParent && "text-muted-foreground")}>{child.name}</span>
-                      </CommandItem>
-                    )
-                  })}
-                </CommandGroup>
-              ))}
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selected.map(id => (
-            <Badge key={id} variant="secondary" className="text-[11px] gap-1 pr-1">
-              <span className="truncate max-w-[180px]">{idToLabel.get(id) ?? id}</span>
-              <button
-                onClick={() => toggle(id)}
-                className="rounded-sm hover:bg-neutral-300 dark:hover:bg-neutral-600 p-0.5"
-                aria-label={`Remove ${idToLabel.get(id) ?? id}`}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </Badge>
-          ))}
         </div>
       )}
     </div>
@@ -788,14 +662,31 @@ function BreakdownCard({
   colorFn?: (label: string) => string
   labelFn?: (label: string) => string
 }) {
+  // Roll up tiny positive slices (0–1%) into "Others" — but only when there is
+  // more than one, and never negatives (e.g. Credit) which stay listed.
+  const tiny = items.filter((i) => i.percentage > 0 && i.percentage < 1)
+  const displayItems: BreakdownItem[] = tiny.length > 1
+    ? [
+        ...items.filter((i) => !(i.percentage > 0 && i.percentage < 1)),
+        {
+          label: "Others",
+          value: tiny.reduce((s, i) => s + parseFloat(i.value), 0).toFixed(2),
+          percentage: tiny.reduce((s, i) => s + i.percentage, 0),
+          display_currency: null,
+        },
+      ].sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
+    : items
+
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="md:flex md:flex-col md:h-full md:min-h-0 md:overflow-hidden">
+      <CardHeader className="pb-2 md:shrink-0">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {items.map((item, i) => {
-          const color = colorFn
+      <CardContent className="space-y-3 md:flex-1 md:min-h-0 md:overflow-y-auto">
+        {displayItems.map((item, i) => {
+          const color = item.label === "Others"
+            ? "#78716c"
+            : colorFn
             ? colorFn(item.label)
             : BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length]
           const displayLabel = labelFn ? labelFn(item.label) : item.label

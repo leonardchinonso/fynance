@@ -446,10 +446,7 @@ async fn run_unified_path(
     let ctx = {
         let db = state.db.lock().expect("db mutex poisoned");
         let category_tree = db.get_categories_tree().unwrap_or_default();
-        let categories: Vec<CategorySummary> = category_tree
-            .values()
-            .flat_map(|roots| flatten_categories(roots))
-            .collect();
+        let categories: Vec<CategorySummary> = flatten_categories(&category_tree);
         let today = chrono::Local::now().date_naive();
         let last_open_holdings: Vec<HoldingSummary> = db
             .get_holdings_for_summary(today, None)
