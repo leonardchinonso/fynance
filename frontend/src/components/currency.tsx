@@ -74,7 +74,6 @@ export function DualAmount({ value, preferredCurrency, display, className, secon
         <TooltipContent
           side="left"
           className="bg-popover text-popover-foreground ring-1 ring-foreground/10 px-3 py-2 text-xs tabular-nums"
-          arrowClassName="bg-popover fill-popover"
         >
           {secondary}
         </TooltipContent>

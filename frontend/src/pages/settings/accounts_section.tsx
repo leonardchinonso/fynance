@@ -396,7 +396,7 @@ function AccountTypeTagPicker({ value, onChange }: { value: AccountType; onChang
               {opt.label}{selected ? (value === "investment_isa" ? " (ISA)" : " (non-ISA)") : ""}
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => onChange("investment")}>Non-ISA (brokerage)</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onChange("investment")}>Non-ISA</DropdownMenuItem>
               <DropdownMenuItem onClick={() => onChange("investment_isa")}>ISA</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

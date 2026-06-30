@@ -53,7 +53,7 @@ function RichTooltipContent({
   children: React.ReactNode
 }) {
   return (
-    <TooltipContent side={side} align={align} className="max-w-72 !p-0 overflow-hidden !bg-[#1c1c1c]" arrowClassName="!bg-[#1c1c1c] !fill-[#1c1c1c]">
+    <TooltipContent side={side} align={align} className="max-w-72 !p-0 overflow-hidden !bg-[#1c1c1c]">
       <div className="space-y-2 p-3" style={{ background: "#1c1c1c", color: "#f0f0f0" }}>
         {children}
       </div>
