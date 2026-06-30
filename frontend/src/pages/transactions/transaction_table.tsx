@@ -18,10 +18,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { MoneyDisplay } from "@/components/currency"
 import { formatDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, Settings2, Check, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
+import { invalidateVolatile } from "@/lib/query_cache"
+import { ChevronLeft, ChevronRight, Settings2, Check, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Tag } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -280,10 +283,70 @@ function TransactionTableInternal({
   const [transactions, setTransactions] = useState(initialTransactions)
   // id -> {filename, uploaded_at} for the per-row "Source" document chips.
   const [docsMap, setDocsMap] = useState<Map<string, SourceDocMeta>>(new Map())
+  // Multi-select: ids ticked on the current page (cleared when the page reloads).
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  // Pending hard-delete (single or bulk); drives the confirm dialog.
+  const [deleting, setDeleting] = useState<string[] | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
   useEffect(() => {
     setTransactions(initialTransactions)
+    setSelected(new Set())
   }, [initialTransactions])
+
+  const allIds = transactions.map((t) => t.id)
+  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id))
+  const someSelected = selected.size > 0
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(allIds))
+  }
+
+  async function bulkSetCategory(opt: { id: string; name: string }) {
+    const ids = [...selected]
+    setTransactions((prev) =>
+      prev.map((t) => (selected.has(t.id) ? { ...t, category_id: opt.id, category_source: "manual" } : t)),
+    )
+    setSelected(new Set())
+    try {
+      await api.bulkSetCategory(ids, opt.id)
+      invalidateVolatile()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return
+    const ids = deleting
+    setDeleteBusy(true)
+    try {
+      if (ids.length === 1) await api.deleteTransaction(ids[0])
+      else await api.bulkDeleteTransactions(ids)
+      const removed = new Set(ids)
+      setTransactions((prev) => prev.filter((t) => !removed.has(t.id)))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        ids.forEach((id) => next.delete(id))
+        return next
+      })
+      setDeleting(null)
+      invalidateVolatile()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -346,9 +409,29 @@ function TransactionTableInternal({
 
   return (
     <div>
+      {someSelected && (
+        <div className="flex flex-wrap items-center gap-2 border-b px-2 py-2 text-sm">
+          <span className="text-muted-foreground">{selected.size} selected</span>
+          <BulkCategoryPicker options={categoryOptions} onSelect={bulkSetCategory} />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-destructive hover:text-destructive"
+            onClick={() => setDeleting([...selected])}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Delete
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              <Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all on page" />
+            </TableHead>
             {isVisible("date") && (
               <SortableHeader label="Date" column="date" activeColumn={sort} direction={sortDir} onClick={onSort} />
             )}
@@ -373,7 +456,14 @@ function TransactionTableInternal({
         </TableHeader>
         <TableBody>
           {transactions.map((t) => (
-            <TableRow key={t.id}>
+            <TableRow key={t.id} className="group">
+              <TableCell className="w-8">
+                <Checkbox
+                  checked={selected.has(t.id)}
+                  onCheckedChange={() => toggleRow(t.id)}
+                  aria-label="Select transaction"
+                />
+              </TableCell>
               {isVisible("date") && (
                 <TableCell className="whitespace-nowrap">
                   {formatDate(t.date)}
@@ -430,7 +520,17 @@ function TransactionTableInternal({
                   />
                 </TableCell>
               )}
-              <TableCell />
+              <TableCell className="text-right">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+                  onClick={() => setDeleting([t.id])}
+                  title="Delete transaction"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -493,7 +593,67 @@ function TransactionTableInternal({
           </div>
         </div>
       </div>
+
+      <Dialog open={deleting !== null} onOpenChange={(o) => { if (!o && !deleteBusy) setDeleting(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              Delete {deleting && deleting.length === 1 ? "transaction" : `${deleting?.length ?? 0} transactions`}?
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This permanently deletes {deleting && deleting.length === 1 ? "this transaction" : "these transactions"}. This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleting(null)} disabled={deleteBusy}>Cancel</Button>
+            <Button variant="destructive" size="sm" onClick={confirmDelete} disabled={deleteBusy}>
+              {deleteBusy ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  )
+}
+
+/** Bulk "Set category" picker for the selection toolbar. */
+function BulkCategoryPicker({
+  options,
+  onSelect,
+}: {
+  options: Array<{ id: string; name: string }>
+  onSelect: (option: { id: string; name: string }) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const sorted = [...options].sort((a, b) => a.name.localeCompare(b.name))
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        disabled={options.length === 0}
+        className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs font-medium hover:bg-accent disabled:opacity-50"
+      >
+        <Tag className="h-3.5 w-3.5" /> Set category
+      </PopoverTrigger>
+      <PopoverContent className="w-[260px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search categories..." className="h-9 text-xs" />
+          <CommandList className="max-h-[280px]">
+            <CommandEmpty>No matches.</CommandEmpty>
+            <CommandGroup>
+              {sorted.map((opt) => (
+                <CommandItem
+                  key={opt.id}
+                  value={opt.name}
+                  onSelect={() => { onSelect(opt); setOpen(false) }}
+                >
+                  {opt.name}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }
 
