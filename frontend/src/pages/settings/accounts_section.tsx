@@ -24,7 +24,7 @@ import { Trash2, Pencil, Plus, Building2, Eye, EyeOff, Check, ChevronsUpDown, Ci
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { cn, formatCurrency } from "@/lib/utils"
 import { accountTypeClasses } from "@/lib/account_type_colors"
-import { ACCOUNT_TYPE_COLORS } from "@/lib/colors"
+import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 
 // Account type tags. Investment + ISA are condensed into one "Investments" tag
 // with an ISA / non-ISA submenu; everything else is a single tag. Order keeps
@@ -101,6 +101,39 @@ export function AccountsSection({ data, profilesData, onRefresh }: Props) {
   )
 }
 
+/** Profile chips shown next to an account name, colored by each profile's color. */
+function ProfileTags({ profileIds, profiles }: { profileIds: string[]; profiles: Profile[] }) {
+  const { profileColors } = useProfileColorsContext()
+  if (profileIds.length === 0) return null
+  return (
+    <span className="flex items-center gap-1">
+      {profileIds.map((id) => {
+        const p = profiles.find((x) => x.id === id)
+        if (!p) return null
+        const color = profileColors[id] ?? "#78716c"
+        return (
+          <span
+            key={id}
+            className="inline-flex items-center rounded-full border px-1.5 h-4 text-[10px] font-medium"
+            style={{ color, borderColor: `${color}66`, backgroundColor: `${color}1f` }}
+          >
+            {p.name}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+/** The account-type badge, shown on the right of a row before the balance. */
+function TypeBadge({ type }: { type: AccountType }) {
+  return (
+    <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border shrink-0", accountTypeClasses(type))}>
+      {ACCOUNT_TYPE_LABELS[type]}
+    </span>
+  )
+}
+
 function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts: Account[]; profiles: Profile[]; onRefresh: () => void; wizardMode: boolean }) {
   const [dragId, setDragId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Account | null>(null)
@@ -141,10 +174,11 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium truncate">{a.name}</p>
-                  <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
+                  <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
                 </div>
                 <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
               </div>
+              <TypeBadge type={a.type} />
               {a.balance && (
                 <p className="text-sm font-medium tabular-nums shrink-0">
                   {formatCurrency(a.balance, a.currency)}
@@ -208,10 +242,11 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium truncate">{a.name}</p>
-                <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
+                <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
               </div>
               <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
             </div>
+            <TypeBadge type={a.type} />
             {a.balance && (
               <p className="text-sm font-medium tabular-nums shrink-0">
                 {formatCurrency(a.balance, a.currency)}
@@ -259,10 +294,11 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium truncate">{a.name}</p>
-                    <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
+                    <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
                   </div>
                   <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
                 </div>
+                <TypeBadge type={a.type} />
                 <Tooltip>
                   <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => showAccount(a.id, accounts)} />}>
                     <EyeOff className="h-3.5 w-3.5" />
