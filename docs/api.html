@@ -1790,6 +1790,36 @@ td code { font-size: 12px; }
   </table>
 </section>
 
+<section class="endpoint" id="patch-api-transactions" data-method="PATCH" data-path="/api/transactions">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/transactions</code>
+  </div>
+  <p class="endpoint-summary">Bulk update. Assign one leaf <code>category_id</code> to every transaction in <code>ids</code>.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>ids</code></td><td>string[]</td><td>Yes</td><td>Transaction ids to update</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>Yes</td><td>Leaf category to assign to all of them</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/transactions \
+  -H "Content-Type: application/json" \
+  -d '{"ids": ["t1", "t2"], "category_id": "cat-groceries"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{ "ok": true, "updated": 2 }</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_body</code></td><td>ids array is empty or missing</td></tr>
+      <tr><td>400</td><td><code>missing_category</code></td><td>category_id is missing</td></tr>
+    </tbody>
+  </table>
+</section>
+
 <section class="endpoint" id="delete-api-transactions" data-method="DELETE" data-path="/api/transactions">
   <div class="endpoint-header">
     <span class="method-badge method-delete">DEL</span>

@@ -417,6 +417,27 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         }
                     }
                 },
+                "patch": {
+                    "summary": "Bulk update transactions (re-categorize)",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "description": "Assign one leaf `category_id` to all transactions in `ids`.",
+                                    "required": ["ids", "category_id"],
+                                    "properties": {
+                                        "ids": { "type": "array", "items": { "type": "string" } },
+                                        "category_id": { "type": "string" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Count of updated transactions" } }
+                },
                 "delete": {
                     "summary": "Bulk hard-delete transactions",
                     "security": [{ "bearerAuth": [] }],

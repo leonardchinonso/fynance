@@ -1620,6 +1620,48 @@ impl Db {
         Ok(())
     }
 
+    /// Assign one leaf category to many transactions in a single statement.
+    /// Validates the category once (active, leaf), then updates all ids.
+    /// Returns the number of rows changed.
+    pub fn bulk_update_transaction_category(
+        &self,
+        ids: &[String],
+        category_id: &str,
+        source: CategorySource,
+    ) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let cat = self
+            .get_category_by_id(category_id)?
+            .ok_or_else(|| anyhow!("category {category_id} not found"))?;
+        if !cat.is_active {
+            return Err(anyhow!("category {category_id} is inactive"));
+        }
+        if cat.parent_id.is_none() {
+            return Err(anyhow!(
+                "category {category_id} is a parent; only leaf categories can be assigned"
+            ));
+        }
+
+        let placeholders: String = (0..ids.len())
+            .map(|i| format!("?{}", i + 3))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "UPDATE transactions SET category_id = ?1, category_source = ?2 WHERE id IN ({placeholders})"
+        );
+        let source_str = source.as_str();
+        let mut sql_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 2);
+        sql_params.push(&category_id);
+        sql_params.push(&source_str);
+        for id in ids {
+            sql_params.push(id);
+        }
+        let n = self.conn.execute(&sql, sql_params.as_slice())?;
+        Ok(n)
+    }
+
     pub fn update_transaction_exclude_summary(&self, id: &str, exclude: bool) -> Result<()> {
         let updated = self.conn.execute(
             "UPDATE transactions SET exclude_from_summary = ?1 WHERE id = ?2",
