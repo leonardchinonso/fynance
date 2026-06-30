@@ -19,7 +19,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Trash2, Pencil, Plus, Tag, ChevronRight } from "lucide-react"
+import { Trash2, Pencil, Plus, Tag, ChevronRight, CircleHelp } from "lucide-react"
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 const DEFAULT_GROUP_COLOR = "#78716c"
@@ -190,13 +191,39 @@ export function CategoriesSection() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Type</label>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-sm font-medium">Type</label>
+                    <TooltipProvider delay={150}>
+                      <Tooltip>
+                        <TooltipTrigger
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label="About category types"
+                        >
+                          <CircleHelp className="h-3.5 w-3.5" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-sm">
+                          <div className="space-y-1.5 text-left leading-relaxed">
+                            <p className="font-semibold">Category types</p>
+                            <p>Types describe how money moves, and power tax and summary calculations:</p>
+                            <ul className="space-y-1">
+                              <li><span className="font-medium">Spending</span> — money going out.</li>
+                              <li><span className="font-medium">Income</span> — money coming in (e.g. salary).</li>
+                              <li><span className="font-medium">Interest</span> — interest and investment income.</li>
+                              <li><span className="font-medium">Donation</span> — charitable giving and gifts.</li>
+                              <li><span className="font-medium">Internal transfer</span> — moving money between your own accounts, both tracked in fynance. These are excluded from summaries like your total spending for the month.</li>
+                            </ul>
+                            <p>For Income, Interest and Donation, the <span className="font-medium">taxed / non-tax</span> split lets fynance help with your tax-return calculations.</p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
                   <TypeTagPicker value={form.category_type} onChange={(t) => setForm(f => ({ ...f, category_type: t }))} />
                 </div>
                 <div>
                   <label className="text-sm font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></label>
                   <textarea
-                    className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm resize-y min-h-[7.5rem]"
+                    className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm resize-y min-h-[7.5rem] placeholder:text-muted-foreground/50"
                     rows={5}
                     placeholder="e.g. Utility bills — internet, water, gas, electricity. Not Netflix or Spotify."
                     value={form.description}

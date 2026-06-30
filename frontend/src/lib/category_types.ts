@@ -20,12 +20,14 @@ export interface TypeGroup {
 
 const NEUTRAL = "#78716c"
 
+// Order matters: this drives the tag picker, the Types filter dropdown and the
+// chart grouping. Internal transfer is kept last everywhere by convention.
 export const CATEGORY_TYPE_GROUPS: TypeGroup[] = [
   { key: "spending", label: "Spending", types: ["spending"], canonical: "spending", color: "#3b82f6" },
   { key: "income", label: "Income", types: ["income_taxable", "income_non_taxable"], canonical: "income_taxable", color: "#22c55e" },
   { key: "interest", label: "Interest", types: ["interest_taxable", "interest_non_taxable"], canonical: "interest_taxable", color: "#14b8a6" },
-  { key: "internal_transfer", label: "Internal transfer", types: ["internal_transfer"], canonical: "internal_transfer", color: NEUTRAL },
   { key: "donation", label: "Donation", types: ["donation_taxable", "donation_non_taxable"], canonical: "donation_taxable", color: "#a855f7" },
+  { key: "internal_transfer", label: "Internal transfer", types: ["internal_transfer"], canonical: "internal_transfer", color: NEUTRAL },
 ]
 
 const GROUP_BY_TYPE: Record<CategoryType, TypeGroup> = Object.fromEntries(
