@@ -434,7 +434,7 @@ function AccountTypeHelp() {
                 <li key={type} className="flex items-start gap-2">
                   <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: ACCOUNT_TYPE_COLORS[type] }} />
                   <span>
-                    <span className="font-medium" style={{ color: ACCOUNT_TYPE_COLORS[type] }}>{label}</span>
+                    <span className="font-medium">{label}</span>
                     {" "}— {desc}
                   </span>
                 </li>

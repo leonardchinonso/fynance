@@ -223,7 +223,7 @@ export function CategoriesSection() {
                                 <li key={g.key} className="flex items-start gap-2">
                                   <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: g.color }} />
                                   <span>
-                                    <span className="font-medium" style={{ color: g.color }}>{g.label}</span>
+                                    <span className="font-medium">{g.label}</span>
                                     {" "}— {CAT_TYPE_DESC[g.key]}
                                   </span>
                                 </li>
