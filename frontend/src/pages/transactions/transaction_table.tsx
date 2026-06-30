@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from "react"
+import { useState, useEffect, useRef, type ReactNode } from "react"
 import type { Transaction } from "@/types"
 import { useResolveCategoryName } from "@/context/category_names_context"
 import { api } from "@/api/client"
@@ -19,11 +19,9 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { MoneyDisplay } from "@/components/currency"
 import { formatDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { invalidateVolatile } from "@/lib/query_cache"
 import { ChevronLeft, ChevronRight, Settings2, Check, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Tag } from "lucide-react"
 import {
   Select,
@@ -96,11 +94,17 @@ interface TransactionTableOuterProps {
   sortDir: SortDir
   onSort: (col: TransactionSortColumn) => void
   onResetFilters?: () => void
+  /** Selected transaction ids (owned by the page so the bulk bar lives with the filters). */
+  selectedIds: Set<string>
+  onSelectedChange: (next: Set<string>) => void
+  /** Open the page's delete-confirm for these ids (single-row trash). */
+  onRequestDelete: (ids: string[]) => void
 }
 
 export function TransactionTable({
   data, page, pageSize, onPageChange, onPageSizeChange, accountNames, categoryColors = {},
   categoryOptions = [], sort, sortDir, onSort, onResetFilters,
+  selectedIds, onSelectedChange, onRequestDelete,
 }: TransactionTableOuterProps) {
   return visitRemoteData(data, {
     notLoaded: () => <TableSkeleton rows={pageSize} cols={5} actions={false} />,
@@ -123,6 +127,9 @@ export function TransactionTable({
             sort={sort}
             sortDir={sortDir}
             onSort={onSort}
+            selectedIds={selectedIds}
+            onSelectedChange={onSelectedChange}
+            onRequestDelete={onRequestDelete}
           />
         )}
         <ReloadingOverlay active={data.status === "reloading"} />
@@ -144,6 +151,9 @@ interface TransactionTableProps {
   sort?: TransactionSortColumn
   sortDir: SortDir
   onSort: (col: TransactionSortColumn) => void
+  selectedIds: Set<string>
+  onSelectedChange: (next: Set<string>) => void
+  onRequestDelete: (ids: string[]) => void
 }
 
 /**
@@ -277,75 +287,52 @@ function TransactionTableInternal({
   sort,
   sortDir,
   onSort,
+  selectedIds,
+  onSelectedChange,
+  onRequestDelete,
 }: TransactionTableProps) {
   const totalPages = Math.ceil(total / limit)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
   const [transactions, setTransactions] = useState(initialTransactions)
   // id -> {filename, uploaded_at} for the per-row "Source" document chips.
   const [docsMap, setDocsMap] = useState<Map<string, SourceDocMeta>>(new Map())
-  // Multi-select: ids ticked on the current page (cleared when the page reloads).
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  // Pending hard-delete (single or bulk); drives the confirm dialog.
-  const [deleting, setDeleting] = useState<string[] | null>(null)
-  const [deleteBusy, setDeleteBusy] = useState(false)
+  // Shift-click range selection: anchor row + whether Shift was held on the click.
+  const lastIndexRef = useRef<number | null>(null)
+  const shiftRef = useRef(false)
 
   useEffect(() => {
     setTransactions(initialTransactions)
-    setSelected(new Set())
+    lastIndexRef.current = null
   }, [initialTransactions])
 
   const allIds = transactions.map((t) => t.id)
-  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id))
-  const someSelected = selected.size > 0
+  const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id))
 
-  function toggleRow(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  // Toggle one row, or — when Shift is held — set the whole range since the last
+  // click to that row's new state (bulk select or unselect in between).
+  function handleToggle(rowIndex: number, id: string) {
+    const next = new Set(selectedIds)
+    if (shiftRef.current && lastIndexRef.current !== null) {
+      const a = Math.min(lastIndexRef.current, rowIndex)
+      const b = Math.max(lastIndexRef.current, rowIndex)
+      const target = !selectedIds.has(id)
+      for (let i = a; i <= b; i++) {
+        const rid = transactions[i]?.id
+        if (!rid) continue
+        if (target) next.add(rid)
+        else next.delete(rid)
+      }
+    } else if (next.has(id)) {
+      next.delete(id)
+    } else {
+      next.add(id)
+    }
+    lastIndexRef.current = rowIndex
+    onSelectedChange(next)
   }
 
   function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(allIds))
-  }
-
-  async function bulkSetCategory(opt: { id: string; name: string }) {
-    const ids = [...selected]
-    setTransactions((prev) =>
-      prev.map((t) => (selected.has(t.id) ? { ...t, category_id: opt.id, category_source: "manual" } : t)),
-    )
-    setSelected(new Set())
-    try {
-      await api.bulkSetCategory(ids, opt.id)
-      invalidateVolatile()
-    } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
-    }
-  }
-
-  async function confirmDelete() {
-    if (!deleting) return
-    const ids = deleting
-    setDeleteBusy(true)
-    try {
-      if (ids.length === 1) await api.deleteTransaction(ids[0])
-      else await api.bulkDeleteTransactions(ids)
-      const removed = new Set(ids)
-      setTransactions((prev) => prev.filter((t) => !removed.has(t.id)))
-      setSelected((prev) => {
-        const next = new Set(prev)
-        ids.forEach((id) => next.delete(id))
-        return next
-      })
-      setDeleting(null)
-      invalidateVolatile()
-    } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
-    } finally {
-      setDeleteBusy(false)
-    }
+    onSelectedChange(allSelected ? new Set() : new Set(allIds))
   }
 
   useEffect(() => {
@@ -409,23 +396,6 @@ function TransactionTableInternal({
 
   return (
     <div>
-      {someSelected && (
-        <div className="flex flex-wrap items-center gap-2 border-b px-2 py-2 text-sm">
-          <span className="text-muted-foreground">{selected.size} selected</span>
-          <BulkCategoryPicker options={categoryOptions} onSelect={bulkSetCategory} />
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 text-destructive hover:text-destructive"
-            onClick={() => setDeleting([...selected])}
-          >
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </Button>
-          <Button variant="ghost" size="sm" className="h-7" onClick={() => setSelected(new Set())}>
-            Clear
-          </Button>
-        </div>
-      )}
       <Table>
         <TableHeader>
           <TableRow>
@@ -455,12 +425,16 @@ function TransactionTableInternal({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {transactions.map((t) => (
+          {transactions.map((t, rowIndex) => (
             <TableRow key={t.id} className="group">
-              <TableCell className="w-8">
+              <TableCell
+                className="w-8"
+                onClickCapture={(e) => { shiftRef.current = e.shiftKey }}
+                onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
+              >
                 <Checkbox
-                  checked={selected.has(t.id)}
-                  onCheckedChange={() => toggleRow(t.id)}
+                  checked={selectedIds.has(t.id)}
+                  onCheckedChange={() => handleToggle(rowIndex, t.id)}
                   aria-label="Select transaction"
                 />
               </TableCell>
@@ -525,7 +499,7 @@ function TransactionTableInternal({
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
-                  onClick={() => setDeleting([t.id])}
+                  onClick={() => onRequestDelete([t.id])}
                   title="Delete transaction"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -593,31 +567,12 @@ function TransactionTableInternal({
           </div>
         </div>
       </div>
-
-      <Dialog open={deleting !== null} onOpenChange={(o) => { if (!o && !deleteBusy) setDeleting(null) }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>
-              Delete {deleting && deleting.length === 1 ? "transaction" : `${deleting?.length ?? 0} transactions`}?
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This permanently deletes {deleting && deleting.length === 1 ? "this transaction" : "these transactions"}. This cannot be undone.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleting(null)} disabled={deleteBusy}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={confirmDelete} disabled={deleteBusy}>
-              {deleteBusy ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
 
 /** Bulk "Set category" picker for the selection toolbar. */
-function BulkCategoryPicker({
+export function BulkCategoryPicker({
   options,
   onSelect,
 }: {
