@@ -68,7 +68,7 @@ const mockCurrencies: Currency[] = [
 ]
 
 // Available/unavailable account type classification
-const AVAILABLE_TYPES = new Set(["checking", "savings", "investment", "cash", "credit"])
+const AVAILABLE_TYPES = new Set(["checking", "savings", "emergency_fund", "investment", "cash", "credit"])
 // Liability types that subtract from unavailable wealth (e.g. mortgage offsets property value)
 const UNAVAILABLE_LIABILITY_TYPES = new Set(["mortgage"])
 

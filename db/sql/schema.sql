@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     institution     TEXT NOT NULL,
-    type            TEXT NOT NULL,   -- 'checking' | 'savings' | 'investment' | 'investment_isa' | 'credit' | 'cash' | 'pension'
+    type            TEXT NOT NULL,   -- 'checking' | 'savings' | 'emergency_fund' | 'investment' | 'investment_isa' | 'credit' | 'cash' | 'pension' | 'property'
     currency        TEXT NOT NULL DEFAULT 'GBP',
     is_active       INTEGER NOT NULL DEFAULT 1,
     notes           TEXT,

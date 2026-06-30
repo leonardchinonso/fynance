@@ -3,6 +3,7 @@ import type { AccountType } from "@/types"
 export const ACCOUNT_TYPE_COLORS: Record<AccountType, string> = {
   checking: "#3b82f6",     // blue-500
   savings: "#22c55e",      // green-500
+  emergency_fund: "#06b6d4", // cyan-500
   investment: "#a855f7",   // purple-500
   investment_isa: "#c084fc", // purple-400
   credit: "#ef4444",       // red-500
@@ -14,6 +15,7 @@ export const ACCOUNT_TYPE_COLORS: Record<AccountType, string> = {
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   checking: "Checking",
   savings: "Savings",
+  emergency_fund: "Emergency fund",
   investment: "Investment",
   investment_isa: "Investment ISA",
   credit: "Credit",

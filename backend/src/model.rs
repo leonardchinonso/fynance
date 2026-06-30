@@ -306,6 +306,7 @@ pub struct Account {
 pub enum AccountType {
     Checking,
     Savings,
+    EmergencyFund,
     Investment,
     InvestmentIsa,
     Credit,
@@ -319,6 +320,7 @@ impl AccountType {
         match self {
             Self::Checking => "checking",
             Self::Savings => "savings",
+            Self::EmergencyFund => "emergency_fund",
             Self::Investment => "investment",
             Self::InvestmentIsa => "investment_isa",
             Self::Credit => "credit",
@@ -332,6 +334,7 @@ impl AccountType {
         match s.to_ascii_lowercase().as_str() {
             "checking" => Some(Self::Checking),
             "savings" => Some(Self::Savings),
+            "emergency_fund" => Some(Self::EmergencyFund),
             "investment" => Some(Self::Investment),
             "investment_isa" => Some(Self::InvestmentIsa),
             "credit" => Some(Self::Credit),

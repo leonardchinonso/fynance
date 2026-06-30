@@ -4365,6 +4365,7 @@ pub fn is_available_account(t: &AccountType) -> bool {
         t,
         AccountType::Checking
             | AccountType::Savings
+            | AccountType::EmergencyFund
             | AccountType::Investment
             | AccountType::InvestmentIsa
             | AccountType::Cash
@@ -4377,9 +4378,11 @@ pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
     match t {
         AccountType::Investment | AccountType::InvestmentIsa => AssetClass::Investments,
         AccountType::Pension => AssetClass::Pension,
-        AccountType::Checking | AccountType::Savings | AccountType::Cash | AccountType::Credit => {
-            AssetClass::Cash
-        }
+        AccountType::Checking
+        | AccountType::Savings
+        | AccountType::EmergencyFund
+        | AccountType::Cash
+        | AccountType::Credit => AssetClass::Cash,
         AccountType::Property => AssetClass::Property,
     }
 }
