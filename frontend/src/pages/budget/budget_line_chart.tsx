@@ -49,19 +49,32 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
 
   // Total sums every filtered row per period, including categories beyond the
   // top-8 drawn as individual lines, so it reflects the full filtered spend.
+  // A period with no underlying data for a series stays a gap (null) rather
+  // than a phantom zero; a genuine 0 (e.g. spends that netted out) shows as 0.
   const data = periodKeys.map((p) => {
-    const entry: Record<string, string | number> = {
+    const entry: Record<string, string | number | null> = {
       period: formatPeriodKey(p, granularity),
     }
     let total = 0
+    let totalHasData = false
+    const hasData = new Set<string>()
     rows.forEach((row, i) => {
-      const n = parseFloat(row.periods[p] ?? "")
-      const value = Number.isFinite(n) ? Math.abs(n) : 0
+      const raw = row.periods[p]
+      const n = parseFloat(raw ?? "")
+      if (raw == null || !Number.isFinite(n)) return
+      const value = Math.abs(n)
       total += value
+      totalHasData = true
       const label = labels[i]
-      if (shown.has(label)) entry[label] = ((entry[label] as number) ?? 0) + value
+      if (shown.has(label)) {
+        entry[label] = ((entry[label] as number) ?? 0) + value
+        hasData.add(label)
+      }
     })
-    entry[TOTAL_LABEL] = total
+    for (const label of baseCategories) {
+      if (!hasData.has(label)) entry[label] = null
+    }
+    entry[TOTAL_LABEL] = totalHasData ? total : null
     return entry
   })
 
