@@ -150,9 +150,9 @@ export function CategoriesSection() {
       </CardContent>
 
       <Dialog open={dialog !== null} onOpenChange={(open) => { if (!open) setDialog(null) }}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="sm:max-w-sm p-6">
           <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
-          <div className="space-y-3 pt-2">
+          <div className="space-y-4 pt-1">
             <div>
               <label className="text-sm font-medium">Name</label>
               <Input
@@ -166,28 +166,11 @@ export function CategoriesSection() {
             {isGroup ? (
               <div>
                 <label className="text-sm font-medium">Color</label>
-                <div className="mt-1 grid grid-cols-8 gap-1">
-                  {COLOR_PALETTE.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      className="h-6 w-6 rounded-full border-2 transition-transform hover:scale-110"
-                      style={{
-                        backgroundColor: c,
-                        borderColor: c === form.color ? "white" : "transparent",
-                        boxShadow: c === form.color ? `0 0 0 1px ${c}` : undefined,
-                      }}
-                      onClick={() => setForm(f => ({ ...f, color: c }))}
-                    />
-                  ))}
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="h-6 w-6 rounded-full border shrink-0" style={{ backgroundColor: form.color }} />
-                  <Input
-                    className="h-8 font-mono text-xs"
-                    value={form.color}
-                    maxLength={7}
-                    onChange={(e) => setForm(f => ({ ...f, color: e.target.value }))}
+                <div className="mt-1.5">
+                  <CategoryColorPicker
+                    name={form.name || "Group"}
+                    color={form.color}
+                    onChange={(_, c) => setForm(f => ({ ...f, color: c }))}
                   />
                 </div>
               </div>
