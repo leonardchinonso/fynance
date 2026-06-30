@@ -2898,15 +2898,7 @@ impl Db {
               ORDER BY i.date ASC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let raw: Vec<(
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            String,
-            Option<String>,
-        )> = stmt
+        let raw: Vec<InvestmentEventRaw> = stmt
             .query_map(
                 rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
                 |row| {
@@ -2924,7 +2916,7 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         // (date_str, signed principal, currency, fee, fee_currency)
-        let events: Vec<(String, Decimal, String, Option<Decimal>, Option<String>)> = raw
+        let events: Vec<InvestmentEventParsed> = raw
             .into_iter()
             .filter_map(|(date, event_type, q, p, fee, currency, fee_currency)| {
                 let q: Decimal = q.parse().ok()?;
@@ -4611,6 +4603,21 @@ type DefaultLeaf = (String, String, Option<String>);
 /// One raw spending-grid row from SQL: (group key, category_id, parent_id,
 /// period, currency, summed amount).
 type SpendingGridRawRow = (String, Option<String>, Option<String>, String, String, f64);
+
+/// One raw investment event row: (date, event_type, quantity, price_per_share,
+/// fee, currency, fee_currency).
+type InvestmentEventRaw = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+);
+
+/// A parsed contribution event: (date, signed principal, currency, fee, fee_currency).
+type InvestmentEventParsed = (String, Decimal, String, Option<Decimal>, Option<String>);
 
 /// Parse the embedded `categories.yaml` into `(parent_name, [leaf...])`. Leaf
 /// children may be bare strings (type defaults to `spending`, no description)
