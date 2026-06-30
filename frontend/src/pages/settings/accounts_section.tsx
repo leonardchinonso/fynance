@@ -44,6 +44,18 @@ const ACCOUNT_TYPE_TAGS: AccountTypeTag[] = [
   { kind: "single", type: "property", label: "Property" },
 ]
 
+// Rows for the Type help tooltip: [type, label, one-line description].
+const ACCOUNT_TYPE_HELP: [AccountType, string, string][] = [
+  ["checking", "Checking", "everyday current account"],
+  ["savings", "Savings", "savings balance"],
+  ["emergency_fund", "Emergency fund", "rainy-day cash"],
+  ["cash", "Cash", "physical cash / wallets"],
+  ["credit", "Credit", "card; a liability"],
+  ["investment", "Investments", "brokerage; ISA vs non-ISA affects CGT (ISA tax-free)"],
+  ["pension", "Pension", "retirement savings"],
+  ["property", "Property", "property value"],
+]
+
 interface Props {
   data: RemoteData<Account[]>
   profilesData: RemoteData<Profile[]>
@@ -336,7 +348,7 @@ function EditAccountDialog({ account, profiles, onClose, onSaved }: {
         <div className="space-y-4 pt-1">
           <div>
             <label className="text-sm font-medium">Name</label>
-            <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoFocus />
+            <Input className="mt-1.5" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoFocus />
           </div>
           <AccountCommonFields
             institution={form.institution}
@@ -361,7 +373,7 @@ function EditAccountDialog({ account, profiles, onClose, onSaved }: {
 
 function AccountTypeTagPicker({ value, onChange }: { value: AccountType; onChange: (t: AccountType) => void }) {
   return (
-    <div className="mt-1 flex flex-wrap gap-2">
+    <div className="mt-1.5 flex flex-wrap gap-2">
       {ACCOUNT_TYPE_TAGS.map((opt) => {
         if (opt.kind === "single") {
           const selected = value === opt.type
@@ -414,15 +426,23 @@ function AccountTypeHelp() {
           <CircleHelp className="h-3.5 w-3.5" />
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-sm">
-          <div className="space-y-1.5 text-left leading-relaxed">
-            <p className="font-semibold">Account types</p>
-            <p>The type sets how an account counts toward your wealth and reports:</p>
-            <ul className="space-y-1">
-              <li><span className="font-medium">Checking, Savings, Emergency fund, Cash</span> — liquid (available) wealth.</li>
-              <li><span className="font-medium">Credit</span> — a liability; the balance reduces available wealth.</li>
-              <li><span className="font-medium">Investments</span> — brokerage holdings. The <span className="font-medium">ISA / non-ISA</span> split matters for UK capital-gains tax: ISA gains are tax-free, so fynance excludes them from CGT.</li>
-              <li><span className="font-medium">Pension, Property</span> — long-term (unavailable) wealth, kept separate from your spendable total.</li>
+          <div className="space-y-2 text-left">
+            <p className="text-sm font-semibold">Account types</p>
+            <p className="text-muted-foreground">Sets how an account counts toward your wealth.</p>
+            <ul className="space-y-1.5">
+              {ACCOUNT_TYPE_HELP.map(([type, label, desc]) => (
+                <li key={type} className="flex items-start gap-2">
+                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: ACCOUNT_TYPE_COLORS[type] }} />
+                  <span>
+                    <span className="font-medium" style={{ color: ACCOUNT_TYPE_COLORS[type] }}>{label}</span>
+                    {" "}— {desc}
+                  </span>
+                </li>
+              ))}
             </ul>
+            <p className="text-muted-foreground">
+              Checking, Savings, Emergency fund &amp; Cash are <span className="font-medium text-foreground">available</span> (liquid); Pension &amp; Property are <span className="font-medium text-foreground">unavailable</span>.
+            </p>
           </div>
         </TooltipContent>
       </Tooltip>
@@ -434,7 +454,7 @@ function CurrencySelect({ value, options, onChange }: { value: string; options: 
   const [open, setOpen] = useState(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger className="w-full mt-1 flex h-8 items-center justify-between rounded-lg border border-input bg-transparent px-2.5 text-base md:text-sm transition-colors hover:bg-accent/50 dark:bg-input/30">
+      <PopoverTrigger className="w-full mt-1.5 flex h-8 items-center justify-between rounded-lg border border-input bg-transparent px-2.5 text-base md:text-sm transition-colors hover:bg-accent/50 dark:bg-input/30">
         <span>{value || "Select"}</span>
         <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
       </PopoverTrigger>
@@ -461,7 +481,7 @@ function CurrencySelect({ value, options, onChange }: { value: string; options: 
 function ProfileChips({ profiles, selected, onToggle }: { profiles: Profile[]; selected: string[]; onToggle: (id: string) => void }) {
   const { profileColors } = useProfileColorsContext()
   return (
-    <div className="flex flex-wrap gap-1.5 mt-1">
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
       {profiles.map((p) => {
         const color = profileColors[p.id] ?? "#78716c"
         const isSel = selected.includes(p.id)
@@ -503,7 +523,7 @@ function AccountCommonFields({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-sm font-medium">Institution</label>
-          <Input value={institution} onChange={(e) => onChange({ institution: e.target.value })} />
+          <Input className="mt-1.5" value={institution} onChange={(e) => onChange({ institution: e.target.value })} />
         </div>
         <div>
           <label className="text-sm font-medium">Currency</label>
@@ -587,12 +607,12 @@ function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefr
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm font-medium">Name</label>
-                <Input placeholder="e.g. Monzo Current" value={form.name}
+                <Input className="mt-1.5" placeholder="e.g. Monzo Current" value={form.name}
                   onChange={(e) => setForm(f => ({ ...f, name: e.target.value, id: slugify(e.target.value) }))} autoFocus />
               </div>
               <div>
                 <label className="text-sm font-medium">ID</label>
-                <Input placeholder="e.g. monzo-current" value={form.id}
+                <Input className="mt-1.5" placeholder="e.g. monzo-current" value={form.id}
                   onChange={(e) => setForm(f => ({ ...f, id: e.target.value }))} />
               </div>
             </div>
@@ -607,7 +627,7 @@ function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefr
             />
             <div>
               <label className="text-sm font-medium">Notes (optional)</label>
-              <Input placeholder="Any additional notes" value={form.notes}
+              <Input className="mt-1.5" placeholder="Any additional notes" value={form.notes}
                 onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
             <div className="flex justify-end gap-2">

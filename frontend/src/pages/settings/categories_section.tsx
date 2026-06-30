@@ -19,11 +19,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Trash2, Pencil, Plus, Tag, ChevronRight, CircleHelp } from "lucide-react"
+import { Trash2, Pencil, Plus, Tag, ChevronRight, ChevronDown, CircleHelp } from "lucide-react"
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { DIALOG_FIELD_CLASS } from "@/lib/field_styles"
 
 const DEFAULT_GROUP_COLOR = "#78716c"
+
+const CAT_TYPE_DESC: Record<string, string> = {
+  spending: "money going out",
+  income: "money coming in (e.g. salary)",
+  interest: "interest & investment income",
+  donation: "charitable giving & gifts",
+  internal_transfer: "between your own accounts; excluded from summaries",
+}
 
 type DialogState = { mode: "group" | "category"; editId: string | null }
 type FormState = { name: string; parent_id: string; description: string; category_type: CategoryType; color: string }
@@ -157,6 +166,7 @@ export function CategoriesSection() {
             <div>
               <label className="text-sm font-medium">Name</label>
               <Input
+                className="mt-1.5"
                 placeholder={isGroup ? "e.g. Housing" : "e.g. Groceries"}
                 value={form.name}
                 onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))}
@@ -179,16 +189,19 @@ export function CategoriesSection() {
               <>
                 <div>
                   <label className="text-sm font-medium">Group</label>
-                  <select
-                    className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm"
-                    value={form.parent_id}
-                    onChange={(e) => setForm(f => ({ ...f, parent_id: e.target.value }))}
-                  >
-                    <option value="">None (top-level)</option>
-                    {tree.map(node => (
-                      <option key={node.id} value={node.id}>{node.name}</option>
-                    ))}
-                  </select>
+                  <div className="relative mt-1.5">
+                    <select
+                      className={cn(DIALOG_FIELD_CLASS, "appearance-none pr-8")}
+                      value={form.parent_id}
+                      onChange={(e) => setForm(f => ({ ...f, parent_id: e.target.value }))}
+                    >
+                      <option value="">None (top-level)</option>
+                      {tree.map(node => (
+                        <option key={node.id} value={node.id}>{node.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50" />
+                  </div>
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
@@ -202,17 +215,23 @@ export function CategoriesSection() {
                           <CircleHelp className="h-3.5 w-3.5" />
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-sm">
-                          <div className="space-y-1.5 text-left leading-relaxed">
-                            <p className="font-semibold">Category types</p>
-                            <p>Types describe how money moves, and power tax and summary calculations:</p>
-                            <ul className="space-y-1">
-                              <li><span className="font-medium">Spending</span> — money going out.</li>
-                              <li><span className="font-medium">Income</span> — money coming in (e.g. salary).</li>
-                              <li><span className="font-medium">Interest</span> — interest and investment income.</li>
-                              <li><span className="font-medium">Donation</span> — charitable giving and gifts.</li>
-                              <li><span className="font-medium">Internal transfer</span> — moving money between your own accounts, both tracked in fynance. These are excluded from summaries like your total spending for the month.</li>
+                          <div className="space-y-2 text-left">
+                            <p className="text-sm font-semibold">Category types</p>
+                            <p className="text-muted-foreground">How money moves — drives tax and summary calculations.</p>
+                            <ul className="space-y-1.5">
+                              {CATEGORY_TYPE_GROUPS.map((g) => (
+                                <li key={g.key} className="flex items-start gap-2">
+                                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: g.color }} />
+                                  <span>
+                                    <span className="font-medium" style={{ color: g.color }}>{g.label}</span>
+                                    {" "}— {CAT_TYPE_DESC[g.key]}
+                                  </span>
+                                </li>
+                              ))}
                             </ul>
-                            <p>For Income, Interest and Donation, the <span className="font-medium">taxed / non-tax</span> split lets fynance help with your tax-return calculations.</p>
+                            <p className="text-muted-foreground">
+                              Income, Interest &amp; Donation have a <span className="font-medium text-foreground">taxed / non-tax</span> split for tax-return help.
+                            </p>
                           </div>
                         </TooltipContent>
                       </Tooltip>
@@ -223,7 +242,7 @@ export function CategoriesSection() {
                 <div>
                   <label className="text-sm font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></label>
                   <textarea
-                    className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm resize-y min-h-[7.5rem] placeholder:text-muted-foreground/50"
+                    className={cn(DIALOG_FIELD_CLASS, "mt-1.5 resize-y min-h-[7.5rem] placeholder:text-muted-foreground/50")}
                     rows={5}
                     placeholder="e.g. Utility bills — internet, water, gas, electricity. Not Netflix or Spotify."
                     value={form.description}
@@ -260,7 +279,7 @@ function subtypeSuffix(t: CategoryType): string {
  */
 function TypeTagPicker({ value, onChange }: { value: CategoryType; onChange: (t: CategoryType) => void }) {
   return (
-    <div className="mt-1 flex flex-wrap gap-2">
+    <div className="mt-1.5 flex flex-wrap gap-2">
       {CATEGORY_TYPE_GROUPS.map((g) => {
         const selected = g.types.includes(value)
         const label = g.label + (selected ? subtypeSuffix(value) : "")
