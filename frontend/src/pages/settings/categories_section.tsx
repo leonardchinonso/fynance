@@ -20,7 +20,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Trash2, Pencil, Plus, Tag, ChevronDown } from "lucide-react"
+import { Trash2, Pencil, Plus, Tag, ChevronDown, ChevronRight } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 export function CategoriesSection() {
   const [categoriesData, refresh] = useCategories()
@@ -283,22 +284,42 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
   categoryColors: Record<string, string>
   onColorChange: (name: string, color: string) => void
 }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({})
   if (nodes.length === 0) return (
     <p className="text-sm text-muted-foreground py-4 text-center">No categories yet.</p>
   )
+  const toggle = (id: string) => setOpen(o => ({ ...o, [id]: !o[id] }))
   return (
     <div className="space-y-4">
-      {nodes.map(parent => (
+      {nodes.map(parent => {
+        const isOpen = open[parent.id] ?? false
+        return (
         <div key={parent.id}>
           <div className="flex items-center gap-3 rounded-lg border p-2.5 group bg-muted/30">
-            <Tag className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <button
+              type="button"
+              onClick={() => toggle(parent.id)}
+              className="shrink-0 text-muted-foreground"
+              aria-label={isOpen ? `Collapse ${parent.name}` : `Expand ${parent.name}`}
+              aria-expanded={isOpen}
+            >
+              <ChevronRight className={cn("h-4 w-4 transition-transform", isOpen && "rotate-90")} />
+            </button>
             <CategoryColorPicker
               name={parent.name}
               color={categoryColors[parent.name] ?? "#78716c"}
               onChange={onColorChange}
             />
-            <p className="flex-1 text-sm font-semibold">{parent.name}</p>
-            <Badge variant="outline" className="text-[10px]">parent</Badge>
+            <button
+              type="button"
+              onClick={() => toggle(parent.id)}
+              className="flex flex-1 min-w-0 items-center gap-2 text-left"
+            >
+              <span className="truncate text-sm font-semibold">{parent.name}</span>
+              {parent.children.length > 0 && (
+                <span className="text-xs text-muted-foreground">({parent.children.length})</span>
+              )}
+            </button>
             <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onEdit(parent, null)}>
               <Pencil className="h-3 w-3" />
             </Button>
@@ -306,7 +327,7 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
               <Trash2 className="h-3 w-3" />
             </Button>
           </div>
-          {parent.children.length > 0 && (
+          {isOpen && parent.children.length > 0 && (
             <div className="ml-4 mt-1 space-y-1">
               {parent.children.map(child => (
                 <div key={child.id} className="flex items-center gap-3 rounded-lg border p-2.5 group">
@@ -333,7 +354,8 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
             </div>
           )}
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
