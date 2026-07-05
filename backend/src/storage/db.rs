@@ -3718,8 +3718,10 @@ impl Db {
         Ok(agg.converted_sum())
     }
 
-    /// Net savings growth over `[start, end]`: the FX-converted value of all
-    /// `savings`-type holdings as of `end` minus their value as of `start`.
+    /// Net savings growth over `[start, end]`: the FX-converted carry-forward
+    /// balance of all `savings` and `emergency_fund` accounts as of `end` minus
+    /// the same as of `start`. Derived from account type, not holding type
+    /// (savings accounts store their balance as a `cash` holding).
     pub fn compute_savings_growth(
         &self,
         start: NaiveDate,
@@ -3731,7 +3733,12 @@ impl Db {
             Ok(self
                 .get_holdings_for_summary(date, profile_id)?
                 .iter()
-                .filter(|r| r.holding.holding_type == HoldingType::Savings)
+                .filter(|r| {
+                    matches!(
+                        r.account_type,
+                        AccountType::Savings | AccountType::EmergencyFund
+                    )
+                })
                 .map(|r| fx.convert(r.holding.value, &r.holding.currency))
                 .sum())
         };
@@ -4360,7 +4367,6 @@ pub fn is_available_account(t: &AccountType) -> bool {
             | AccountType::EmergencyFund
             | AccountType::Investment
             | AccountType::InvestmentIsa
-            | AccountType::Cash
             | AccountType::Credit
     )
 }
@@ -4373,7 +4379,6 @@ pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
         AccountType::Checking
         | AccountType::Savings
         | AccountType::EmergencyFund
-        | AccountType::Cash
         | AccountType::Credit => AssetClass::Cash,
         AccountType::Property => AssetClass::Property,
     }
@@ -4964,6 +4969,18 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
             }
         }
     }
+
+    // ── 14. Collapse removed account/holding type variants ──
+    // `cash` accounts fold into `checking`; the `savings` holding type (which
+    // had no real data source) folds into `cash`; and the redundant `loan` and
+    // `credit` holding types merge into a single `debt` liability line. Plain
+    // idempotent UPDATEs (no CHECK constraint on either column): after the first
+    // pass no rows match, so they are safe to run on every startup.
+    conn.execute_batch("UPDATE accounts SET type = 'checking' WHERE type = 'cash'")?;
+    conn.execute_batch("UPDATE holdings SET holding_type = 'cash' WHERE holding_type = 'savings'")?;
+    conn.execute_batch(
+        "UPDATE holdings SET holding_type = 'debt' WHERE holding_type IN ('loan', 'credit')",
+    )?;
 
     Ok(())
 }

@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     institution     TEXT NOT NULL,
-    type            TEXT NOT NULL,   -- 'checking' | 'savings' | 'emergency_fund' | 'investment' | 'investment_isa' | 'credit' | 'cash' | 'pension' | 'property'
+    type            TEXT NOT NULL,   -- 'checking' | 'savings' | 'emergency_fund' | 'investment' | 'investment_isa' | 'credit' | 'pension' | 'property'
     currency        TEXT NOT NULL DEFAULT 'GBP',
     is_active       INTEGER NOT NULL DEFAULT 1,
     notes           TEXT,
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS holdings (
     account_id      TEXT NOT NULL,
     symbol          TEXT NOT NULL,
     name            TEXT NOT NULL,
-    holding_type    TEXT NOT NULL DEFAULT 'stock',
+    holding_type    TEXT NOT NULL DEFAULT 'stock',  -- 'stock' | 'etf' | 'fund' | 'bond' | 'crypto' | 'cash' | 'property' | 'debt'
     quantity        TEXT NOT NULL,
     price_per_unit  TEXT,
     value           TEXT NOT NULL,

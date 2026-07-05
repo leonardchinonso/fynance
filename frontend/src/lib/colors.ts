@@ -7,7 +7,6 @@ export const ACCOUNT_TYPE_COLORS: Record<AccountType, string> = {
   investment: "#a855f7",   // purple-500
   investment_isa: "#c084fc", // purple-400
   credit: "#ef4444",       // red-500
-  cash: "#eab308",         // yellow-500
   pension: "#6366f1",      // indigo-500
   property: "#14b8a6",     // teal-500
 }
@@ -19,7 +18,6 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   investment: "Investment",
   investment_isa: "Investment ISA",
   credit: "Credit",
-  cash: "Cash",
   pension: "Pension",
   property: "Property",
 }

@@ -29,10 +29,8 @@ const HOLDING_TYPE_COLORS: Record<HoldingType, string> = {
   bond:     "#f97316",
   crypto:   "#eab308",
   cash:     "#78716c",
-  savings:  "#10b981",
   property: "#06b6d4",
-  loan:     "#ef4444",
-  credit:   "#ec4899",
+  debt:     "#ef4444",
 }
 
 const HOLDING_TYPE_LABELS: Record<HoldingType, string> = {
@@ -42,10 +40,8 @@ const HOLDING_TYPE_LABELS: Record<HoldingType, string> = {
   bond:     "Bond",
   crypto:   "Crypto",
   cash:     "Cash",
-  savings:  "Savings",
   property: "Property",
-  loan:     "Loan",
-  credit:   "Credit",
+  debt:     "Debt",
 }
 
 const PIE_COLORS = [

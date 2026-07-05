@@ -451,8 +451,8 @@ td code { font-size: 12px; }
 <table>
   <thead><tr><th>Enum</th><th>Values</th><th>Used in</th></tr></thead>
   <tbody>
-    <tr><td>AccountType</td><td><code>checking</code>, <code>savings</code>, <code>investment</code>, <code>investment_isa</code>, <code>credit</code>, <code>cash</code>, <code>pension</code>, <code>property</code></td><td>Account.type</td></tr>
-    <tr><td>HoldingType</td><td><code>stock</code>, <code>etf</code>, <code>fund</code>, <code>bond</code>, <code>crypto</code>, <code>cash</code>, <code>property</code>, <code>loan</code>, <code>credit</code></td><td>Holding.holding_type</td></tr>
+    <tr><td>AccountType</td><td><code>checking</code>, <code>savings</code>, <code>emergency_fund</code>, <code>investment</code>, <code>investment_isa</code>, <code>credit</code>, <code>pension</code>, <code>property</code></td><td>Account.type</td></tr>
+    <tr><td>HoldingType</td><td><code>stock</code>, <code>etf</code>, <code>fund</code>, <code>bond</code>, <code>crypto</code>, <code>cash</code>, <code>property</code>, <code>debt</code></td><td>Holding.holding_type</td></tr>
     <tr><td>CategorySource</td><td><code>rule</code>, <code>agent</code>, <code>manual</code></td><td>Transaction.category_source</td></tr>
     <tr><td>InvestmentEventType</td><td><code>vest</code>, <code>buy</code>, <code>sell</code>, <code>transfer</code>, <code>withhold</code>, <code>split</code></td><td>InvestmentEvent.event_type</td></tr>
     <tr><td>Granularity</td><td><code>monthly</code>, <code>quarterly</code>, <code>yearly</code></td><td>spending-grid, holdings/history, cash-flow</td></tr>
@@ -899,7 +899,7 @@ td code { font-size: 12px; }
       <tr><td><code>as_of</code></td><td>string</td><td>Computation date (YYYY-MM-DD)</td></tr>
       <tr><td><code>total_assets</code></td><td>string</td><td>Sum of positive-value holdings</td></tr>
       <tr><td><code>total_liabilities</code></td><td>string</td><td>Sum of negative-value holdings</td></tr>
-      <tr><td><code>available_wealth</code></td><td>string</td><td>Liquid wealth (checking, savings, investment, cash, credit)</td></tr>
+      <tr><td><code>available_wealth</code></td><td>string</td><td>Liquid wealth (checking, savings, emergency_fund, investment, investment_isa, credit)</td></tr>
       <tr><td><code>unavailable_wealth</code></td><td>string</td><td>Illiquid wealth (pension, property)</td></tr>
       <tr><td><code>accounts</code></td><td>Account[]</td><td>All accounts with carry-forward balances</td></tr>
       <tr><td><code>by_type</code></td><td>BreakdownItem[]</td><td>Breakdown by account type</td></tr>
@@ -2770,7 +2770,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <h4>Request Body <span class="content-type">application/json</span></h4>
   <p><code>{ account_id, holdings: HoldingWrite[] }</code>. Each holding's amount is a
   presence-discriminated union: supply either <code>value</code> (scalar: cash,
-  property, loan) OR both <code>quantity</code> and <code>price_per_unit</code>
+  property, debt) OR both <code>quantity</code> and <code>price_per_unit</code>
   (computed: stock, etf, fund, bond, crypto). The server derives
   <code>value = quantity &times; price_per_unit</code> for the computed arm and
   rejects payloads that set fields from both arms (400 <code>invalid_holding</code>).

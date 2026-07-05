@@ -926,8 +926,7 @@ fn parse_holding_type_fuzzy(s: &str) -> HoldingType {
         "crypto" | "cryptocurrency" | "digital_asset" => HoldingType::Crypto,
         "cash" | "money" | "deposit" => HoldingType::Cash,
         "property" | "real_estate" | "reit" => HoldingType::Property,
-        "loan" | "debt" => HoldingType::Loan,
-        "credit" | "credit_card" => HoldingType::Credit,
+        "loan" | "debt" | "liability" | "credit" | "credit_card" => HoldingType::Debt,
         _ => HoldingType::Stock,
     }
 }
@@ -968,6 +967,9 @@ mod tests {
         assert_eq!(parse_holding_type_fuzzy("equity"), HoldingType::Stock);
         assert_eq!(parse_holding_type_fuzzy("mutual_fund"), HoldingType::Fund);
         assert_eq!(parse_holding_type_fuzzy("CRYPTO"), HoldingType::Crypto);
+        assert_eq!(parse_holding_type_fuzzy("loan"), HoldingType::Debt);
+        assert_eq!(parse_holding_type_fuzzy("credit_card"), HoldingType::Debt);
+        assert_eq!(parse_holding_type_fuzzy("liability"), HoldingType::Debt);
         assert_eq!(
             parse_holding_type_fuzzy("unknown_thing"),
             HoldingType::Stock

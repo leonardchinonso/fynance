@@ -310,7 +310,6 @@ pub enum AccountType {
     Investment,
     InvestmentIsa,
     Credit,
-    Cash,
     Pension,
     Property,
 }
@@ -324,7 +323,6 @@ impl AccountType {
             Self::Investment => "investment",
             Self::InvestmentIsa => "investment_isa",
             Self::Credit => "credit",
-            Self::Cash => "cash",
             Self::Pension => "pension",
             Self::Property => "property",
         }
@@ -338,7 +336,6 @@ impl AccountType {
             "investment" => Some(Self::Investment),
             "investment_isa" => Some(Self::InvestmentIsa),
             "credit" => Some(Self::Credit),
-            "cash" => Some(Self::Cash),
             "pension" => Some(Self::Pension),
             "property" => Some(Self::Property),
             _ => None,
@@ -863,10 +860,8 @@ pub enum HoldingType {
     Bond,
     Crypto,
     Cash,
-    Savings,
     Property,
-    Loan,
-    Credit,
+    Debt,
 }
 
 impl HoldingType {
@@ -878,10 +873,8 @@ impl HoldingType {
             Self::Bond => "bond",
             Self::Crypto => "crypto",
             Self::Cash => "cash",
-            Self::Savings => "savings",
             Self::Property => "property",
-            Self::Loan => "loan",
-            Self::Credit => "credit",
+            Self::Debt => "debt",
         }
     }
 
@@ -893,10 +886,8 @@ impl HoldingType {
             "bond" => Some(Self::Bond),
             "crypto" => Some(Self::Crypto),
             "cash" => Some(Self::Cash),
-            "savings" => Some(Self::Savings),
             "property" => Some(Self::Property),
-            "loan" => Some(Self::Loan),
-            "credit" => Some(Self::Credit),
+            "debt" => Some(Self::Debt),
             _ => None,
         }
     }

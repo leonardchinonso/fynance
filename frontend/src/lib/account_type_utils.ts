@@ -10,7 +10,6 @@ export function accountTypeToAssetClass(t: AccountType): AssetClass {
     case "checking":
     case "savings":
     case "emergency_fund":
-    case "cash":
     case "credit":         return "Cash"
   }
 }
