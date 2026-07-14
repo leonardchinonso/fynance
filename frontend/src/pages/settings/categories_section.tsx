@@ -191,7 +191,7 @@ export function CategoriesSection() {
                   <label className="text-sm font-medium">Group</label>
                   <div className="relative mt-1.5">
                     <select
-                      className={cn(DIALOG_FIELD_CLASS, "appearance-none pr-8")}
+                      className={cn(DIALOG_FIELD_CLASS, "appearance-none pr-8", "[&>option]:bg-popover [&>option]:text-popover-foreground")}
                       value={form.parent_id}
                       onChange={(e) => setForm(f => ({ ...f, parent_id: e.target.value }))}
                     >
