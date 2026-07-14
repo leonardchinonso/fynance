@@ -23,7 +23,7 @@ use crate::importers::unified_parser::{
 };
 use crate::model::IngestionPreview;
 use crate::server::error::AppError;
-use crate::server::state::AppState;
+use crate::server::state::{AppState, lock_or_recover};
 
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10 MB per file
 const MAX_TOTAL_SIZE: usize = 50 * 1024 * 1024; // 50 MB total
@@ -199,20 +199,13 @@ pub async fn parse_documents(
     // ── Progress channel setup ─────────────────────────────────────────────
     let progress_tx: Option<ProgressTx> = parse_id.as_ref().map(|pid| {
         let (tx, _rx) = tokio::sync::broadcast::channel::<ProgressEvent>(64);
-        state
-            .progress_channels
-            .lock()
-            .expect("progress_channels mutex poisoned")
-            .insert(pid.clone(), tx.clone());
+        state.progress_channels().insert(pid.clone(), tx.clone());
 
         let channels = state.progress_channels.clone();
         let pid_clone = pid.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(600)).await;
-            channels
-                .lock()
-                .expect("progress_channels mutex poisoned")
-                .remove(&pid_clone);
+            lock_or_recover(&channels).remove(&pid_clone);
         });
 
         tx
@@ -223,10 +216,7 @@ pub async fn parse_documents(
         let pid = parse_id.clone();
         move || {
             if let Some(pid) = &pid {
-                channels
-                    .lock()
-                    .expect("progress_channels mutex poisoned")
-                    .remove(pid);
+                lock_or_recover(&channels).remove(pid);
             }
         }
     };
@@ -264,7 +254,7 @@ pub async fn parse_documents(
     // name(s) so unified mode can recognise transfers to the holder's own other
     // accounts as self-transfers rather than money to other people.
     let (account, account_holder_names) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let account = db.get_account_by_id(&account_id)?.ok_or_else(|| {
             AppError::bad_request(
                 format!("account {} not found", account_id),
@@ -376,7 +366,7 @@ pub async fn parse_documents(
 
     // Store the source documents and run deduplication (needs DB, synchronous).
     let preview = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let (doc_map, all_doc_ids, doc_summaries) =
             store_parse_documents(&db, &documents, &account_id)
                 .map_err(|e| AppError::bad_request(e.to_string(), "document_store_error"))?;
@@ -444,7 +434,7 @@ async fn run_unified_path(
 
     // Build UnifiedContext: active leaf categories + last open holdings.
     let ctx = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let category_tree = db.get_categories_tree().unwrap_or_default();
         let categories: Vec<CategorySummary> = flatten_categories(&category_tree);
         let today = chrono::Local::now().date_naive();
@@ -585,7 +575,7 @@ async fn run_unified_path(
     };
 
     let mut preview = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let (doc_map, all_doc_ids, doc_summaries) =
             store_parse_documents(&db, &documents, &account_id)
                 .map_err(|e| AppError::bad_request(e.to_string(), "document_store_error"))?;
@@ -637,12 +627,7 @@ pub async fn parse_progress(
     // insert, so poll for up to ~2s before treating the parse as unknown.
     let mut rx = None;
     for _ in 0..20 {
-        if let Some(tx) = state
-            .progress_channels
-            .lock()
-            .expect("progress_channels mutex poisoned")
-            .get(&parse_id)
-        {
+        if let Some(tx) = state.progress_channels().get(&parse_id) {
             rx = Some(tx.subscribe());
             break;
         }

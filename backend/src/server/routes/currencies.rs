@@ -44,7 +44,7 @@ fn is_valid_iso_code(code: &str) -> bool {
 pub async fn list_currencies(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Currency>>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let currencies = db.get_currencies()?;
     Ok(Json(currencies))
 }
@@ -71,7 +71,7 @@ pub async fn create_currency(
         ));
     }
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     if db.currency_exists(&code)? {
         return Err(AppError::conflict(
@@ -107,7 +107,7 @@ pub async fn update_currency(
         }
     }
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     // Transfer preferred status first (if requested).
     if let Some(true) = payload.is_preferred {
@@ -151,7 +151,7 @@ pub async fn delete_currency(
     State(state): State<AppState>,
     Path(code): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     db.delete_currency(&code).map_err(|e| {
         let msg = e.to_string();
         if msg.contains("not found") {

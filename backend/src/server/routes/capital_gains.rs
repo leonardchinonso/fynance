@@ -326,7 +326,7 @@ pub async fn get_s104_pools(
         .map(parse_date)
         .transpose()?;
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     // Fetch all accounts once; derive both the profile scope and the ISA/Pension exclusion from it.
     let accounts = db.get_accounts(None)?;
@@ -398,7 +398,7 @@ pub async fn get_capital_gains(
         validate_date_range(s, e)?;
     }
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     // Fetch all accounts once; derive both the profile scope and the ISA/Pension exclusion from it.
     let accounts = db.get_accounts(None)?;

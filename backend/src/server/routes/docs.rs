@@ -291,11 +291,11 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "parameters": [
                         { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
                         { "name": "hard", "in": "query", "schema": { "type": "boolean", "default": false },
-                          "description": "Hard-delete the row instead of deactivating. Refuses if the account still has transactions or holdings." }
+                          "description": "Hard-delete the row instead of deactivating. Refuses if the account still has transactions, holdings, or investment events; its ingestion-checklist rows are removed with it." }
                     ],
                     "responses": {
                         "200": { "description": "Account deleted or deactivated" },
-                        "409": { "description": "Account still has transactions or holdings" }
+                        "409": { "description": "Account still has transactions, holdings, or investment events" }
                     }
                 }
             },

@@ -42,7 +42,7 @@ pub async fn create_investment(
     }
 
     let event = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.create_investment_event(&body)
             .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?
     };
@@ -57,7 +57,7 @@ pub async fn list_investments(
     Query(q): Query<ListInvestmentEventsQuery>,
 ) -> Result<Json<Value>, AppError> {
     let events = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.list_investment_events(
             q.account_id.as_deref(),
             q.symbol.as_deref(),
@@ -110,7 +110,7 @@ pub async fn get_investment_history(
         .unwrap_or_default();
 
     let (rows, preferred_currency) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let fx = FxRateMap::new(db.get_currencies()?)?;
         let rows =
             db.get_investment_history(start, end, &granularity, profile_id, &account_ids, &fx)?;
@@ -147,7 +147,7 @@ pub async fn update_investment(
     }
 
     let event = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.update_investment_event(&id, &body)
             .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?
     };
@@ -164,7 +164,7 @@ pub async fn delete_investment(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let deleted = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.delete_investment_event(&id)?
     };
 
@@ -214,7 +214,7 @@ pub async fn import_investments(
     let mut errors: Vec<InvestmentImportError> = Vec::new();
 
     {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         for (index, event) in payload.events.iter().enumerate() {
             let body = CreateInvestmentEventBody {
                 account_id: payload.account_id.clone(),

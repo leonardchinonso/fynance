@@ -35,7 +35,7 @@ ts-rs = { version = "10", features = ["serde-compat", "chrono-impl"] }
 axum = { version = "0.7", features = ["multipart", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+tower-http = { version = "0.6", features = ["catch-panic", "cors", "fs", "trace"] }
 include_dir = "0.7"
 open = "5"
 rand = "0.8"

@@ -1,10 +1,17 @@
 //! Shared state injected into every Axum handler.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::importers::provider::ProgressTx;
 use crate::storage::Db;
+
+/// `Mutex::lock` that recovers the guard when a previous panic poisoned the
+/// mutex. One panicked handler must not take the whole server down; SQLite
+/// writes are transactional, so the connection stays consistent.
+pub fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Clone-cheap bundle of process-wide resources.
 ///
@@ -27,4 +34,14 @@ pub struct AppState {
     /// another non-loopback environment, this is `false` and the auth
     /// middleware requires a token for every non-public API route.
     pub loopback_only: bool,
+}
+
+impl AppState {
+    pub fn db(&self) -> MutexGuard<'_, Db> {
+        lock_or_recover(&self.db)
+    }
+
+    pub fn progress_channels(&self) -> MutexGuard<'_, HashMap<String, ProgressTx>> {
+        lock_or_recover(&self.progress_channels)
+    }
 }

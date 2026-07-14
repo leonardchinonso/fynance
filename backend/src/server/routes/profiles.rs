@@ -15,7 +15,7 @@ use crate::server::validation::validate_profile_id;
 
 pub async fn list_profiles(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
     let profiles = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_profiles()?
     };
     Ok(Json(serde_json::to_value(profiles)?))
@@ -36,7 +36,7 @@ pub async fn create_profile(
     validate_profile_id(&body.id)?;
 
     {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         if db.profile_exists(&body.id)? {
             return Err(AppError::conflict(
                 format!("profile {} already exists", body.id),
@@ -73,7 +73,7 @@ pub async fn update_profile(
             "invalid_name",
         ));
     }
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     if !db.profile_exists(&id)? {
         return Err(AppError::NotFound(format!("profile {id} not found")));
     }
@@ -87,7 +87,7 @@ pub async fn delete_profile(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     if !db.profile_exists(&id)? {
         return Err(AppError::NotFound(format!("profile {id} not found")));
     }

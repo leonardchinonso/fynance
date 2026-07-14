@@ -69,7 +69,7 @@ pub async fn auth_middleware(
     if state.loopback_only {
         if let Some(token) = bearer_token(req.headers()) {
             let validated = {
-                let db = state.db.lock().expect("db mutex poisoned");
+                let db = state.db();
                 db.validate_token(&token)
             };
             if let Ok(Some(name)) = validated {
@@ -86,7 +86,7 @@ pub async fn auth_middleware(
         return Err(StatusCode::UNAUTHORIZED);
     };
     let validated = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.validate_token(&token)
     };
     match validated {

@@ -155,7 +155,7 @@ fn excel_to_csv_text(filename: &str, bytes: &[u8]) -> Result<String> {
             bytes = csv_output.len(),
             "Excel sheet converted to CSV exceeds 200KB; truncating"
         );
-        csv_output.truncate(200_000);
+        csv_output.truncate(crate::util::char_boundary_floor(&csv_output, 200_000));
     }
 
     Ok(csv_output)

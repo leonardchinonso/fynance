@@ -100,7 +100,7 @@ impl StatementParser for LlmStatementParser {
                 max_bytes = MAX_CSV_BYTES,
                 "CSV is large; truncating before sending to LLM"
             );
-            &raw[..MAX_CSV_BYTES]
+            &raw[..crate::util::char_boundary_floor(raw, MAX_CSV_BYTES)]
         } else {
             raw
         };

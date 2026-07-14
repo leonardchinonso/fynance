@@ -608,17 +608,6 @@ pub struct ImportRowError {
     pub reason: String,
 }
 
-/// A standing budget (old model). Kept for CLI backward compatibility.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../frontend/src/bindings/")]
-pub struct Budget {
-    pub month: String,
-    pub category: String,
-    #[serde(with = "rust_decimal::serde::str")]
-    #[ts(type = "string")]
-    pub amount: Decimal,
-}
-
 /// One row in the ingestion checklist for a given month.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]

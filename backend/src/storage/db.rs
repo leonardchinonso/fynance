@@ -164,6 +164,9 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "wal_autocheckpoint", 100)?;
+        // A CLI command and `serve` can hold connections to the same file;
+        // without a timeout a write collision fails immediately with SQLITE_BUSY.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
         conn.execute_batch(SCHEMA_SQL)
             .context("running schema.sql")?;
@@ -716,22 +719,20 @@ impl Db {
             .ok_or_else(|| anyhow!("account {id} not found after update"))
     }
 
-    pub fn count_transactions_for_account(&self, id: &str) -> Result<i64> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM transactions WHERE account_id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        Ok(count)
-    }
-
-    pub fn count_holdings_for_account(&self, id: &str) -> Result<i64> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM holdings WHERE account_id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        Ok(count)
+    /// `(transactions, holdings, investment events)` referencing this account.
+    /// Delete guards must check all three: holdings and investments carry an
+    /// FK to accounts, so a hard delete with any left would hit an FK violation.
+    pub fn account_reference_counts(&self, id: &str) -> Result<(i64, i64, i64)> {
+        self.conn
+            .query_row(
+                r"SELECT
+                    (SELECT COUNT(*) FROM transactions WHERE account_id = ?1),
+                    (SELECT COUNT(*) FROM holdings WHERE account_id = ?1),
+                    (SELECT COUNT(*) FROM investments WHERE account_id = ?1)",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(Into::into)
     }
 
     /// Soft-delete by setting `is_active = 0`. Hard delete is unsafe because
@@ -750,15 +751,21 @@ impl Db {
 
     /// Permanently remove the account row, unlike [`Self::delete_account`] which
     /// only flips `is_active`. Callers must verify the account has no
-    /// transactions or holdings first (the DELETE route guard does this) so no
-    /// rows are orphaned.
+    /// transactions, holdings, or investment events first (see
+    /// [`Self::account_reference_counts`]) so no rows are orphaned. Ingestion
+    /// checklist rows are per-month bookkeeping metadata and are removed with
+    /// the account.
     pub fn hard_delete_account(&self, id: &str) -> Result<()> {
-        let deleted = self
-            .conn
-            .execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM ingestion_checklist WHERE account_id = ?1",
+            params![id],
+        )?;
+        let deleted = tx.execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
         if deleted == 0 {
             return Err(anyhow!("account {id} not found"));
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -2074,7 +2081,7 @@ impl Db {
         );
         let mut stmt = self.conn.prepare(sql)?;
         let raw: Vec<RawBudgetRow> = stmt
-            .query_map(params![month, month, month], |row| {
+            .query_map(params![month], |row| {
                 Ok((
                     row.get(0)?,
                     row.get(1)?,
@@ -2367,35 +2374,6 @@ impl Db {
                 .then(a.category_id.cmp(&b.category_id))
         });
         Ok(result)
-    }
-
-    // ── Legacy budget (CLI compat) ─────────────────────────────────────────────
-
-    pub fn set_budget(&self, month: &str, category: &str, amount: Decimal) -> Result<()> {
-        self.conn.execute(
-            r"INSERT INTO budgets (month, category, amount)
-              VALUES (?1, ?2, ?3)
-              ON CONFLICT(month, category) DO UPDATE SET amount = excluded.amount",
-            params![month, category, amount.to_string()],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_budgets_for_month(&self, month: &str) -> Result<Vec<crate::model::Budget>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT month, category, amount FROM budgets WHERE month = ?1 ORDER BY category",
-        )?;
-        let rows = stmt
-            .query_map(params![month], |row| {
-                let amount: String = row.get(2)?;
-                Ok(crate::model::Budget {
-                    month: row.get(0)?,
-                    category: row.get(1)?,
-                    amount: amount.parse::<Decimal>().unwrap_or_default(),
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
     }
 
     // ── Portfolio ─────────────────────────────────────────────────────────────
@@ -2820,9 +2798,70 @@ impl Db {
 
     // ── Portfolio queries ─────────────────────────────────────────────────────
 
+    /// Every holdings snapshot on an active account with `as_of <= to` (end
+    /// of day), profile-filtered, sorted by `as_of` ascending: the input to
+    /// [`CarryForward`]. Replaying these in order and keeping the last
+    /// snapshot per (account, symbol, sub_account) reproduces
+    /// `get_holdings_for_summary` for any period end without re-scanning the
+    /// table once per period.
+    fn holding_snapshots_until(
+        &self,
+        to: NaiveDate,
+        profile_id: Option<&str>,
+    ) -> Result<Vec<HoldingSnapshot>> {
+        let to_str = to.format("%Y-%m-%dT23:59:59").to_string();
+        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
+        {
+            (
+                "AND a.profile_ids LIKE ?2".to_string(),
+                Some(format!("%\"{pid}\"%")),
+            )
+        } else {
+            (String::new(), None)
+        };
+
+        let sql = format!(
+            r"SELECT h.account_id, h.symbol, COALESCE(h.sub_account, ''), h.as_of,
+                     h.value, h.currency, h.is_closed, a.type
+              FROM holdings h
+              JOIN accounts a ON a.id = h.account_id
+              WHERE a.is_active = 1
+                {profile_filter}
+                AND h.as_of <= ?1
+              ORDER BY h.as_of"
+        );
+
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<HoldingSnapshot> {
+            let value_str: String = row.get(4)?;
+            let account_type_str: String = row.get(7)?;
+            Ok(HoldingSnapshot {
+                account_id: row.get(0)?,
+                symbol: row.get(1)?,
+                sub_account: row.get(2)?,
+                as_of: row.get(3)?,
+                value: value_str.parse::<Decimal>().unwrap_or_default(),
+                currency: row.get(5)?,
+                is_closed: row.get::<_, i64>(6)? != 0,
+                account_type: AccountType::parse(&account_type_str)
+                    .unwrap_or(AccountType::Checking),
+            })
+        };
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = if let Some(ref pat) = profile_arg {
+            stmt.query_map(rusqlite::params![to_str, pat], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(rusqlite::params![to_str], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        Ok(rows)
+    }
+
     /// One `HoldingsHistoryRow` per period in `[from, to]`. The last point
     /// reconciles with the portfolio summary's net worth for the same
-    /// `as_of` (both reduce `get_holdings_for_summary`).
+    /// `as_of` (history replays the same snapshots `get_holdings_for_summary`
+    /// reduces, via [`CarryForward`]).
     pub fn get_monthly_net_worth(
         &self,
         from: NaiveDate,
@@ -2834,19 +2873,19 @@ impl Db {
         use crate::util::fx::CurrencyAggregator;
 
         let periods = generate_period_end_dates(from, to, granularity);
-        let mut rows = Vec::new();
+        let mut carry = CarryForward::new(self.holding_snapshots_until(to, profile_id)?);
+        let mut rows = Vec::with_capacity(periods.len());
 
         for (label, period_end) in periods {
-            let holdings = self.get_holdings_for_summary(period_end, profile_id)?;
+            carry.advance_to(period_end);
             let mut available_agg: CurrencyAggregator = Default::default();
             let mut unavailable_agg: CurrencyAggregator = Default::default();
 
-            for row in holdings {
-                let h = &row.holding;
-                if is_available_account(&row.account_type) {
-                    available_agg.add(h.value, &h.currency, fx);
+            for s in carry.effective() {
+                if is_available_account(&s.account_type) {
+                    available_agg.add(s.value, &s.currency, fx);
                 } else {
-                    unavailable_agg.add(h.value, &h.currency, fx);
+                    unavailable_agg.add(s.value, &s.currency, fx);
                 }
             }
 
@@ -2957,6 +2996,7 @@ impl Db {
             .collect();
 
         let periods = generate_period_end_dates(from, to, granularity);
+        let mut carry = CarryForward::new(self.holding_snapshots_until(to, profile_id)?);
         let mut rows = Vec::with_capacity(periods.len());
         let mut pools: HashMap<String, (Decimal, Decimal)> = HashMap::new();
         let mut invested = Decimal::ZERO;
@@ -3003,16 +3043,17 @@ impl Db {
             let net_invested = any_event.then(|| invested.to_string());
 
             // Market value of active (unclosed) investment + ISA holdings.
+            carry.advance_to(period_end);
             let mut mv = CurrencyAggregator::default();
             let mut has_active = false;
-            for r in self.get_holdings_for_summary(period_end, profile_id)? {
+            for s in carry.effective() {
                 if matches!(
-                    r.account_type,
+                    s.account_type,
                     AccountType::Investment | AccountType::InvestmentIsa
-                ) && !r.holding.is_closed
-                    && (account_ids.is_empty() || account_ids.contains(&r.holding.account_id))
+                ) && !s.is_closed
+                    && (account_ids.is_empty() || account_ids.contains(&s.account_id))
                 {
-                    mv.add(r.holding.value, &r.holding.currency, fx);
+                    mv.add(s.value, &s.currency, fx);
                     has_active = true;
                 }
             }
@@ -3661,6 +3702,21 @@ impl Db {
         profile_id: Option<&str>,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<InvestmentMetrics> {
+        let new_cash_invested = self.compute_new_cash_invested(start, end, profile_id, fx)?;
+        self.compute_investment_metrics_with(start, end, profile_id, fx, new_cash_invested)
+    }
+
+    /// [`Self::compute_investment_metrics`] for callers that already computed
+    /// `new_cash_invested` for the same range and filters, so it is not
+    /// recomputed per request.
+    pub fn compute_investment_metrics_with(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
+        new_cash_invested: Decimal,
+    ) -> Result<InvestmentMetrics> {
         let sum_carry_forward = |date: NaiveDate| -> Result<Decimal> {
             Ok(self
                 .get_holdings_for_summary(date, profile_id)?
@@ -3672,8 +3728,6 @@ impl Db {
 
         let start_value = sum_carry_forward(start)?;
         let end_value = sum_carry_forward(end)?;
-
-        let new_cash_invested = self.compute_new_cash_invested(start, end, profile_id, fx)?;
 
         let total_growth = end_value - start_value;
         let market_growth = total_growth - new_cash_invested;
@@ -4443,6 +4497,62 @@ pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
 
 /// Generate (label, period_end_date) pairs for a date range and granularity.
 /// Each period_end is clamped to `to` if it exceeds it.
+/// One holdings row as stored, joined with its account type. Produced by
+/// `Db::holding_snapshots_until` for the [`CarryForward`] walk.
+struct HoldingSnapshot {
+    account_id: String,
+    symbol: String,
+    /// Normalized: NULL stored as `''`, matching the summary query's COALESCE.
+    sub_account: String,
+    /// ISO datetime string as stored; lexicographic order is chronological.
+    as_of: String,
+    value: Decimal,
+    currency: String,
+    is_closed: bool,
+    account_type: AccountType,
+}
+
+/// Replays snapshots in `as_of` order, keeping the latest per
+/// (account, symbol, sub_account). After `advance_to(d)`, `effective()`
+/// yields the same set of carried holdings `get_holdings_for_summary(d)`
+/// returns (closed snapshots included; they are invariant-zeroed). Callers
+/// must advance with non-decreasing dates.
+struct CarryForward {
+    snapshots: Vec<HoldingSnapshot>,
+    cursor: usize,
+    effective: HashMap<(String, String, String), usize>,
+}
+
+impl CarryForward {
+    fn new(snapshots: Vec<HoldingSnapshot>) -> Self {
+        Self {
+            snapshots,
+            cursor: 0,
+            effective: HashMap::new(),
+        }
+    }
+
+    fn advance_to(&mut self, period_end: NaiveDate) {
+        let end = period_end.format("%Y-%m-%dT23:59:59").to_string();
+        while self.cursor < self.snapshots.len() && self.snapshots[self.cursor].as_of <= end {
+            let s = &self.snapshots[self.cursor];
+            self.effective.insert(
+                (
+                    s.account_id.clone(),
+                    s.symbol.clone(),
+                    s.sub_account.clone(),
+                ),
+                self.cursor,
+            );
+            self.cursor += 1;
+        }
+    }
+
+    fn effective(&self) -> impl Iterator<Item = &HoldingSnapshot> {
+        self.effective.values().map(|&i| &self.snapshots[i])
+    }
+}
+
 pub fn generate_period_end_dates(
     from: NaiveDate,
     to: NaiveDate,
@@ -5909,6 +6019,122 @@ mod consolidation_tests {
                 .balance
                 .unwrap(),
             dec!(0)
+        );
+    }
+
+    // One-scan carry-forward must reproduce per-period recomputation: values
+    // carry forward between snapshots, an account whose first snapshot lands
+    // mid-range contributes only from then on, and a closed (zeroed) holding
+    // contributes 0 to net worth but drops out of investment market value.
+    #[test]
+    fn history_carry_forward_mid_range_and_closed_holding() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+        db.create_account(&make_account("sav", AccountType::Savings))
+            .unwrap();
+
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2025, 1, 15),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "MSFT",
+                HoldingType::Stock,
+                dec!(50),
+                naive_dt(2025, 2, 5),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(120),
+                naive_dt(2025, 3, 10),
+            )],
+        )
+        .unwrap();
+        // Savings account's first snapshot lands mid-range.
+        db.upsert_holdings(
+            "sav",
+            &[make_holding(
+                "sav",
+                "_CASH",
+                HoldingType::Cash,
+                dec!(1000),
+                naive_dt(2025, 3, 20),
+            )],
+        )
+        .unwrap();
+        // MSFT zeroed and closed in April.
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "MSFT",
+                HoldingType::Stock,
+                dec!(0),
+                naive_dt(2025, 4, 10),
+            )],
+        )
+        .unwrap();
+        db.close_holding("t212", "MSFT", None, naive_dt(2025, 4, 10))
+            .unwrap();
+
+        let fx = gbp_fx();
+        let from = naive_date(2025, 1, 1);
+        let to = naive_date(2025, 5, 31);
+
+        let history = db
+            .get_monthly_net_worth(from, to, &Granularity::Monthly, None, &fx)
+            .unwrap();
+        let totals: Vec<(String, Decimal)> = history
+            .iter()
+            .map(|r| (r.month.clone(), r.total_wealth))
+            .collect();
+        assert_eq!(
+            totals,
+            vec![
+                ("2025-01".to_string(), dec!(100)),
+                ("2025-02".to_string(), dec!(150)),
+                ("2025-03".to_string(), dec!(1170)),
+                ("2025-04".to_string(), dec!(1120)),
+                ("2025-05".to_string(), dec!(1120)),
+            ]
+        );
+        assert_eq!(
+            history.last().unwrap().total_wealth,
+            summary_net_worth(&db, to, &fx)
+        );
+
+        // Investment market value drops the closed MSFT position from April
+        // on and never includes the savings account.
+        let inv = db
+            .get_investment_history(from, to, &Granularity::Monthly, None, &[], &fx)
+            .unwrap();
+        let mv: Vec<Option<String>> = inv.iter().map(|r| r.market_value.clone()).collect();
+        assert_eq!(
+            mv,
+            vec![
+                Some("100".to_string()),
+                Some("150".to_string()),
+                Some("170".to_string()),
+                Some("120".to_string()),
+                Some("120".to_string()),
+            ]
         );
     }
 

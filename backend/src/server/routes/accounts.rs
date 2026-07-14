@@ -28,7 +28,7 @@ pub async fn list_accounts(
 ) -> Result<Json<Value>, AppError> {
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
     let accounts = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_accounts(profile_id)?
     };
     Ok(Json(serde_json::to_value(accounts)?))
@@ -94,7 +94,7 @@ pub async fn create_account(
     };
 
     {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         if db.account_exists(&body.id)? {
             return Err(AppError::conflict(
                 format!("account {} already exists", body.id),
@@ -176,7 +176,7 @@ pub async fn update_account(
         })
         .transpose()?;
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     if !db.account_exists(&id)? {
         return Err(AppError::NotFound(format!("account {id} not found")));
     }
@@ -221,7 +221,7 @@ pub async fn update_account(
 pub struct DeleteAccountQuery {
     /// When true, permanently remove the row instead of soft-deleting
     /// (flipping `is_active`). The account must still be empty (no
-    /// transactions/holdings) either way. Defaults to false.
+    /// transactions/holdings/investment events) either way. Defaults to false.
     #[serde(default)]
     pub hard: bool,
 }
@@ -231,16 +231,15 @@ pub async fn delete_account(
     Path(id): Path<String>,
     Query(q): Query<DeleteAccountQuery>,
 ) -> Result<Json<Value>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     if !db.account_exists(&id)? {
         return Err(AppError::NotFound(format!("account {id} not found")));
     }
-    let tx_count = db.count_transactions_for_account(&id)?;
-    let holding_count = db.count_holdings_for_account(&id)?;
-    if tx_count > 0 || holding_count > 0 {
+    let (tx_count, holding_count, investment_count) = db.account_reference_counts(&id)?;
+    if tx_count > 0 || holding_count > 0 || investment_count > 0 {
         return Err(AppError::conflict(
             format!(
-                "account {id} is still referenced by {tx_count} transaction(s) and {holding_count} holding(s); remove them first"
+                "account {id} is still referenced by {tx_count} transaction(s), {holding_count} holding(s) and {investment_count} investment event(s); remove them first"
             ),
             "account_in_use",
         ));
@@ -276,7 +275,7 @@ pub async fn set_account_balance(
     let date = crate::server::validation::parse_naive_datetime(&body.date)?;
 
     {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_account_by_id(&id)?
             .ok_or_else(|| AppError::NotFound(format!("account {id} not found")))?;
         db.set_account_balance(&id, balance, date)?;

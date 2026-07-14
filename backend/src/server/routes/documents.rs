@@ -40,7 +40,7 @@ pub async fn list_documents(
     auth: axum::extract::Extension<AuthContext>,
 ) -> Result<Json<Vec<DocumentSummary>>, AppError> {
     require_token_if_remote(&state, &auth)?;
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     Ok(Json(db.list_documents()?))
 }
 
@@ -52,7 +52,7 @@ pub async fn get_document(
     Path(id): Path<String>,
 ) -> Result<Json<DocumentSummary>, AppError> {
     require_token_if_remote(&state, &auth)?;
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let doc = db
         .get_document(&id)?
         .ok_or_else(|| AppError::NotFound(format!("document {id} not found")))?;
@@ -79,7 +79,7 @@ pub async fn download_document(
 ) -> Result<Response, AppError> {
     require_token_if_remote(&state, &auth)?;
     let doc = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_document(&id)?
             .ok_or_else(|| AppError::NotFound(format!("document {id} not found")))?
     };
@@ -183,7 +183,7 @@ pub async fn upload_document(
     }
 
     let account_id = account_id.or(form_account_id);
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let mut out = Vec::with_capacity(stored.len());
     for (filename, mime, bytes) in stored {
         let (doc, _deduped) =
@@ -222,7 +222,7 @@ pub async fn delete_document(
     let force = q.force.unwrap_or(false);
 
     let outcome = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.delete_document(&id, force)?
     };
 

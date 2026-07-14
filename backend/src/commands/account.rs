@@ -84,17 +84,17 @@ pub fn list(db: &Db) -> Result<()> {
     Ok(())
 }
 
-/// Delete an account. Refuses if it still has transactions or holdings.
-/// Soft delete (deactivate) by default; `hard` permanently removes the row.
+/// Delete an account. Refuses if it still has transactions, holdings, or
+/// investment events. Soft delete (deactivate) by default; `hard` permanently
+/// removes the row.
 pub fn delete(db: &Db, id: &str, hard: bool) -> Result<()> {
     if !db.account_exists(id)? {
         return Err(anyhow!("account {id} not found"));
     }
-    let tx = db.count_transactions_for_account(id)?;
-    let holdings = db.count_holdings_for_account(id)?;
-    if tx > 0 || holdings > 0 {
+    let (tx, holdings, investments) = db.account_reference_counts(id)?;
+    if tx > 0 || holdings > 0 || investments > 0 {
         return Err(anyhow!(
-            "account {id} still has {tx} transaction(s) and {holdings} holding(s); remove them first"
+            "account {id} still has {tx} transaction(s), {holdings} holding(s) and {investments} investment event(s); remove them first"
         ));
     }
     if hard {
@@ -142,6 +142,63 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("does not exist"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn delete_refuses_account_with_investment_events() {
+        let (db, _f) = test_db();
+        db.create_profile("alice", "Alice").expect("create profile");
+        add(
+            &db,
+            "a1",
+            "Trading",
+            "TestBank",
+            "investment",
+            None,
+            &["alice".to_string()],
+        )
+        .expect("add account");
+        db.create_investment_event(&crate::model::CreateInvestmentEventBody {
+            account_id: "a1".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "VUSA".to_string(),
+            date: "2026-03-15T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            fee: None,
+            currency: "GBP".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: Vec::new(),
+        })
+        .expect("create investment event");
+
+        let err = delete(&db, "a1", true).unwrap_err().to_string();
+        assert!(
+            err.contains("investment event"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn hard_delete_removes_checklist_rows() {
+        let (db, _f) = test_db();
+        db.create_profile("alice", "Alice").expect("create profile");
+        add(
+            &db,
+            "a1",
+            "Current",
+            "TestBank",
+            "checking",
+            None,
+            &["alice".to_string()],
+        )
+        .expect("add account");
+        db.mark_checklist_complete("2026-03", "a1", None)
+            .expect("mark checklist");
+
+        delete(&db, "a1", true).expect("hard delete with checklist rows");
+        assert!(!db.account_exists("a1").expect("exists check"));
     }
 
     #[test]
