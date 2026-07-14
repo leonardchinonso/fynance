@@ -78,7 +78,7 @@ pub fn build_investments_tool_schema() -> Value {
                         },
                         "quantity": {
                             "type": "string",
-                            "description": "Number of units as a decimal string. Positive for buy/sell/vest/withhold (event_type encodes direction). For `transfer`, the sign carries direction: negative when shares leave this account (journal/transfer OUT), positive when they arrive. Never drop a transfer-out's negative sign."
+                            "description": "Number of units as a decimal string. Positive for buy/sell/vest/withhold (event_type encodes direction). For `transfer`, the sign carries direction: negative when shares leave this account (journal/transfer OUT), positive when they arrive. Never drop a transfer-out's negative sign. For `split`, this is the number of shares ADDED by the split, NOT the split ratio: a 10-for-1 split of a 1.5-share holding is 13.5, not 10."
                         },
                         "price_per_share": {
                             "type": "string",
