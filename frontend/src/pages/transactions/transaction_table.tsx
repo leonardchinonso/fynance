@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from "react"
 import type { Transaction } from "@/types"
 import { useResolveCategoryName } from "@/context/category_names_context"
+import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { api } from "@/api/client"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
@@ -357,6 +358,9 @@ function TransactionTableInternal({
   }
 
   const resolveName = useResolveCategoryName()
+  const preferredCurrency = usePreferredCurrency()
+  const currencies = useCurrenciesFromContext()
+  const fxRates = Object.fromEntries(currencies.map(c => [c.code, c.fx_rate]))
 
   async function changeCategory(
     id: string,
@@ -460,7 +464,12 @@ function TransactionTableInternal({
               )}
               {isVisible("amount") && (
                 <TableCell className="text-right">
-                  <MoneyDisplay amount={t.amount} currency={t.currency} />
+                  <MoneyDisplay
+                    amount={t.amount}
+                    currency={t.currency}
+                    preferredCurrency={preferredCurrency}
+                    fxRate={fxRates[t.currency]}
+                  />
                 </TableCell>
               )}
               {isVisible("account") && (

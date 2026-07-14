@@ -7,6 +7,11 @@ interface MoneyDisplayProps {
   currency?: string
   className?: string
   colorize?: boolean
+  /** Preferred currency to convert to. With `fxRate`, a foreign-currency amount
+   *  is dotted-underlined and reveals its converted value on hover. */
+  preferredCurrency?: string
+  /** Multiplier from `currency` to `preferredCurrency`. */
+  fxRate?: string
 }
 
 export function MoneyDisplay({
@@ -14,20 +19,44 @@ export function MoneyDisplay({
   currency = "GBP",
   className,
   colorize = true,
+  preferredCurrency,
+  fxRate,
 }: MoneyDisplayProps) {
   const num = parseFloat(amount)
   const formatted = formatCurrency(amount, currency)
 
+  const colorClass = cn(
+    colorize && num < 0 && "text-red-500",
+    colorize && num > 0 && "text-green-500",
+    className
+  )
+
+  const rate = fxRate ? parseFloat(fxRate) : NaN
+  const showConverted =
+    preferredCurrency != null &&
+    currency !== preferredCurrency &&
+    !isNaN(num) &&
+    !isNaN(rate)
+
+  if (!showConverted) return <span className={colorClass}>{formatted}</span>
+
   return (
-    <span
-      className={cn(
-        colorize && num < 0 && "text-red-500",
-        colorize && num > 0 && "text-green-500",
-        className
-      )}
-    >
-      {formatted}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        className={cn(
+          "cursor-default underline decoration-dotted decoration-muted-foreground/40 underline-offset-2",
+          colorClass,
+        )}
+      >
+        {formatted}
+      </TooltipTrigger>
+      <TooltipContent
+        side="left"
+        className="bg-popover text-popover-foreground ring-1 ring-foreground/10 px-3 py-2 text-xs tabular-nums"
+      >
+        {formatCurrency(String(num * rate), preferredCurrency)}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
