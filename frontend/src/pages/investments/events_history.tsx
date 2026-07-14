@@ -4,7 +4,7 @@ import type { Account } from "@/types"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
-import { formatCurrency, formatDate, cn } from "@/lib/utils"
+import { formatDate, cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/empty_state"
@@ -28,6 +28,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
 import { SourceChips, type SourceDocMeta } from "@/components/source_chips"
+import { MoneyDisplay } from "@/components/currency"
+import { colorForSymbol, EVENT_TYPE_COLORS } from "@/lib/colors"
+import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { EventDialog } from "./event_dialog"
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
@@ -221,6 +224,13 @@ function EventsTable({
   const typeSet = useMemo(() => new Set(selectedTypes), [selectedTypes])
   const needle = search.trim().toLowerCase()
 
+  const preferredCurrency = usePreferredCurrency()
+  const currencies = useCurrenciesFromContext()
+  const fxRates = useMemo(
+    () => Object.fromEntries(currencies.map(c => [c.code, c.fx_rate])),
+    [currencies],
+  )
+
   const filtered = useMemo(() => {
     const startDay = start.slice(0, 10)
     const endDay = end.slice(0, 10)
@@ -323,21 +333,57 @@ function EventsTable({
               {isVisible("account") && (
                 <TableCell className="text-sm text-muted-foreground">{accountLabel(e.account_id)}</TableCell>
               )}
-              {isVisible("symbol") && <TableCell className="font-medium">{e.symbol}</TableCell>}
+              {isVisible("symbol") && (
+                <TableCell className="font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: colorForSymbol(e.symbol) }}
+                    />
+                    {e.symbol}
+                  </span>
+                </TableCell>
+              )}
               {isVisible("type") && (
                 <TableCell>
-                  <Badge variant="secondary" className="capitalize font-normal">{e.event_type}</Badge>
+                  <Badge
+                    variant="secondary"
+                    className="capitalize font-normal border"
+                    style={{
+                      backgroundColor: `${EVENT_TYPE_COLORS[e.event_type]}1f`,
+                      borderColor: `${EVENT_TYPE_COLORS[e.event_type]}59`,
+                      color: EVENT_TYPE_COLORS[e.event_type],
+                    }}
+                  >
+                    {e.event_type}
+                  </Badge>
                 </TableCell>
               )}
               {isVisible("quantity") && (
                 <TableCell className="text-right tabular-nums">{fmtQty(e.quantity)}</TableCell>
               )}
               {isVisible("price") && (
-                <TableCell className="text-right tabular-nums">{formatCurrency(e.price_per_share, e.currency)}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  <MoneyDisplay
+                    amount={e.price_per_share}
+                    currency={e.currency}
+                    colorize={false}
+                    preferredCurrency={preferredCurrency}
+                    fxRate={fxRates[e.currency]}
+                  />
+                </TableCell>
               )}
               {isVisible("fee") && (
                 <TableCell className="text-right tabular-nums text-muted-foreground">
-                  {e.fee ? formatCurrency(e.fee, e.fee_currency ?? e.currency) : "—"}
+                  {e.fee ? (
+                    <MoneyDisplay
+                      amount={e.fee}
+                      currency={e.fee_currency ?? e.currency}
+                      colorize={false}
+                      preferredCurrency={preferredCurrency}
+                      fxRate={fxRates[e.fee_currency ?? e.currency]}
+                    />
+                  ) : "—"}
                 </TableCell>
               )}
               {isVisible("currency") && (
