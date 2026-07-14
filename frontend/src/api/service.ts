@@ -35,6 +35,7 @@ import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
+import type { InvestmentHistoryRow } from "@/bindings/InvestmentHistoryRow"
 import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
 import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
 import type { S104PoolState } from "@/bindings/S104PoolState"
@@ -142,7 +143,8 @@ export interface ApiService {
   setBudgetOverride(body: SetBudgetOverrideBody): Promise<void>
 
   // Portfolio
-  getPortfolio(profileId?: string): Promise<PortfolioResponse>
+  /** Portfolio summary. `asOf` (YYYY-MM-DD) reports balances as of that date (carry-forward); omitted = today. */
+  getPortfolio(profileId?: string, asOf?: string): Promise<PortfolioResponse>
   getPortfolioHistory(
     start: string,
     end: string,
@@ -190,6 +192,12 @@ export interface ApiService {
   updateCategory(id: string, body: PatchCategoryBody): Promise<Category>
   deleteCategory(id: string): Promise<void>
   patchTransaction(id: string, body: PatchTransactionBody): Promise<Transaction>
+  /** Hard-delete one transaction. Maps to `DELETE /api/transactions/:id`. */
+  deleteTransaction(id: string): Promise<void>
+  /** Hard-delete many transactions. Maps to `DELETE /api/transactions { ids }`. */
+  bulkDeleteTransactions(ids: string[]): Promise<void>
+  /** Assign one leaf category to many transactions. Maps to `PATCH /api/transactions { ids, category_id }`. */
+  bulkSetCategory(ids: string[], categoryId: string): Promise<void>
 
   // ── Currencies ────────────────────────────────────────────────────
   getCurrencies(): Promise<Currency[]>
@@ -237,6 +245,14 @@ export interface ApiService {
   deleteInvestment(id: string): Promise<void>
   /** S104 average-cost pool snapshot per symbol. Maps to `GET /api/investments/pools`. */
   getInvestmentPools(profileId?: string): Promise<S104PoolState[]>
+  /** Cumulative net invested vs market value over time. Maps to `GET /api/investments/history`. */
+  getInvestmentHistory(
+    start: string,
+    end: string,
+    granularity: Granularity,
+    profileId?: string,
+    accountIds?: string[],
+  ): Promise<InvestmentHistoryRow[]>
 
   // ── Documents ─────────────────────────────────────────────────────
   /**

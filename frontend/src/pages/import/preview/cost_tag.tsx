@@ -54,7 +54,6 @@ export function CostTag({ price, className }: Props) {
         side="top"
         // Override the default inverted pill — unreadable for a table.
         className="max-w-sm bg-popover text-popover-foreground ring-1 ring-foreground/10 px-3 py-2"
-        arrowClassName="bg-popover fill-popover"
       >
         <div className="space-y-1.5 text-xs">
           <p className="text-[10px] text-muted-foreground">

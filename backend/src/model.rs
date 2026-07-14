@@ -306,10 +306,10 @@ pub struct Account {
 pub enum AccountType {
     Checking,
     Savings,
+    EmergencyFund,
     Investment,
     InvestmentIsa,
     Credit,
-    Cash,
     Pension,
     Property,
 }
@@ -319,10 +319,10 @@ impl AccountType {
         match self {
             Self::Checking => "checking",
             Self::Savings => "savings",
+            Self::EmergencyFund => "emergency_fund",
             Self::Investment => "investment",
             Self::InvestmentIsa => "investment_isa",
             Self::Credit => "credit",
-            Self::Cash => "cash",
             Self::Pension => "pension",
             Self::Property => "property",
         }
@@ -332,10 +332,10 @@ impl AccountType {
         match s.to_ascii_lowercase().as_str() {
             "checking" => Some(Self::Checking),
             "savings" => Some(Self::Savings),
+            "emergency_fund" => Some(Self::EmergencyFund),
             "investment" => Some(Self::Investment),
             "investment_isa" => Some(Self::InvestmentIsa),
             "credit" => Some(Self::Credit),
-            "cash" => Some(Self::Cash),
             "pension" => Some(Self::Pension),
             "property" => Some(Self::Property),
             _ => None,
@@ -860,10 +860,8 @@ pub enum HoldingType {
     Bond,
     Crypto,
     Cash,
-    Savings,
     Property,
-    Loan,
-    Credit,
+    Debt,
 }
 
 impl HoldingType {
@@ -875,10 +873,8 @@ impl HoldingType {
             Self::Bond => "bond",
             Self::Crypto => "crypto",
             Self::Cash => "cash",
-            Self::Savings => "savings",
             Self::Property => "property",
-            Self::Loan => "loan",
-            Self::Credit => "credit",
+            Self::Debt => "debt",
         }
     }
 
@@ -890,10 +886,8 @@ impl HoldingType {
             "bond" => Some(Self::Bond),
             "crypto" => Some(Self::Crypto),
             "cash" => Some(Self::Cash),
-            "savings" => Some(Self::Savings),
             "property" => Some(Self::Property),
-            "loan" => Some(Self::Loan),
-            "credit" => Some(Self::Credit),
+            "debt" => Some(Self::Debt),
             _ => None,
         }
     }
@@ -1034,6 +1028,21 @@ pub struct HoldingsHistoryRow {
     pub total_wealth: Decimal,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_wealth_display: Option<DisplayCurrency>,
+}
+
+/// One period in the `GET /api/investments/history` response. Both values are
+/// `null` where the period has no underlying data (before the first
+/// contribution event, or no active holdings) so the chart shows a gap rather
+/// than a phantom zero. Values are decimal strings in the preferred currency.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InvestmentHistoryRow {
+    /// Period label: "YYYY-MM" / "YYYY-Qn" / "YYYY".
+    pub period: String,
+    /// Cumulative net contributions (buys/vests/transfers in, sells/withholds out, plus fees).
+    pub net_invested: Option<String>,
+    /// Market value of all active investment + ISA holdings.
+    pub market_value: Option<String>,
 }
 
 /// Stable metadata for one holding line in an account's history chart.

@@ -1,9 +1,10 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { api } from "@/api/client"
 import type { Account, Profile, AccountType } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useIngestionPreferences } from "@/hooks/use_ingestion_preferences"
+import { useProfileColorsContext } from "@/context/profile_colors_context"
 import { DraggableList, DragHandle } from "@/components/draggable_list"
 import { SettingsListSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
@@ -11,16 +12,46 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { Badge } from "@/components/ui/badge"
-import { Trash2, Pencil, Plus, Building2, Eye, EyeOff } from "lucide-react"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from "@/components/ui/dropdown-menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command"
+import { Trash2, Pencil, Plus, Building2, Eye, EyeOff, Check, ChevronsUpDown, CircleHelp } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { cn, formatCurrency } from "@/lib/utils"
 import { accountTypeClasses } from "@/lib/account_type_colors"
+import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 
-const ACCOUNT_TYPES: AccountType[] = [
-  "checking", "savings", "investment", "investment_isa", "credit", "cash", "pension", "property",
+// Account type tags. Investment + ISA are condensed into one "Investments" tag
+// with an ISA / non-ISA submenu; everything else is a single tag. Order keeps
+// the everyday-cash types first, then investments, then long-term assets.
+type AccountTypeTag =
+  | { kind: "single"; type: AccountType; label: string }
+  | { kind: "group"; key: string; label: string; types: AccountType[] }
+
+const ACCOUNT_TYPE_TAGS: AccountTypeTag[] = [
+  { kind: "single", type: "checking", label: "Checking" },
+  { kind: "single", type: "savings", label: "Savings" },
+  { kind: "single", type: "emergency_fund", label: "Emergency fund" },
+  { kind: "single", type: "credit", label: "Credit" },
+  { kind: "group", key: "investments", label: "Investments", types: ["investment", "investment_isa"] },
+  { kind: "single", type: "pension", label: "Pension" },
+  { kind: "single", type: "property", label: "Property" },
+]
+
+// Rows for the Type help tooltip: [type, label, one-line description].
+const ACCOUNT_TYPE_HELP: [AccountType, string, string][] = [
+  ["checking", "Checking", "everyday current account"],
+  ["savings", "Savings", "savings balance"],
+  ["emergency_fund", "Emergency fund", "rainy-day cash"],
+  ["credit", "Credit", "card; a liability"],
+  ["investment", "Investments", "brokerage; ISA vs non-ISA affects CGT (ISA tax-free)"],
+  ["pension", "Pension", "retirement savings"],
+  ["property", "Property", "property value"],
 ]
 
 interface Props {
@@ -68,6 +99,39 @@ export function AccountsSection({ data, profilesData, onRefresh }: Props) {
   )
 }
 
+/** Profile chips shown next to an account name, colored by each profile's color. */
+function ProfileTags({ profileIds, profiles }: { profileIds: string[]; profiles: Profile[] }) {
+  const { profileColors } = useProfileColorsContext()
+  if (profileIds.length === 0) return null
+  return (
+    <span className="flex items-center gap-1">
+      {profileIds.map((id) => {
+        const p = profiles.find((x) => x.id === id)
+        if (!p) return null
+        const color = profileColors[id] ?? "#78716c"
+        return (
+          <span
+            key={id}
+            className="inline-flex items-center rounded-full border px-1.5 h-4 text-[10px] font-medium"
+            style={{ color, borderColor: `${color}66`, backgroundColor: `${color}1f` }}
+          >
+            {p.name}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+/** The account-type badge, shown on the right of a row before the balance. */
+function TypeBadge({ type }: { type: AccountType }) {
+  return (
+    <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border shrink-0", accountTypeClasses(type))}>
+      {ACCOUNT_TYPE_LABELS[type]}
+    </span>
+  )
+}
+
 function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts: Account[]; profiles: Profile[]; onRefresh: () => void; wizardMode: boolean }) {
   const [dragId, setDragId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Account | null>(null)
@@ -108,10 +172,11 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium truncate">{a.name}</p>
-                  <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
+                  <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
                 </div>
                 <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
               </div>
+              <TypeBadge type={a.type} />
               {a.balance && (
                 <p className="text-sm font-medium tabular-nums shrink-0">
                   {formatCurrency(a.balance, a.currency)}
@@ -175,10 +240,11 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium truncate">{a.name}</p>
-                <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
+                <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
               </div>
               <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
             </div>
+            <TypeBadge type={a.type} />
             {a.balance && (
               <p className="text-sm font-medium tabular-nums shrink-0">
                 {formatCurrency(a.balance, a.currency)}
@@ -226,10 +292,11 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium truncate">{a.name}</p>
-                    <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border capitalize", accountTypeClasses(a.type))}>{a.type}</span>
+                    <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
                   </div>
                   <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
                 </div>
+                <TypeBadge type={a.type} />
                 <Tooltip>
                   <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => showAccount(a.id, accounts)} />}>
                     <EyeOff className="h-3.5 w-3.5" />
@@ -287,15 +354,7 @@ function EditAccountDialog({ account, profiles, onClose, onSaved }: {
     profileIds: account.profile_ids ?? [],
   })
   const [saving, setSaving] = useState(false)
-
-  function toggleProfile(id: string) {
-    setForm((f) => ({
-      ...f,
-      profileIds: f.profileIds.includes(id)
-        ? f.profileIds.filter((x) => x !== id)
-        : [...f.profileIds, id],
-    }))
-  }
+  const currencies = useCurrencyOptions()
 
   async function handleSave() {
     if (!form.name.trim() || !form.institution.trim()) return
@@ -318,59 +377,219 @@ function EditAccountDialog({ account, profiles, onClose, onSaved }: {
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md p-6">
         <DialogHeader><DialogTitle>Edit account</DialogTitle></DialogHeader>
-        <div className="space-y-3 pt-2">
+        <div className="space-y-4 pt-1">
           <div>
             <label className="text-sm font-medium">Name</label>
-            <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoFocus />
+            <Input className="mt-1.5" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoFocus />
           </div>
-          <div>
-            <label className="text-sm font-medium">Institution</label>
-            <Input value={form.institution} onChange={(e) => setForm((f) => ({ ...f, institution: e.target.value }))} />
+          <AccountCommonFields
+            institution={form.institution}
+            currency={form.currency}
+            type={form.type}
+            profileIds={form.profileIds}
+            profiles={profiles}
+            currencies={currencies}
+            onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" onClick={handleSave} disabled={!form.name.trim() || !form.institution.trim() || saving}>
+              {saving ? "Saving..." : "Save"}
+            </Button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium">Type</label>
-              <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v as AccountType }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ACCOUNT_TYPES.map((t) => <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Currency</label>
-              <Input value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))} />
-            </div>
-          </div>
-          {profiles.length > 0 && (
-            <div>
-              <label className="text-sm font-medium">Profiles</label>
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                {profiles.map((p) => (
-                  <Badge
-                    key={p.id}
-                    variant={form.profileIds.includes(p.id) ? "default" : "outline"}
-                    className="cursor-pointer"
-                    onClick={() => toggleProfile(p.id)}
-                  >
-                    {p.name}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={handleSave} disabled={!form.name.trim() || !form.institution.trim() || saving}>
-            {saving ? "Saving..." : "Save"}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
+}
+
+function AccountTypeTagPicker({ value, onChange }: { value: AccountType; onChange: (t: AccountType) => void }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {ACCOUNT_TYPE_TAGS.map((opt) => {
+        if (opt.kind === "single") {
+          const selected = value === opt.type
+          const color = ACCOUNT_TYPE_COLORS[opt.type]
+          return (
+            <button
+              key={opt.type}
+              type="button"
+              onClick={() => onChange(opt.type)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs font-medium transition-all",
+                selected ? "border-solid" : "border-dashed bg-transparent opacity-60 hover:opacity-100",
+              )}
+              style={selected ? { backgroundColor: color, borderColor: color, color: "#fff" } : { color, borderColor: color }}
+            >
+              {opt.label}
+            </button>
+          )
+        }
+        const selected = opt.types.includes(value)
+        const color = ACCOUNT_TYPE_COLORS.investment
+        const className = cn(
+          "rounded-full border px-3 py-1 text-xs font-medium transition-all",
+          selected ? "border-solid" : "border-dashed bg-transparent opacity-60 hover:opacity-100",
+        )
+        const style = selected
+          ? { backgroundColor: color, borderColor: color, color: "#fff" }
+          : { color, borderColor: color }
+        return (
+          <DropdownMenu key={opt.key}>
+            <DropdownMenuTrigger className={className} style={style}>
+              {opt.label}{selected ? (value === "investment_isa" ? " (ISA)" : " (non-ISA)") : ""}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={() => onChange("investment")}>Non-ISA</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onChange("investment_isa")}>ISA</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      })}
+    </div>
+  )
+}
+
+function AccountTypeHelp() {
+  return (
+    <TooltipProvider delay={150}>
+      <Tooltip>
+        <TooltipTrigger className="text-muted-foreground hover:text-foreground" aria-label="About account types">
+          <CircleHelp className="h-3.5 w-3.5" />
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-sm">
+          <div className="space-y-2 text-left">
+            <p className="text-sm font-semibold">Account types</p>
+            <p className="text-muted-foreground">Sets how an account counts toward your wealth.</p>
+            <ul className="space-y-1.5">
+              {ACCOUNT_TYPE_HELP.map(([type, label, desc]) => (
+                <li key={type} className="flex items-start gap-2">
+                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: ACCOUNT_TYPE_COLORS[type] }} />
+                  <span>
+                    <span className="font-medium">{label}</span>
+                    {" "}— {desc}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-muted-foreground">
+              Checking, Savings, Emergency fund &amp; Cash are <span className="font-medium text-foreground">available</span> (liquid); Pension &amp; Property are <span className="font-medium text-foreground">unavailable</span>.
+            </p>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+function CurrencySelect({ value, options, onChange }: { value: string; options: string[]; onChange: (code: string) => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger className="w-full mt-1.5 flex h-8 items-center justify-between rounded-lg border border-input bg-transparent px-2.5 text-base md:text-sm transition-colors hover:bg-accent/50 dark:bg-input/30">
+        <span>{value || "Select"}</span>
+        <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
+      </PopoverTrigger>
+      <PopoverContent className="w-[200px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search currency..." />
+          <CommandList>
+            <CommandEmpty>No currency.</CommandEmpty>
+            <CommandGroup>
+              {options.map((code) => (
+                <CommandItem key={code} value={code} onSelect={() => { onChange(code); setOpen(false) }}>
+                  <Check className={cn("mr-2 h-4 w-4", value === code ? "opacity-100" : "opacity-0")} />
+                  {code}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function ProfileChips({ profiles, selected, onToggle }: { profiles: Profile[]; selected: string[]; onToggle: (id: string) => void }) {
+  const { profileColors } = useProfileColorsContext()
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {profiles.map((p) => {
+        const color = profileColors[p.id] ?? "#78716c"
+        const isSel = selected.includes(p.id)
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onToggle(p.id)}
+            className={cn(
+              "rounded-full border px-2.5 py-1 text-xs font-medium transition-all",
+              isSel ? "border-solid" : "border-dashed bg-transparent opacity-60 hover:opacity-100",
+            )}
+            style={isSel ? { backgroundColor: color, borderColor: color, color: "#fff" } : { color, borderColor: color }}
+          >
+            {p.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Institution + Currency, Profiles, and Type — shared by the Add and Edit dialogs. */
+function AccountCommonFields({
+  institution, currency, type, profileIds, profiles, currencies, onChange,
+}: {
+  institution: string
+  currency: string
+  type: AccountType
+  profileIds: string[]
+  profiles: Profile[]
+  currencies: string[]
+  onChange: (patch: Partial<{ institution: string; currency: string; type: AccountType; profileIds: string[] }>) => void
+}) {
+  const toggleProfile = (id: string) =>
+    onChange({ profileIds: profileIds.includes(id) ? profileIds.filter((x) => x !== id) : [...profileIds, id] })
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-sm font-medium">Institution</label>
+          <Input className="mt-1.5" value={institution} onChange={(e) => onChange({ institution: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-sm font-medium">Currency</label>
+          <CurrencySelect value={currency} options={currencies} onChange={(c) => onChange({ currency: c })} />
+        </div>
+      </div>
+      {profiles.length > 0 && (
+        <div>
+          <label className="text-sm font-medium">Profiles</label>
+          <ProfileChips profiles={profiles} selected={profileIds} onToggle={toggleProfile} />
+        </div>
+      )}
+      <div>
+        <div className="flex items-center gap-1.5">
+          <label className="text-sm font-medium">Type</label>
+          <AccountTypeHelp />
+        </div>
+        <AccountTypeTagPicker value={type} onChange={(t) => onChange({ type: t })} />
+      </div>
+    </>
+  )
+}
+
+/** Currency code options for the account dialogs, fetched once. */
+function useCurrencyOptions(): string[] {
+  const [codes, setCodes] = useState<string[]>([])
+  useEffect(() => {
+    let alive = true
+    api.getCurrencies().then((cs) => { if (alive) setCodes(cs.map((c) => c.code)) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+  return codes
 }
 
 function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefresh: () => void }) {
@@ -408,14 +627,7 @@ function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefr
     }
   }
 
-  function toggleProfile(profileId: string) {
-    setForm(prev => ({
-      ...prev,
-      profileIds: prev.profileIds.includes(profileId)
-        ? prev.profileIds.filter(id => id !== profileId)
-        : [...prev.profileIds, profileId],
-    }))
-  }
+  const currencies = useCurrencyOptions()
 
   return (
     <>
@@ -423,56 +635,33 @@ function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefr
         <Plus className="h-3.5 w-3.5" /> Add Account
       </Button>
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md p-6">
           <DialogHeader><DialogTitle>Add Account</DialogTitle></DialogHeader>
-          <div className="space-y-3 pt-2">
-            <div>
-              <label className="text-sm font-medium">Name</label>
-              <Input placeholder="e.g. Monzo Current" value={form.name}
-                onChange={(e) => setForm(f => ({ ...f, name: e.target.value, id: slugify(e.target.value) }))} autoFocus />
-            </div>
-            <div>
-              <label className="text-sm font-medium">ID</label>
-              <Input placeholder="e.g. monzo-current" value={form.id}
-                onChange={(e) => setForm(f => ({ ...f, id: e.target.value }))} />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Institution</label>
-              <Input placeholder="e.g. Monzo" value={form.institution}
-                onChange={(e) => setForm(f => ({ ...f, institution: e.target.value }))} />
-            </div>
+          <div className="space-y-4 pt-1">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium">Type</label>
-                <Select value={form.type} onValueChange={(v) => setForm(f => ({ ...f, type: v as AccountType }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ACCOUNT_TYPES.map(t => <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <label className="text-sm font-medium">Name</label>
+                <Input className="mt-1.5" placeholder="e.g. Monzo Current" value={form.name}
+                  onChange={(e) => setForm(f => ({ ...f, name: e.target.value, id: slugify(e.target.value) }))} autoFocus />
               </div>
               <div>
-                <label className="text-sm font-medium">Currency</label>
-                <Input placeholder="GBP" value={form.currency}
-                  onChange={(e) => setForm(f => ({ ...f, currency: e.target.value.toUpperCase() }))} />
+                <label className="text-sm font-medium">ID</label>
+                <Input className="mt-1.5" placeholder="e.g. monzo-current" value={form.id}
+                  onChange={(e) => setForm(f => ({ ...f, id: e.target.value }))} />
               </div>
             </div>
-            {profiles.length > 0 && (
-              <div>
-                <label className="text-sm font-medium">Profiles</label>
-                <div className="flex flex-wrap gap-1.5 mt-1">
-                  {profiles.map(p => (
-                    <Badge key={p.id} variant={form.profileIds.includes(p.id) ? "default" : "outline"}
-                      className="cursor-pointer" onClick={() => toggleProfile(p.id)}>
-                      {p.name}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
+            <AccountCommonFields
+              institution={form.institution}
+              currency={form.currency}
+              type={form.type}
+              profileIds={form.profileIds}
+              profiles={profiles}
+              currencies={currencies}
+              onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+            />
             <div>
               <label className="text-sm font-medium">Notes (optional)</label>
-              <Input placeholder="Any additional notes" value={form.notes}
+              <Input className="mt-1.5" placeholder="Any additional notes" value={form.notes}
                 onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
             <div className="flex justify-end gap-2">

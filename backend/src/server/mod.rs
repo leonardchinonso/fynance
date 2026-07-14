@@ -71,6 +71,7 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route(
             "/transactions",
             get(routes::transactions::list_transactions)
+                .patch(routes::transactions::bulk_patch_transactions)
                 .delete(routes::transactions::bulk_delete_transactions),
         )
         .route(
@@ -202,6 +203,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route(
             "/investments/import",
             post(routes::investments::import_investments),
+        )
+        .route(
+            "/investments/history",
+            get(routes::investments::get_investment_history),
         )
         .route(
             "/investments/pools",

@@ -451,8 +451,8 @@ td code { font-size: 12px; }
 <table>
   <thead><tr><th>Enum</th><th>Values</th><th>Used in</th></tr></thead>
   <tbody>
-    <tr><td>AccountType</td><td><code>checking</code>, <code>savings</code>, <code>investment</code>, <code>investment_isa</code>, <code>credit</code>, <code>cash</code>, <code>pension</code>, <code>property</code></td><td>Account.type</td></tr>
-    <tr><td>HoldingType</td><td><code>stock</code>, <code>etf</code>, <code>fund</code>, <code>bond</code>, <code>crypto</code>, <code>cash</code>, <code>property</code>, <code>loan</code>, <code>credit</code></td><td>Holding.holding_type</td></tr>
+    <tr><td>AccountType</td><td><code>checking</code>, <code>savings</code>, <code>emergency_fund</code>, <code>investment</code>, <code>investment_isa</code>, <code>credit</code>, <code>pension</code>, <code>property</code></td><td>Account.type</td></tr>
+    <tr><td>HoldingType</td><td><code>stock</code>, <code>etf</code>, <code>fund</code>, <code>bond</code>, <code>crypto</code>, <code>cash</code>, <code>property</code>, <code>debt</code></td><td>Holding.holding_type</td></tr>
     <tr><td>CategorySource</td><td><code>rule</code>, <code>agent</code>, <code>manual</code></td><td>Transaction.category_source</td></tr>
     <tr><td>InvestmentEventType</td><td><code>vest</code>, <code>buy</code>, <code>sell</code>, <code>transfer</code>, <code>withhold</code>, <code>split</code></td><td>InvestmentEvent.event_type</td></tr>
     <tr><td>Granularity</td><td><code>monthly</code>, <code>quarterly</code>, <code>yearly</code></td><td>spending-grid, holdings/history, cash-flow</td></tr>
@@ -899,7 +899,7 @@ td code { font-size: 12px; }
       <tr><td><code>as_of</code></td><td>string</td><td>Computation date (YYYY-MM-DD)</td></tr>
       <tr><td><code>total_assets</code></td><td>string</td><td>Sum of positive-value holdings</td></tr>
       <tr><td><code>total_liabilities</code></td><td>string</td><td>Sum of negative-value holdings</td></tr>
-      <tr><td><code>available_wealth</code></td><td>string</td><td>Liquid wealth (checking, savings, investment, cash, credit)</td></tr>
+      <tr><td><code>available_wealth</code></td><td>string</td><td>Liquid wealth (checking, savings, emergency_fund, investment, investment_isa, credit)</td></tr>
       <tr><td><code>unavailable_wealth</code></td><td>string</td><td>Illiquid wealth (pension, property)</td></tr>
       <tr><td><code>accounts</code></td><td>Account[]</td><td>All accounts with carry-forward balances</td></tr>
       <tr><td><code>by_type</code></td><td>BreakdownItem[]</td><td>Breakdown by account type</td></tr>
@@ -1786,6 +1786,36 @@ td code { font-size: 12px; }
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
       <tr><td>404</td><td><code>not_found</code></td><td>Transaction does not exist</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="patch-api-transactions" data-method="PATCH" data-path="/api/transactions">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/transactions</code>
+  </div>
+  <p class="endpoint-summary">Bulk update. Assign one leaf <code>category_id</code> to every transaction in <code>ids</code>.</p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>ids</code></td><td>string[]</td><td>Yes</td><td>Transaction ids to update</td></tr>
+      <tr><td><code>category_id</code></td><td>string</td><td>Yes</td><td>Leaf category to assign to all of them</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X PATCH http://localhost:7433/api/transactions \
+  -H "Content-Type: application/json" \
+  -d '{"ids": ["t1", "t2"], "category_id": "cat-groceries"}'</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{ "ok": true, "updated": 2 }</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_body</code></td><td>ids array is empty or missing</td></tr>
+      <tr><td>400</td><td><code>missing_category</code></td><td>category_id is missing</td></tr>
     </tbody>
   </table>
 </section>
@@ -2740,7 +2770,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <h4>Request Body <span class="content-type">application/json</span></h4>
   <p><code>{ account_id, holdings: HoldingWrite[] }</code>. Each holding's amount is a
   presence-discriminated union: supply either <code>value</code> (scalar: cash,
-  property, loan) OR both <code>quantity</code> and <code>price_per_unit</code>
+  property, debt) OR both <code>quantity</code> and <code>price_per_unit</code>
   (computed: stock, etf, fund, bond, crypto). The server derives
   <code>value = quantity &times; price_per_unit</code> for the computed arm and
   rejects payloads that set fields from both arms (400 <code>invalid_holding</code>).
@@ -3234,6 +3264,34 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   "inserted": 1,
   "duplicates": 0,
   "errors": []
+}</code></pre>
+</section>
+
+<section class="endpoint" id="get-api-investments-history" data-method="GET" data-path="/api/investments/history">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/investments/history</code>
+  </div>
+  <p class="endpoint-summary">Per-period series for the Cumulative Invested chart: cumulative net contributions vs the market value of investment + ISA holdings. Either value is <code>null</code> for a period with no underlying data (before the first contribution / no active holdings) so the chart shows a gap, not a zero. Net invested is capital contributed: a disposal removes the shares' average book cost from a per-symbol pool, not the sale proceeds. A split adds shares at no cost, so it lowers the average per-share cost without changing net invested.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>query</td><td>string</td><td>Yes</td><td>Start date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>end</code></td><td>query</td><td>string</td><td>Yes</td><td>End date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>granularity</code></td><td>query</td><td>string</td><td>Yes</td><td>monthly, quarterly, or yearly</td></tr>
+      <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter by profile</td></tr>
+      <tr><td><code>accounts</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated account ids. Scopes both series. Omitted = all investment + ISA accounts.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/history?start=2025-01-01&amp;end=2026-01-01&amp;granularity=monthly"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "preferred_currency": "GBP",
+  "rows": [
+    { "period": "2025-01", "net_invested": "260000.00", "market_value": "268086.68" }
+  ]
 }</code></pre>
 </section>
 

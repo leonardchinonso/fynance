@@ -417,6 +417,27 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         }
                     }
                 },
+                "patch": {
+                    "summary": "Bulk update transactions (re-categorize)",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "description": "Assign one leaf `category_id` to all transactions in `ids`.",
+                                    "required": ["ids", "category_id"],
+                                    "properties": {
+                                        "ids": { "type": "array", "items": { "type": "string" } },
+                                        "category_id": { "type": "string" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Count of updated transactions" } }
+                },
                 "delete": {
                     "summary": "Bulk hard-delete transactions",
                     "security": [{ "bearerAuth": [] }],
@@ -914,6 +935,19 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "summary": "Bulk import investment events",
                     "security": [{ "bearerAuth": [] }],
                     "responses": { "200": { "description": "Investment import summary" } }
+                }
+            },
+            "/api/investments/history": {
+                "get": {
+                    "summary": "Cumulative net invested vs market value over time",
+                    "parameters": [
+                        { "name": "start", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
+                        { "name": "end", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
+                        { "name": "granularity", "in": "query", "schema": { "type": "string", "enum": ["monthly", "quarterly", "yearly"] } },
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." },
+                        { "name": "accounts", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account ids. Scopes both series. Omitted = all investment + ISA accounts." }
+                    ],
+                    "responses": { "200": { "description": "Per-period { net_invested, market_value }, null where no data. Net invested is capital contributed: a disposal removes the shares' average book cost, not the sale proceeds." } }
                 }
             },
             "/api/investments/{id}": {

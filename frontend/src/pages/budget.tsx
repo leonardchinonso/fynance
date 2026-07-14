@@ -7,10 +7,12 @@ import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { MultiSelect } from "@/components/multi_select"
 import { BudgetSpreadsheet } from "./budget/budget_spreadsheet"
 import { BudgetCharts } from "./budget/budget_charts"
-import { TransactionTable } from "./transactions/transaction_table"
-import { Grid3X3, Table2, BarChart3, Search } from "lucide-react"
+import { TransactionTable, BulkCategoryPicker } from "./transactions/transaction_table"
+import { Grid3X3, Table2, BarChart3, Search, Trash2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { invalidateVolatile } from "@/lib/query_cache"
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from "@/components/ui/select"
@@ -123,11 +125,47 @@ export function BudgetPage() {
     search, page, pageSize, profileId, txSort, txDir, view === "table",
   )
 
+  // Transaction multi-select lives here so the bulk-action bar can sit inline
+  // with the filters (not in a new row that shifts the table on first select).
+  const [selectedTxnIds, setSelectedTxnIds] = useState<Set<string>>(new Set())
+  const [deletingIds, setDeletingIds] = useState<string[] | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  // Clear selection whenever the visible result set changes.
+  const txKey = [
+    start, end, selectedAccounts.join(","), selectedCategories.join(","),
+    selectedCategoryTypes.join(","), search, page, pageSize, txSort ?? "", txDir, profileId ?? "",
+  ].join("|")
+  useEffect(() => { setSelectedTxnIds(new Set()) }, [txKey])
+
+  async function bulkSetCategory(opt: { id: string; name: string }) {
+    const ids = [...selectedTxnIds]
+    setSelectedTxnIds(new Set())
+    try { await api.bulkSetCategory(ids, opt.id); invalidateVolatile() }
+    catch (e) { alert(e instanceof Error ? e.message : String(e)) }
+  }
+
+  async function confirmDeleteTxns() {
+    if (!deletingIds) return
+    const ids = deletingIds
+    setDeleteBusy(true)
+    try {
+      if (ids.length === 1) await api.deleteTransaction(ids[0])
+      else await api.bulkDeleteTransactions(ids)
+      setSelectedTxnIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n })
+      setDeletingIds(null)
+      invalidateVolatile()
+    } catch (e) { alert(e instanceof Error ? e.message : String(e)) }
+    finally { setDeleteBusy(false) }
+  }
+
+  // A chart drill-down pins an explicit start/end, which overrides the preset.
+  // Clearing has to drop those too, or the date range stays stuck on the drilled
+  // period and the button looks like it did nothing.
+  const hasExplicitRange = searchParams.has("start") || searchParams.has("end")
   const hasFilters =
     selectedAccounts.length > 0 || selectedCategories.length > 0 ||
-    selectedCategoryTypes.length > 0 || search.length > 0
-  const clearFilters = () => { setAccounts([]); setCategories([]); setCategoryTypes([]); setSearch("") }
-  const resetAll = () => setFilter({
+    selectedCategoryTypes.length > 0 || search.length > 0 || hasExplicitRange
+  const clearFilters = () => setFilter({
     accounts: undefined, categories: undefined, category_types: undefined, search: undefined,
     preset: "last-12-months", start: undefined, end: undefined, page: "1",
   })
@@ -180,6 +218,21 @@ export function BudgetPage() {
         {hasFilters && (
           <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>
         )}
+        {view === "table" && selectedTxnIds.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">{selectedTxnIds.size} selected</span>
+            <BulkCategoryPicker options={categoryOptions} onSelect={bulkSetCategory} />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-destructive hover:text-destructive"
+              onClick={() => setDeletingIds([...selectedTxnIds])}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8" onClick={() => setSelectedTxnIds(new Set())}>Clear</Button>
+          </div>
+        )}
         <div className="flex-1" />
         {view === "table" && (
           <div className="relative">
@@ -210,12 +263,34 @@ export function BudgetPage() {
           sort={txSort}
           sortDir={txDir}
           onSort={cycleTxSort}
-          onResetFilters={hasFilters ? resetAll : undefined}
+          onResetFilters={hasFilters ? clearFilters : undefined}
+          selectedIds={selectedTxnIds}
+          onSelectedChange={setSelectedTxnIds}
+          onRequestDelete={(ids) => setDeletingIds(ids)}
         />
       )}
       {view === "charts" && (
         <BudgetCharts data={chartGrid} months={months} granularity={granularity} groupBy={groupBy} accountNameMap={accountNameMap} />
       )}
+
+      <Dialog open={deletingIds !== null} onOpenChange={(o) => { if (!o && !deleteBusy) setDeletingIds(null) }}>
+        <DialogContent className="sm:max-w-sm p-6">
+          <DialogHeader>
+            <DialogTitle>
+              Delete {deletingIds && deletingIds.length === 1 ? "transaction" : `${deletingIds?.length ?? 0} transactions`}?
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This permanently deletes {deletingIds && deletingIds.length === 1 ? "this transaction" : "these transactions"}. This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setDeletingIds(null)} disabled={deleteBusy}>Cancel</Button>
+            <Button variant="destructive" size="sm" onClick={confirmDeleteTxns} disabled={deleteBusy}>
+              {deleteBusy ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

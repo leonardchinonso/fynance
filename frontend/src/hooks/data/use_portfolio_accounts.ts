@@ -28,7 +28,10 @@ export function usePortfolioAccounts(
   const [data] = useQuery(
     async () => {
       const [portfolioResponse, accountBalances, currencies] = await Promise.all([
-        api.getPortfolio(profileId),
+        // Balances as of the range end date: the most recent snapshot on/before
+        // `end` (carry-forward), so a past end date shows historical balances
+        // rather than today's.
+        api.getPortfolio(profileId, end),
         api.getAccountBalances(start, end, profileId),
         api.getCurrencies(),
       ])

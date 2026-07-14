@@ -239,6 +239,41 @@ pub async fn delete_transaction(
     Ok(Json(serde_json::json!({ "ok": true, "deleted": deleted })))
 }
 
+// ── PATCH /api/transactions (bulk) ────────────────────────────────────────────
+//
+// Bulk-update many transactions at once. Currently supports re-categorizing a
+// set of transactions to a single leaf category; the body shape leaves room for
+// future bulk fields.
+
+#[derive(Debug, Deserialize)]
+pub struct BulkPatchBody {
+    pub ids: Vec<String>,
+    pub category_id: String,
+}
+
+pub async fn bulk_patch_transactions(
+    State(state): State<AppState>,
+    Json(body): Json<BulkPatchBody>,
+) -> Result<Json<Value>, AppError> {
+    if body.ids.is_empty() {
+        return Err(AppError::bad_request(
+            "request body must include a non-empty ids array",
+            "empty_body",
+        ));
+    }
+    if body.category_id.trim().is_empty() {
+        return Err(AppError::bad_request(
+            "category_id is required",
+            "missing_category",
+        ));
+    }
+
+    let db = state.db.lock().expect("db mutex poisoned");
+    let updated =
+        db.bulk_update_transaction_category(&body.ids, &body.category_id, CategorySource::Manual)?;
+    Ok(Json(serde_json::json!({ "ok": true, "updated": updated })))
+}
+
 // ── DELETE /api/transactions ──────────────────────────────────────────────────
 //
 // Bulk hard-delete. Provide exactly one of `ids` (delete those transactions) or

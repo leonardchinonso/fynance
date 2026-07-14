@@ -36,6 +36,7 @@ import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
+import type { InvestmentHistoryRow } from "@/bindings/InvestmentHistoryRow"
 import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
 import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
 import type { InvestmentEventType } from "@/bindings/InvestmentEventType"
@@ -67,7 +68,7 @@ const mockCurrencies: Currency[] = [
 ]
 
 // Available/unavailable account type classification
-const AVAILABLE_TYPES = new Set(["checking", "savings", "investment", "cash", "credit"])
+const AVAILABLE_TYPES = new Set(["checking", "savings", "emergency_fund", "investment", "cash", "credit"])
 // Liability types that subtract from unavailable wealth (e.g. mortgage offsets property value)
 const UNAVAILABLE_LIABILITY_TYPES = new Set(["mortgage"])
 
@@ -507,7 +508,7 @@ export class MockApiService implements ApiService {
     }
   }
 
-  async getPortfolio(profileId?: string): Promise<PortfolioResponse> {
+  async getPortfolio(profileId?: string, _asOf?: string): Promise<PortfolioResponse> {
     await delay(DELAY_MS)
 
     const accounts = profileId
@@ -945,6 +946,28 @@ export class MockApiService implements ApiService {
     return { ...tx }
   }
 
+  async deleteTransaction(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    const idx = MOCK_TRANSACTIONS.findIndex(t => t.id === id)
+    if (idx !== -1) MOCK_TRANSACTIONS.splice(idx, 1)
+  }
+
+  async bulkDeleteTransactions(ids: string[]): Promise<void> {
+    await delay(DELAY_MS)
+    const set = new Set(ids)
+    for (let i = MOCK_TRANSACTIONS.length - 1; i >= 0; i--) {
+      if (set.has(MOCK_TRANSACTIONS[i].id)) MOCK_TRANSACTIONS.splice(i, 1)
+    }
+  }
+
+  async bulkSetCategory(ids: string[], categoryId: string): Promise<void> {
+    await delay(DELAY_MS)
+    const set = new Set(ids)
+    for (const t of MOCK_TRANSACTIONS) {
+      if (set.has(t.id)) t.category_id = categoryId
+    }
+  }
+
   // ── Currencies ────────────────────────────────────────────────────
 
   async getCurrencies(): Promise<Currency[]> {
@@ -1227,6 +1250,24 @@ export class MockApiService implements ApiService {
   async getInvestmentPools(_profileId?: string): Promise<S104PoolState[]> {
     await delay(DELAY_MS)
     return derivePools(this.investments)
+  }
+
+  async getInvestmentHistory(
+    start: string,
+    end: string,
+    _granularity: Granularity = "monthly",
+    _profileId?: string,
+    _accountIds: string[] = [],
+  ): Promise<InvestmentHistoryRow[]> {
+    await delay(DELAY_MS)
+    const months = getMonthsInRange(start, end)
+    return months.map((month, i) => {
+      // Demo the no-data gap: nothing before the third month in range.
+      if (i < 2) return { period: month, net_invested: null, market_value: null }
+      const invested = 100000 + i * 2000
+      const value = invested * (1 + 0.03 * (i - 1))
+      return { period: month, net_invested: invested.toFixed(2), market_value: value.toFixed(2) }
+    })
   }
 
   // ── Documents ─────────────────────────────────────────────────────

@@ -1,12 +1,14 @@
 import type { SpendingGridRow, Granularity } from "@/types"
 import type { CategoryType } from "@/bindings/CategoryType"
 import { StyledLineChart } from "@/components/charts"
-import { formatPeriodKey, periodKeysFromRows, categoryParent } from "@/lib/utils"
+import { formatPeriodKey, periodKeysFromRows, categoryParent, periodKeyToRange } from "@/lib/utils"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { groupLabelForType, colorForGroupLabel } from "@/lib/category_types"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useCategoryMeta } from "@/context/category_names_context"
 import { useThemeContext } from "@/context/theme_context"
+import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useChartContextMenu, ChartContextMenu } from "@/components/charts/chart_context_menu"
 
 interface BudgetLineChartProps {
   rows: SpendingGridRow[]
@@ -27,6 +29,8 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
   const { categoryColors } = useCategoryColorsContext()
   const { resolve, parentName } = useCategoryMeta()
   const { resolvedTheme } = useThemeContext()
+  const { setFilter } = useUrlFilters()
+  const { menu, open, close } = useChartContextMenu()
 
   const seriesLabel = (row: SpendingGridRow): string => {
     switch (groupBy) {
@@ -49,19 +53,32 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
 
   // Total sums every filtered row per period, including categories beyond the
   // top-8 drawn as individual lines, so it reflects the full filtered spend.
+  // A period with no underlying data for a series stays a gap (null) rather
+  // than a phantom zero; a genuine 0 (e.g. spends that netted out) shows as 0.
   const data = periodKeys.map((p) => {
-    const entry: Record<string, string | number> = {
+    const entry: Record<string, string | number | null> = {
       period: formatPeriodKey(p, granularity),
     }
     let total = 0
+    let totalHasData = false
+    const hasData = new Set<string>()
     rows.forEach((row, i) => {
-      const n = parseFloat(row.periods[p] ?? "")
-      const value = Number.isFinite(n) ? Math.abs(n) : 0
+      const raw = row.periods[p]
+      const n = parseFloat(raw ?? "")
+      if (raw == null || !Number.isFinite(n)) return
+      const value = Math.abs(n)
       total += value
+      totalHasData = true
       const label = labels[i]
-      if (shown.has(label)) entry[label] = ((entry[label] as number) ?? 0) + value
+      if (shown.has(label)) {
+        entry[label] = ((entry[label] as number) ?? 0) + value
+        hasData.add(label)
+      }
     })
-    entry[TOTAL_LABEL] = total
+    for (const label of baseCategories) {
+      if (!hasData.has(label)) entry[label] = null
+    }
+    entry[TOTAL_LABEL] = totalHasData ? total : null
     return entry
   })
 
@@ -77,6 +94,21 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
   const categories = [TOTAL_LABEL, ...baseCategories]
   const colors = [TOTAL_COLOR[resolvedTheme], ...baseColors]
 
+  const handleContextMenu = (
+    e: { clientX: number; clientY: number; preventDefault: () => void },
+    ctx: { index: number | null },
+  ) => {
+    if (ctx.index == null) return
+    const key = periodKeys[ctx.index]
+    if (!key) return
+    const label = formatPeriodKey(key, granularity)
+    const range = periodKeyToRange(key, granularity)
+    open(e, [{
+      label: `All transactions in ${label}`,
+      onSelect: () => setFilter({ view: "table", page: "1", start: range.start, end: range.end }),
+    }])
+  }
+
   return (
     <div className="rounded-lg border p-4">
       <h3 className="mb-2 text-sm font-medium text-muted-foreground">
@@ -90,7 +122,9 @@ export function BudgetLineChart({ rows, granularity, groupBy, accountNameMap }: 
         dashedKeys={[TOTAL_LABEL]}
         height={340}
         curved
+        onContextMenu={handleContextMenu}
       />
+      <ChartContextMenu menu={menu} onClose={close} />
     </div>
   )
 }

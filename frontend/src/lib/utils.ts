@@ -199,3 +199,32 @@ export function periodKeyForMonth(
   }
   return month
 }
+
+/**
+ * The inclusive [start, end] date range (YYYY-MM-DD) a backend period key spans:
+ * "YYYY-MM" → that calendar month, "YYYY-Qn" → that quarter, "YYYY" → that year.
+ * Used to drill a clicked chart period down to the matching transactions.
+ */
+export function periodKeyToRange(
+  key: string,
+  granularity: "monthly" | "quarterly" | "yearly"
+): { start: string; end: string } {
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const lastDay = (year: number, month1: number) => new Date(year, month1, 0).getDate()
+  if (granularity === "yearly") {
+    return { start: `${key}-01-01`, end: `${key}-12-31` }
+  }
+  if (granularity === "quarterly") {
+    const m = key.match(/^(\d{4})-Q(\d)$/)
+    if (m) {
+      const year = Number(m[1])
+      const quarter = Number(m[2])
+      const startMonth = (quarter - 1) * 3 + 1
+      const endMonth = quarter * 3
+      return { start: `${m[1]}-${pad(startMonth)}-01`, end: `${m[1]}-${pad(endMonth)}-${pad(lastDay(year, endMonth))}` }
+    }
+  }
+  // monthly "YYYY-MM"
+  const [y, mo] = key.split("-")
+  return { start: `${y}-${mo}-01`, end: `${y}-${mo}-${pad(lastDay(Number(y), Number(mo)))}` }
+}

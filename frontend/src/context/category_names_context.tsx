@@ -19,6 +19,8 @@ interface CategoryMaps {
   typeMap: Map<string, CategoryType>
   /** parent id -> parent name */
   parentNameMap: Map<string, string>
+  /** parent id -> its leaf child ids (for drilling a parent into its leaves) */
+  childIdsMap: Map<string, string[]>
   /** parent ids in display order (drives spreadsheet group order) */
   parentOrder: string[]
 }
@@ -27,6 +29,8 @@ interface CategoryNamesContextValue {
   resolve: (id: string | null | undefined) => string
   categoryType: (id: string | null | undefined) => CategoryType | undefined
   parentName: (parentId: string | null | undefined) => string
+  /** Leaf child ids under a parent id (empty if unknown). */
+  childIdsOf: (parentId: string | null | undefined) => string[]
   parentOrder: string[]
   refresh: () => void
 }
@@ -37,24 +41,27 @@ function buildMaps(tree: CategoryNode[]): CategoryMaps {
   const nameMap = new Map<string, string>()
   const typeMap = new Map<string, CategoryType>()
   const parentNameMap = new Map<string, string>()
+  const childIdsMap = new Map<string, string[]>()
   const parentOrder: string[] = []
   for (const parent of tree) {
     nameMap.set(parent.id, parent.name)
     typeMap.set(parent.id, parent.category_type)
     parentNameMap.set(parent.id, parent.name)
+    childIdsMap.set(parent.id, parent.children.map((c) => c.id))
     parentOrder.push(parent.id)
     for (const child of parent.children) {
       nameMap.set(child.id, `${parent.name}: ${child.name}`)
       typeMap.set(child.id, child.category_type)
     }
   }
-  return { nameMap, typeMap, parentNameMap, parentOrder }
+  return { nameMap, typeMap, parentNameMap, childIdsMap, parentOrder }
 }
 
 const EMPTY_MAPS: CategoryMaps = {
   nameMap: new Map(),
   typeMap: new Map(),
   parentNameMap: new Map(),
+  childIdsMap: new Map(),
   parentOrder: [],
 }
 
@@ -96,9 +103,17 @@ export function CategoryNamesProvider({ children }: { children: React.ReactNode 
     [maps],
   )
 
+  const childIdsOf = useCallback(
+    (parentId: string | null | undefined): string[] => {
+      if (!parentId) return []
+      return maps.childIdsMap.get(parentId) ?? []
+    },
+    [maps],
+  )
+
   return (
     <CategoryNamesContext.Provider
-      value={{ resolve, categoryType, parentName, parentOrder: maps.parentOrder, refresh: load }}
+      value={{ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder, refresh: load }}
     >
       {children}
     </CategoryNamesContext.Provider>

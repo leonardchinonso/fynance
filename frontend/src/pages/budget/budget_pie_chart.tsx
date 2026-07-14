@@ -6,6 +6,9 @@ import { CATEGORY_COLORS } from "@/lib/colors"
 import { groupLabelForType, colorForGroupLabel } from "@/lib/category_types"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useCategoryMeta } from "@/context/category_names_context"
+import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useChartContextMenu, ChartContextMenu } from "@/components/charts/chart_context_menu"
+import { categoryFilterForSeries } from "./chart_drill"
 
 interface BudgetPieChartProps {
   rows: SpendingGridRow[]
@@ -20,7 +23,9 @@ const NEUTRAL = "#78716c"
 
 export function BudgetPieChart({ rows, groupBy, accountNameMap }: BudgetPieChartProps) {
   const { categoryColors } = useCategoryColorsContext()
-  const { resolve, parentName } = useCategoryMeta()
+  const { resolve, parentName, childIdsOf } = useCategoryMeta()
+  const { setFilter } = useUrlFilters()
+  const { menu, open, close } = useChartContextMenu()
 
   const seriesLabel = (row: SpendingGridRow): string => {
     switch (groupBy) {
@@ -64,6 +69,21 @@ export function BudgetPieChart({ rows, groupBy, accountNameMap }: BudgetPieChart
 
   const totalSpending = data.reduce((s, d) => s + d.value, 0)
 
+  const handleContextMenu = (
+    e: { clientX: number; clientY: number; preventDefault: () => void },
+    ctx: { index: number | null },
+  ) => {
+    if (ctx.index == null) return
+    const name = data[ctx.index]?.name
+    if (!name) return
+    const catFilter = categoryFilterForSeries(rows, name, groupBy, seriesLabel, childIdsOf)
+    if (!catFilter) return
+    open(e, [{
+      label: `View ${name} transactions`,
+      onSelect: () => setFilter({ view: "table", page: "1", ...catFilter }),
+    }])
+  }
+
   return (
     <div className="rounded-lg border p-4">
       <h3 className="mb-2 text-sm font-medium text-muted-foreground">
@@ -76,7 +96,9 @@ export function BudgetPieChart({ rows, groupBy, accountNameMap }: BudgetPieChart
         height={320}
         innerRadius={70}
         outerRadius={120}
+        onContextMenu={handleContextMenu}
       />
+      <ChartContextMenu menu={menu} onClose={close} />
     </div>
   )
 }

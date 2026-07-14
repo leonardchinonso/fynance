@@ -1,6 +1,7 @@
-import { useState, useEffect, type ReactNode } from "react"
+import { useState, useEffect, useRef, type ReactNode } from "react"
 import type { Transaction } from "@/types"
 import { useResolveCategoryName } from "@/context/category_names_context"
+import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { api } from "@/api/client"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
@@ -18,10 +19,11 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import { MoneyDisplay } from "@/components/currency"
 import { formatDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, Settings2, Check, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
+import { ChevronLeft, ChevronRight, Settings2, Check, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Tag } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -93,11 +95,17 @@ interface TransactionTableOuterProps {
   sortDir: SortDir
   onSort: (col: TransactionSortColumn) => void
   onResetFilters?: () => void
+  /** Selected transaction ids (owned by the page so the bulk bar lives with the filters). */
+  selectedIds: Set<string>
+  onSelectedChange: (next: Set<string>) => void
+  /** Open the page's delete-confirm for these ids (single-row trash). */
+  onRequestDelete: (ids: string[]) => void
 }
 
 export function TransactionTable({
   data, page, pageSize, onPageChange, onPageSizeChange, accountNames, categoryColors = {},
   categoryOptions = [], sort, sortDir, onSort, onResetFilters,
+  selectedIds, onSelectedChange, onRequestDelete,
 }: TransactionTableOuterProps) {
   return visitRemoteData(data, {
     notLoaded: () => <TableSkeleton rows={pageSize} cols={5} actions={false} />,
@@ -120,6 +128,9 @@ export function TransactionTable({
             sort={sort}
             sortDir={sortDir}
             onSort={onSort}
+            selectedIds={selectedIds}
+            onSelectedChange={onSelectedChange}
+            onRequestDelete={onRequestDelete}
           />
         )}
         <ReloadingOverlay active={data.status === "reloading"} />
@@ -141,6 +152,9 @@ interface TransactionTableProps {
   sort?: TransactionSortColumn
   sortDir: SortDir
   onSort: (col: TransactionSortColumn) => void
+  selectedIds: Set<string>
+  onSelectedChange: (next: Set<string>) => void
+  onRequestDelete: (ids: string[]) => void
 }
 
 /**
@@ -274,16 +288,53 @@ function TransactionTableInternal({
   sort,
   sortDir,
   onSort,
+  selectedIds,
+  onSelectedChange,
+  onRequestDelete,
 }: TransactionTableProps) {
   const totalPages = Math.ceil(total / limit)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
   const [transactions, setTransactions] = useState(initialTransactions)
   // id -> {filename, uploaded_at} for the per-row "Source" document chips.
   const [docsMap, setDocsMap] = useState<Map<string, SourceDocMeta>>(new Map())
+  // Shift-click range selection: anchor row + whether Shift was held on the click.
+  const lastIndexRef = useRef<number | null>(null)
+  const shiftRef = useRef(false)
 
   useEffect(() => {
     setTransactions(initialTransactions)
+    lastIndexRef.current = null
   }, [initialTransactions])
+
+  const allIds = transactions.map((t) => t.id)
+  const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id))
+
+  // Toggle one row, or — when Shift is held — set the whole range since the last
+  // click to that row's new state (bulk select or unselect in between).
+  function handleToggle(rowIndex: number, id: string) {
+    const next = new Set(selectedIds)
+    if (shiftRef.current && lastIndexRef.current !== null) {
+      const a = Math.min(lastIndexRef.current, rowIndex)
+      const b = Math.max(lastIndexRef.current, rowIndex)
+      const target = !selectedIds.has(id)
+      for (let i = a; i <= b; i++) {
+        const rid = transactions[i]?.id
+        if (!rid) continue
+        if (target) next.add(rid)
+        else next.delete(rid)
+      }
+    } else if (next.has(id)) {
+      next.delete(id)
+    } else {
+      next.add(id)
+    }
+    lastIndexRef.current = rowIndex
+    onSelectedChange(next)
+  }
+
+  function toggleAll() {
+    onSelectedChange(allSelected ? new Set() : new Set(allIds))
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -307,6 +358,9 @@ function TransactionTableInternal({
   }
 
   const resolveName = useResolveCategoryName()
+  const preferredCurrency = usePreferredCurrency()
+  const currencies = useCurrenciesFromContext()
+  const fxRates = Object.fromEntries(currencies.map(c => [c.code, c.fx_rate]))
 
   async function changeCategory(
     id: string,
@@ -349,6 +403,9 @@ function TransactionTableInternal({
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              <Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all on page" />
+            </TableHead>
             {isVisible("date") && (
               <SortableHeader label="Date" column="date" activeColumn={sort} direction={sortDir} onClick={onSort} />
             )}
@@ -372,8 +429,19 @@ function TransactionTableInternal({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {transactions.map((t) => (
-            <TableRow key={t.id}>
+          {transactions.map((t, rowIndex) => (
+            <TableRow key={t.id} className="group">
+              <TableCell
+                className="w-8"
+                onClickCapture={(e) => { shiftRef.current = e.shiftKey }}
+                onMouseDown={(e) => { if (e.shiftKey) e.preventDefault() }}
+              >
+                <Checkbox
+                  checked={selectedIds.has(t.id)}
+                  onCheckedChange={() => handleToggle(rowIndex, t.id)}
+                  aria-label="Select transaction"
+                />
+              </TableCell>
               {isVisible("date") && (
                 <TableCell className="whitespace-nowrap">
                   {formatDate(t.date)}
@@ -396,7 +464,12 @@ function TransactionTableInternal({
               )}
               {isVisible("amount") && (
                 <TableCell className="text-right">
-                  <MoneyDisplay amount={t.amount} currency={t.currency} />
+                  <MoneyDisplay
+                    amount={t.amount}
+                    currency={t.currency}
+                    preferredCurrency={preferredCurrency}
+                    fxRate={fxRates[t.currency]}
+                  />
                 </TableCell>
               )}
               {isVisible("account") && (
@@ -430,7 +503,17 @@ function TransactionTableInternal({
                   />
                 </TableCell>
               )}
-              <TableCell />
+              <TableCell className="text-right">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+                  onClick={() => onRequestDelete([t.id])}
+                  title="Delete transaction"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -494,6 +577,47 @@ function TransactionTableInternal({
         </div>
       </div>
     </div>
+  )
+}
+
+/** Bulk "Set category" picker for the selection toolbar. */
+export function BulkCategoryPicker({
+  options,
+  onSelect,
+}: {
+  options: Array<{ id: string; name: string }>
+  onSelect: (option: { id: string; name: string }) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const sorted = [...options].sort((a, b) => a.name.localeCompare(b.name))
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        disabled={options.length === 0}
+        className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs font-medium hover:bg-accent disabled:opacity-50"
+      >
+        <Tag className="h-3.5 w-3.5" /> Set category
+      </PopoverTrigger>
+      <PopoverContent className="w-[260px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search categories..." className="h-9 text-xs" />
+          <CommandList className="max-h-[280px]">
+            <CommandEmpty>No matches.</CommandEmpty>
+            <CommandGroup>
+              {sorted.map((opt) => (
+                <CommandItem
+                  key={opt.id}
+                  value={opt.name}
+                  onSelect={() => { onSelect(opt); setOpen(false) }}
+                >
+                  {opt.name}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }
 

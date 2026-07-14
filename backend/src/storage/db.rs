@@ -20,9 +20,9 @@ use crate::model::{
     CreateInvestmentEventBody, Currency, Document, DocumentReferences, DocumentSummary,
     Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth,
     HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome,
-    InvestmentEvent, InvestmentEventType, InvestmentMetrics, PatchCategoryPayload,
-    PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy, Transaction,
-    TransactionPreviewRow, TransactionPreviewStatus,
+    InvestmentEvent, InvestmentEventType, InvestmentHistoryRow, InvestmentMetrics,
+    PatchCategoryPayload, PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy,
+    Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -1406,9 +1406,13 @@ impl Db {
         let order_by = match filters.sort {
             None => "t.date DESC, t.id DESC".to_string(),
             Some(TransactionSort::Date) => format!("t.date {dir}, t.id DESC"),
-            Some(TransactionSort::Amount) => {
-                format!("CAST(t.amount AS REAL) {dir}, t.id DESC")
-            }
+            // Amounts are stored in each transaction's native currency, so they
+            // must be converted to the preferred currency before comparing or a
+            // large-denomination row (e.g. NGN) outranks every GBP row. Rows in a
+            // currency with no configured rate fall back to their raw amount.
+            Some(TransactionSort::Amount) => format!(
+                "CAST(t.amount AS REAL) * CAST(COALESCE(fx.fx_rate, '1') AS REAL) {dir}, t.id DESC"
+            ),
             // Push uncategorized rows to the bottom regardless of direction.
             Some(TransactionSort::Category) => format!(
                 "(t.category_id IS NULL) ASC, pc.name {dir}, c.name {dir}, t.date DESC, t.id DESC"
@@ -1425,6 +1429,7 @@ impl Db {
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
               LEFT JOIN categories pc ON pc.id = c.parent_id
+              LEFT JOIN currencies fx ON fx.code = t.currency
               {join}
               WHERE {where_clause}
               ORDER BY {order_by}
@@ -1618,6 +1623,48 @@ impl Db {
             return Err(anyhow!("unknown transaction: {id}"));
         }
         Ok(())
+    }
+
+    /// Assign one leaf category to many transactions in a single statement.
+    /// Validates the category once (active, leaf), then updates all ids.
+    /// Returns the number of rows changed.
+    pub fn bulk_update_transaction_category(
+        &self,
+        ids: &[String],
+        category_id: &str,
+        source: CategorySource,
+    ) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let cat = self
+            .get_category_by_id(category_id)?
+            .ok_or_else(|| anyhow!("category {category_id} not found"))?;
+        if !cat.is_active {
+            return Err(anyhow!("category {category_id} is inactive"));
+        }
+        if cat.parent_id.is_none() {
+            return Err(anyhow!(
+                "category {category_id} is a parent; only leaf categories can be assigned"
+            ));
+        }
+
+        let placeholders: String = (0..ids.len())
+            .map(|i| format!("?{}", i + 3))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "UPDATE transactions SET category_id = ?1, category_source = ?2 WHERE id IN ({placeholders})"
+        );
+        let source_str = source.as_str();
+        let mut sql_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 2);
+        sql_params.push(&category_id);
+        sql_params.push(&source_str);
+        for id in ids {
+            sql_params.push(id);
+        }
+        let n = self.conn.execute(&sql, sql_params.as_slice())?;
+        Ok(n)
     }
 
     pub fn update_transaction_exclude_summary(&self, id: &str, exclude: bool) -> Result<()> {
@@ -2820,6 +2867,167 @@ impl Db {
         Ok(rows)
     }
 
+    /// Per-period series for the "Cumulative invested" chart: cumulative net
+    /// contributions and the market value of investment + ISA holdings, both
+    /// FX-converted to the preferred currency. Each is `None` for a period with
+    /// no underlying data (before the first contribution event / no active
+    /// holdings) so the chart shows a gap instead of a phantom zero.
+    pub fn get_investment_history(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+        granularity: &Granularity,
+        profile_id: Option<&str>,
+        account_ids: &[String],
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<Vec<InvestmentHistoryRow>> {
+        use crate::util::fx::CurrencyAggregator;
+
+        // Contribution events on investment + ISA accounts, oldest first. Dates
+        // are ISO datetime strings, so lexicographic comparison against a
+        // period-end string is a valid chronological compare.
+        let to_str = to.format("%Y-%m-%dT23:59:59").to_string();
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(to_str)];
+        let profile_filter = if let Some(pid) = profile_id {
+            args.push(Box::new(format!("%\"{pid}\"%")));
+            "AND a.profile_ids LIKE ?2"
+        } else {
+            ""
+        };
+        let account_filter = if !account_ids.is_empty() {
+            let start = args.len() + 1;
+            for id in account_ids {
+                args.push(Box::new(id.to_string()));
+            }
+            let placeholders = (start..start + account_ids.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("AND i.account_id IN ({placeholders})")
+        } else {
+            String::new()
+        };
+        let sql = format!(
+            r"SELECT i.date, i.event_type, i.symbol, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
+              FROM investments i
+              JOIN accounts a ON a.id = i.account_id
+              WHERE a.type IN ('investment', 'investment_isa')
+                AND i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer', 'split')
+                AND i.date <= ?1 {profile_filter} {account_filter}
+              ORDER BY i.date ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let raw: Vec<InvestmentEventRaw> = stmt
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        // Net invested is capital contributed, so a disposal must remove what the
+        // shares COST (their average book cost), not what they sold for. Removing
+        // proceeds would let a profitable sale subtract more than was ever put in
+        // and understate the basis. Values are converted to the preferred currency
+        // at event time so each pool's average cost is in a single currency.
+        let events: Vec<InvestmentEventParsed> = raw
+            .into_iter()
+            .filter_map(
+                |(date, event_type, symbol, q, p, fee, currency, fee_currency)| {
+                    let q: Decimal = q.parse().ok()?;
+                    let p: Decimal = p.parse().ok()?;
+                    let principal = fx.convert(q * p, &currency);
+                    let fee = fee
+                        .and_then(|f| f.parse::<Decimal>().ok())
+                        .map(|f| fx.convert(f, fee_currency.as_deref().unwrap_or(&currency)))
+                        .unwrap_or(Decimal::ZERO);
+                    Some((date, event_type, symbol, q, principal, fee))
+                },
+            )
+            .collect();
+
+        let periods = generate_period_end_dates(from, to, granularity);
+        let mut rows = Vec::with_capacity(periods.len());
+        let mut pools: HashMap<String, (Decimal, Decimal)> = HashMap::new();
+        let mut invested = Decimal::ZERO;
+        let mut ev_idx = 0usize;
+        let mut any_event = false;
+
+        for (label, period_end) in periods {
+            let period_end_str = period_end.format("%Y-%m-%dT23:59:59").to_string();
+
+            while ev_idx < events.len() && events[ev_idx].0 <= period_end_str {
+                let (_, event_type, symbol, qty, principal, fee) = &events[ev_idx];
+                let (shares, cost) = pools.entry(symbol.clone()).or_default();
+
+                if event_type == "split" {
+                    // `quantity` is the shares ADDED by the split, not a ratio. The
+                    // shares arrive at no cost, so the pool's total cost and the
+                    // net invested are both unchanged; only the average per-share
+                    // cost falls. Skipping splits would leave the pool holding a
+                    // pre-split share count while later disposals carry post-split
+                    // quantities, so book cost would be drawn down at an inflated
+                    // per-share rate.
+                    *shares += *qty;
+                } else if event_type == "sell" || event_type == "withhold" {
+                    // Remove the average book cost of the disposed shares.
+                    let removed = (*qty).min(*shares).max(Decimal::ZERO);
+                    let book_cost = if *shares > Decimal::ZERO {
+                        removed * (*cost / *shares)
+                    } else {
+                        Decimal::ZERO
+                    };
+                    *shares -= removed;
+                    *cost -= book_cost;
+                    invested -= book_cost;
+                } else {
+                    let gross = *principal + *fee;
+                    *shares += *qty;
+                    *cost += gross;
+                    invested += gross;
+                }
+
+                any_event = true;
+                ev_idx += 1;
+            }
+            let net_invested = any_event.then(|| invested.to_string());
+
+            // Market value of active (unclosed) investment + ISA holdings.
+            let mut mv = CurrencyAggregator::default();
+            let mut has_active = false;
+            for r in self.get_holdings_for_summary(period_end, profile_id)? {
+                if matches!(
+                    r.account_type,
+                    AccountType::Investment | AccountType::InvestmentIsa
+                ) && !r.holding.is_closed
+                    && (account_ids.is_empty() || account_ids.contains(&r.holding.account_id))
+                {
+                    mv.add(r.holding.value, &r.holding.currency, fx);
+                    has_active = true;
+                }
+            }
+            let market_value = has_active.then(|| mv.converted_sum().to_string());
+
+            rows.push(InvestmentHistoryRow {
+                period: label,
+                net_invested,
+                market_value,
+            });
+        }
+
+        Ok(rows)
+    }
+
     /// Per-symbol value history for a single account: one row per period in
     /// `[from, to]`, each carrying the account total and the per-symbol breakdown
     /// (all converted to the preferred currency). Mirrors `get_monthly_net_worth`
@@ -3561,8 +3769,10 @@ impl Db {
         Ok(agg.converted_sum())
     }
 
-    /// Net savings growth over `[start, end]`: the FX-converted value of all
-    /// `savings`-type holdings as of `end` minus their value as of `start`.
+    /// Net savings growth over `[start, end]`: the FX-converted carry-forward
+    /// balance of all `savings` and `emergency_fund` accounts as of `end` minus
+    /// the same as of `start`. Derived from account type, not holding type
+    /// (savings accounts store their balance as a `cash` holding).
     pub fn compute_savings_growth(
         &self,
         start: NaiveDate,
@@ -3574,7 +3784,12 @@ impl Db {
             Ok(self
                 .get_holdings_for_summary(date, profile_id)?
                 .iter()
-                .filter(|r| r.holding.holding_type == HoldingType::Savings)
+                .filter(|r| {
+                    matches!(
+                        r.account_type,
+                        AccountType::Savings | AccountType::EmergencyFund
+                    )
+                })
                 .map(|r| fx.convert(r.holding.value, &r.holding.currency))
                 .sum())
         };
@@ -4200,9 +4415,9 @@ pub fn is_available_account(t: &AccountType) -> bool {
         t,
         AccountType::Checking
             | AccountType::Savings
+            | AccountType::EmergencyFund
             | AccountType::Investment
             | AccountType::InvestmentIsa
-            | AccountType::Cash
             | AccountType::Credit
     )
 }
@@ -4212,9 +4427,10 @@ pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
     match t {
         AccountType::Investment | AccountType::InvestmentIsa => AssetClass::Investments,
         AccountType::Pension => AssetClass::Pension,
-        AccountType::Checking | AccountType::Savings | AccountType::Cash | AccountType::Credit => {
-            AssetClass::Cash
-        }
+        AccountType::Checking
+        | AccountType::Savings
+        | AccountType::EmergencyFund
+        | AccountType::Credit => AssetClass::Cash,
         AccountType::Property => AssetClass::Property,
     }
 }
@@ -4443,6 +4659,23 @@ type DefaultLeaf = (String, String, Option<String>);
 /// One raw spending-grid row from SQL: (group key, category_id, parent_id,
 /// period, currency, summed amount).
 type SpendingGridRawRow = (String, Option<String>, Option<String>, String, String, f64);
+
+/// One raw investment event row: (date, event_type, symbol, quantity,
+/// price_per_share, fee, currency, fee_currency).
+type InvestmentEventRaw = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+);
+
+/// A parsed contribution event, amounts already converted to the preferred
+/// currency: (date, event_type, symbol, quantity, principal, fee).
+type InvestmentEventParsed = (String, String, String, Decimal, Decimal, Decimal);
 
 /// Parse the embedded `categories.yaml` into `(parent_name, [leaf...])`. Leaf
 /// children may be bare strings (type defaults to `spending`, no description)
@@ -4789,6 +5022,18 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
             }
         }
     }
+
+    // ── 14. Collapse removed account/holding type variants ──
+    // `cash` accounts fold into `checking`; the `savings` holding type (which
+    // had no real data source) folds into `cash`; and the redundant `loan` and
+    // `credit` holding types merge into a single `debt` liability line. Plain
+    // idempotent UPDATEs (no CHECK constraint on either column): after the first
+    // pass no rows match, so they are safe to run on every startup.
+    conn.execute_batch("UPDATE accounts SET type = 'checking' WHERE type = 'cash'")?;
+    conn.execute_batch("UPDATE holdings SET holding_type = 'cash' WHERE holding_type = 'savings'")?;
+    conn.execute_batch(
+        "UPDATE holdings SET holding_type = 'debt' WHERE holding_type IN ('loan', 'credit')",
+    )?;
 
     Ok(())
 }

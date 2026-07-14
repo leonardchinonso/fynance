@@ -7,7 +7,6 @@ import { CATEGORY_TYPE_GROUPS, colorForType } from "@/lib/category_types"
 import { visitRemoteData } from "@/lib/remote_data"
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu"
 import { useCategories } from "@/hooks/data"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
@@ -20,15 +19,30 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Trash2, Pencil, Plus, Tag, ChevronDown } from "lucide-react"
+import { Trash2, Pencil, Plus, Tag, ChevronRight, ChevronDown, CircleHelp } from "lucide-react"
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
+import { DIALOG_FIELD_CLASS } from "@/lib/field_styles"
+
+const DEFAULT_GROUP_COLOR = "#78716c"
+
+const CAT_TYPE_DESC: Record<string, string> = {
+  spending: "money going out",
+  income: "money coming in (e.g. salary)",
+  interest: "interest & investment income",
+  donation: "charitable giving & gifts",
+  internal_transfer: "between your own accounts; excluded from summaries",
+}
+
+type DialogState = { mode: "group" | "category"; editId: string | null }
+type FormState = { name: string; parent_id: string; description: string; category_type: CategoryType; color: string }
+
+const EMPTY_FORM: FormState = { name: "", parent_id: "", description: "", category_type: "spending", color: COLOR_PALETTE[0] }
 
 export function CategoriesSection() {
   const [categoriesData, refresh] = useCategories()
-  const [showAdd, setShowAdd] = useState(false)
-  const [editCat, setEditCat] = useState<{ id: string; name: string; parent_id: string | null; description: string | null } | null>(null)
-  const [form, setForm] = useState<{ name: string; parent_id: string; description: string; category_type: CategoryType }>(
-    { name: "", parent_id: "", description: "", category_type: "spending" },
-  )
+  const [dialog, setDialog] = useState<DialogState | null>(null)
+  const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
 
   const tree = categoriesData.status === "succeeded" || categoriesData.status === "reloading"
@@ -41,12 +55,21 @@ export function CategoriesSection() {
     if (parentNames.length > 0) syncParents(parentNames)
   }, [parentNames.join(",")])
 
+  const loaded = categoriesData.status === "succeeded" || categoriesData.status === "reloading"
+
   async function handleSave() {
-    if (!form.name.trim()) return
+    if (!form.name.trim() || !dialog) return
     setSaving(true)
     try {
-      if (editCat) {
-        await api.updateCategory(editCat.id, {
+      if (dialog.mode === "group") {
+        if (dialog.editId) {
+          await api.updateCategory(dialog.editId, { name: form.name.trim() })
+        } else {
+          await api.createCategory({ name: form.name.trim(), category_type: "spending" })
+        }
+        setColor(form.name.trim(), form.color)
+      } else if (dialog.editId) {
+        await api.updateCategory(dialog.editId, {
           name: form.name.trim(),
           parent_id: form.parent_id || undefined,
           // Empty string = explicit "clear" on the backend; an unchanged
@@ -63,8 +86,7 @@ export function CategoriesSection() {
           category_type: form.category_type,
         })
       }
-      setShowAdd(false)
-      setEditCat(null)
+      setDialog(null)
       refresh()
     } finally {
       setSaving(false)
@@ -76,25 +98,49 @@ export function CategoriesSection() {
     refresh()
   }
 
-  function openEdit(node: CategoryNode, parentId: string | null) {
-    setEditCat({ id: node.id, name: node.name, parent_id: parentId, description: node.description ?? null })
-    setForm({ name: node.name, parent_id: parentId ?? "", description: node.description ?? "", category_type: node.category_type })
-    setShowAdd(true)
+  function openGroupAdd() {
+    setForm({ ...EMPTY_FORM, color: COLOR_PALETTE[0] })
+    setDialog({ mode: "group", editId: null })
   }
+
+  function openCategoryAdd() {
+    setForm({ ...EMPTY_FORM, parent_id: tree[0]?.id ?? "" })
+    setDialog({ mode: "category", editId: null })
+  }
+
+  function openEdit(node: CategoryNode, parentId: string | null) {
+    if (parentId === null) {
+      setForm({ ...EMPTY_FORM, name: node.name, color: categoryColors[node.name] ?? DEFAULT_GROUP_COLOR })
+      setDialog({ mode: "group", editId: node.id })
+    } else {
+      setForm({ ...EMPTY_FORM, name: node.name, parent_id: parentId, description: node.description ?? "", category_type: node.category_type })
+      setDialog({ mode: "category", editId: node.id })
+    }
+  }
+
+  const isGroup = dialog?.mode === "group"
+  const title = isGroup
+    ? (dialog?.editId ? "Edit group" : "New group")
+    : (dialog?.editId ? "Edit category" : "New category")
 
   return (
     <Card id="categories">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">Categories</CardTitle>
-          {(categoriesData.status === "succeeded" || categoriesData.status === "reloading") && (
-            <Button size="sm" className="gap-1.5" onClick={() => { setEditCat(null); setForm({ name: "", parent_id: "", description: "", category_type: "spending" }); setShowAdd(true) }}>
-              <Plus className="h-3.5 w-3.5" /> Add Category
-            </Button>
+          {loaded && (
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={openGroupAdd}>
+                <Plus className="h-3.5 w-3.5" /> New group
+              </Button>
+              <Button size="sm" className="gap-1.5" onClick={openCategoryAdd}>
+                <Plus className="h-3.5 w-3.5" /> New category
+              </Button>
+            </div>
           )}
         </div>
         <p className="text-sm text-muted-foreground">
-          Organize transactions into categories. Budgets are set in the Budget view.
+          Categories are organized into groups. Budgets are set in the Budget view.
         </p>
       </CardHeader>
       <CardContent>
@@ -113,82 +159,161 @@ export function CategoriesSection() {
         })}
       </CardContent>
 
-      <Dialog open={showAdd} onOpenChange={(open) => { setShowAdd(open); if (!open) setEditCat(null) }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>{editCat ? "Edit Category" : "Add Category"}</DialogTitle></DialogHeader>
-          <div className="space-y-3 pt-2">
+      <Dialog open={dialog !== null} onOpenChange={(open) => { if (!open) setDialog(null) }}>
+        <DialogContent className="sm:max-w-sm p-6">
+          <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
+          <div className="space-y-4 pt-1">
             <div>
               <label className="text-sm font-medium">Name</label>
-              <Input placeholder="e.g. Groceries" value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Parent category</label>
-              <select
-                className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm"
-                value={form.parent_id}
-                onChange={(e) => setForm(f => ({ ...f, parent_id: e.target.value }))}
-              >
-                <option value="">None (top-level)</option>
-                {tree.map(node => (
-                  <option key={node.id} value={node.id}>{node.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Category type</label>
-              <DropdownMenu>
-                <DropdownMenuTrigger className="w-full mt-1 flex items-center justify-between rounded-md border bg-background px-3 py-2 text-sm hover:bg-accent/50">
-                  <span>{CATEGORY_TYPE_LABELS[form.category_type]}</span>
-                  <ChevronDown className="h-4 w-4 opacity-50" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="min-w-[14rem]">
-                  {CATEGORY_TYPE_GROUPS.map((g) =>
-                    g.types.length === 1 ? (
-                      <DropdownMenuItem
-                        key={g.key}
-                        onClick={() => setForm((f) => ({ ...f, category_type: g.types[0] }))}
-                      >
-                        {g.label}
-                      </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuSub key={g.key}>
-                        <DropdownMenuSubTrigger>{g.label}</DropdownMenuSubTrigger>
-                        <DropdownMenuSubContent>
-                          {g.types.map((t) => (
-                            <DropdownMenuItem
-                              key={t}
-                              onClick={() => setForm((f) => ({ ...f, category_type: t }))}
-                            >
-                              {CATEGORY_TYPE_LABELS[t]}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuSubContent>
-                      </DropdownMenuSub>
-                    ),
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></label>
-              <textarea
-                className="w-full mt-1 rounded-md border bg-background px-3 py-2 text-sm resize-y min-h-[7.5rem]"
-                rows={5}
-                placeholder="e.g. Utility bills — internet, water, gas, electricity. Not Netflix or Spotify."
-                value={form.description}
-                onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
+              <Input
+                className="mt-1.5"
+                placeholder={isGroup ? "e.g. Housing" : "e.g. Groceries"}
+                value={form.name}
+                onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))}
+                autoFocus
               />
             </div>
+
+            {isGroup ? (
+              <div>
+                <label className="text-sm font-medium">Color</label>
+                <div className="mt-1.5">
+                  <CategoryColorPicker
+                    name={form.name || "Group"}
+                    color={form.color}
+                    onChange={(_, c) => setForm(f => ({ ...f, color: c }))}
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="text-sm font-medium">Group</label>
+                  <div className="relative mt-1.5">
+                    <select
+                      className={cn(DIALOG_FIELD_CLASS, "appearance-none pr-8", "[&>option]:bg-popover [&>option]:text-popover-foreground")}
+                      value={form.parent_id}
+                      onChange={(e) => setForm(f => ({ ...f, parent_id: e.target.value }))}
+                    >
+                      <option value="">None (top-level)</option>
+                      {tree.map(node => (
+                        <option key={node.id} value={node.id}>{node.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50" />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-sm font-medium">Type</label>
+                    <TooltipProvider delay={150}>
+                      <Tooltip>
+                        <TooltipTrigger
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label="About category types"
+                        >
+                          <CircleHelp className="h-3.5 w-3.5" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-sm">
+                          <div className="space-y-2 text-left">
+                            <p className="text-sm font-semibold">Category types</p>
+                            <p className="text-muted-foreground">How money moves — drives tax and summary calculations.</p>
+                            <ul className="space-y-1.5">
+                              {CATEGORY_TYPE_GROUPS.map((g) => (
+                                <li key={g.key} className="flex items-start gap-2">
+                                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: g.color }} />
+                                  <span>
+                                    <span className="font-medium">{g.label}</span>
+                                    {" "}— {CAT_TYPE_DESC[g.key]}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                            <p className="text-muted-foreground">
+                              Income, Interest &amp; Donation have a <span className="font-medium text-foreground">taxed / non-tax</span> split for tax-return help.
+                            </p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <TypeTagPicker value={form.category_type} onChange={(t) => setForm(f => ({ ...f, category_type: t }))} />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Description <span className="text-muted-foreground font-normal">(optional)</span></label>
+                  <textarea
+                    className={cn(DIALOG_FIELD_CLASS, "mt-1.5 resize-y min-h-[7.5rem] placeholder:text-muted-foreground/50")}
+                    rows={5}
+                    placeholder="e.g. Utility bills — internet, water, gas, electricity. Not Netflix or Spotify."
+                    value={form.description}
+                    onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
+                  />
+                </div>
+              </>
+            )}
+
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
+              <Button variant="outline" size="sm" onClick={() => setDialog(null)}>Cancel</Button>
               <Button size="sm" onClick={handleSave} disabled={!form.name.trim() || saving}>
-                {saving ? "Saving..." : editCat ? "Update" : "Create"}
+                {saving ? "Saving..." : dialog?.editId ? "Update" : "Create"}
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
     </Card>
+  )
+}
+
+/** Bracket appended to a selected type tag, e.g. "Income (taxed)". */
+function subtypeSuffix(t: CategoryType): string {
+  if (t.includes("non_taxable")) return " (non tax)"
+  if (t.includes("_taxable")) return " (taxed)"
+  return ""
+}
+
+/**
+ * Type selector as a row of colored tags. Inactive tags are dashed + dimmed;
+ * the selected one is filled. Groups with a taxable / non-taxable split open a
+ * submenu, and only commit once a subtype is chosen.
+ */
+function TypeTagPicker({ value, onChange }: { value: CategoryType; onChange: (t: CategoryType) => void }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {CATEGORY_TYPE_GROUPS.map((g) => {
+        const selected = g.types.includes(value)
+        const label = g.label + (selected ? subtypeSuffix(value) : "")
+        const className = cn(
+          "rounded-full border px-3 py-1 text-xs font-medium transition-all",
+          selected ? "border-solid" : "border-dashed bg-transparent opacity-60 hover:opacity-100",
+        )
+        const style = selected
+          ? { backgroundColor: g.color, borderColor: g.color, color: "#fff" }
+          : { color: g.color, borderColor: g.color }
+
+        if (g.types.length === 1) {
+          return (
+            <button key={g.key} type="button" className={className} style={style} onClick={() => onChange(g.types[0])}>
+              {label}
+            </button>
+          )
+        }
+        return (
+          <DropdownMenu key={g.key}>
+            <DropdownMenuTrigger className={className} style={style}>
+              {label}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              {g.types.map((t) => (
+                <DropdownMenuItem key={t} onClick={() => onChange(t)}>
+                  {t.includes("non_taxable") ? "Non-taxable" : "Taxable"}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      })}
+    </div>
   )
 }
 
@@ -283,22 +408,42 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
   categoryColors: Record<string, string>
   onColorChange: (name: string, color: string) => void
 }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({})
   if (nodes.length === 0) return (
-    <p className="text-sm text-muted-foreground py-4 text-center">No categories yet.</p>
+    <p className="text-sm text-muted-foreground py-4 text-center">No groups yet.</p>
   )
+  const toggle = (id: string) => setOpen(o => ({ ...o, [id]: !o[id] }))
   return (
     <div className="space-y-4">
-      {nodes.map(parent => (
+      {nodes.map(parent => {
+        const isOpen = open[parent.id] ?? false
+        return (
         <div key={parent.id}>
           <div className="flex items-center gap-3 rounded-lg border p-2.5 group bg-muted/30">
-            <Tag className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <button
+              type="button"
+              onClick={() => toggle(parent.id)}
+              className="shrink-0 text-muted-foreground"
+              aria-label={isOpen ? `Collapse ${parent.name}` : `Expand ${parent.name}`}
+              aria-expanded={isOpen}
+            >
+              <ChevronRight className={cn("h-4 w-4 transition-transform", isOpen && "rotate-90")} />
+            </button>
             <CategoryColorPicker
               name={parent.name}
-              color={categoryColors[parent.name] ?? "#78716c"}
+              color={categoryColors[parent.name] ?? DEFAULT_GROUP_COLOR}
               onChange={onColorChange}
             />
-            <p className="flex-1 text-sm font-semibold">{parent.name}</p>
-            <Badge variant="outline" className="text-[10px]">parent</Badge>
+            <button
+              type="button"
+              onClick={() => toggle(parent.id)}
+              className="flex flex-1 min-w-0 items-center gap-2 text-left"
+            >
+              <span className="truncate text-sm font-semibold">{parent.name}</span>
+              {parent.children.length > 0 && (
+                <span className="text-xs text-muted-foreground">({parent.children.length})</span>
+              )}
+            </button>
             <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onEdit(parent, null)}>
               <Pencil className="h-3 w-3" />
             </Button>
@@ -306,7 +451,7 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
               <Trash2 className="h-3 w-3" />
             </Button>
           </div>
-          {parent.children.length > 0 && (
+          {isOpen && parent.children.length > 0 && (
             <div className="ml-4 mt-1 space-y-1">
               {parent.children.map(child => (
                 <div key={child.id} className="flex items-center gap-3 rounded-lg border p-2.5 group">
@@ -333,7 +478,8 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
             </div>
           )}
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

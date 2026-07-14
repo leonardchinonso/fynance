@@ -53,7 +53,7 @@ function RichTooltipContent({
   children: React.ReactNode
 }) {
   return (
-    <TooltipContent side={side} align={align} className="max-w-72 !p-0 overflow-hidden !bg-[#1c1c1c]" arrowClassName="!bg-[#1c1c1c] !fill-[#1c1c1c]">
+    <TooltipContent side={side} align={align} className="max-w-72 !p-0 overflow-hidden !bg-[#1c1c1c]">
       <div className="space-y-2 p-3" style={{ background: "#1c1c1c", color: "#f0f0f0" }}>
         {children}
       </div>
@@ -379,7 +379,20 @@ function PortfolioOverviewInternal({
                   </div>
                   <div className="space-y-0.5 @[380px]/cashflow:space-y-1 min-w-0">
                     <div className="text-[10px] @[380px]/cashflow:text-xs text-muted-foreground whitespace-nowrap truncate">
-                      Net Savings
+                      <Tooltip>
+                        <TooltipTrigger className="underline decoration-dotted underline-offset-2 cursor-default">
+                          Net Savings
+                        </TooltipTrigger>
+                        <RichTooltipContent side="top">
+                          <div className="flex items-center gap-2">
+                            <PiggyBank className="h-4 w-4 text-green-400 shrink-0" />
+                            <span className="font-semibold text-sm text-white">Net Savings</span>
+                          </div>
+                          <p className="text-xs text-white/70 leading-relaxed">
+                            The change in your savings and emergency-fund account balances over this period (end balance minus start balance).
+                          </p>
+                        </RichTooltipContent>
+                      </Tooltip>
                     </div>
                     <p className={`text-sm @[300px]/cashflow:text-base @[380px]/cashflow:text-xl font-semibold tabular-nums truncate ${netSavings >= 0 ? "text-green-500" : "text-red-500"}`}>
                       {netSavings >= 0 ? "+" : ""}

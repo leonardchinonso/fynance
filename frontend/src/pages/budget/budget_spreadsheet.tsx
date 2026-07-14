@@ -238,7 +238,6 @@ function ParentBlock({
                   <TooltipContent
                     side="left"
                     className="max-w-xs bg-popover text-popover-foreground ring-1 ring-foreground/10 px-3 py-2"
-                    arrowClassName="bg-popover fill-popover"
                   >
                     <div className="space-y-1 text-xs">
                       <p className="text-[10px] font-medium text-muted-foreground">{categoryLeaf(resolveName(row.category_id))} — spend by period</p>

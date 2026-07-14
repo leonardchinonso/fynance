@@ -15,6 +15,7 @@ A personal finance tracker written in Rust with a local React web UI. Ingests ba
 | 25 | [25_import_gaps.md](25_import_gaps.md) | Multi-institution unified import + dryrun preview: gaps analysis and implementation plan. |
 | 26 | [26_document_storage.md](26_document_storage.md) | Document storage + per-row source provenance. Implemented on `feat/document-storage`. |
 | 27 | [27_dynamic_history_endpoint.md](27_dynamic_history_endpoint.md) | Proposed generic time-series endpoint (dynamic granularity / measure / group_by / filters) to consolidate the bespoke history endpoints. |
+| 28 | [28_type_cleanup_and_test_signoff.md](28_type_cleanup_and_test_signoff.md) | Account/holding type enum cleanup (drop `cash` account type + `savings`/`loan`/`credit` holding types, add `liability`, startup migrations, Net Savings rework) + manual test sign-off list for shipped items 10-17. |
 
 ## Archived Plans
 

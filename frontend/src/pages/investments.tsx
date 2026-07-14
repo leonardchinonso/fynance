@@ -7,7 +7,7 @@ import { ViewModeSwitcher } from "@/components/view_mode_switcher"
 import { DateRangeSelector } from "@/components/date_range_selector"
 import { useAccounts, useInvestments, useInvestmentsOverview } from "@/hooks/data"
 import { accountTypeToAssetClass } from "@/lib/account_type_utils"
-import { History, Layers, Search, Check, ChevronsUpDown, Plus } from "lucide-react"
+import { History, Layers, Search, Check, ChevronsUpDown } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { EVENT_TYPES, EventDialog } from "./investments/event_dialog"
+import { EVENT_TYPES } from "./investments/event_dialog"
 import { EventsHistory, type InvSortColumn, type SortDir } from "./investments/events_history"
 import { InvestmentsOverview } from "./investments/investments_overview"
 
@@ -89,7 +89,6 @@ export function InvestmentsPage() {
   // Overview is the default; "history" is the only non-default view value.
   const activeView = view === "history" ? "history" : "overview"
 
-  const [adding, setAdding] = useState(false)
 
   const [accountsData] = useAccounts(profileId)
   const accounts = accountsData.status === "succeeded" || accountsData.status === "reloading"
@@ -193,9 +192,6 @@ export function InvestmentsPage() {
                 className="h-8 w-[200px] pl-8 text-sm"
               />
             </div>
-            <Button size="sm" className="gap-1.5" onClick={() => setAdding(true)} disabled={accounts.length === 0}>
-              <Plus className="h-3.5 w-3.5" /> Add event
-            </Button>
           </>
         )}
       </div>
@@ -230,14 +226,6 @@ export function InvestmentsPage() {
         />
       )}
 
-      {adding && (
-        <EventDialog
-          event={null}
-          accounts={accounts}
-          onClose={() => setAdding(false)}
-          onSaved={() => { setAdding(false); reloadEvents() }}
-        />
-      )}
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { api } from "@/api/client"
 import type { Account, Currency, Holding } from "@/types"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
+import type { InvestmentHistoryRow } from "@/bindings/InvestmentHistoryRow"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CgtSummary } from "@/bindings/CgtSummary"
 import type { RemoteData } from "@/lib/remote_data"
@@ -15,6 +16,8 @@ export interface InvestmentsOverviewData {
   pools: S104PoolState[]
   /** Full events ledger, for the cumulative-invested time series. */
   events: InvestmentEvent[]
+  /** Per-period net invested vs market value (investment + ISA), for the chart. */
+  investmentHistory: InvestmentHistoryRow[]
   /** FX rates keyed by currency code, for converting holding values. */
   currencies: Currency[]
   /**
@@ -85,6 +88,16 @@ export function useInvestmentsOverview(
         .map((a) => a.id)
       const accountIdSet = new Set(investmentAccountIds)
 
+      // Scope the chart to the same accounts as the holdings and events. Passing
+      // nothing here would plot the whole profile against a filtered pie.
+      const investmentHistory = await api.getInvestmentHistory(
+        start,
+        end,
+        "monthly",
+        profileId,
+        selected.size === 0 ? [] : investmentAccountIds,
+      )
+
       // Scope events to the same investment accounts as the holdings, so cost
       // basis (derived from events) and current value (from holdings) cover the
       // same set. Without this, selecting a profile compares that profile's
@@ -118,6 +131,7 @@ export function useInvestmentsOverview(
         holdings,
         pools,
         events,
+        investmentHistory,
         currencies,
         realisedGains,
         preferredCurrency: preferredCode(currencies),
