@@ -158,11 +158,14 @@ export function BudgetPage() {
     finally { setDeleteBusy(false) }
   }
 
+  // A chart drill-down pins an explicit start/end, which overrides the preset.
+  // Clearing has to drop those too, or the date range stays stuck on the drilled
+  // period and the button looks like it did nothing.
+  const hasExplicitRange = searchParams.has("start") || searchParams.has("end")
   const hasFilters =
     selectedAccounts.length > 0 || selectedCategories.length > 0 ||
-    selectedCategoryTypes.length > 0 || search.length > 0
-  const clearFilters = () => { setAccounts([]); setCategories([]); setCategoryTypes([]); setSearch("") }
-  const resetAll = () => setFilter({
+    selectedCategoryTypes.length > 0 || search.length > 0 || hasExplicitRange
+  const clearFilters = () => setFilter({
     accounts: undefined, categories: undefined, category_types: undefined, search: undefined,
     preset: "last-12-months", start: undefined, end: undefined, page: "1",
   })
@@ -260,7 +263,7 @@ export function BudgetPage() {
           sort={txSort}
           sortDir={txDir}
           onSort={cycleTxSort}
-          onResetFilters={hasFilters ? resetAll : undefined}
+          onResetFilters={hasFilters ? clearFilters : undefined}
           selectedIds={selectedTxnIds}
           onSelectedChange={setSelectedTxnIds}
           onRequestDelete={(ids) => setDeletingIds(ids)}
