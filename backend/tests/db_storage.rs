@@ -796,3 +796,42 @@ fn investment_history_counts_only_investment_and_isa_accounts() {
         "only the GIA (1,200) and ISA (800) holdings count"
     );
 }
+
+/// `created_at` is written with a trailing `Z` (by both the SQL column default and
+/// the Rust insert), but the row mapper falls back to `now()` when it cannot parse
+/// a stored datetime. If the parser rejects the `Z`, every read silently returns
+/// the current time instead of the real one, and the fallback hides the failure.
+#[test]
+fn created_at_is_read_from_the_row_not_regenerated() {
+    let db = test_db("created_at_round_trip.db");
+    db.create_account(&account("gia", AccountType::Investment))
+        .unwrap();
+
+    db.create_investment_event(&CreateInvestmentEventBody {
+        account_id: "gia".to_string(),
+        event_type: "buy".to_string(),
+        symbol: "AAPL".to_string(),
+        date: "2026-01-05T00:00:00".to_string(),
+        quantity: "10".to_string(),
+        price_per_share: "150.00".to_string(),
+        fee: None,
+        currency: "GBP".to_string(),
+        fee_currency: None,
+        notes: None,
+        source_document_ids: Vec::new(),
+    })
+    .unwrap();
+
+    let first = db.list_investment_events(None, None, None, None).unwrap();
+    let created = first[0].created_at;
+
+    // A fabricated now() differs on a later read; a value actually read from the
+    // row cannot. Sleep past the column's one-second resolution.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let second = db.list_investment_events(None, None, None, None).unwrap();
+
+    assert_eq!(
+        created, second[0].created_at,
+        "created_at changed between reads, so it is being regenerated rather than read from the row"
+    );
+}
