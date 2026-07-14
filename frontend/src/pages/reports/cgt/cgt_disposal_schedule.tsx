@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/table"
 import { formatCurrency } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
 
 const UNMATCHED_TITLE =
@@ -68,6 +69,7 @@ export function CgtDisposalSchedule({ rows }: CgtDisposalScheduleProps) {
 }
 
 function DisposalRow({ event }: { event: CgtRealizedEvent }) {
+  useRedactedFlag()
   const gain = Number.parseFloat(event.gain_loss)
   const unmatched = event.rule_applied === "Unmatched"
   const acquisitionLabel = formatAcquisition(event)

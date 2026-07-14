@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react"
-import { api } from "@/api/client"
+import { createContext, useContext } from "react"
 import type { Currency } from "@/types"
+import { useCurrencies } from "@/hooks/data/use_currencies"
 
 interface PreferredCurrencyContextValue {
   preferredCurrency: string
@@ -10,22 +10,24 @@ interface PreferredCurrencyContextValue {
 
 const PreferredCurrencyContext = createContext<PreferredCurrencyContextValue | null>(null)
 
+/**
+ * Preferred currency + FX rates, derived from the shared cached currencies
+ * query (same cache entry as {@link useCurrencies}). Currency mutations
+ * invalidate the whole cache via the api client, so this stays fresh without
+ * manual wiring; `refreshPreferredCurrency` remains for explicit force-reloads.
+ */
 export function PreferredCurrencyProvider({ children }: { children: React.ReactNode }) {
-  const [preferredCurrency, setPreferredCurrency] = useState("GBP")
-  const [currencies, setCurrencies] = useState<Currency[]>([])
-
-  const load = useCallback(() => {
-    api.getCurrencies().then((result) => {
-      setCurrencies(result)
-      const preferred = result.find((c) => c.is_preferred)
-      if (preferred) setPreferredCurrency(preferred.code)
-    }).catch(() => {})
-  }, [])
-
-  useEffect(() => { load() }, [load])
+  const [currenciesData, refresh] = useCurrencies()
+  const currencies =
+    currenciesData.status === "succeeded" || currenciesData.status === "reloading"
+      ? currenciesData.value
+      : []
+  const preferredCurrency = currencies.find((c) => c.is_preferred)?.code ?? "GBP"
 
   return (
-    <PreferredCurrencyContext.Provider value={{ preferredCurrency, currencies, refreshPreferredCurrency: load }}>
+    <PreferredCurrencyContext.Provider
+      value={{ preferredCurrency, currencies, refreshPreferredCurrency: refresh }}
+    >
       {children}
     </PreferredCurrencyContext.Provider>
   )

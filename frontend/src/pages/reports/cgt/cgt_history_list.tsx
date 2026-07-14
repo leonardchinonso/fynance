@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { formatCurrency } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { periodLabel } from "@/api/cgt_filter_params"
 import { useProfiles } from "@/context/profile_context"
 import type { StoredCgtReport } from "./stored_reports"
@@ -14,6 +15,7 @@ interface CgtHistoryListProps {
 }
 
 export function CgtHistoryList({ reports, onDelete }: CgtHistoryListProps) {
+  useRedactedFlag()
   const navigate = useNavigate()
   const { profilesData } = useProfiles()
   const profiles = profilesData.status === "succeeded" ? profilesData.value : []

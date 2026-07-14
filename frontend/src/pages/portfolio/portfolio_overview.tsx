@@ -11,6 +11,7 @@ import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import type { PortfolioSummaryData } from "@/hooks/data"
 import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { PortfolioOverviewSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -152,6 +153,7 @@ function PortfolioOverviewInternal({
   assetClassSettings,
   hideSmall,
 }: PortfolioOverviewProps) {
+  useRedactedFlag()
   const { setFilter } = useUrlFilters()
   const [settingsOpen, setSettingsOpen] = useState(false)
 

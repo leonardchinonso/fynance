@@ -13,6 +13,7 @@ import {
 } from "recharts"
 import { ChartTooltip, useClampedTooltipPosition } from "./chart_tooltip"
 import { formatCurrencyCompact } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 
 const DEFAULT_COLORS = [
   "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
@@ -61,6 +62,7 @@ export function StyledLineChart({
   onActiveIndexChange,
   onContextMenu,
 }: StyledLineChartProps) {
+  useRedactedFlag()
   const containerRef = useRef<HTMLDivElement>(null)
   const activeIndexRef = useRef<number | null>(null)
   const { pos, onMouseMove, onMouseLeave } = useClampedTooltipPosition(containerRef)

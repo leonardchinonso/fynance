@@ -1,16 +1,19 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react"
-import { api } from "@/api/client"
+import { createContext, useContext, useMemo, useCallback } from "react"
 import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { CategoryType } from "@/bindings/CategoryType"
+import { useCategories } from "@/hooks/data/use_categories"
 
 /**
  * Resolves a `category_id` to its display name ("Parent: Child"), its
  * `category_type`, and parent grouping/ordering info.
  *
  * The API returns ids only; the human-readable name, type and hierarchy live in
- * the categories table, which this context loads once. Unknown ids fall through
- * to the id verbatim — which is also how mock mode works, where `category_id`
- * carries the display-name string directly.
+ * the categories table. The maps derive from the shared cached category query
+ * (same cache entry as {@link useCategories}), so category mutations — which
+ * invalidate the whole cache via the api client — refresh names everywhere
+ * without a page reload. Unknown ids fall through to the id verbatim — which is
+ * also how mock mode works, where `category_id` carries the display-name string
+ * directly.
  */
 interface CategoryMaps {
   /** leaf/parent id -> "Parent: Child" (or "Parent" for a parent id) */
@@ -66,18 +69,12 @@ const EMPTY_MAPS: CategoryMaps = {
 }
 
 export function CategoryNamesProvider({ children }: { children: React.ReactNode }) {
-  const [maps, setMaps] = useState<CategoryMaps>(EMPTY_MAPS)
-
-  const load = useCallback(() => {
-    api
-      .getCategoryDetails()
-      .then((tree) => setMaps(buildMaps(tree)))
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    load()
-  }, [load])
+  const [categoriesData, refresh] = useCategories()
+  const tree =
+    categoriesData.status === "succeeded" || categoriesData.status === "reloading"
+      ? categoriesData.value
+      : null
+  const maps = useMemo(() => (tree ? buildMaps(tree) : EMPTY_MAPS), [tree])
 
   const resolve = useCallback(
     (id: string | null | undefined): string => {
@@ -113,7 +110,7 @@ export function CategoryNamesProvider({ children }: { children: React.ReactNode 
 
   return (
     <CategoryNamesContext.Provider
-      value={{ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder, refresh: load }}
+      value={{ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder, refresh }}
     >
       {children}
     </CategoryNamesContext.Provider>

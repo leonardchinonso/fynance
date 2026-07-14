@@ -27,7 +27,9 @@ let currentMode: ApiMode = getStoredMode()
 // A write whose name starts with one of these mutates server state, so the
 // request-keyed cache must be invalidated once it commits. Reads (`get*`/`list*`)
 // and side-effect-free calls (`parseDocuments`, `exportData`) are left untouched.
-const MUTATION_PREFIX = /^(set|create|update|delete|patch|commit|upload|import)/
+// When adding an ApiService mutation whose name doesn't match, extend this list —
+// a miss means stale data everywhere after the write (this bit `bulk*` once).
+const MUTATION_PREFIX = /^(set|create|update|delete|patch|commit|upload|import|bulk)/
 // Categories, currencies and profiles ripple into every money figure and label,
 // so their writes invalidate static reference data too — not just volatile queries.
 const RIPPLE_ALL = /categor|currenc|profile/i

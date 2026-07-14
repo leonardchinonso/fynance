@@ -18,6 +18,7 @@ import { AuthAwareError } from "@/components/auth_aware_error"
 import { LoadingSpinner } from "@/components/loading_spinner"
 import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { formatCurrency, formatDate } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { AccountHistoryChart, type HoverPeriod } from "./account_history_chart"
 
@@ -122,6 +123,7 @@ export function InvestmentsDetail({ accountId, account, start, end, onClose }: I
 }
 
 function AccountMeta({ account }: { account: Account }) {
+  useRedactedFlag()
   return (
     <div className="mt-4 space-y-2">
       <DetailRow label="Institution" value={account.institution} />
@@ -158,6 +160,7 @@ function HoldingsContent({
   preferredCurrency: string
   toPreferred: (value: number, currency: string) => number
 }) {
+  useRedactedFlag()
   const [chartView, setChartView] = useState<"allocation" | "history">("allocation")
   const [granularity, setGranularity] = useState<Granularity>("monthly")
   // Period the cursor is over in the history chart; drives the as-of table view.

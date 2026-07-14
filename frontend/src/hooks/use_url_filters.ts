@@ -123,9 +123,11 @@ export function useUrlFilters() {
   )
 
   const setPreset = useCallback(
+    // Only the preset goes in the URL; start/end are derived at read time so
+    // bookmarks and pinned views stay evergreen ("last 12 months" tracks today
+    // instead of freezing at the dates it resolved to when pinned).
     (p: Preset) => {
-      const range = getPresetRange(p)
-      setFilter({ preset: p, start: range.start, end: range.end, page: "1" })
+      setFilter({ preset: p, start: undefined, end: undefined, page: "1" })
     },
     [setFilter]
   )

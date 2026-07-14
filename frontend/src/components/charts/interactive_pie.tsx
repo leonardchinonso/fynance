@@ -12,6 +12,7 @@ import type { PieSectorDataItem } from "recharts/types/polar/Pie"
 import { PieTooltip, useClampedTooltipPosition } from "./chart_tooltip"
 import { ChartLegend } from "@/components/chart_legend"
 import { formatCurrency, cn } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { ChevronDown, ChevronUp } from "lucide-react"
 
 const DEFAULT_COLORS = [
@@ -59,6 +60,7 @@ export function InteractivePie({
   legendPosition = "bottom",
   onContextMenu,
 }: InteractivePieProps) {
+  useRedactedFlag()
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
   const chartAreaRef = useRef<HTMLDivElement>(null)

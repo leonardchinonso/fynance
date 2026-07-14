@@ -5,8 +5,9 @@ import type { IngestionPreview } from "@/bindings/IngestionPreview"
 import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
-import type { Currency } from "@/types"
 import type { PreviewEdits } from "@/hooks/use_recent_imports"
+import { useCategoryOptions } from "@/hooks/data"
+import { useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CountBadge } from "@/components/count_badge"
@@ -91,8 +92,13 @@ export function PreviewReview({
     })
   }, [txPayload, holdingsPayload, invPayload, txDeleted, holdingsDeleted, invDeleted])
 
-  const [categoryById, setCategoryById] = useState<Record<string, string>>({})
-  const [currencyOptions, setCurrencyOptions] = useState<Currency[]>([])
+  const categoryOptions = useCategoryOptions()
+  const categoryById = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const e of categoryOptions) map[e.id] = e.name
+    return map
+  }, [categoryOptions])
+  const currencyOptions = useCurrenciesFromContext()
 
   // Lookup for the per-row "Source" chips: document id -> name/date.
   const docsMap = useMemo(() => {
@@ -106,17 +112,6 @@ export function PreviewReview({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-
-  useEffect(() => {
-    api.getCategoriesWithIds()
-      .then((entries) => {
-        const map: Record<string, string> = {}
-        for (const e of entries) map[e.id] = e.name
-        setCategoryById(map)
-      })
-      .catch(() => setCategoryById({}))
-    api.getCurrencies().then(setCurrencyOptions).catch(() => setCurrencyOptions([]))
-  }, [])
 
   const showTx = preview.transactions.count > 0
   const showHoldings = preview.holdings.count > 0

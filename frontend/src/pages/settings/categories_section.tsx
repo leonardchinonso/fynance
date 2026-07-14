@@ -44,6 +44,10 @@ export function CategoriesSection() {
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const tree = categoriesData.status === "succeeded" || categoriesData.status === "reloading"
     ? categoriesData.value : []
@@ -60,6 +64,7 @@ export function CategoriesSection() {
   async function handleSave() {
     if (!form.name.trim() || !dialog) return
     setSaving(true)
+    setSaveError(null)
     try {
       if (dialog.mode === "group") {
         if (dialog.editId) {
@@ -88,27 +93,47 @@ export function CategoriesSection() {
       }
       setDialog(null)
       refresh()
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleDelete(id: string) {
-    await api.deleteCategory(id)
-    refresh()
+  function requestDelete(node: CategoryNode) {
+    setDeleteError(null)
+    setDeleting({ id: node.id, name: node.name })
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return
+    setDeleteBusy(true)
+    setDeleteError(null)
+    try {
+      await api.deleteCategory(deleting.id)
+      setDeleting(null)
+      refresh()
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDeleteBusy(false)
+    }
   }
 
   function openGroupAdd() {
+    setSaveError(null)
     setForm({ ...EMPTY_FORM, color: COLOR_PALETTE[0] })
     setDialog({ mode: "group", editId: null })
   }
 
   function openCategoryAdd() {
+    setSaveError(null)
     setForm({ ...EMPTY_FORM, parent_id: tree[0]?.id ?? "" })
     setDialog({ mode: "category", editId: null })
   }
 
   function openEdit(node: CategoryNode, parentId: string | null) {
+    setSaveError(null)
     if (parentId === null) {
       setForm({ ...EMPTY_FORM, name: node.name, color: categoryColors[node.name] ?? DEFAULT_GROUP_COLOR })
       setDialog({ mode: "group", editId: node.id })
@@ -151,7 +176,7 @@ export function CategoriesSection() {
             <CategoryTree
               nodes={nodes}
               onEdit={openEdit}
-              onDelete={handleDelete}
+              onDelete={requestDelete}
               categoryColors={categoryColors}
               onColorChange={setColor}
             />
@@ -252,12 +277,36 @@ export function CategoriesSection() {
               </>
             )}
 
+            {saveError && (
+              <p className="text-xs text-destructive whitespace-pre-wrap">{saveError}</p>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setDialog(null)}>Cancel</Button>
               <Button size="sm" onClick={handleSave} disabled={!form.name.trim() || saving}>
                 {saving ? "Saving..." : dialog?.editId ? "Update" : "Create"}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleting !== null} onOpenChange={(open) => { if (!open && !deleteBusy) setDeleting(null) }}>
+        <DialogContent className="sm:max-w-sm p-6">
+          <DialogHeader>
+            <DialogTitle>Delete "{deleting?.name}"?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            The category is removed from category lists and can no longer be assigned.
+            Transactions are not deleted.
+          </p>
+          {deleteError && (
+            <p className="text-xs text-destructive whitespace-pre-wrap">{deleteError}</p>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleting(null)} disabled={deleteBusy}>Cancel</Button>
+            <Button variant="destructive" size="sm" onClick={confirmDelete} disabled={deleteBusy}>
+              {deleteBusy ? "Deleting..." : "Delete"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -404,7 +453,7 @@ function CategoryColorPicker({
 function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }: {
   nodes: CategoryNode[]
   onEdit: (node: CategoryNode, parentId: string | null) => void
-  onDelete: (id: string) => void
+  onDelete: (node: CategoryNode) => void
   categoryColors: Record<string, string>
   onColorChange: (name: string, color: string) => void
 }) {
@@ -447,7 +496,7 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
             <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onEdit(parent, null)}>
               <Pencil className="h-3 w-3" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onDelete(parent.id)}>
+            <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onDelete(parent)}>
               <Trash2 className="h-3 w-3" />
             </Button>
           </div>
@@ -470,7 +519,7 @@ function CategoryTree({ nodes, onEdit, onDelete, categoryColors, onColorChange }
                   <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onEdit(child, parent.id)}>
                     <Pencil className="h-3 w-3" />
                   </Button>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onDelete(child.id)}>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onDelete(child)}>
                     <Trash2 className="h-3 w-3" />
                   </Button>
                 </div>

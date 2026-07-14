@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api } from "@/api/client"
 import { formatCurrency, categoryLeaf } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { Pencil } from "lucide-react"
 
 interface BudgetEditPopoverProps {
@@ -22,6 +23,7 @@ export function BudgetEditPopover({
   month,
   onSaved,
 }: BudgetEditPopoverProps) {
+  useRedactedFlag()
   const [open, setOpen] = useState(false)
   const [value, setValue] = useState(currentBudget ?? "")
   const [saving, setSaving] = useState(false)

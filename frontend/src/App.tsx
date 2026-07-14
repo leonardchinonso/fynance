@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react"
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom"
+import { ErrorBoundary } from "@/components/error_boundary"
 import { ProfileProvider } from "@/context/profile_context"
 import { PreferredCurrencyProvider } from "@/context/preferred_currency_context"
 import { CategoryColorsProvider } from "@/context/category_colors_context"
@@ -39,12 +40,15 @@ function getHomepage(): string {
 
 function Layout() {
   const homepage = getHomepage()
+  const location = useLocation()
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-x-hidden">
       <Navbar />
       <main className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[1600px] px-3 sm:px-6 py-4 sm:py-6 w-full">
+        {/* Keyed by path so navigating away from a crashed page resets the boundary. */}
+        <ErrorBoundary key={location.pathname}>
         <Routes>
           <Route path="/" element={<Navigate to={homepage} replace />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
@@ -82,6 +86,7 @@ function Layout() {
           <Route path="/import/single" element={<ImportPage />} />
           <Route path="*" element={<Navigate to={homepage} replace />} />
         </Routes>
+        </ErrorBoundary>
       </div>
       </main>
     </div>
@@ -91,6 +96,7 @@ function Layout() {
 export default function App() {
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <ThemeProvider>
       <ProfileProvider>
         <PreferredCurrencyProvider>
@@ -108,6 +114,7 @@ export default function App() {
         </PreferredCurrencyProvider>
       </ProfileProvider>
       </ThemeProvider>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }

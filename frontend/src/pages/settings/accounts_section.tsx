@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { api } from "@/api/client"
 import type { Account, Profile, AccountType } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useIngestionPreferences } from "@/hooks/use_ingestion_preferences"
 import { useProfileColorsContext } from "@/context/profile_colors_context"
+import { useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { DraggableList, DragHandle } from "@/components/draggable_list"
 import { SettingsListSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
@@ -23,6 +24,7 @@ import {
 import { Trash2, Pencil, Plus, Building2, Eye, EyeOff, Check, ChevronsUpDown, CircleHelp } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { cn, formatCurrency } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { accountTypeClasses } from "@/lib/account_type_colors"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 
@@ -133,6 +135,7 @@ function TypeBadge({ type }: { type: AccountType }) {
 }
 
 function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts: Account[]; profiles: Profile[]; onRefresh: () => void; wizardMode: boolean }) {
+  useRedactedFlag()
   const [dragId, setDragId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Account | null>(null)
   const [deleting, setDeleting] = useState<Account | null>(null)
@@ -581,15 +584,10 @@ function AccountCommonFields({
   )
 }
 
-/** Currency code options for the account dialogs, fetched once. */
+/** Currency code options for the account dialogs, from the shared currencies context. */
 function useCurrencyOptions(): string[] {
-  const [codes, setCodes] = useState<string[]>([])
-  useEffect(() => {
-    let alive = true
-    api.getCurrencies().then((cs) => { if (alive) setCodes(cs.map((c) => c.code)) }).catch(() => {})
-    return () => { alive = false }
-  }, [])
-  return codes
+  const currencies = useCurrenciesFromContext()
+  return currencies.map((c) => c.code)
 }
 
 function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefresh: () => void }) {

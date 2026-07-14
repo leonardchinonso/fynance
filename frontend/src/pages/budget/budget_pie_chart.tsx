@@ -7,6 +7,7 @@ import { groupLabelForType, colorForGroupLabel } from "@/lib/category_types"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useCategoryMeta } from "@/context/category_names_context"
 import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { useChartContextMenu, ChartContextMenu } from "@/components/charts/chart_context_menu"
 import { categoryFilterForSeries } from "./chart_drill"
 
@@ -22,6 +23,7 @@ const PALETTE = Object.values(CATEGORY_COLORS)
 const NEUTRAL = "#78716c"
 
 export function BudgetPieChart({ rows, groupBy, accountNameMap }: BudgetPieChartProps) {
+  useRedactedFlag()
   const { categoryColors } = useCategoryColorsContext()
   const { resolve, parentName, childIdsOf } = useCategoryMeta()
   const { setFilter } = useUrlFilters()

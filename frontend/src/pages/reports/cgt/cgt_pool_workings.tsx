@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ChevronDown, ChevronRight } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 
 interface CgtPoolWorkingsProps {
@@ -17,6 +18,7 @@ export function CgtPoolWorkings({
   symbolCurrencies,
   defaultCurrency,
 }: CgtPoolWorkingsProps) {
+  useRedactedFlag()
   const [open, setOpen] = useState(false)
   const nonEmpty = pools.filter((p) => Number.parseFloat(p.current_shares) > 0)
   if (nonEmpty.length === 0) return null

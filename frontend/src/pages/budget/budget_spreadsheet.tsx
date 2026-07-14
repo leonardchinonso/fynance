@@ -13,6 +13,7 @@ import type { CategoryType } from "@/bindings/CategoryType"
 import { DualAmount } from "@/components/currency"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
 import { useCategoryMeta } from "@/context/category_names_context"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { SpreadsheetSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -183,6 +184,7 @@ function ParentBlock({
   categoryType: (id: string | null | undefined) => CategoryType | undefined
   onBudgetSaved?: () => void
 }) {
+  useRedactedFlag()
   const totals: Record<string, number | null> = {}
   for (const p of periods) totals[p] = null
   for (const row of rows) {

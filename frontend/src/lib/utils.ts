@@ -43,8 +43,20 @@ let _redacted = (() => {
   }
 })()
 
-export function isRedactedInitial(): boolean {
+// Subscribers notified when the flag flips. Components that format money during
+// render subscribe via useRedactedFlag() so a toggle re-renders them in place
+// (no remount, so page state — dialogs, selections, wizard edits — survives).
+const redactedListeners = new Set<() => void>()
+
+export function getRedacted(): boolean {
   return _redacted
+}
+
+export function subscribeRedacted(cb: () => void): () => void {
+  redactedListeners.add(cb)
+  return () => {
+    redactedListeners.delete(cb)
+  }
 }
 
 export function setRedacted(value: boolean): void {
@@ -54,6 +66,7 @@ export function setRedacted(value: boolean): void {
   } catch {
     /* ignore: redaction still works in-memory for this session */
   }
+  for (const cb of redactedListeners) cb()
 }
 
 export function formatCurrency(amount: string, currency: string = "GBP"): string {

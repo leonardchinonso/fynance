@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { formatCurrency } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import type { CgtSummary } from "@/bindings/CgtSummary"
 
 interface CgtSummaryCardProps {
@@ -9,6 +10,7 @@ interface CgtSummaryCardProps {
 }
 
 export function CgtSummaryCard({ summary, disposalCount }: CgtSummaryCardProps) {
+  useRedactedFlag()
   const cur = summary.base_currency
   const net = Number.parseFloat(summary.net_gain_loss)
   return (

@@ -12,12 +12,11 @@ import { Grid3X3, Table2, BarChart3, Search, Trash2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { invalidateVolatile } from "@/lib/query_cache"
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from "@/components/ui/select"
 import { getMonthsInRange } from "@/lib/utils"
-import { useSpendingGrid, useTransactions, useFilterOptions } from "@/hooks/data"
+import { useSpendingGrid, useTransactions, useFilterOptions, useCategoryOptions } from "@/hooks/data"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { api } from "@/api/client"
 import type { CategoryType } from "@/bindings/CategoryType"
@@ -68,14 +67,7 @@ export function BudgetPage() {
 
   // Leaf categories with ids: powers the Category filter (we filter by id) and
   // the table's inline category editor.
-  const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string }>>([])
-  useEffect(() => {
-    let cancelled = false
-    api.getCategoriesWithIds()
-      .then((list) => { if (!cancelled) setCategoryOptions(list) })
-      .catch(() => { if (!cancelled) setCategoryOptions([]) })
-    return () => { cancelled = true }
-  }, [])
+  const categoryOptions = useCategoryOptions()
   const categoryNameById = useMemo(
     () => Object.fromEntries(categoryOptions.map((c) => [c.id, c.name])),
     [categoryOptions],
@@ -140,7 +132,7 @@ export function BudgetPage() {
   async function bulkSetCategory(opt: { id: string; name: string }) {
     const ids = [...selectedTxnIds]
     setSelectedTxnIds(new Set())
-    try { await api.bulkSetCategory(ids, opt.id); invalidateVolatile() }
+    try { await api.bulkSetCategory(ids, opt.id) }
     catch (e) { alert(e instanceof Error ? e.message : String(e)) }
   }
 
@@ -153,7 +145,6 @@ export function BudgetPage() {
       else await api.bulkDeleteTransactions(ids)
       setSelectedTxnIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n })
       setDeletingIds(null)
-      invalidateVolatile()
     } catch (e) { alert(e instanceof Error ? e.message : String(e)) }
     finally { setDeleteBusy(false) }
   }
