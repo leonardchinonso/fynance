@@ -4,6 +4,7 @@ import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CgtSummary } from "@/bindings/CgtSummary"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
+import { colorForSymbol } from "@/lib/colors"
 import type { InvestmentsOverviewData } from "@/hooks/data"
 import { PortfolioOverviewSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
@@ -19,11 +20,6 @@ import {
 } from "@/components/ui/table"
 import { TrendingUp, TrendingDown, Wallet, Receipt, Coins, Scale, Layers } from "lucide-react"
 import { formatCurrency, formatMonthShort } from "@/lib/utils"
-
-const STOCK_COLORS = [
-  "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
-  "#06b6d4", "#eab308", "#6366f1", "#14b8a6", "#ef4444",
-]
 
 interface Props {
   data: RemoteData<InvestmentsOverviewData>
@@ -79,7 +75,7 @@ function InvestmentsOverviewInternal({
 
   const pieData = buildSymbolPie(holdings, toPreferred)
   const pieColorMap = new Map<string, string>()
-  pieData.forEach((d, i) => pieColorMap.set(d.name, STOCK_COLORS[i % STOCK_COLORS.length]))
+  pieData.forEach((d) => pieColorMap.set(d.name, colorForSymbol(d.name)))
 
   // Two lines from the backend series: cumulative net invested vs market value.
   // Values are null where there's no data (gap, not a phantom zero).
@@ -266,6 +262,7 @@ function PoolsTable({ pools }: { pools: S104PoolState[] }) {
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           Average-cost pools per symbol, derived from your investment events. This is your CGT cost basis, not market value.
+          {" "}Pools are always profile-wide: HMRC pools a symbol across all of your accounts, so the account filter does not apply here.
         </p>
       </CardHeader>
       <CardContent className="p-0">
@@ -345,6 +342,16 @@ function buildInvested(
     const fee = e.fee ? toPreferred(parseFloat(e.fee), e.fee_currency ?? e.currency) : 0
     const gross = toPreferred(qty * price, e.currency) + fee
     const pool = pools.get(e.symbol) ?? { shares: 0, cost: 0 }
+
+    if (e.event_type === "split") {
+      // `quantity` is the shares ADDED, not a ratio. They arrive at no cost, so
+      // pool cost and net invested are unchanged and only the average per-share
+      // cost falls. Without this the pool holds a pre-split share count while
+      // later disposals carry post-split quantities.
+      pool.shares += qty
+      pools.set(e.symbol, pool)
+      continue
+    }
 
     if (e.event_type === "buy" || e.event_type === "vest" || e.event_type === "transfer") {
       pool.shares += qty

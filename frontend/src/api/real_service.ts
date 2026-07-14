@@ -312,9 +312,11 @@ export class RealApiService implements ApiService {
     end: string,
     granularity: Granularity = "monthly",
     profileId?: string,
+    accountIds: string[] = [],
   ): Promise<InvestmentHistoryRow[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
+    if (accountIds.length > 0) params.accounts = accountIds.join(",")
     const res = await get<{ preferred_currency: string; rows: InvestmentHistoryRow[] }>(
       `${BASE}/investments/history`,
       params,

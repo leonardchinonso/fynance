@@ -251,6 +251,7 @@ export interface ApiService {
     end: string,
     granularity: Granularity,
     profileId?: string,
+    accountIds?: string[],
   ): Promise<InvestmentHistoryRow[]>
 
   // ── Documents ─────────────────────────────────────────────────────

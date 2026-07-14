@@ -1406,9 +1406,13 @@ impl Db {
         let order_by = match filters.sort {
             None => "t.date DESC, t.id DESC".to_string(),
             Some(TransactionSort::Date) => format!("t.date {dir}, t.id DESC"),
-            Some(TransactionSort::Amount) => {
-                format!("CAST(t.amount AS REAL) {dir}, t.id DESC")
-            }
+            // Amounts are stored in each transaction's native currency, so they
+            // must be converted to the preferred currency before comparing or a
+            // large-denomination row (e.g. NGN) outranks every GBP row. Rows in a
+            // currency with no configured rate fall back to their raw amount.
+            Some(TransactionSort::Amount) => format!(
+                "CAST(t.amount AS REAL) * CAST(COALESCE(fx.fx_rate, '1') AS REAL) {dir}, t.id DESC"
+            ),
             // Push uncategorized rows to the bottom regardless of direction.
             Some(TransactionSort::Category) => format!(
                 "(t.category_id IS NULL) ASC, pc.name {dir}, c.name {dir}, t.date DESC, t.id DESC"
@@ -1425,6 +1429,7 @@ impl Db {
               FROM transactions t
               LEFT JOIN categories c ON c.id = t.category_id
               LEFT JOIN categories pc ON pc.id = c.parent_id
+              LEFT JOIN currencies fx ON fx.code = t.currency
               {join}
               WHERE {where_clause}
               ORDER BY {order_by}
@@ -2873,6 +2878,7 @@ impl Db {
         to: NaiveDate,
         granularity: &Granularity,
         profile_id: Option<&str>,
+        account_ids: &[String],
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<InvestmentHistoryRow>> {
         use crate::util::fx::CurrencyAggregator;
@@ -2888,13 +2894,26 @@ impl Db {
         } else {
             ""
         };
+        let account_filter = if !account_ids.is_empty() {
+            let start = args.len() + 1;
+            for id in account_ids {
+                args.push(Box::new(id.to_string()));
+            }
+            let placeholders = (start..start + account_ids.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("AND i.account_id IN ({placeholders})")
+        } else {
+            String::new()
+        };
         let sql = format!(
-            r"SELECT i.date, i.event_type, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
+            r"SELECT i.date, i.event_type, i.symbol, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
               FROM investments i
               JOIN accounts a ON a.id = i.account_id
               WHERE a.type IN ('investment', 'investment_isa')
-                AND i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
-                AND i.date <= ?1 {profile_filter}
+                AND i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer', 'split')
+                AND i.date <= ?1 {profile_filter} {account_filter}
               ORDER BY i.date ASC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -2910,31 +2929,37 @@ impl Db {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
+                        row.get(7)?,
                     ))
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        // (date_str, signed principal, currency, fee, fee_currency)
+        // Net invested is capital contributed, so a disposal must remove what the
+        // shares COST (their average book cost), not what they sold for. Removing
+        // proceeds would let a profitable sale subtract more than was ever put in
+        // and understate the basis. Values are converted to the preferred currency
+        // at event time so each pool's average cost is in a single currency.
         let events: Vec<InvestmentEventParsed> = raw
             .into_iter()
-            .filter_map(|(date, event_type, q, p, fee, currency, fee_currency)| {
-                let q: Decimal = q.parse().ok()?;
-                let p: Decimal = p.parse().ok()?;
-                let principal = q * p;
-                let signed = if event_type == "sell" || event_type == "withhold" {
-                    -principal
-                } else {
-                    principal
-                };
-                let fee = fee.and_then(|f| f.parse::<Decimal>().ok());
-                Some((date, signed, currency, fee, fee_currency))
-            })
+            .filter_map(
+                |(date, event_type, symbol, q, p, fee, currency, fee_currency)| {
+                    let q: Decimal = q.parse().ok()?;
+                    let p: Decimal = p.parse().ok()?;
+                    let principal = fx.convert(q * p, &currency);
+                    let fee = fee
+                        .and_then(|f| f.parse::<Decimal>().ok())
+                        .map(|f| fx.convert(f, fee_currency.as_deref().unwrap_or(&currency)))
+                        .unwrap_or(Decimal::ZERO);
+                    Some((date, event_type, symbol, q, principal, fee))
+                },
+            )
             .collect();
 
         let periods = generate_period_end_dates(from, to, granularity);
         let mut rows = Vec::with_capacity(periods.len());
-        let mut agg = CurrencyAggregator::default();
+        let mut pools: HashMap<String, (Decimal, Decimal)> = HashMap::new();
+        let mut invested = Decimal::ZERO;
         let mut ev_idx = 0usize;
         let mut any_event = false;
 
@@ -2942,15 +2967,40 @@ impl Db {
             let period_end_str = period_end.format("%Y-%m-%dT23:59:59").to_string();
 
             while ev_idx < events.len() && events[ev_idx].0 <= period_end_str {
-                let (_, signed, currency, fee, fee_currency) = &events[ev_idx];
-                agg.add(*signed, currency, fx);
-                if let Some(fee) = fee {
-                    agg.add(*fee, fee_currency.as_deref().unwrap_or(currency), fx);
+                let (_, event_type, symbol, qty, principal, fee) = &events[ev_idx];
+                let (shares, cost) = pools.entry(symbol.clone()).or_default();
+
+                if event_type == "split" {
+                    // `quantity` is the shares ADDED by the split, not a ratio. The
+                    // shares arrive at no cost, so the pool's total cost and the
+                    // net invested are both unchanged; only the average per-share
+                    // cost falls. Skipping splits would leave the pool holding a
+                    // pre-split share count while later disposals carry post-split
+                    // quantities, so book cost would be drawn down at an inflated
+                    // per-share rate.
+                    *shares += *qty;
+                } else if event_type == "sell" || event_type == "withhold" {
+                    // Remove the average book cost of the disposed shares.
+                    let removed = (*qty).min(*shares).max(Decimal::ZERO);
+                    let book_cost = if *shares > Decimal::ZERO {
+                        removed * (*cost / *shares)
+                    } else {
+                        Decimal::ZERO
+                    };
+                    *shares -= removed;
+                    *cost -= book_cost;
+                    invested -= book_cost;
+                } else {
+                    let gross = *principal + *fee;
+                    *shares += *qty;
+                    *cost += gross;
+                    invested += gross;
                 }
+
                 any_event = true;
                 ev_idx += 1;
             }
-            let net_invested = any_event.then(|| agg.converted_sum().to_string());
+            let net_invested = any_event.then(|| invested.to_string());
 
             // Market value of active (unclosed) investment + ISA holdings.
             let mut mv = CurrencyAggregator::default();
@@ -2960,6 +3010,7 @@ impl Db {
                     r.account_type,
                     AccountType::Investment | AccountType::InvestmentIsa
                 ) && !r.holding.is_closed
+                    && (account_ids.is_empty() || account_ids.contains(&r.holding.account_id))
                 {
                     mv.add(r.holding.value, &r.holding.currency, fx);
                     has_active = true;
@@ -4609,9 +4660,10 @@ type DefaultLeaf = (String, String, Option<String>);
 /// period, currency, summed amount).
 type SpendingGridRawRow = (String, Option<String>, Option<String>, String, String, f64);
 
-/// One raw investment event row: (date, event_type, quantity, price_per_share,
-/// fee, currency, fee_currency).
+/// One raw investment event row: (date, event_type, symbol, quantity,
+/// price_per_share, fee, currency, fee_currency).
 type InvestmentEventRaw = (
+    String,
     String,
     String,
     String,
@@ -4621,8 +4673,9 @@ type InvestmentEventRaw = (
     Option<String>,
 );
 
-/// A parsed contribution event: (date, signed principal, currency, fee, fee_currency).
-type InvestmentEventParsed = (String, Decimal, String, Option<Decimal>, Option<String>);
+/// A parsed contribution event, amounts already converted to the preferred
+/// currency: (date, event_type, symbol, quantity, principal, fee).
+type InvestmentEventParsed = (String, String, String, Decimal, Decimal, Decimal);
 
 /// Parse the embedded `categories.yaml` into `(parent_name, [leaf...])`. Leaf
 /// children may be bare strings (type defaults to `spending`, no description)

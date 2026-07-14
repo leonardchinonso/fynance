@@ -944,9 +944,10 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         { "name": "start", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
                         { "name": "end", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },
                         { "name": "granularity", "in": "query", "schema": { "type": "string", "enum": ["monthly", "quarterly", "yearly"] } },
-                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." }
+                        { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by profile." },
+                        { "name": "accounts", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated account ids. Scopes both series. Omitted = all investment + ISA accounts." }
                     ],
-                    "responses": { "200": { "description": "Per-period { net_invested, market_value }, null where no data" } }
+                    "responses": { "200": { "description": "Per-period { net_invested, market_value }, null where no data. Net invested is capital contributed: a disposal removes the shares' average book cost, not the sale proceeds." } }
                 }
             },
             "/api/investments/{id}": {

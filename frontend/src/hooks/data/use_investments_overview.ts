@@ -74,12 +74,11 @@ export function useInvestmentsOverview(
   const selectedKey = [...selectedAccountIds].sort().join(",")
   const [data] = useQuery(
     async (): Promise<InvestmentsOverviewData> => {
-      const [accounts, pools, allEvents, currencies, investmentHistory] = await Promise.all([
+      const [accounts, pools, allEvents, currencies] = await Promise.all([
         api.getAccounts(profileId),
         api.getInvestmentPools(profileId),
         api.listInvestments(),
         api.getCurrencies(),
-        api.getInvestmentHistory(start, end, "monthly", profileId),
       ])
 
       const selected = new Set(selectedAccountIds)
@@ -88,6 +87,16 @@ export function useInvestmentsOverview(
         .filter((a) => selected.size === 0 || selected.has(a.id))
         .map((a) => a.id)
       const accountIdSet = new Set(investmentAccountIds)
+
+      // Scope the chart to the same accounts as the holdings and events. Passing
+      // nothing here would plot the whole profile against a filtered pie.
+      const investmentHistory = await api.getInvestmentHistory(
+        start,
+        end,
+        "monthly",
+        profileId,
+        selected.size === 0 ? [] : investmentAccountIds,
+      )
 
       // Scope events to the same investment accounts as the holdings, so cost
       // basis (derived from events) and current value (from holdings) cover the

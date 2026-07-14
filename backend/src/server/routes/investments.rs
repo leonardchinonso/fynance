@@ -11,7 +11,9 @@ use crate::model::{
 };
 use crate::server::error::AppError;
 use crate::server::state::AppState;
-use crate::server::validation::{parse_date, parse_granularity, validate_date_range};
+use crate::server::validation::{
+    parse_date, parse_granularity, split_csv_param, validate_date_range,
+};
 use crate::util::fx::FxRateMap;
 
 // ── POST /api/investments ────────────────────────────────────────────────────
@@ -74,6 +76,8 @@ pub struct InvestmentHistoryQuery {
     pub end: Option<String>,
     pub granularity: Option<String>,
     pub profile_id: Option<String>,
+    /// Comma-separated account ids. Empty means every investment + ISA account.
+    pub accounts: Option<String>,
 }
 
 pub async fn get_investment_history(
@@ -99,11 +103,17 @@ pub async fn get_investment_history(
         .and_then(parse_granularity)?;
 
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
+    let account_ids: Vec<String> = q
+        .accounts
+        .as_deref()
+        .and_then(split_csv_param)
+        .unwrap_or_default();
 
     let (rows, preferred_currency) = {
         let db = state.db.lock().expect("db mutex poisoned");
         let fx = FxRateMap::new(db.get_currencies()?)?;
-        let rows = db.get_investment_history(start, end, &granularity, profile_id, &fx)?;
+        let rows =
+            db.get_investment_history(start, end, &granularity, profile_id, &account_ids, &fx)?;
         (rows, fx.preferred().to_string())
     };
 

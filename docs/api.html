@@ -3272,7 +3272,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <span class="method-badge method-get">GET</span>
     <code class="endpoint-path">/api/investments/history</code>
   </div>
-  <p class="endpoint-summary">Per-period series for the Cumulative Invested chart: cumulative net contributions vs the market value of investment + ISA holdings. Either value is <code>null</code> for a period with no underlying data (before the first contribution / no active holdings) so the chart shows a gap, not a zero.</p>
+  <p class="endpoint-summary">Per-period series for the Cumulative Invested chart: cumulative net contributions vs the market value of investment + ISA holdings. Either value is <code>null</code> for a period with no underlying data (before the first contribution / no active holdings) so the chart shows a gap, not a zero. Net invested is capital contributed: a disposal removes the shares' average book cost from a per-symbol pool, not the sale proceeds. A split adds shares at no cost, so it lowers the average per-share cost without changing net invested.</p>
   <h4>Parameters</h4>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -3281,6 +3281,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
       <tr><td><code>end</code></td><td>query</td><td>string</td><td>Yes</td><td>End date (YYYY-MM-DD)</td></tr>
       <tr><td><code>granularity</code></td><td>query</td><td>string</td><td>Yes</td><td>monthly, quarterly, or yearly</td></tr>
       <tr><td><code>profile_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter by profile</td></tr>
+      <tr><td><code>accounts</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated account ids. Scopes both series. Omitted = all investment + ISA accounts.</td></tr>
     </tbody>
   </table>
   <h4>Example Request</h4>

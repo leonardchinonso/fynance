@@ -1257,6 +1257,7 @@ export class MockApiService implements ApiService {
     end: string,
     _granularity: Granularity = "monthly",
     _profileId?: string,
+    _accountIds: string[] = [],
   ): Promise<InvestmentHistoryRow[]> {
     await delay(DELAY_MS)
     const months = getMonthsInRange(start, end)
