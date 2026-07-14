@@ -1865,7 +1865,7 @@ td code { font-size: 12px; }
     <span class="method-badge method-post">POST</span>
     <code class="endpoint-path">/api/transactions/import</code>
   </div>
-  <p class="endpoint-summary">Import structured transaction JSON. Supports dry_run for preview.</p>
+  <p class="endpoint-summary">Import structured transaction JSON. Supports dry_run for preview. Each transaction may carry <code>source_document_ids</code> (ids from <code>POST /api/documents</code>, or forwarded verbatim from a <code>/api/parse</code> payload) linking it to the document it was extracted from. Omitting the field stores the row with no provenance and raises no error.</p>
   <h4>Parameters</h4>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -3239,7 +3239,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <span class="method-badge method-post">POST</span>
     <code class="endpoint-path">/api/investments/import</code>
   </div>
-  <p class="endpoint-summary">Bulk import investment events.</p>
+  <p class="endpoint-summary">Bulk import investment events. Each event may carry <code>source_document_ids</code> (ids from <code>POST /api/documents</code>, or forwarded verbatim from a <code>/api/parse</code> payload) linking it to the document it was extracted from. Omitting the field stores the event with no provenance and raises no error.</p>
   <h4>Request Body <span class="content-type">application/json</span></h4>
   <p>InvestmentsImportPayload object (see Models).</p>
   <h4>Example Request</h4>
@@ -3254,7 +3254,8 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
         "date": "2026-01-15",
         "quantity": "10.000",
         "price_per_share": "95.00",
-        "currency": "GBP"
+        "currency": "GBP",
+        "source_document_ids": ["3f1c8a02-7b4e-4d19-9f2a-1c6b0e5d8a77"]
       }
     ]
   }'</code></pre>

@@ -4258,7 +4258,13 @@ pub struct AccountStats {
 /// `YYYY-MM-DD` format (converting date-only values to `T00:00:00`).
 /// Returns `None` on parse failure rather than panicking so callers can
 /// use `.unwrap_or_else` with a sensible default.
+/// Parse a stored ISO 8601 datetime. Event dates are written without a zone
+/// suffix, but `created_at` (both the SQL column default and the Rust insert)
+/// appends a `Z`. Callers fall back to `now()` when this returns None, so a
+/// format this does not accept is silently replaced by the current time rather
+/// than surfacing as an error.
 fn parse_transaction_datetime(s: &str) -> Option<NaiveDateTime> {
+    let s = s.strip_suffix('Z').unwrap_or(s);
     NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
         .ok()
         .or_else(|| {

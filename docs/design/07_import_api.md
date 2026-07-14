@@ -121,6 +121,7 @@ type TransactionPreviewRow = {
   existing_id: string | null;            // if duplicate, the ID of the existing row
   existing_description: string | null;   // if duplicate, the description of the existing row
   error_reason: string | null;           // if error, why
+  source_document_ids: string[];         // documents this row was extracted from
 };
 ```
 
@@ -168,6 +169,7 @@ type InvestmentPreviewRow = {
   currency: string;
   status: "new" | "duplicate" | "error";
   existing_id: string | null;       // if duplicate, the ID of the existing event
+  source_document_ids: string[];    // documents this event was extracted from
 };
 ```
 
@@ -487,6 +489,14 @@ curl -X POST http://127.0.0.1:7433/api/parse \
 Each Stage 2 endpoint receives the `payload` field from the corresponding section of the `IngestionPreview` response. The frontend sends only the payloads the user has confirmed.
 
 Stage 2 endpoints are independent. Call them in any order. If one fails, the others are unaffected.
+
+> **Forward `payload` as-is. Do not rebuild it by hand.**
+>
+> Every row in a Stage 1 `payload` carries `source_document_ids`, linking it to the document it was extracted from. That is what populates the Source column and lets a stored figure be traced back to the statement it came from.
+>
+> Dropping or filtering rows is fine (`payload.events.filter(...)`), but reconstructing each row field-by-field is not: it is easy to omit `source_document_ids` and nothing will fail. The rows commit cleanly, and the provenance is simply gone. A bulk import that reconstructed its payload this way left 691 investment events with no source link and no error to show for it.
+>
+> If you must build a payload without a Stage 1 parse (a CSV you already hold, a correction script), upload the source file via `POST /api/documents` first and set `source_document_ids` to the returned id. Leave it empty only when there genuinely is no source document.
 
 ---
 

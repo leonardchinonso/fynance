@@ -190,6 +190,25 @@ pub async fn import_investments(
         ));
     }
 
+    // A payload with no provenance commits cleanly and reports success, so the
+    // omission is invisible: a bulk import that rebuilt its rows by hand instead of
+    // forwarding the /api/parse payload verbatim left hundreds of events with no
+    // source link and no error. Warn rather than reject, since a manual or
+    // corrective import legitimately has no source document.
+    if !payload.events.is_empty()
+        && payload
+            .events
+            .iter()
+            .all(|e| e.source_document_ids.is_empty())
+    {
+        tracing::warn!(
+            account_id = %payload.account_id,
+            events = payload.events.len(),
+            "investment import has no source_document_ids on any event; these rows will have no provenance. \
+             Forward the /api/parse payload verbatim, or upload the source via POST /api/documents first."
+        );
+    }
+
     let mut inserted: usize = 0;
     let mut duplicates: usize = 0;
     let mut errors: Vec<InvestmentImportError> = Vec::new();
