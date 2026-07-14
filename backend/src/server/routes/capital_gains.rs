@@ -725,9 +725,17 @@ fn run_cgt_engine(
                     }
                 }
                 InvestmentEventType::Split => {
-                    let split_ratio = e.quantity;
-                    if split_ratio > Decimal::ZERO {
-                        pool_shares *= split_ratio;
+                    // `quantity` is the shares ADDED by the split, not a ratio: a
+                    // 10-for-1 on 1.72827619 shares is stored as 15.55448571.
+                    // Multiplying by it would inflate the pool (here: 25.17 shares
+                    // instead of 17.28), understating average cost and overstating
+                    // every later gain.
+                    //
+                    // A split is a reorganisation (TCGA 1992 s.126-131): the new
+                    // holding is the same asset acquired at the same time and cost,
+                    // so pool_cost is untouched and only the share count rises.
+                    if e.quantity > Decimal::ZERO {
+                        pool_shares += e.quantity;
                     }
                 }
                 InvestmentEventType::Transfer => {

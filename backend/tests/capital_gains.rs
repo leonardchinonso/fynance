@@ -326,7 +326,9 @@ async fn test_cgt_stock_split() {
         let db_lock = db.lock().unwrap();
         setup_account(&db_lock, "gia", AccountType::Investment);
 
-        // Buy 100 MSFT @ 10 (total cost 1000). Split 2:1 on May 5th. Sell 100 MSFT @ 8.
+        // Buy 100 MSFT @ 10 (total cost 1000). Split 2-for-1 on May 5th, which ADDS
+        // 100 shares (quantity is the shares added, not a ratio), taking the pool to
+        // 200 shares at an unchanged cost of 1000, so 5/share. Sell 100 MSFT @ 8.
         insert_event(
             &db_lock,
             "gia",
@@ -343,7 +345,7 @@ async fn test_cgt_stock_split() {
             "split",
             "MSFT",
             "2026-05-05T10:00:00",
-            "2",
+            "100",
             "0.00",
             None,
         );
@@ -452,14 +454,16 @@ async fn test_cgt_complex_scenario() {
             None,
         );
 
-        // 2. Stock Split of 10:1 on May 15th
+        // 2. Stock split of 10-for-1 on May 15th. Quantity is the shares ADDED, so
+        // the 50 shares held (5 vests x 10, cost 6000) become 500: 450 added, cost
+        // unchanged, giving the 12.00/share S104 average the matches below expect.
         insert_event(
             &db_lock,
             "gia",
             "split",
             "GOOG",
             "2026-05-15T09:00:00",
-            "10",
+            "450",
             "0.00",
             None,
         );
@@ -1378,4 +1382,70 @@ async fn test_cgt_missing_fee_currency_returns_400() {
         res["error"].as_str().unwrap().contains("ZAR"),
         "error message should name the missing fee currency"
     );
+}
+
+/// A 10-for-1 split of a fractional holding, mirroring a real broker statement:
+/// 1.72827619 shares become 17.2827619, so `quantity` is the 15.55448571 shares
+/// ADDED. Treating that number as a ratio would inflate the pool to 25.17 shares,
+/// understating average cost and overstating every later gain.
+#[tokio::test]
+async fn test_cgt_split_quantity_is_shares_added_not_a_ratio() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Buy 1.72827619 @ 1000 (cost 1728.27619).
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "NVDA",
+            "2026-05-01T10:00:00",
+            "1.72827619",
+            "1000.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "split",
+            "NVDA",
+            "2026-06-10T10:00:00",
+            "15.55448571",
+            "0.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let pool = res["pools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["symbol"] == "NVDA")
+        .expect("NVDA pool");
+
+    // Shares added, not multiplied: 1.72827619 + 15.55448571 = 17.2827619.
+    assert_eq!(pool["current_shares"], "17.28276190");
+    // A split is a reorganisation: total cost is untouched, only the per-share
+    // average falls (1000 -> 100, exactly the 10-for-1 ratio).
+    assert_eq!(pool["total_allowable_expenditure"], "1728.2761900000");
+    let avg: f64 = pool["average_cost_per_share"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((avg - 100.0).abs() < 1e-9, "average cost per share: {avg}");
 }
