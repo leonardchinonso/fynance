@@ -231,18 +231,18 @@ function PortfolioOverviewInternal({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-baseline gap-3">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <span className="text-4xl font-bold tabular-nums">
                 <MoneyDisplay amount={portfolio.net_worth} currency={preferredCurrency} colorize={false} />
               </span>
               {delta !== null && (
-                <div className="flex flex-col">
+                <div className="flex min-w-0 flex-col">
                   <span
-                    className={`flex items-center gap-1 text-sm font-semibold ${
+                    className={`flex flex-wrap items-center gap-x-1 text-sm font-semibold ${
                       delta >= 0 ? "text-green-500" : "text-red-500"
                     }`}
                   >
-                    {delta >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                    {delta >= 0 ? <TrendingUp className="h-4 w-4 shrink-0" /> : <TrendingDown className="h-4 w-4 shrink-0" />}
                     <MoneyDisplay amount={delta.toFixed(2)} currency={preferredCurrency} />
                     {deltaPercent && <span className="text-xs opacity-75">({deltaPercent}%)</span>}
                   </span>
