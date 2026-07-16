@@ -1,6 +1,7 @@
 import { api } from "@/api/client"
 import type { Currency, Granularity, Holding, PortfolioHistoryRow, PortfolioResponse } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
+import { RemoteData as RD, combineRemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
 
 /** Data needed by the Overview and Charts views. */
@@ -15,13 +16,13 @@ export interface PortfolioSummaryData {
 }
 
 /**
- * Fetches portfolio summary, history, and holdings in parallel.
- * Used by the Overview and Charts views.
+ * Composes the Overview data set from per-endpoint cache entries, so each
+ * piece is cached and deduped independently: a date-range change refetches
+ * only the history, and `currencies`/`holdings-history` entries are shared
+ * with every other consumer of the same request shape.
  *
- * - Hard dep: `profileId`
- * - Soft deps: `start`, `end`, `granularity`
- *
- * `enabled` gates the fetch so the Overview tab issues no request until shown.
+ * The holdings batch depends on the summary's account list, so it starts once
+ * the summary lands (and is skipped entirely for zero accounts).
  */
 export function usePortfolioSummary(
   start: string,
@@ -30,22 +31,37 @@ export function usePortfolioSummary(
   profileId: string | undefined,
   enabled = true,
 ): RemoteData<PortfolioSummaryData> {
-  const [data] = useQuery(
-    async () => {
-      const [portfolio, history, currencies] = await Promise.all([
-        api.getPortfolio(profileId),
-        api.getPortfolioHistory(start, end, granularity, profileId),
-        api.getCurrencies(),
-      ])
-
-      const allAccountIds = portfolio.accounts.map(a => a.id)
-      const allHoldings = allAccountIds.length > 0
-        ? await api.getHoldingsBatch(allAccountIds)
-        : []
-
-      return { portfolio, history, allHoldings, currencies }
-    },
-    { tag: "portfolio-summary", hard: [profileId], soft: [start, end, granularity], enabled },
+  const [portfolio] = useQuery(
+    () => api.getPortfolio(profileId),
+    { tag: "holdings-summary", hard: [profileId], soft: [], enabled },
   )
-  return data
+  const [history] = useQuery(
+    () => api.getPortfolioHistory(start, end, granularity, profileId),
+    { tag: "holdings-history", hard: [profileId], soft: [start, end, granularity], enabled },
+  )
+  const [currencies] = useQuery(
+    () => api.getCurrencies(),
+    { tag: "currencies", hard: [], soft: [], static: true, enabled },
+  )
+
+  const accountIds =
+    portfolio.status === "succeeded" || portfolio.status === "reloading"
+      ? portfolio.value.accounts.map((a) => a.id)
+      : null
+  const [holdingsBatch] = useQuery(
+    () => api.getHoldingsBatch(accountIds ?? []),
+    {
+      tag: "holdings-batch",
+      hard: [],
+      soft: [accountIds],
+      enabled: enabled && accountIds !== null && accountIds.length > 0,
+    },
+  )
+  const holdings: RemoteData<Holding[]> =
+    accountIds !== null && accountIds.length === 0 ? RD.succeeded([]) : holdingsBatch
+
+  return combineRemoteData(
+    [portfolio, history, holdings, currencies] as const,
+    ([p, h, hold, c]) => ({ portfolio: p, history: h, allHoldings: hold, currencies: c }),
+  )
 }

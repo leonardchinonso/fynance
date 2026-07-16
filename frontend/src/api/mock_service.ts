@@ -739,11 +739,7 @@ export class MockApiService implements ApiService {
       }))
   }
 
-  async getAccountBalances(
-    start: string,
-    end: string,
-    _profileId?: string
-  ): Promise<AccountSnapshot[]> {
+  async getAccountBalances(start: string, end: string): Promise<AccountSnapshot[]> {
     await delay(DELAY_MS)
     return MOCK_ACCOUNT_BALANCES.filter((s) => {
       const month = getMonthFromDate(s.as_of)

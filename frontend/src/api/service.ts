@@ -166,12 +166,10 @@ export interface ApiService {
     excludeCategoryIds?: string[]
   ): Promise<CashFlowMonth[]>
 
-  // Account balances (per-account monthly balances for delta calculations)
-  getAccountBalances(
-    start: string,
-    end: string,
-    profileId?: string
-  ): Promise<AccountSnapshot[]>
+  // Account balances (per-account monthly balances for delta calculations).
+  // No profile filter: the endpoint has none; callers join against their own
+  // (already profile-filtered) account list.
+  getAccountBalances(start: string, end: string): Promise<AccountSnapshot[]>
 
   // Export
   exportData(format: string): Promise<void>

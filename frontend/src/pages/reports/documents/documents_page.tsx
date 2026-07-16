@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 import { api } from "@/api/client"
 import { DocumentReferencedError } from "@/api/service"
+import { useDocuments } from "@/hooks/data"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -67,6 +68,9 @@ const COLUMNS_KEY = "fynance-doc-columns"
 
 // Sentinel option for documents with no associated account.
 const NO_ACCOUNT = "__none__"
+
+// Stable empty list while the document query has no value yet.
+const NO_DOCS: DocumentSummary[] = []
 
 type DocSortColumn = "file" | "uploaded"
 type SortDir = "asc" | "desc"
@@ -269,8 +273,14 @@ function LinksCell({
 
 export function DocumentsPage() {
   const navigate = useNavigate()
-  const [docs, setDocs] = useState<DocumentSummary[]>([])
-  const [loading, setLoading] = useState(true)
+  // Shared cached list: uploads/deletes invalidate it via the api client's
+  // mutation wrapper, which force-refetches this active query.
+  const [docsData, refreshDocs] = useDocuments()
+  const docs =
+    docsData.status === "succeeded" || docsData.status === "reloading" ? docsData.value : NO_DOCS
+  const loading = docsData.status === "loading" || docsData.status === "idle"
+  const listError = docsData.status === "failed" ? docsData.error : null
+  // Upload/delete failures; list failures come from the query above.
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -298,20 +308,6 @@ export function DocumentsPage() {
   // The document pending a force-delete confirmation, plus its reference breakdown.
   const [confirm, setConfirm] = useState<{ doc: DocumentSummary; references: References } | null>(null)
   const [deleting, setDeleting] = useState(false)
-
-  function load() {
-    setLoading(true)
-    api
-      .listDocuments()
-      .then((d) => {
-        setDocs(d)
-        setError(null)
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(load, [])
 
   useEffect(() => {
     let cancelled = false
@@ -408,7 +404,6 @@ export function DocumentsPage() {
     setError(null)
     try {
       await api.uploadDocuments(Array.from(files))
-      load()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -429,7 +424,6 @@ export function DocumentsPage() {
     try {
       await api.deleteDocument(doc.id, force)
       setConfirm(null)
-      load()
     } catch (e: unknown) {
       if (e instanceof DocumentReferencedError) {
         setConfirm({ doc, references: e.references })
@@ -496,10 +490,15 @@ export function DocumentsPage() {
         </p>
       </div>
 
-      {error && (
+      {(error ?? listError) && (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
           <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-          <span className="text-xs text-destructive">{error}</span>
+          <span className="flex-1 text-xs text-destructive">{error ?? listError}</span>
+          {!error && listError && (
+            <Button variant="outline" size="sm" className="h-6 text-xs" onClick={refreshDocs}>
+              Retry
+            </Button>
+          )}
         </div>
       )}
 
