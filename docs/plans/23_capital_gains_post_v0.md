@@ -368,6 +368,8 @@ Closely linked to 7.4 — the tax computation should include an `aea_remaining`,
 
 Audit pass: walk every handler in `backend/src/server/routes/`, replace any "this throws a 500 because we panicked / unwrapped" with a `UserFacingError` (or accept it as a true internal). The fx panic was the canonical example; there are probably more.
 
+The storage-side half of this (a typed `StorageError` enum replacing the message-substring matching that routes do today, plus parameterizing the one string-built query) is tracked in `20_post_v0_plans.md` under "Backend Hardening"; implement the two together so handlers map `StorageError` variants straight into this envelope.
+
 ### 7.10 Historical FX rates (the big rock)
 
 Engine takes one rate per currency and uses it for every event regardless of date. PLTR (USD) figures last tax year differ from the filing by ~£80k because of this alone.
