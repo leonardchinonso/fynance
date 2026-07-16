@@ -30,12 +30,12 @@ impl FxRateMap {
     }
 
     /// Convert an amount from `source_currency` to the preferred currency.
-    /// When the source currency is missing from the FX table — which should not
-    /// happen for transactions/holdings/accounts since they go through write-time
-    /// validation, but can happen for investment events that pre-date that
-    /// validation — log a warning and return the amount unchanged. Poisoning the
-    /// DB mutex with a panic here brings down the whole server for a single bad
-    /// row; that trade-off is not worth it.
+    /// Every write path (transactions, holdings, accounts, investment events)
+    /// validates currencies at write time, so a currency missing from the FX
+    /// table can only come from a row written before that validation existed.
+    /// Log a warning and return the amount unchanged: poisoning the DB mutex
+    /// with a panic here brings down the whole server for a single bad row,
+    /// and that trade-off is not worth it.
     pub fn convert(&self, amount: Decimal, source_currency: &str) -> Decimal {
         if source_currency == self.preferred {
             return amount;

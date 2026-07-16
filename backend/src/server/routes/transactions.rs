@@ -209,17 +209,14 @@ pub async fn patch_transaction(
         .get_transaction_by_id(&id)?
         .ok_or_else(|| AppError::NotFound(format!("transaction {id} not found")))?;
 
-    if let Some(ref cat_id) = body.category_id {
-        db.update_transaction_category(&id, cat_id, CategorySource::Manual)?;
-    }
-
-    if let Some(ref notes) = body.notes {
-        db.update_transaction_notes(&id, Some(notes.as_str()))?;
-    }
-
-    if let Some(exclude) = body.exclude_from_summary {
-        db.update_transaction_exclude_summary(&id, exclude)?;
-    }
+    db.patch_transaction_fields(
+        &id,
+        body.category_id
+            .as_deref()
+            .map(|cat_id| (cat_id, CategorySource::Manual)),
+        body.notes.as_deref(),
+        body.exclude_from_summary,
+    )?;
 
     let updated = db.get_transaction_by_id(&id)?.unwrap_or(tx);
     Ok(Json(updated))

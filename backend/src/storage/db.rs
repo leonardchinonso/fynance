@@ -547,39 +547,34 @@ impl Db {
     /// sub_account) forward to the most recent snapshot on/before `as_of`.
     /// Returns `account_id -> (balance, latest_as_of_among_carried_rows)`.
     ///
-    /// Same carry-forward rule as `carried_holdings_sql`, kept separate on
-    /// purpose: `get_accounts` / `get_account_by_id` report balances for
-    /// inactive accounts too, so this must not join on `a.is_active`. Any
-    /// change to the rule must be mirrored there (and vice versa) to keep the
-    /// reconciliation invariant: account balances sum to summary net worth.
+    /// Uses `carried_holdings_sql` with `active_only = false`: `get_accounts`
+    /// / `get_account_by_id` report balances for inactive accounts too, which
+    /// keeps the reconciliation invariant that account balances sum to
+    /// summary net worth.
     fn balances_from_holdings_as_of(
         &self,
         as_of: NaiveDate,
     ) -> Result<std::collections::HashMap<String, (Decimal, NaiveDateTime)>> {
         use std::collections::HashMap;
         let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
-        let mut stmt = self.conn.prepare(
-            r"SELECT h.account_id, h.value, h.as_of
-              FROM holdings h
-              WHERE h.as_of = (
-                  SELECT MAX(h2.as_of) FROM holdings h2
-                  WHERE h2.account_id = h.account_id
-                    AND h2.symbol = h.symbol
-                    AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
-                    AND h2.as_of <= ?1
-              )",
-        )?;
+        let sql = carried_holdings_sql("account_id, value, as_of", "AND h.as_of <= ?1", false);
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![as_of_str], |row| {
             let account_id: String = row.get(0)?;
             let value_str: String = row.get(1)?;
             let as_of_str: String = row.get(2)?;
-            Ok((account_id, value_str, as_of_str))
+            let value: Decimal = value_str.parse().map_err(|_| {
+                column_error(
+                    1,
+                    format!("invalid holding value {value_str:?} for account {account_id}"),
+                )
+            })?;
+            Ok((account_id, value, as_of_str))
         })?;
 
         let mut agg: HashMap<String, (Decimal, NaiveDateTime)> = HashMap::new();
         for r in rows {
-            let (account_id, value_str, as_of_str) = r?;
-            let value: Decimal = value_str.parse().unwrap_or(Decimal::ZERO);
+            let (account_id, value, as_of_str) = r?;
             let snapshot_dt = parse_transaction_datetime(&as_of_str)
                 .unwrap_or_else(|| chrono::Utc::now().naive_utc());
             let entry = agg
@@ -777,10 +772,14 @@ impl Db {
 
     // ── Investments ───────────────────────────────────────────────────────────
 
+    /// Insert one investment event. `INSERT OR IGNORE` on the unique
+    /// fingerprint makes creation idempotent; the returned [`InsertOutcome`]
+    /// says whether a row was inserted or the fingerprint already existed
+    /// (the existing event is returned either way).
     pub fn create_investment_event(
         &self,
         body: &CreateInvestmentEventBody,
-    ) -> Result<InvestmentEvent> {
+    ) -> Result<(InvestmentEvent, InsertOutcome)> {
         let event_type = InvestmentEventType::parse(&body.event_type)
             .ok_or_else(|| anyhow::anyhow!("invalid event_type: {}", body.event_type))?;
         let quantity = body
@@ -827,7 +826,7 @@ impl Db {
         let source_ids_json =
             serde_json::to_string(&body.source_document_ids).unwrap_or_else(|_| "[]".to_string());
 
-        self.conn.execute(
+        let rows = self.conn.execute(
             "INSERT OR IGNORE INTO investments
              (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
@@ -848,6 +847,11 @@ impl Db {
                 fee_currency,
             ],
         )?;
+        let outcome = if rows == 1 {
+            InsertOutcome::Inserted
+        } else {
+            InsertOutcome::Duplicate
+        };
 
         // On a duplicate (INSERT ignored) the row already exists; union any new
         // source documents into it so re-imports keep the audit trail complete.
@@ -867,7 +871,7 @@ impl Db {
             params![fingerprint],
             row_to_investment_event,
         )?;
-        Ok(event)
+        Ok((event, outcome))
     }
 
     pub fn list_investment_events(
@@ -924,56 +928,84 @@ impl Db {
         Ok(rows)
     }
 
+    /// Patch an investment event. All field updates land in one transaction,
+    /// and the fingerprint is recomputed whenever an identity field
+    /// (event_type, symbol, date, quantity, price_per_share) changes so that
+    /// dedup on re-import keeps working. A recompute that collides with
+    /// another event's fingerprint fails the whole patch.
     pub fn update_investment_event(
         &self,
         id: &str,
         body: &PatchInvestmentEventBody,
     ) -> Result<Option<InvestmentEvent>> {
-        let exists: bool = self.conn.query_row(
-            "SELECT COUNT(*) > 0 FROM investments WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        if !exists {
+        let tx = self.conn.unchecked_transaction()?;
+
+        let current = tx
+            .query_row(
+                "SELECT account_id, event_type, symbol, date, quantity, price_per_share
+                 FROM investments WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((account_id, mut event_type, mut symbol, mut date_str, mut quantity, mut price)) =
+            current
+        else {
             return Ok(None);
-        }
+        };
 
         if let Some(ref et) = body.event_type {
-            InvestmentEventType::parse(et)
+            let parsed = InvestmentEventType::parse(et)
                 .ok_or_else(|| anyhow::anyhow!("invalid event_type: {}", et))?;
-            self.conn.execute(
+            event_type = parsed.as_str().to_string();
+            tx.execute(
                 "UPDATE investments SET event_type = ?1 WHERE id = ?2",
-                params![et, id],
+                params![event_type, id],
             )?;
         }
         if let Some(ref s) = body.symbol {
-            self.conn.execute(
+            symbol = s.clone();
+            tx.execute(
                 "UPDATE investments SET symbol = ?1 WHERE id = ?2",
-                params![s, id],
+                params![symbol, id],
             )?;
         }
         if let Some(ref d) = body.date {
             let dt = parse_transaction_datetime(d)
                 .ok_or_else(|| anyhow::anyhow!("invalid date format"))?;
-            self.conn.execute(
+            date_str = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+            tx.execute(
                 "UPDATE investments SET date = ?1 WHERE id = ?2",
-                params![dt.format("%Y-%m-%dT%H:%M:%S").to_string(), id],
+                params![date_str, id],
             )?;
         }
         if let Some(ref q) = body.quantity {
-            q.parse::<Decimal>()
-                .map_err(|_| anyhow::anyhow!("invalid quantity"))?;
-            self.conn.execute(
+            quantity = q
+                .parse::<Decimal>()
+                .map_err(|_| anyhow::anyhow!("invalid quantity"))?
+                .to_string();
+            tx.execute(
                 "UPDATE investments SET quantity = ?1 WHERE id = ?2",
-                params![q, id],
+                params![quantity, id],
             )?;
         }
         if let Some(ref p) = body.price_per_share {
-            p.parse::<Decimal>()
-                .map_err(|_| anyhow::anyhow!("invalid price_per_share"))?;
-            self.conn.execute(
+            price = p
+                .parse::<Decimal>()
+                .map_err(|_| anyhow::anyhow!("invalid price_per_share"))?
+                .to_string();
+            tx.execute(
                 "UPDATE investments SET price_per_share = ?1 WHERE id = ?2",
-                params![p, id],
+                params![price, id],
             )?;
         }
         if body.fee.is_some() {
@@ -982,29 +1014,60 @@ impl Db {
                 f.parse::<Decimal>()
                     .map_err(|_| anyhow::anyhow!("invalid fee"))?;
             }
-            self.conn.execute(
+            tx.execute(
                 "UPDATE investments SET fee = ?1 WHERE id = ?2",
                 params![fee_str, id],
             )?;
         }
         if let Some(ref c) = body.currency {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE investments SET currency = ?1 WHERE id = ?2",
                 params![c, id],
             )?;
         }
         if let Some(ref fc) = body.fee_currency {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE investments SET fee_currency = ?1 WHERE id = ?2",
                 params![fc, id],
             )?;
         }
         if body.notes.is_some() {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE investments SET notes = ?1 WHERE id = ?2",
                 params![body.notes.as_deref(), id],
             )?;
         }
+
+        let identity_changed = body.event_type.is_some()
+            || body.symbol.is_some()
+            || body.date.is_some()
+            || body.quantity.is_some()
+            || body.price_per_share.is_some();
+        if identity_changed {
+            // Same formula as create_investment_event: decimals go through
+            // Decimal Display and event_type through as_str(), so the stored
+            // fingerprint stays comparable with future imports.
+            let quantity_dec = quantity.parse::<Decimal>().map_err(|_| {
+                anyhow!("stored quantity {quantity:?} on investment event {id} is not a decimal")
+            })?;
+            let price_dec = price.parse::<Decimal>().map_err(|_| {
+                anyhow!("stored price_per_share {price:?} on investment event {id} is not a decimal")
+            })?;
+            let canonical_event_type = InvestmentEventType::parse(&event_type)
+                .ok_or_else(|| {
+                    anyhow!("unknown event_type {event_type:?} stored on investment event {id}")
+                })?
+                .as_str();
+            let fingerprint = sha256_hex(&format!(
+                "{account_id}|{symbol}|{date_str}|{quantity_dec}|{price_dec}|{canonical_event_type}"
+            ));
+            tx.execute(
+                "UPDATE investments SET fingerprint = ?1 WHERE id = ?2",
+                params![fingerprint, id],
+            )?;
+        }
+
+        tx.commit()?;
 
         let event = self.conn.query_row(
             "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency
@@ -1587,7 +1650,9 @@ impl Db {
 
         let mut categories_map: HashMap<Option<String>, CurrencyAggregator> = HashMap::new();
         for (category_id, currency, total_f64) in raw {
-            let total = Decimal::try_from(total_f64).unwrap_or_default();
+            let total = Decimal::try_from(total_f64).map_err(|e| {
+                anyhow!("total for category {category_id:?} ({currency}) is not representable: {e}")
+            })?;
             categories_map
                 .entry(category_id)
                 .or_default()
@@ -1699,6 +1764,31 @@ impl Db {
         if updated == 0 {
             return Err(anyhow!("unknown transaction: {id}"));
         }
+        Ok(())
+    }
+
+    /// Apply a transaction patch atomically: category, notes and
+    /// exclude_from_summary all land or none do. The individual update
+    /// helpers run on the same connection, so they execute inside the
+    /// transaction opened here.
+    pub fn patch_transaction_fields(
+        &self,
+        id: &str,
+        category: Option<(&str, CategorySource)>,
+        notes: Option<&str>,
+        exclude_from_summary: Option<bool>,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        if let Some((category_id, source)) = category {
+            self.update_transaction_category(id, category_id, source)?;
+        }
+        if let Some(n) = notes {
+            self.update_transaction_notes(id, Some(n))?;
+        }
+        if let Some(e) = exclude_from_summary {
+            self.update_transaction_exclude_summary(id, e)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1910,7 +2000,9 @@ impl Db {
     /// so no dangling references remain (FK enforcement is off, so this is
     /// done explicitly rather than relying on ON DELETE).
     pub fn hard_delete_category(&self, id: &str) -> Result<()> {
-        let child_count: i64 = self.conn.query_row(
+        let tx = self.conn.unchecked_transaction()?;
+
+        let child_count: i64 = tx.query_row(
             "SELECT COUNT(*) FROM categories WHERE parent_id = ?1",
             params![id],
             |row| row.get(0),
@@ -1921,27 +2013,25 @@ impl Db {
             ));
         }
 
-        self.conn.execute(
+        tx.execute(
             "UPDATE transactions SET category_id = NULL WHERE category_id = ?1",
             params![id],
         )?;
-        self.conn
-            .execute("DELETE FROM budgets WHERE category_id = ?1", params![id])?;
-        self.conn.execute(
+        tx.execute("DELETE FROM budgets WHERE category_id = ?1", params![id])?;
+        tx.execute(
             "DELETE FROM standing_budgets WHERE category_id = ?1",
             params![id],
         )?;
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM budget_overrides WHERE category_id = ?1",
             params![id],
         )?;
 
-        let deleted = self
-            .conn
-            .execute("DELETE FROM categories WHERE id = ?1", params![id])?;
+        let deleted = tx.execute("DELETE FROM categories WHERE id = ?1", params![id])?;
         if deleted == 0 {
             return Err(anyhow!("category {id} not found"));
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -2295,7 +2385,9 @@ impl Db {
             ),
         > = HashMap::new();
         for (gkey, cat_id, parent_id, period, currency, total_f64) in raw {
-            let total_dec = Decimal::try_from(total_f64).unwrap_or_default();
+            let total_dec = Decimal::try_from(total_f64).map_err(|e| {
+                anyhow!("spending total for {gkey} in period {period} is not representable: {e}")
+            })?;
             let entry = grid.entry(gkey.clone()).or_insert_with(|| {
                 let (category_id, parent_id_field, group_key) = match group_by {
                     SpendingGroupBy::LeafCategory => (cat_id.clone(), parent_id.clone(), None),
@@ -2862,6 +2954,7 @@ impl Db {
             "account_id, symbol, COALESCE(sub_account, '') AS sub_account, as_of,
              value, currency, is_closed, account_type",
             &format!("AND h.as_of <= ?1{filters}"),
+            true,
         );
         let sql = format!(
             r"{carried_at_from}
@@ -2882,11 +2975,12 @@ impl Db {
                 symbol: row.get(1)?,
                 sub_account: row.get(2)?,
                 as_of: row.get(3)?,
-                value: value_str.parse::<Decimal>().unwrap_or_default(),
+                value: parse_decimal_column(4, "holding value", &value_str)?,
                 currency: row.get(5)?,
                 is_closed: row.get::<_, i64>(6)? != 0,
-                account_type: AccountType::parse(&account_type_str)
-                    .unwrap_or(AccountType::Checking),
+                account_type: AccountType::parse(&account_type_str).ok_or_else(|| {
+                    column_error(7, format!("unknown account type: {account_type_str:?}"))
+                })?,
             })
         };
 
@@ -3024,19 +3118,28 @@ impl Db {
         // at event time so each pool's average cost is in a single currency.
         let events: Vec<InvestmentEventParsed> = raw
             .into_iter()
-            .filter_map(
+            .map(
                 |(date, event_type, symbol, q, p, fee, currency, fee_currency)| {
-                    let q: Decimal = q.parse().ok()?;
-                    let p: Decimal = p.parse().ok()?;
+                    let q: Decimal = q.parse().map_err(|_| {
+                        anyhow!("invalid quantity {q:?} on {event_type} {symbol} at {date}")
+                    })?;
+                    let p: Decimal = p.parse().map_err(|_| {
+                        anyhow!("invalid price_per_share {p:?} on {event_type} {symbol} at {date}")
+                    })?;
                     let principal = fx.convert(q * p, &currency);
-                    let fee = fee
-                        .and_then(|f| f.parse::<Decimal>().ok())
-                        .map(|f| fx.convert(f, fee_currency.as_deref().unwrap_or(&currency)))
-                        .unwrap_or(Decimal::ZERO);
-                    Some((date, event_type, symbol, q, principal, fee))
+                    let fee = match fee {
+                        Some(f) => {
+                            let f: Decimal = f.parse().map_err(|_| {
+                                anyhow!("invalid fee {f:?} on {event_type} {symbol} at {date}")
+                            })?;
+                            fx.convert(f, fee_currency.as_deref().unwrap_or(&currency))
+                        }
+                        None => Decimal::ZERO,
+                    };
+                    Ok((date, event_type, symbol, q, principal, fee))
                 },
             )
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let periods = generate_period_end_dates(from, to, granularity);
         let mut carry = CarryForward::new(self.holding_snapshots_in_range(
@@ -3179,7 +3282,9 @@ impl Db {
 
             for r in mapped {
                 let (symbol, name, short_name, value_str, currency, holding_type) = r?;
-                let value = value_str.parse::<Decimal>().unwrap_or_default();
+                let value = value_str.parse::<Decimal>().map_err(|_| {
+                    anyhow!("invalid holding value {value_str:?} for {account_id}/{symbol}")
+                })?;
                 let converted = fx.convert(value, &currency);
                 *by_symbol.entry(symbol.clone()).or_insert(Decimal::ZERO) += converted;
 
@@ -3434,8 +3539,12 @@ impl Db {
         let mut periods_map: HashMap<String, (CurrencyAggregator, CurrencyAggregator)> =
             HashMap::new();
         for (period, currency, income_f, spending_f) in raw {
-            let income = Decimal::try_from(income_f).unwrap_or_default();
-            let spending = Decimal::try_from(spending_f).unwrap_or_default();
+            let income = Decimal::try_from(income_f).map_err(|e| {
+                anyhow!("income total for period {period} ({currency}) is not representable: {e}")
+            })?;
+            let spending = Decimal::try_from(spending_f).map_err(|e| {
+                anyhow!("spending total for period {period} ({currency}) is not representable: {e}")
+            })?;
             let entry = periods_map
                 .entry(period)
                 .or_insert_with(|| (Default::default(), Default::default()));
@@ -3497,6 +3606,7 @@ impl Db {
                  as_of, short_name, sub_account, is_closed,
                  account_type, institution, source_document_ids",
                 &format!("AND h.as_of <= ?1 {profile_filter}"),
+                true,
             )
         );
 
@@ -3506,8 +3616,9 @@ impl Db {
             let holding = row_to_holding(row)?;
             Ok(HoldingSummaryRow {
                 holding,
-                account_type: AccountType::parse(&account_type_str)
-                    .unwrap_or(AccountType::Checking),
+                account_type: AccountType::parse(&account_type_str).ok_or_else(|| {
+                    column_error(12, format!("unknown account type: {account_type_str:?}"))
+                })?,
                 institution,
             })
         };
@@ -3575,7 +3686,8 @@ impl Db {
             let profile_ids: Vec<String> = serde_json::from_str(&profile_ids_str)
                 .unwrap_or_else(|_| vec!["default".to_string()]);
 
-            let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
+            let account_type = AccountType::parse(&type_str)
+                .ok_or_else(|| column_error(3, format!("unknown account type: {type_str:?}")))?;
             let is_available = is_available_account(&account_type);
 
             let (balance, balance_date) = match agg.get(&id) {
@@ -3851,8 +3963,12 @@ impl Db {
 
         let mut agg = CurrencyAggregator::default();
         for (event_type, qty, price, fee, currency, fee_currency) in rows {
-            let q = qty.parse::<Decimal>().unwrap_or_default();
-            let p = price.parse::<Decimal>().unwrap_or_default();
+            let q = qty
+                .parse::<Decimal>()
+                .map_err(|_| anyhow!("invalid quantity {qty:?} on {event_type} event"))?;
+            let p = price
+                .parse::<Decimal>()
+                .map_err(|_| anyhow!("invalid price_per_share {price:?} on {event_type} event"))?;
             // In (+): buy, vest, transfer-in. Out (-): sell, withhold. transfer
             // carries its direction in the quantity sign, so it is added as-is.
             // Fee is always a cost (+).
@@ -3864,7 +3980,9 @@ impl Db {
             };
             agg.add(signed, &currency, fx);
             if let Some(fee) = fee {
-                let f = fee.parse::<Decimal>().unwrap_or_default();
+                let f = fee
+                    .parse::<Decimal>()
+                    .map_err(|_| anyhow!("invalid fee {fee:?} on {event_type} event"))?;
                 if !f.is_zero() {
                     agg.add(f, fee_currency.as_deref().unwrap_or(&currency), fx);
                 }
@@ -3961,7 +4079,9 @@ impl Db {
             let Some(ctype) = CategoryType::parse(&ctype_str) else {
                 continue;
             };
-            let amount = Decimal::try_from(total_f64).unwrap_or_default();
+            let amount = Decimal::try_from(total_f64).map_err(|e| {
+                anyhow!("cash total for category type {ctype_str} is not representable: {e}")
+            })?;
             if CategoryType::INCOME.contains(&ctype) {
                 income.add(amount, &currency, fx);
             } else if CategoryType::SPENDING.contains(&ctype) {
@@ -4380,7 +4500,22 @@ fn parse_transaction_datetime(s: &str) -> Option<NaiveDateTime> {
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
+/// Column-level conversion failure for row mappers. Corrupt stored values
+/// (unparseable decimals, unknown enum strings) must surface as errors, never
+/// silently coerce to a default that misreports data.
+fn column_error(idx: usize, msg: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, msg.into())
+}
+
+fn parse_decimal_column(idx: usize, field: &str, s: &str) -> rusqlite::Result<Decimal> {
+    s.parse()
+        .map_err(|_| column_error(idx, format!("invalid {field}: {s:?}")))
+}
+
 fn row_to_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {
+    let category_type_str: String = row.get(6)?;
+    let category_type = CategoryType::parse(&category_type_str)
+        .ok_or_else(|| column_error(6, format!("unknown category type: {category_type_str:?}")))?;
     Ok(Category {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -4388,8 +4523,7 @@ fn row_to_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {
         display_order: row.get(3)?,
         is_active: row.get::<_, i64>(4)? != 0,
         description: row.get(5)?,
-        category_type: CategoryType::parse(&row.get::<_, String>(6)?)
-            .unwrap_or(CategoryType::Spending),
+        category_type,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
     })
@@ -4406,10 +4540,14 @@ fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
         account_id: row.get(0)?,
         symbol: row.get(1)?,
         name: row.get(2)?,
-        holding_type: HoldingType::parse(&holding_type_str).unwrap_or(HoldingType::Stock),
-        quantity: quantity_str.parse::<Decimal>().unwrap_or_default(),
-        price_per_unit: price_str.and_then(|s| s.parse::<Decimal>().ok()),
-        value: value_str.parse::<Decimal>().unwrap_or_default(),
+        holding_type: HoldingType::parse(&holding_type_str)
+            .ok_or_else(|| column_error(3, format!("unknown holding type: {holding_type_str:?}")))?,
+        quantity: parse_decimal_column(4, "holding quantity", &quantity_str)?,
+        price_per_unit: price_str
+            .as_deref()
+            .map(|s| parse_decimal_column(5, "holding price_per_unit", s))
+            .transpose()?,
+        value: parse_decimal_column(6, "holding value", &value_str)?,
         currency: row.get(7)?,
         as_of: parse_transaction_datetime(&as_of_str)
             .unwrap_or_else(|| chrono::Local::now().naive_local()),
@@ -4442,7 +4580,7 @@ fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> 
         })?,
         description: row.get(2)?,
         normalized: row.get(3)?,
-        amount: amount.parse::<Decimal>().unwrap_or_default(),
+        amount: parse_decimal_column(4, "transaction amount", &amount)?,
         currency: row.get(5)?,
         account_id: row.get(6)?,
         category_id: row.get(7)?, // FK to categories.id
@@ -4469,7 +4607,8 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
     let profile_ids_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
     let profile_ids: Vec<String> =
         serde_json::from_str(&profile_ids_str).unwrap_or_else(|_| vec!["default".to_string()]);
-    let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
+    let account_type = AccountType::parse(&type_str)
+        .ok_or_else(|| column_error(3, format!("unknown account type: {type_str:?}")))?;
     let is_available = is_available_account(&account_type);
     Ok(Account {
         id: row.get(0)?,
@@ -4492,16 +4631,23 @@ fn row_to_investment_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Investme
     let date_str: String = row.get(4)?;
     let created_at_str: String = row.get(11)?;
     let fee: Option<String> = row.get(7)?;
+    let quantity_str: String = row.get(5)?;
+    let price_str: String = row.get(6)?;
     Ok(InvestmentEvent {
         id: row.get(0)?,
         account_id: row.get(1)?,
-        event_type: InvestmentEventType::parse(&event_type_str).unwrap_or(InvestmentEventType::Buy),
+        event_type: InvestmentEventType::parse(&event_type_str).ok_or_else(|| {
+            column_error(2, format!("unknown investment event type: {event_type_str:?}"))
+        })?,
         symbol: row.get(3)?,
         date: parse_transaction_datetime(&date_str)
             .unwrap_or_else(|| chrono::Utc::now().naive_utc()),
-        quantity: row.get::<_, String>(5)?.parse().unwrap_or_default(),
-        price_per_share: row.get::<_, String>(6)?.parse().unwrap_or_default(),
-        fee: fee.and_then(|s| s.parse::<Decimal>().ok()),
+        quantity: parse_decimal_column(5, "investment quantity", &quantity_str)?,
+        price_per_share: parse_decimal_column(6, "investment price_per_share", &price_str)?,
+        fee: fee
+            .as_deref()
+            .map(|s| parse_decimal_column(7, "investment fee", s))
+            .transpose()?,
         currency: row.get(8)?,
         // Read by name so SELECTs that omit it fall back to None.
         fee_currency: row.get::<_, Option<String>>("fee_currency").ok().flatten(),
@@ -4546,25 +4692,38 @@ pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
 }
 
 /// The single SQL form of the holdings carry-forward rule: the latest
-/// snapshot per (account_id, symbol, COALESCE(sub_account, '')) on an active
-/// account, restricted by `filters` (which must bind the `h.as_of <= ?N`
-/// cutoff plus any profile/account predicates; `h` = holdings, `a` =
-/// accounts). `select` projects holdings columns plus `account_type` /
-/// `institution`. `get_holdings_for_summary` and `holding_snapshots_in_range`
-/// both build on this; `balances_from_holdings_as_of` intentionally does not
-/// (it must include inactive accounts). rowid breaks `as_of` ties
-/// deterministically, though `uq_holdings_identity` makes ties impossible.
-fn carried_holdings_sql(select: &str, filters: &str) -> String {
+/// snapshot per (account_id, symbol, COALESCE(sub_account, '')), restricted
+/// by `filters` (which must bind the `h.as_of <= ?N` cutoff plus any
+/// profile/account predicates; `h` = holdings, `a` = accounts). With
+/// `active_only`, holdings are joined to accounts and restricted to
+/// `a.is_active = 1`, and `select` may project `account_type` /
+/// `institution` alongside holdings columns; without it there is no accounts
+/// join at all, so every holdings row counts regardless of account state.
+/// `get_holdings_for_summary` and `holding_snapshots_in_range` use
+/// `active_only = true`; `balances_from_holdings_as_of` uses `false` because
+/// account balances are reported for inactive accounts too. rowid breaks
+/// `as_of` ties deterministically, though `uq_holdings_identity` makes ties
+/// impossible.
+fn carried_holdings_sql(select: &str, filters: &str, active_only: bool) -> String {
+    let (join, account_cols, where_head) = if active_only {
+        (
+            "JOIN accounts a ON a.id = h.account_id",
+            ", a.type AS account_type, a.institution",
+            "a.is_active = 1",
+        )
+    } else {
+        ("", "", "1=1")
+    };
     format!(
         r"SELECT {select} FROM (
-              SELECT h.*, a.type AS account_type, a.institution,
+              SELECT h.*{account_cols},
                      ROW_NUMBER() OVER (
                          PARTITION BY h.account_id, h.symbol, COALESCE(h.sub_account, '')
                          ORDER BY h.as_of DESC, h.rowid DESC
                      ) AS rn
               FROM holdings h
-              JOIN accounts a ON a.id = h.account_id
-              WHERE a.is_active = 1 {filters}
+              {join}
+              WHERE {where_head} {filters}
           ) WHERE rn = 1"
     )
 }
@@ -6770,11 +6929,11 @@ mod investment_dedup_tests {
         };
 
         // Fee present, no fee_currency -> defaults to the trade currency.
-        let defaulted = db.create_investment_event(&base).unwrap();
+        let (defaulted, _) = db.create_investment_event(&base).unwrap();
         assert_eq!(defaulted.fee_currency.as_deref(), Some("USD"));
 
         // Fee present with an explicit, different fee_currency -> preserved.
-        let explicit = db
+        let (explicit, _) = db
             .create_investment_event(&crate::model::CreateInvestmentEventBody {
                 symbol: "MSFT".to_string(),
                 fee_currency: Some("GBP".to_string()),
@@ -6784,7 +6943,7 @@ mod investment_dedup_tests {
         assert_eq!(explicit.fee_currency.as_deref(), Some("GBP"));
 
         // No fee -> fee_currency stays null.
-        let no_fee = db
+        let (no_fee, _) = db
             .create_investment_event(&crate::model::CreateInvestmentEventBody {
                 symbol: "TSLA".to_string(),
                 fee: None,
@@ -6793,6 +6952,132 @@ mod investment_dedup_tests {
             })
             .unwrap();
         assert_eq!(no_fee.fee_currency, None);
+    }
+
+    fn make_test_account(db: &Db, id: &str) {
+        db.create_account(&crate::model::Account {
+            id: id.to_string(),
+            name: "Test".to_string(),
+            institution: "Test Bank".to_string(),
+            account_type: crate::model::AccountType::Investment,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+    }
+
+    fn make_event_body(symbol: &str) -> crate::model::CreateInvestmentEventBody {
+        crate::model::CreateInvestmentEventBody {
+            account_id: "acct-1".to_string(),
+            event_type: "buy".to_string(),
+            symbol: symbol.to_string(),
+            date: "2026-03-15T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            fee: None,
+            currency: "GBP".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn create_investment_event_reports_duplicate_on_reimport() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+
+        let body = make_event_body("VUSA");
+        let (first, outcome) = db.create_investment_event(&body).unwrap();
+        assert_eq!(outcome, crate::model::InsertOutcome::Inserted);
+
+        let (second, outcome) = db.create_investment_event(&body).unwrap();
+        assert_eq!(outcome, crate::model::InsertOutcome::Duplicate);
+        assert_eq!(second.id, first.id, "duplicate returns the existing row");
+
+        let events = db
+            .list_investment_events(Some("acct-1"), None, None, None)
+            .unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn update_investment_event_recomputes_fingerprint() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+
+        let body = make_event_body("VUSA");
+        let (created, _) = db.create_investment_event(&body).unwrap();
+
+        let patched = db
+            .update_investment_event(
+                &created.id,
+                &crate::model::PatchInvestmentEventBody {
+                    event_type: None,
+                    symbol: None,
+                    date: None,
+                    quantity: Some("12".to_string()),
+                    price_per_share: None,
+                    fee: None,
+                    currency: None,
+                    fee_currency: None,
+                    notes: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(patched.fingerprint, created.fingerprint);
+        assert_eq!(
+            patched.fingerprint,
+            sha256_hex("acct-1|VUSA|2026-03-15T00:00:00|12|76.32|buy"),
+            "fingerprint must match what create_investment_event would compute"
+        );
+
+        // Dedup follows the new identity: re-importing the original body
+        // inserts a fresh row, re-importing the patched identity is a duplicate.
+        let (_, outcome) = db.create_investment_event(&body).unwrap();
+        assert_eq!(outcome, crate::model::InsertOutcome::Inserted);
+        let (_, outcome) = db
+            .create_investment_event(&crate::model::CreateInvestmentEventBody {
+                quantity: "12".to_string(),
+                ..body.clone()
+            })
+            .unwrap();
+        assert_eq!(outcome, crate::model::InsertOutcome::Duplicate);
+    }
+
+    #[test]
+    fn update_investment_event_notes_only_keeps_fingerprint() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+
+        let (created, _) = db.create_investment_event(&make_event_body("VUSA")).unwrap();
+        let patched = db
+            .update_investment_event(
+                &created.id,
+                &crate::model::PatchInvestmentEventBody {
+                    event_type: None,
+                    symbol: None,
+                    date: None,
+                    quantity: None,
+                    price_per_share: None,
+                    fee: None,
+                    currency: None,
+                    fee_currency: None,
+                    notes: Some("hello".to_string()),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(patched.fingerprint, created.fingerprint);
+        assert_eq!(patched.notes.as_deref(), Some("hello"));
     }
 }
 
