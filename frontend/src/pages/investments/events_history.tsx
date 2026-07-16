@@ -24,9 +24,7 @@ import {
   Pencil, Trash2, TrendingUp,
   ChevronLeft, ChevronRight, Settings2, Check, ArrowUp, ArrowDown, ArrowUpDown,
 } from "lucide-react"
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog"
+import { ConfirmDialog } from "@/components/confirm_dialog"
 import { SourceChips, type SourceDocMeta } from "@/components/source_chips"
 import { MoneyDisplay } from "@/components/currency"
 import { colorForSymbol, EVENT_TYPE_COLORS } from "@/lib/colors"
@@ -154,19 +152,15 @@ export function EventsHistory({
         />
       )}
 
-      <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null) }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>Delete investment event?</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This permanently removes the <strong>{deleting?.event_type}</strong> event for{" "}
-            <strong>{deleting?.symbol}</strong> on {deleting?.date.slice(0, 10)}.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>Delete</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!deleting}
+        onOpenChange={(open) => { if (!open) setDeleting(null) }}
+        title="Delete investment event?"
+        onConfirm={handleDeleteConfirm}
+      >
+        This permanently removes the <strong>{deleting?.event_type}</strong> event for{" "}
+        <strong>{deleting?.symbol}</strong> on {deleting?.date.slice(0, 10)}.
+      </ConfirmDialog>
     </div>
   )
 }

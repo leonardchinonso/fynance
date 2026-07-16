@@ -110,9 +110,6 @@ export function InteractivePie({
     }
   }, [data])
 
-  const pieTooltip = (props: Parameters<typeof PieTooltip>[0]) =>
-    PieTooltip({ ...props, total, data })
-
   const chart = (
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
@@ -149,7 +146,7 @@ export function InteractivePie({
           ))}
         </Pie>
         <Tooltip
-          content={pieTooltip}
+          content={<PieTooltip total={total} data={data} />}
           position={pos}
           wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
           isAnimationActive={false}

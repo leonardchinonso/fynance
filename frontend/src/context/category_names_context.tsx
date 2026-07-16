@@ -112,10 +112,15 @@ export function CategoryNamesProvider({ children }: { children: React.ReactNode 
     [maps],
   )
 
+  // Everything derives from `maps`, so consumers only re-render when the tree
+  // actually changed, not on every stale-while-revalidate emit.
+  const value = useMemo<CategoryNamesContextValue>(
+    () => ({ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder }),
+    [resolve, categoryType, parentName, childIdsOf, maps],
+  )
+
   return (
-    <CategoryNamesContext.Provider
-      value={{ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder }}
-    >
+    <CategoryNamesContext.Provider value={value}>
       {children}
     </CategoryNamesContext.Provider>
   )

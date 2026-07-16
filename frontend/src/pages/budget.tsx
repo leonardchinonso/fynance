@@ -11,7 +11,7 @@ import { TransactionTable, BulkCategoryPicker } from "./transactions/transaction
 import { Grid3X3, Table2, BarChart3, Search, Trash2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { ConfirmDialog } from "@/components/confirm_dialog"
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from "@/components/ui/select"
@@ -264,24 +264,15 @@ export function BudgetPage() {
         <BudgetCharts data={chartGrid} months={months} granularity={granularity} groupBy={groupBy} accountNameMap={accountNameMap} />
       )}
 
-      <Dialog open={deletingIds !== null} onOpenChange={(o) => { if (!o && !deleteBusy) setDeletingIds(null) }}>
-        <DialogContent className="sm:max-w-sm p-6">
-          <DialogHeader>
-            <DialogTitle>
-              Delete {deletingIds && deletingIds.length === 1 ? "transaction" : `${deletingIds?.length ?? 0} transactions`}?
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This permanently deletes {deletingIds && deletingIds.length === 1 ? "this transaction" : "these transactions"}. This cannot be undone.
-          </p>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" size="sm" onClick={() => setDeletingIds(null)} disabled={deleteBusy}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={confirmDeleteTxns} disabled={deleteBusy}>
-              {deleteBusy ? "Deleting..." : "Delete"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={deletingIds !== null}
+        onOpenChange={(o) => { if (!o) setDeletingIds(null) }}
+        title={`Delete ${deletingIds && deletingIds.length === 1 ? "transaction" : `${deletingIds?.length ?? 0} transactions`}?`}
+        busy={deleteBusy}
+        onConfirm={confirmDeleteTxns}
+      >
+        This permanently deletes {deletingIds && deletingIds.length === 1 ? "this transaction" : "these transactions"}. This cannot be undone.
+      </ConfirmDialog>
     </div>
   )
 }

@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react"
 import type React from "react"
 import type { TooltipProps } from "recharts"
 import { formatCurrency } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import type { PieDataItem } from "./interactive_pie"
 
 const CURSOR_OFFSET = 15 // gap between the cursor and the tooltip
@@ -87,6 +88,7 @@ export function ChartTooltip({
   activeCategory?: string | null
   showTotal?: boolean
 }) {
+  useRedactedFlag()
   if (!active || !payload || payload.length === 0) return null
 
   // Skip series with no value in this period (gaps before tracking starts) so the
@@ -157,6 +159,7 @@ export function PieTooltip({
   total,
   data,
 }: TooltipProps<number, string> & { total?: number; data?: PieDataItem[] }) {
+  useRedactedFlag()
   if (!active || !payload || payload.length === 0) return null
 
   const entry = payload[0]

@@ -16,6 +16,7 @@ import { AuthAwareError } from "@/components/auth_aware_error"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { ConfirmDialog } from "@/components/confirm_dialog"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -290,26 +291,17 @@ export function CategoriesSection() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={deleting !== null} onOpenChange={(open) => { if (!open && !deleteBusy) setDeleting(null) }}>
-        <DialogContent className="sm:max-w-sm p-6">
-          <DialogHeader>
-            <DialogTitle>Delete "{deleting?.name}"?</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            The category is removed from category lists and can no longer be assigned.
-            Transactions are not deleted.
-          </p>
-          {deleteError && (
-            <p className="text-xs text-destructive whitespace-pre-wrap">{deleteError}</p>
-          )}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" size="sm" onClick={() => setDeleting(null)} disabled={deleteBusy}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={confirmDelete} disabled={deleteBusy}>
-              {deleteBusy ? "Deleting..." : "Delete"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(open) => { if (!open) setDeleting(null) }}
+        title={`Delete "${deleting?.name}"?`}
+        busy={deleteBusy}
+        error={deleteError}
+        onConfirm={confirmDelete}
+      >
+        The category is removed from category lists and can no longer be assigned.
+        Transactions are not deleted.
+      </ConfirmDialog>
     </Card>
   )
 }

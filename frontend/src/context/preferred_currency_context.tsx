@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef } from "react"
+import { createContext, useContext, useMemo, useRef } from "react"
 import type { Currency } from "@/types"
 import { useCurrencies } from "@/hooks/data/use_currencies"
 
@@ -28,8 +28,12 @@ export function PreferredCurrencyProvider({ children }: { children: React.ReactN
   const currencies = fresh ?? lastGood.current
   const preferredCurrency = currencies.find((c) => c.is_preferred)?.code ?? "GBP"
 
+  // Stable value identity: consumers re-render only when the rates change,
+  // not on every stale-while-revalidate emit.
+  const value = useMemo(() => ({ preferredCurrency, currencies }), [preferredCurrency, currencies])
+
   return (
-    <PreferredCurrencyContext.Provider value={{ preferredCurrency, currencies }}>
+    <PreferredCurrencyContext.Provider value={value}>
       {children}
     </PreferredCurrencyContext.Provider>
   )

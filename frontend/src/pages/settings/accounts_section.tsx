@@ -23,8 +23,9 @@ import {
 } from "@/components/ui/command"
 import { Trash2, Pencil, Plus, Building2, Eye, EyeOff, Check, ChevronsUpDown, CircleHelp } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
-import { cn, formatCurrency } from "@/lib/utils"
-import { useRedactedFlag } from "@/hooks/use_redacted_flag"
+import { cn } from "@/lib/utils"
+import { MoneyDisplay } from "@/components/currency"
+import { ConfirmDialog } from "@/components/confirm_dialog"
 import { accountTypeClasses } from "@/lib/account_type_colors"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 
@@ -135,7 +136,6 @@ function TypeBadge({ type }: { type: AccountType }) {
 }
 
 function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts: Account[]; profiles: Profile[]; onRefresh: () => void; wizardMode: boolean }) {
-  useRedactedFlag()
   const [dragId, setDragId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Account | null>(null)
   const [deleting, setDeleting] = useState<Account | null>(null)
@@ -182,7 +182,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
               <TypeBadge type={a.type} />
               {a.balance && (
                 <p className="text-sm font-medium tabular-nums shrink-0">
-                  {formatCurrency(a.balance, a.currency)}
+                  <MoneyDisplay amount={a.balance} currency={a.currency} colorize={false} />
                 </p>
               )}
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
@@ -204,18 +204,15 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
           />
         )}
 
-        <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null) }}>
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader><DialogTitle>Delete account?</DialogTitle></DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              This deactivates <strong>{deleting?.name}</strong>. If the account still has transactions or holdings, the delete will be rejected — clear those first.
-            </p>
-            <DialogFooter>
-              <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
-              <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>Delete</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ConfirmDialog
+          open={!!deleting}
+          onOpenChange={(open) => { if (!open) setDeleting(null) }}
+          title="Delete account?"
+          onConfirm={handleDeleteConfirm}
+        >
+          This deactivates <strong>{deleting?.name}</strong>. If the account still has
+          transactions, holdings, or investment events, the delete is rejected: clear those first.
+        </ConfirmDialog>
       </>
     )
   }
@@ -250,7 +247,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
             <TypeBadge type={a.type} />
             {a.balance && (
               <p className="text-sm font-medium tabular-nums shrink-0">
-                {formatCurrency(a.balance, a.currency)}
+                <MoneyDisplay amount={a.balance} currency={a.currency} colorize={false} />
               </p>
             )}
             <Tooltip>
