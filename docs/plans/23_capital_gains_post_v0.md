@@ -385,6 +385,14 @@ Engine takes one rate per currency and uses it for every event regardless of dat
 
 **Open for the call:** do we backfill lazily (on report request) or proactively (background job on currency change)? Lazy is simpler; proactive is faster on the user's first report.
 
+### 7.11 Move the engine out of the routes layer
+
+`run_cgt_engine` and its supporting types (~900 lines of matching-rule business logic) live inside the HTTP route file, [`backend/src/server/routes/capital_gains.rs`](../../backend/src/server/routes/capital_gains.rs). Move them to a dedicated `backend/src/cgt/` module, leaving the route as a thin adapter that parses query params and maps the engine result into the response. Pure relocation, no behavior change; the integration tests pin the outputs.
+
+While there, add cross-references between the engine and the second average-cost pooling implementation in `Db::get_investment_history`: they intentionally differ (history applies plain S104 averaging and skips same-day/30-day matching, which is fine for a value-over-time chart), but nothing at either site says so today, which invites someone to "fix" one to match the other.
+
+Sequencing: best done after the `storage/db.rs` module split tracked in `20_post_v0_plans.md` §V2 Refactoring, so each diff stays a pure file move.
+
 ---
 
 ## 8. Items already covered above (cross-references)

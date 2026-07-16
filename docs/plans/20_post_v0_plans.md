@@ -106,6 +106,10 @@ Summary:
 
 Frequent automatic snapshots and backups of db so user can't loose months of work at a time
 
+### Refactoring
+
+- [ ] **Split `storage/db.rs` into per-entity modules.** ~7k lines and ~90 methods across every entity in one file. Split into `storage/{transactions,holdings,investments,categories,budgets,documents,meta}.rs` as `impl Db` blocks (one struct's impls can live across files): pure file moves, zero logic change, compiler-verified, tests unchanged. Timing matters more than effort: ship as its own logic-free PR at a quiet moment (right after a big branch merges), since it conflicts with anything in flight that touches `db.rs`. The CGT-engine relocation is tracked separately in `23_capital_gains_post_v0.md` §7.11.
+
 ---
 
 ## V3
