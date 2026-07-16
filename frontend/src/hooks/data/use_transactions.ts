@@ -34,9 +34,11 @@ export function useTransactions(
   sortDir: SortDir,
   enabled = true,
 ): RemoteData<TransactionsData> {
-  const accountsKey = selectedAccounts.join(",")
-  const categoriesKey = selectedCategories.join(",")
-  const typesKey = selectedCategoryTypes.join(",")
+  // Sorted so the cache key is order-insensitive, matching stableKey's array
+  // normalization (same selection in a different order must not refetch).
+  const accountsKey = [...selectedAccounts].sort().join(",")
+  const categoriesKey = [...selectedCategories].sort().join(",")
+  const typesKey = [...selectedCategoryTypes].sort().join(",")
 
   const [result] = useQuery(
     () => {
@@ -84,9 +86,10 @@ export function useTransactionCharts(
   profileId: string | undefined,
   enabled = true,
 ): RemoteData<CategoryTotal[]> {
-  const accountsKey = selectedAccounts.join(",")
-  const categoriesKey = selectedCategories.join(",")
-  const typesKey = selectedCategoryTypes.join(",")
+  // Sorted for order-insensitive cache keys, as in useTransactions above.
+  const accountsKey = [...selectedAccounts].sort().join(",")
+  const categoriesKey = [...selectedCategories].sort().join(",")
+  const typesKey = [...selectedCategoryTypes].sort().join(",")
 
   const [data] = useQuery(
     () => {

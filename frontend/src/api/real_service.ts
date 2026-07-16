@@ -558,8 +558,8 @@ export class RealApiService implements ApiService {
 
   // ── Documents ─────────────────────────────────────────────────────
 
-  async listDocuments(): Promise<DocumentSummary[]> {
-    return get<DocumentSummary[]>(`${BASE}/documents`)
+  async listDocuments(includeRefs = false): Promise<DocumentSummary[]> {
+    return get<DocumentSummary[]>(`${BASE}/documents${includeRefs ? "?include=refs" : ""}`)
   }
 
   async getDocument(id: string): Promise<DocumentSummary> {

@@ -34,6 +34,8 @@ interface InteractivePieProps {
   colors?: string[]
   /** Stable color map keyed by item name — takes precedence over positional `colors` */
   colorMap?: Map<string, string>
+  /** Currency code for the active-slice center label. Defaults to GBP. */
+  currency?: string
   label?: string
   height?: number
   className?: string
@@ -52,6 +54,7 @@ export function InteractivePie({
   data,
   colors = DEFAULT_COLORS,
   colorMap,
+  currency,
   label,
   height = 280,
   className,
@@ -122,7 +125,7 @@ export function InteractivePie({
           dataKey="value"
           nameKey="name"
           activeIndex={activeIndex}
-          activeShape={renderActiveShape}
+          activeShape={(p: PieSectorDataItem) => renderActiveShape(p, currency)}
           onMouseEnter={(_, index) => setActiveIndex(index)}
           onMouseLeave={clearHover}
           onClick={undefined}
@@ -271,7 +274,7 @@ function ScrollArrow({
   )
 }
 
-function renderActiveShape(props: PieSectorDataItem) {
+function renderActiveShape(props: PieSectorDataItem, currency?: string) {
   const {
     cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, percent,
   } = props
@@ -316,7 +319,7 @@ function renderActiveShape(props: PieSectorDataItem) {
         textAnchor="middle"
         className="fill-muted-foreground text-xs"
       >
-        {formatCurrency(((props.value as number) ?? 0).toFixed(2))} ({((percent ?? 0) * 100).toFixed(1)}%)
+        {formatCurrency(((props.value as number) ?? 0).toFixed(2), currency)} ({((percent ?? 0) * 100).toFixed(1)}%)
       </text>
     </g>
   )

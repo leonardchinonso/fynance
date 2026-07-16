@@ -48,7 +48,7 @@ fynance/
 │   │   ├── importers/       # Bank CSV parsers
 │   │   └── storage/         # SQLite queries
 │   └── config/              # categories.yaml, rules.yaml
-├── db/                      # sql/schema.sql, migrations
+├── db/                      # sql/schema.sql (migrations are probe-based in backend/src/storage/db.rs)
 ├── assets/                  # shared assets (logo, etc.)
 ├── docs/                    # design docs, plans, research, prompts
 │   ├── design/

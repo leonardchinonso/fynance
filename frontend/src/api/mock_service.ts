@@ -1248,10 +1248,14 @@ export class MockApiService implements ApiService {
 
   // ── Documents ─────────────────────────────────────────────────────
 
-  async listDocuments(): Promise<DocumentSummary[]> {
+  async listDocuments(includeRefs = false): Promise<DocumentSummary[]> {
     await delay(DELAY_MS)
-    // Match the real backend: the list never carries the exact count.
-    return this.documents.map((d) => ({ ...d, reference_count: null }))
+    // Match the real backend: the plain list never carries the exact count;
+    // `include=refs` populates it for every row (orphans resolve to 0).
+    return this.documents.map((d) => ({
+      ...d,
+      reference_count: includeRefs ? (d.orphaned ? 0 : (this.documentRefCounts[d.id] ?? 0)) : null,
+    }))
   }
 
   async getDocument(id: string): Promise<DocumentSummary> {

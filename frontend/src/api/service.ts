@@ -253,10 +253,11 @@ export interface ApiService {
   // ── Documents ─────────────────────────────────────────────────────
   /**
    * List all stored source documents with their orphan flag. `reference_count`
-   * is `null` here (computed lazily); fetch the real count per doc via
-   * {@link getDocument}.
+   * is `null` by default; pass `includeRefs` to populate it for every row
+   * (maps to `GET /api/documents?include=refs`). Without it, fetch the count
+   * per doc via {@link getDocument}.
    */
-  listDocuments(): Promise<DocumentSummary[]>
+  listDocuments(includeRefs?: boolean): Promise<DocumentSummary[]>
   /**
    * Fetch one document with its computed `reference_count`. Maps to
    * `GET /api/documents/:id`. Used to resolve the lazy per-row link count.

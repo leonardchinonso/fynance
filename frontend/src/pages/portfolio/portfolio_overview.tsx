@@ -497,6 +497,7 @@ function PortfolioOverviewInternal({
                     <InteractivePie
                       data={pieData}
                       colorMap={pieColorMap}
+                      currency={preferredCurrency}
                       height={240}
                       innerRadius={50}
                       outerRadius={90}

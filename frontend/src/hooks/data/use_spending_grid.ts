@@ -24,9 +24,11 @@ export function useSpendingGrid(
   filters: SpendingGridFilters = {},
   enabled = true,
 ): [RemoteData<SpendingGridRow[]>, () => void] {
-  const accountsKey = (filters.accounts ?? []).join(",")
-  const categoriesKey = (filters.categories ?? []).join(",")
-  const typesKey = (filters.categoryTypes ?? []).join(",")
+  // Sorted so the cache key is order-insensitive (same selection in a
+  // different order must not refetch).
+  const accountsKey = [...(filters.accounts ?? [])].sort().join(",")
+  const categoriesKey = [...(filters.categories ?? [])].sort().join(",")
+  const typesKey = [...(filters.categoryTypes ?? [])].sort().join(",")
   const groupBy = filters.groupBy ?? ""
   return useQuery(
     () => api.getSpendingGrid(start, end, granularity, profileId, filters),

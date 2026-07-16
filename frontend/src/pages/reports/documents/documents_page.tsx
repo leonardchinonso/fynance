@@ -274,8 +274,9 @@ function LinksCell({
 export function DocumentsPage() {
   const navigate = useNavigate()
   // Shared cached list: uploads/deletes invalidate it via the api client's
-  // mutation wrapper, which force-refetches this active query.
-  const [docsData, refreshDocs] = useDocuments()
+  // mutation wrapper, which force-refetches this active query. Refs are
+  // included so the Links column renders without per-row lookups.
+  const [docsData, refreshDocs] = useDocuments(true, true)
   const docs =
     docsData.status === "succeeded" || docsData.status === "reloading" ? docsData.value : NO_DOCS
   const loading = docsData.status === "loading" || docsData.status === "idle"

@@ -150,6 +150,7 @@ function InvestmentsOverviewInternal({
                 <InteractivePie
                   data={pieData}
                   colorMap={pieColorMap}
+                  currency={preferredCurrency}
                   height={260}
                   innerRadius={55}
                   outerRadius={95}

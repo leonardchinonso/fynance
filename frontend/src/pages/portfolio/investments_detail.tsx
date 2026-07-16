@@ -315,6 +315,7 @@ function HoldingsContent({
           <InteractivePie
             data={pieData}
             colors={PIE_COLORS}
+            currency={preferredCurrency}
             height={260}
             innerRadius={55}
             outerRadius={95}

@@ -7,10 +7,10 @@ import { useQuery } from "@/hooks/use_query"
 /**
  * Fetches the full investment-events ledger for the profile, unfiltered.
  *
- * All filtering (account, type, symbol, search, date) is done client-side by
- * the History table, so the ledger is fetched once and reused. This keeps the
- * History view from re-fetching on every filter change and lets it paginate
- * the full result set locally.
+ * All filtering, sorting, and pagination happen client-side over the full
+ * ledger, deliberately diverging from transactions (which paginate
+ * server-side): event counts are small, and several views reuse this one
+ * cached list.
  *
  * `enabled` gates the fetch so the History tab issues no request until shown.
  * Returns `[data, reload]` — call `reload()` after creating, editing, or
