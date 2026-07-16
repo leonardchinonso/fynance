@@ -28,6 +28,7 @@ import {
 } from "lucide-react"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { formatCurrency, getMonthsInRange } from "@/lib/utils"
+import { subMoney, sumMoney } from "@/lib/money"
 import { cn } from "@/lib/utils"
 import type { AssetClass } from "@/bindings/AssetClass"
 import { ASSET_CLASSES, type AssetClassSettings } from "@/hooks/use_url_filters"
@@ -159,12 +160,12 @@ function PortfolioOverviewInternal({
 
 
   const preferredCurrency = portfolio.preferred_currency
+  const delta = startNetWorth && endNetWorth ? subMoney(endNetWorth, startNetWorth) : null
+  const deltaNum = delta !== null ? parseFloat(delta) : null
   const startNw = startNetWorth ? parseFloat(startNetWorth) : null
-  const endNw = endNetWorth ? parseFloat(endNetWorth) : null
-  const delta = startNw !== null && endNw !== null ? endNw - startNw : null
   const deltaPercent =
-    delta !== null && startNw !== null && startNw > 0
-      ? ((delta / startNw) * 100).toFixed(1)
+    deltaNum !== null && startNw !== null && startNw > 0
+      ? ((deltaNum / startNw) * 100).toFixed(1)
       : null
 
   const netWorth = parseFloat(portfolio.net_worth)
@@ -215,7 +216,9 @@ function PortfolioOverviewInternal({
   pieColorMap.set("Others", "#78716c")
 
   const pieData = hideSmall ? groupSmall(allPieItems) : allPieItems
-  const pieTotal = pieData.reduce((s, d) => s + d.value, 0)
+  // Item values stay numeric for chart geometry; the displayed total sums
+  // their cent-rounded 2dp representations exactly.
+  const pieTotal = sumMoney(pieData.map((d) => d.value.toFixed(2)))
 
   return (
     // On desktop the overview fills the viewport (minus the navbar + filter row
@@ -237,15 +240,15 @@ function PortfolioOverviewInternal({
               <span className="text-4xl font-bold tabular-nums">
                 <MoneyDisplay amount={portfolio.net_worth} currency={preferredCurrency} colorize={false} />
               </span>
-              {delta !== null && (
+              {delta !== null && deltaNum !== null && (
                 <div className="flex min-w-0 flex-col">
                   <span
                     className={`flex flex-wrap items-center gap-x-1 text-sm font-semibold ${
-                      delta >= 0 ? "text-green-500" : "text-red-500"
+                      deltaNum >= 0 ? "text-green-500" : "text-red-500"
                     }`}
                   >
-                    {delta >= 0 ? <TrendingUp className="h-4 w-4 shrink-0" /> : <TrendingDown className="h-4 w-4 shrink-0" />}
-                    <MoneyDisplay amount={delta.toFixed(2)} currency={preferredCurrency} />
+                    {deltaNum >= 0 ? <TrendingUp className="h-4 w-4 shrink-0" /> : <TrendingDown className="h-4 w-4 shrink-0" />}
+                    <MoneyDisplay amount={delta} currency={preferredCurrency} />
                     {deltaPercent && <span className="text-xs opacity-75">({deltaPercent}%)</span>}
                   </span>
                   <span className="text-xs text-muted-foreground ml-5">over selected period</span>
@@ -497,7 +500,7 @@ function PortfolioOverviewInternal({
                       height={240}
                       innerRadius={50}
                       outerRadius={90}
-                      label={formatCurrency(pieTotal.toFixed(2), preferredCurrency)}
+                      label={formatCurrency(pieTotal, preferredCurrency)}
                       legendPosition="left"
                       className="w-full h-full min-w-[340px]"
                     />
@@ -595,7 +598,7 @@ function groupSmall(items: PieDataItem[]): PieDataItem[] {
   const main = items.filter(d => (d.value / total) * 100 >= 1)
   const small = items.filter(d => (d.value / total) * 100 < 1)
   if (small.length === 0) return main
-  const othersValue = parseFloat(small.reduce((s, d) => s + d.value, 0).toFixed(2))
+  const othersValue = parseFloat(sumMoney(small.map((d) => d.value.toFixed(2))))
   return [
     ...main,
     {
@@ -632,6 +635,8 @@ function buildPieData({
         if (value > 0) items.push({ name: cls, value })
       }
     } else {
+      // FX-converted values stay float on purpose (rates exceed 2dp); see the
+      // contract in lib/money.ts. Each slice is cent-rounded before display.
       const byName = new Map<string, { value: number; fullName: string }>()
       let negativesSum = 0
       for (const h of holdings.filter(h => accountAssetClass.get(h.account_id) === cls)) {
@@ -685,7 +690,7 @@ function BreakdownCard({
         ...items.filter((i) => !(i.percentage > 0 && i.percentage < 1)),
         {
           label: "Others",
-          value: tiny.reduce((s, i) => s + parseFloat(i.value), 0).toFixed(2),
+          value: sumMoney(tiny.map((i) => i.value)),
           percentage: tiny.reduce((s, i) => s + i.percentage, 0),
           display_currency: null,
         },

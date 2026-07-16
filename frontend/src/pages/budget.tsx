@@ -12,6 +12,7 @@ import { Grid3X3, Table2, BarChart3, Search, Trash2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/confirm_dialog"
+import { showErrorToast } from "@/components/toast"
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from "@/components/ui/select"
@@ -122,6 +123,7 @@ export function BudgetPage() {
   const [selectedTxnIds, setSelectedTxnIds] = useState<Set<string>>(new Set())
   const [deletingIds, setDeletingIds] = useState<string[] | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   // Clear selection whenever the visible result set changes.
   const txKey = [
     start, end, selectedAccounts.join(","), selectedCategories.join(","),
@@ -133,19 +135,25 @@ export function BudgetPage() {
     const ids = [...selectedTxnIds]
     setSelectedTxnIds(new Set())
     try { await api.bulkSetCategory(ids, opt.id) }
-    catch (e) { alert(e instanceof Error ? e.message : String(e)) }
+    catch (e) { showErrorToast(e instanceof Error ? e.message : String(e)) }
+  }
+
+  function requestDeleteTxns(ids: string[]) {
+    setDeleteError(null)
+    setDeletingIds(ids)
   }
 
   async function confirmDeleteTxns() {
     if (!deletingIds) return
     const ids = deletingIds
     setDeleteBusy(true)
+    setDeleteError(null)
     try {
       if (ids.length === 1) await api.deleteTransaction(ids[0])
       else await api.bulkDeleteTransactions(ids)
       setSelectedTxnIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n })
       setDeletingIds(null)
-    } catch (e) { alert(e instanceof Error ? e.message : String(e)) }
+    } catch (e) { setDeleteError(e instanceof Error ? e.message : String(e)) }
     finally { setDeleteBusy(false) }
   }
 
@@ -217,7 +225,7 @@ export function BudgetPage() {
               variant="outline"
               size="sm"
               className="h-8 gap-1.5 text-destructive hover:text-destructive"
-              onClick={() => setDeletingIds([...selectedTxnIds])}
+              onClick={() => requestDeleteTxns([...selectedTxnIds])}
             >
               <Trash2 className="h-3.5 w-3.5" /> Delete
             </Button>
@@ -257,7 +265,7 @@ export function BudgetPage() {
           onResetFilters={hasFilters ? clearFilters : undefined}
           selectedIds={selectedTxnIds}
           onSelectedChange={setSelectedTxnIds}
-          onRequestDelete={(ids) => setDeletingIds(ids)}
+          onRequestDelete={requestDeleteTxns}
         />
       )}
       {view === "charts" && (
@@ -269,6 +277,7 @@ export function BudgetPage() {
         onOpenChange={(o) => { if (!o) setDeletingIds(null) }}
         title={`Delete ${deletingIds && deletingIds.length === 1 ? "transaction" : `${deletingIds?.length ?? 0} transactions`}?`}
         busy={deleteBusy}
+        error={deleteError}
         onConfirm={confirmDeleteTxns}
       >
         This permanently deletes {deletingIds && deletingIds.length === 1 ? "this transaction" : "these transactions"}. This cannot be undone.

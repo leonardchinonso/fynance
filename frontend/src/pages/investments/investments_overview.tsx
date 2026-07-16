@@ -60,6 +60,8 @@ function InvestmentsOverviewInternal({
 
   const toPreferred = makeFxConverter(currencies)
 
+  // FX-converted sums stay float on purpose (rates exceed 2dp); see the
+  // contract in lib/money.ts.
   const currentValue = holdings.reduce(
     (sum, h) => sum + toPreferred(parseFloat(h.value), h.currency),
     0,

@@ -9,6 +9,7 @@ import { ThemeProvider } from "@/context/theme_context"
 import { ProfileColorsProvider } from "@/context/profile_colors_context"
 import { RedactedProvider } from "@/context/redacted_context"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { Toaster } from "@/components/toast"
 import { Navbar } from "@/components/navbar"
 import { BudgetPage } from "@/pages/budget"
 import { PortfolioPage } from "@/pages/portfolio"
@@ -106,6 +107,7 @@ export default function App() {
                 <RedactedProvider>
                   <TooltipProvider>
                     <Layout />
+                    <Toaster />
                   </TooltipProvider>
                 </RedactedProvider>
               </ProfileColorsProvider>

@@ -97,15 +97,26 @@ export function EventsHistory({
 }: Props) {
   const [editing, setEditing] = useState<InvestmentEvent | null>(null)
   const [deleting, setDeleting] = useState<InvestmentEvent | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  function requestDelete(event: InvestmentEvent) {
+    setDeleteError(null)
+    setDeleting(event)
+  }
 
   async function handleDeleteConfirm() {
     if (!deleting) return
+    setDeleteBusy(true)
+    setDeleteError(null)
     try {
       await api.deleteInvestment(deleting.id)
       setDeleting(null)
       reload()
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      setDeleteError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -135,7 +146,7 @@ export function EventsHistory({
               sortDir={sortDir}
               onSort={onSort}
               onEdit={setEditing}
-              onDelete={setDeleting}
+              onDelete={requestDelete}
               onResetFilters={filtersActive ? onResetFilters : undefined}
             />
             <ReloadingOverlay active={data.status === "reloading"} />
@@ -156,6 +167,8 @@ export function EventsHistory({
         open={!!deleting}
         onOpenChange={(open) => { if (!open) setDeleting(null) }}
         title="Delete investment event?"
+        busy={deleteBusy}
+        error={deleteError}
         onConfirm={handleDeleteConfirm}
       >
         This permanently removes the <strong>{deleting?.event_type}</strong> event for{" "}
