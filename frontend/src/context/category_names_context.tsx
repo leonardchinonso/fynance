@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useCallback } from "react"
+import { createContext, useContext, useMemo, useCallback, useRef } from "react"
 import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { CategoryType } from "@/bindings/CategoryType"
 import { useCategories } from "@/hooks/data/use_categories"
@@ -69,10 +69,15 @@ const EMPTY_MAPS: CategoryMaps = {
 
 export function CategoryNamesProvider({ children }: { children: React.ReactNode }) {
   const [categoriesData] = useCategories()
-  const tree =
+  const fresh =
     categoriesData.status === "succeeded" || categoriesData.status === "reloading"
       ? categoriesData.value
       : null
+  // Keep the last good tree through a failed refetch (e.g. a forced
+  // invalidation while the backend restarts): stale names beat raw ids.
+  const lastGood = useRef<CategoryNode[] | null>(null)
+  if (fresh) lastGood.current = fresh
+  const tree = fresh ?? lastGood.current
   const maps = useMemo(() => (tree ? buildMaps(tree) : EMPTY_MAPS), [tree])
 
   const resolve = useCallback(

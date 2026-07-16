@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react"
+import { createContext, useContext, useRef } from "react"
 import type { Currency } from "@/types"
 import { useCurrencies } from "@/hooks/data/use_currencies"
 
@@ -17,10 +17,15 @@ const PreferredCurrencyContext = createContext<PreferredCurrencyContextValue | n
  */
 export function PreferredCurrencyProvider({ children }: { children: React.ReactNode }) {
   const [currenciesData] = useCurrencies()
-  const currencies =
+  const fresh =
     currenciesData.status === "succeeded" || currenciesData.status === "reloading"
       ? currenciesData.value
-      : []
+      : null
+  // Keep the last good rates through a failed refetch: a backend blip must not
+  // re-base every money label to GBP or wipe FX conversions.
+  const lastGood = useRef<Currency[]>([])
+  if (fresh) lastGood.current = fresh
+  const currencies = fresh ?? lastGood.current
   const preferredCurrency = currencies.find((c) => c.is_preferred)?.code ?? "GBP"
 
   return (
