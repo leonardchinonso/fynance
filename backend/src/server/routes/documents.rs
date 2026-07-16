@@ -35,13 +35,21 @@ fn require_token_if_remote(state: &AppState, auth: &AuthContext) -> Result<(), A
 
 // ── GET /api/documents ────────────────────────────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+pub struct ListDocumentsQuery {
+    /// `refs` populates `reference_count` for every row (batched, not per-doc).
+    pub include: Option<String>,
+}
+
 pub async fn list_documents(
     State(state): State<AppState>,
     auth: axum::extract::Extension<AuthContext>,
+    Query(q): Query<ListDocumentsQuery>,
 ) -> Result<Json<Vec<DocumentSummary>>, AppError> {
     require_token_if_remote(&state, &auth)?;
+    let include_refs = q.include.as_deref() == Some("refs");
     let db = state.db();
-    Ok(Json(db.list_documents()?))
+    Ok(Json(db.list_documents(include_refs)?))
 }
 
 // ── GET /api/documents/:id ────────────────────────────────────────────────────

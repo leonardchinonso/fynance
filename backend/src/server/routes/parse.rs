@@ -29,6 +29,28 @@ const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10 MB per file
 const MAX_TOTAL_SIZE: usize = 50 * 1024 * 1024; // 50 MB total
 const MAX_FILES: usize = 5;
 
+type ProgressChannels =
+    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, ProgressTx>>>;
+
+/// Removes this parse's progress channel from the shared map on drop, so
+/// every exit path out of `parse_documents` (including early error returns)
+/// cleans up exactly once instead of leaking the entry until the 600s
+/// backstop timer. Dropping the map's sender does not cut off events already
+/// broadcast: the SSE stream drains its own receiver, so the final `done`
+/// event still reaches subscribers.
+struct ProgressCleanupGuard {
+    parse_id: Option<String>,
+    channels: ProgressChannels,
+}
+
+impl Drop for ProgressCleanupGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = &self.parse_id {
+            lock_or_recover(&self.channels).remove(pid);
+        }
+    }
+}
+
 // ── POST /api/parse ─────────────────────────────────────────────────────────
 
 pub async fn parse_documents(
@@ -211,14 +233,9 @@ pub async fn parse_documents(
         tx
     });
 
-    let cleanup_progress = {
-        let channels = state.progress_channels.clone();
-        let pid = parse_id.clone();
-        move || {
-            if let Some(pid) = &pid {
-                lock_or_recover(&channels).remove(pid);
-            }
-        }
+    let _progress_cleanup = ProgressCleanupGuard {
+        parse_id: parse_id.clone(),
+        channels: state.progress_channels.clone(),
     };
 
     emit_progress(
@@ -308,16 +325,7 @@ pub async fn parse_documents(
             progress_tx.clone(),
         )
         .await;
-        match result {
-            Ok(preview) => {
-                cleanup_progress();
-                return Ok(Json(preview));
-            }
-            Err(e) => {
-                cleanup_progress();
-                return Err(e);
-            }
-        }
+        return result.map(Json);
     }
 
     // Run the multi-file LLM pipeline (split mode)
@@ -337,7 +345,6 @@ pub async fn parse_documents(
                 message: e.to_string(),
             },
         );
-        cleanup_progress();
         provider_err_to_app_error(e)
     })?;
     let elapsed = start.elapsed().as_millis() as u64;
@@ -345,7 +352,6 @@ pub async fn parse_documents(
     // If clarification needed, return early
     if let PipelineOutcome::NeedsClarification(mut preview) = pipeline_result {
         preview.metadata.processing_time_ms = elapsed;
-        cleanup_progress();
         return Ok(Json(*preview));
     }
 
@@ -391,7 +397,6 @@ pub async fn parse_documents(
             total_ms: route_started.elapsed().as_millis() as u64,
         },
     );
-    cleanup_progress();
 
     tracing::info!(
         elapsed_ms = route_started.elapsed().as_millis() as u64,
@@ -811,4 +816,40 @@ fn infer_mime(filename: &str) -> String {
         _ => "application/octet-stream",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_cleanup_guard_removes_channel_on_drop() {
+        let channels: ProgressChannels = Default::default();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<ProgressEvent>(4);
+        lock_or_recover(&channels).insert("p1".to_string(), tx);
+
+        {
+            let _guard = ProgressCleanupGuard {
+                parse_id: Some("p1".to_string()),
+                channels: channels.clone(),
+            };
+        }
+        assert!(
+            !lock_or_recover(&channels).contains_key("p1"),
+            "dropping the guard must remove the channel entry"
+        );
+    }
+
+    #[test]
+    fn progress_cleanup_guard_without_parse_id_is_noop() {
+        let channels: ProgressChannels = Default::default();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<ProgressEvent>(4);
+        lock_or_recover(&channels).insert("p2".to_string(), tx);
+
+        drop(ProgressCleanupGuard {
+            parse_id: None,
+            channels: channels.clone(),
+        });
+        assert!(lock_or_recover(&channels).contains_key("p2"));
+    }
 }

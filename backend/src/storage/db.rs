@@ -1051,7 +1051,9 @@ impl Db {
                 anyhow!("stored quantity {quantity:?} on investment event {id} is not a decimal")
             })?;
             let price_dec = price.parse::<Decimal>().map_err(|_| {
-                anyhow!("stored price_per_share {price:?} on investment event {id} is not a decimal")
+                anyhow!(
+                    "stored price_per_share {price:?} on investment event {id} is not a decimal"
+                )
             })?;
             let canonical_event_type = InvestmentEventType::parse(&event_type)
                 .ok_or_else(|| {
@@ -1138,13 +1140,15 @@ impl Db {
 
     /// Batch-insert a slice of `ImportTransaction`s from the JSON API.
     /// Inserts valid rows and skips bad ones (partial success). Returns an
-    /// `ImportResult` with per-row error details for any skipped rows.
+    /// `ImportResult` with per-row error details for any skipped rows. All
+    /// valid rows commit in a single transaction at the end.
     pub fn insert_transactions_bulk(
         &self,
         account_id: &str,
         txns: &[ImportTransaction],
     ) -> Result<ImportResult> {
         use crate::util::{fingerprint, normalize_description};
+        use std::collections::HashSet;
         use uuid::Uuid;
 
         let mut result = ImportResult {
@@ -1153,67 +1157,125 @@ impl Db {
             ..ImportResult::default()
         };
 
-        for (i, t) in txns.iter().enumerate() {
-            result.rows_total += 1;
-            let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
-            let amount_str = t.amount.to_string();
-            let currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
-            let normalized = normalize_description(&t.description);
-            let fp = fingerprint(&date_iso, &amount_str, account_id);
+        // Category validity, preloaded once (a per-row lookup made large
+        // imports issue O(rows) queries). Assignable = active leaf; parents
+        // get a distinct error message regardless of their active flag,
+        // mirroring the old per-row get_category_by_id match.
+        let mut active_leaves: HashSet<String> = HashSet::new();
+        let mut parent_ids: HashSet<String> = HashSet::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, parent_id IS NULL, is_active FROM categories")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)? != 0,
+                    row.get::<_, i64>(2)? != 0,
+                ))
+            })?;
+            for row in rows {
+                let (id, is_parent, is_active) = row?;
+                if is_parent {
+                    parent_ids.insert(id);
+                } else if is_active {
+                    active_leaves.insert(id);
+                }
+            }
+        }
 
-            // Validate the category_id (must be an active leaf) when provided.
-            let category_id = if let Some(ref cid) = t.category_id {
-                match self.get_category_by_id(cid)? {
-                    Some(cat) if cat.parent_id.is_some() && cat.is_active => Some(cid.clone()),
-                    Some(cat) if cat.parent_id.is_none() => {
+        let db_tx = self.conn.unchecked_transaction()?;
+        {
+            let mut insert_stmt = self.conn.prepare_cached(
+                r"INSERT OR IGNORE INTO transactions (
+                    id, date, description, normalized, amount, currency,
+                    account_id, category_id, category_source, confidence, notes,
+                    is_recurring, exclude_from_summary, fingerprint, fitid, source_document_ids
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            )?;
+
+            for (i, t) in txns.iter().enumerate() {
+                result.rows_total += 1;
+                let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
+                let amount_str = t.amount.to_string();
+                let currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
+                let normalized = normalize_description(&t.description);
+                let fp = fingerprint(&date_iso, &amount_str, account_id);
+
+                let category_id = match &t.category_id {
+                    Some(cid) if active_leaves.contains(cid) => Some(cid.as_str()),
+                    Some(cid) if parent_ids.contains(cid) => {
                         result.errors.push(ImportRowError {
                             index: i,
                             reason: format!("category {cid} is a parent, not a leaf"),
                         });
                         continue;
                     }
-                    _ => {
+                    Some(cid) => {
                         result.errors.push(ImportRowError {
                             index: i,
                             reason: format!("category {cid} not found or inactive"),
                         });
                         continue;
                     }
-                }
-            } else {
-                None
-            };
+                    None => None,
+                };
 
-            let tx = Transaction {
-                id: Uuid::new_v4().to_string(),
-                date: t.date,
-                description: t.description.clone(),
-                normalized,
-                amount: t.amount,
-                currency,
-                account_id: account_id.to_string(),
-                category_id,
-                category_source: t.category_source.clone(),
-                confidence: None,
-                notes: t.notes.clone(),
-                is_recurring: t.is_recurring.unwrap_or(false),
-                exclude_from_summary: t.exclude_from_summary.unwrap_or(false),
-                fingerprint: fp,
-                fitid: None,
-                source_document_ids: t.source_document_ids.clone(),
-            };
+                let source_ids_json = serde_json::to_string(&t.source_document_ids)
+                    .unwrap_or_else(|_| "[]".to_string());
+                let inserted = insert_stmt.execute(params![
+                    Uuid::new_v4().to_string(),
+                    date_iso,
+                    t.description,
+                    normalized,
+                    amount_str,
+                    currency,
+                    account_id,
+                    category_id,
+                    t.category_source.as_ref().map(|s| s.as_str()),
+                    Option::<f64>::None,
+                    t.notes,
+                    t.is_recurring.unwrap_or(false) as i64,
+                    t.exclude_from_summary.unwrap_or(false) as i64,
+                    fp,
+                    Option::<String>::None,
+                    source_ids_json,
+                ]);
 
-            match self.insert_transaction(&tx) {
-                Ok(InsertOutcome::Inserted) => result.rows_inserted += 1,
-                Ok(InsertOutcome::Duplicate) => result.rows_duplicate += 1,
-                Err(e) => {
-                    result.errors.push(ImportRowError {
+                match inserted {
+                    Ok(1) => result.rows_inserted += 1,
+                    Ok(_) => {
+                        // Duplicate (same fingerprint). Merge any new source
+                        // documents into the existing row so the audit trail
+                        // stays complete across re-imports of overlapping
+                        // statements.
+                        let merged = if t.source_document_ids.is_empty() {
+                            Ok(())
+                        } else {
+                            merge_source_documents(
+                                &self.conn,
+                                "transactions",
+                                "fingerprint",
+                                &fp,
+                                &source_ids_json,
+                            )
+                        };
+                        match merged {
+                            Ok(()) => result.rows_duplicate += 1,
+                            Err(e) => result.errors.push(ImportRowError {
+                                index: i,
+                                reason: e.to_string(),
+                            }),
+                        }
+                    }
+                    Err(e) => result.errors.push(ImportRowError {
                         index: i,
                         reason: e.to_string(),
-                    });
+                    }),
                 }
             }
         }
+        db_tx.commit()?;
         Ok(result)
     }
 
@@ -1429,7 +1491,15 @@ impl Db {
             conditions.push(format!("t.category_source = ?{}", args.len()));
         }
         if let Some(search) = &filters.search {
-            let pattern = format!("%{}%", search.replace('%', "\\%").replace('_', "\\_"));
+            // Escape the escape character itself first, or a search containing
+            // `\` builds a malformed pattern.
+            let pattern = format!(
+                "%{}%",
+                search
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+            );
             args.push(Box::new(pattern.clone()));
             let idx = args.len();
             conditions.push(format!(
@@ -1540,10 +1610,29 @@ impl Db {
         use crate::util::fx::CurrencyAggregator;
         use std::collections::HashMap;
 
-        let mut conditions: Vec<String> = vec![
-            "t.category_id IS NOT NULL".to_string(),
-            "t.exclude_from_summary = 0".to_string(),
-        ];
+        // Same "__uncategorized__" sentinel contract as get_transactions:
+        // when the categories filter includes it, NULL-category rows come
+        // back as their own group (category_id = null). By default they are
+        // excluded.
+        let mut want_uncategorized = false;
+        let real_cats: Vec<&String> = filters
+            .categories
+            .iter()
+            .flatten()
+            .filter(|v| {
+                if v.as_str() == "__uncategorized__" {
+                    want_uncategorized = true;
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let mut conditions: Vec<String> = vec!["t.exclude_from_summary = 0".to_string()];
+        if !want_uncategorized {
+            conditions.push("t.category_id IS NOT NULL".to_string());
+        }
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut need_account_join = false;
 
@@ -1567,18 +1656,22 @@ impl Db {
                 conditions.push(format!("t.account_id IN ({})", placeholders.join(",")));
             }
         }
-        if let Some(cats) = &filters.categories {
-            if !cats.is_empty() {
-                let placeholders: Vec<String> = cats
+        if !real_cats.is_empty() || want_uncategorized {
+            let mut clauses: Vec<String> = Vec::new();
+            if !real_cats.is_empty() {
+                let placeholders: Vec<String> = real_cats
                     .iter()
                     .map(|v| {
-                        args.push(Box::new(v.clone()));
+                        args.push(Box::new((*v).clone()));
                         format!("?{}", args.len())
                     })
                     .collect();
-                let ph = placeholders.join(",");
-                conditions.push(format!("t.category_id IN ({ph})"));
+                clauses.push(format!("t.category_id IN ({})", placeholders.join(",")));
             }
+            if want_uncategorized {
+                clauses.push("t.category_id IS NULL".to_string());
+            }
+            conditions.push(format!("({})", clauses.join(" OR ")));
         }
         let mut need_category_join = false;
         if let Some(ctypes) = &filters.category_types {
@@ -2708,18 +2801,31 @@ impl Db {
             .map_err(Into::into)
     }
 
-    /// List every stored document with its orphan flag. The exact reference
-    /// count is intentionally NOT computed here: the three correlated `COUNT`s
-    /// over `json_each` are slow over the whole dataset and block the list.
-    /// `reference_count` is left `None`; clients fetch it lazily per row via
-    /// `get_document`. Orphaned is still computed, but cheaply: `NOT EXISTS`
-    /// short-circuits on the first referencing row instead of counting them all.
-    pub fn list_documents(&self) -> Result<Vec<DocumentSummary>> {
-        // Collect every referenced document id in a single pass per table. The
-        // previous per-document correlated `NOT EXISTS` was O(docs x rows) and
-        // re-scanned/re-parsed every source_document_ids JSON array once per
-        // document; this scans each table's json arrays exactly once.
-        let referenced: std::collections::HashSet<String> = {
+    /// List every stored document with its orphan flag. `reference_count` is
+    /// left `None` by default (clients fetch it lazily per row via
+    /// `get_document`); with `include_refs` it is populated for every row via
+    /// one grouped scan over the three referencing link sources, matching
+    /// `document_references(id).total()` per document.
+    pub fn list_documents(&self, include_refs: bool) -> Result<Vec<DocumentSummary>> {
+        // Single pass per table over the source_document_ids JSON arrays.
+        // Without include_refs a UNION collects the distinct referenced ids
+        // (orphan flag only); with it, UNION ALL + GROUP BY counts every
+        // referencing row. Either way the query count is constant.
+        let referenced: std::collections::HashMap<String, usize> = if include_refs {
+            let mut stmt = self.conn.prepare(
+                r"SELECT value, COUNT(*) FROM (
+                    SELECT j.value FROM transactions t, json_each(t.source_document_ids) j
+                    UNION ALL
+                    SELECT j.value FROM holdings h, json_each(h.source_document_ids) j
+                    UNION ALL
+                    SELECT j.value FROM investments i, json_each(i.source_document_ids) j
+                  ) GROUP BY value",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+            })?;
+            rows.collect::<rusqlite::Result<_>>()?
+        } else {
             let mut stmt = self.conn.prepare(
                 r"SELECT j.value FROM transactions t, json_each(t.source_document_ids) j
                   UNION
@@ -2727,8 +2833,8 @@ impl Db {
                   UNION
                   SELECT j.value FROM investments i, json_each(i.source_document_ids) j",
             )?;
-            let ids = stmt.query_map([], |row| row.get::<_, String>(0))?;
-            ids.collect::<rusqlite::Result<std::collections::HashSet<String>>>()?
+            let ids = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, 0usize)))?;
+            ids.collect::<rusqlite::Result<_>>()?
         };
 
         let mut stmt = self.conn.prepare(
@@ -2739,7 +2845,7 @@ impl Db {
         let rows = stmt
             .query_map([], |row| {
                 let id: String = row.get(0)?;
-                let orphaned = !referenced.contains(&id);
+                let refs = referenced.get(&id).copied();
                 Ok(DocumentSummary {
                     id,
                     filename: row.get(1)?,
@@ -2748,8 +2854,12 @@ impl Db {
                     origin: row.get(4)?,
                     account_id: row.get(5)?,
                     uploaded_at: row.get(6)?,
-                    reference_count: None,
-                    orphaned,
+                    reference_count: if include_refs {
+                        Some(refs.unwrap_or(0))
+                    } else {
+                        None
+                    },
+                    orphaned: refs.is_none(),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -2884,8 +2994,15 @@ impl Db {
             .ok();
         match row {
             Some((name, active)) if active != 0 => {
+                // Debounced: refreshing last_used on every request turns each
+                // authenticated read into a write. Only touch it when unset or
+                // older than 60s. The stored format is fixed-width ISO 8601
+                // UTC, so string comparison is chronological.
                 self.conn.execute(
-                    "UPDATE api_tokens SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1",
+                    "UPDATE api_tokens SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                     WHERE name = ?1
+                       AND (last_used IS NULL
+                            OR last_used < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-60 seconds'))",
                     params![name],
                 )?;
                 Ok(Some(name))
@@ -2920,8 +3037,7 @@ impl Db {
         let from_str = from.format("%Y-%m-%dT23:59:59").to_string();
         let to_str = to.format("%Y-%m-%dT23:59:59").to_string();
 
-        let mut args: Vec<Box<dyn rusqlite::ToSql>> =
-            vec![Box::new(from_str), Box::new(to_str)];
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(from_str), Box::new(to_str)];
         let mut filters = String::new();
         if let Some(pid) = profile_id {
             args.push(Box::new(format!("%\"{pid}\"%")));
@@ -3314,8 +3430,10 @@ impl Db {
         Ok((series, rows))
     }
 
-    /// Returns the first and last balance (SUM of holdings) per account within `[start, end]`,
-    /// and the delta between them.
+    /// Returns the first and last balance (SUM of holdings) per account within
+    /// `[start, end]`, and the delta between them. Accounts with no snapshot
+    /// inside the range are omitted entirely; snapshots outside the range
+    /// never contribute.
     pub fn get_balance_summary(
         &self,
         start: NaiveDate,
@@ -3324,66 +3442,41 @@ impl Db {
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
-        let account_ids: Vec<String> = {
-            let mut stmt = self.conn.prepare(
-                "SELECT DISTINCT account_id FROM holdings WHERE as_of >= ?1 AND as_of <= ?2",
-            )?;
-            stmt.query_map(rusqlite::params![start_str, end_str], |row| row.get(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
+        // One query total: per-account first/last snapshot date over the
+        // range-filtered rows, joined back to sum the balances at those two
+        // dates. The old shape issued ~4 queries per account.
+        let mut stmt = self.conn.prepare(
+            r"WITH bounds AS (
+                SELECT account_id, MIN(as_of) AS first_date, MAX(as_of) AS last_date
+                FROM holdings
+                WHERE as_of >= ?1 AND as_of <= ?2
+                GROUP BY account_id
+              )
+              SELECT b.account_id,
+                     SUM(CASE WHEN h.as_of = b.first_date THEN CAST(h.value AS REAL) ELSE 0 END),
+                     SUM(CASE WHEN h.as_of = b.last_date THEN CAST(h.value AS REAL) ELSE 0 END)
+              FROM bounds b
+              JOIN holdings h
+                ON h.account_id = b.account_id
+               AND h.as_of IN (b.first_date, b.last_date)
+              GROUP BY b.account_id
+              ORDER BY b.account_id",
+        )?;
+
+        let rows = stmt.query_map(rusqlite::params![start_str, end_str], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<f64>>(1)?,
+                row.get::<_, Option<f64>>(2)?,
+            ))
+        })?;
 
         let mut result = Vec::new();
-        for account_id in account_ids {
-            let first_date: Option<String> = self
-                .conn
-                .query_row(
-                    r"SELECT MIN(as_of) FROM holdings
-                      WHERE account_id = ?1 AND as_of >= ?2",
-                    rusqlite::params![account_id, start_str],
-                    |row| row.get(0),
-                )
-                .ok()
-                .flatten();
-
-            let last_date: Option<String> = self
-                .conn
-                .query_row(
-                    r"SELECT MAX(as_of) FROM holdings
-                      WHERE account_id = ?1 AND as_of <= ?2",
-                    rusqlite::params![account_id, end_str],
-                    |row| row.get(0),
-                )
-                .ok()
-                .flatten();
-
-            let start_balance: Option<Decimal> = first_date.as_ref().and_then(|d| {
-                self.conn
-                    .query_row(
-                        r"SELECT SUM(CAST(value AS REAL)) FROM holdings
-                          WHERE account_id = ?1 AND as_of = ?2",
-                        rusqlite::params![account_id, d],
-                        |row| row.get::<_, Option<f64>>(0),
-                    )
-                    .ok()
-                    .flatten()
-                    .and_then(|f| Decimal::try_from(f).ok())
-            });
-
-            let end_balance: Option<Decimal> = last_date.as_ref().and_then(|d| {
-                self.conn
-                    .query_row(
-                        r"SELECT SUM(CAST(value AS REAL)) FROM holdings
-                          WHERE account_id = ?1 AND as_of = ?2",
-                        rusqlite::params![account_id, d],
-                        |row| row.get::<_, Option<f64>>(0),
-                    )
-                    .ok()
-                    .flatten()
-                    .and_then(|f| Decimal::try_from(f).ok())
-            });
-
+        for row in rows {
+            let (account_id, start_f, end_f) = row?;
+            let start_balance = start_f.and_then(|f| Decimal::try_from(f).ok());
+            let end_balance = end_f.and_then(|f| Decimal::try_from(f).ok());
             let delta = start_balance.zip(end_balance).map(|(s, e)| e - s);
-
             result.push(BalanceDelta {
                 account_id,
                 start_balance,
@@ -3391,7 +3484,6 @@ impl Db {
                 delta,
             });
         }
-
         Ok(result)
     }
 
@@ -4540,8 +4632,9 @@ fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
         account_id: row.get(0)?,
         symbol: row.get(1)?,
         name: row.get(2)?,
-        holding_type: HoldingType::parse(&holding_type_str)
-            .ok_or_else(|| column_error(3, format!("unknown holding type: {holding_type_str:?}")))?,
+        holding_type: HoldingType::parse(&holding_type_str).ok_or_else(|| {
+            column_error(3, format!("unknown holding type: {holding_type_str:?}"))
+        })?,
         quantity: parse_decimal_column(4, "holding quantity", &quantity_str)?,
         price_per_unit: price_str
             .as_deref()
@@ -4637,7 +4730,10 @@ fn row_to_investment_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Investme
         id: row.get(0)?,
         account_id: row.get(1)?,
         event_type: InvestmentEventType::parse(&event_type_str).ok_or_else(|| {
-            column_error(2, format!("unknown investment event type: {event_type_str:?}"))
+            column_error(
+                2,
+                format!("unknown investment event type: {event_type_str:?}"),
+            )
         })?,
         symbol: row.get(3)?,
         date: parse_transaction_datetime(&date_str)
@@ -5627,6 +5723,58 @@ mod consolidation_tests {
         assert!((start - dec!(1000)).abs() < tol);
         assert!((end - dec!(1300)).abs() < tol);
         assert!((delta - dec!(300)).abs() < tol);
+    }
+
+    #[test]
+    fn get_balance_summary_multi_account_range_semantics() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("single", AccountType::Checking))
+            .unwrap();
+        db.create_account(&make_account("spanning", AccountType::Checking))
+            .unwrap();
+        db.create_account(&make_account("outside", AccountType::Checking))
+            .unwrap();
+
+        // Exactly one snapshot inside the range.
+        db.set_account_balance("single", dec!(500), naive_dt(2025, 2, 10))
+            .unwrap();
+
+        // Snapshots on both sides of the range plus two inside it: the
+        // out-of-range ones must not contribute.
+        db.set_account_balance("spanning", dec!(100), naive_dt(2024, 12, 1))
+            .unwrap();
+        db.set_account_balance("spanning", dec!(200), naive_dt(2025, 1, 10))
+            .unwrap();
+        db.set_account_balance("spanning", dec!(350), naive_dt(2025, 3, 20))
+            .unwrap();
+        db.set_account_balance("spanning", dec!(900), naive_dt(2025, 5, 1))
+            .unwrap();
+
+        // Only out-of-range snapshots: must not appear at all.
+        db.set_account_balance("outside", dec!(42), naive_dt(2024, 6, 1))
+            .unwrap();
+        db.set_account_balance("outside", dec!(43), naive_dt(2025, 6, 1))
+            .unwrap();
+
+        let mut summary = db
+            .get_balance_summary(naive_date(2025, 1, 1), naive_date(2025, 3, 31))
+            .unwrap();
+        summary.sort_by(|a, b| a.account_id.cmp(&b.account_id));
+        assert_eq!(summary.len(), 2, "out-of-range-only account is omitted");
+
+        let tol = Decimal::from_str("0.01").unwrap();
+
+        let single = &summary[0];
+        assert_eq!(single.account_id, "single");
+        assert!((single.start_balance.unwrap() - dec!(500)).abs() < tol);
+        assert!((single.end_balance.unwrap() - dec!(500)).abs() < tol);
+        assert!(single.delta.unwrap().abs() < tol);
+
+        let spanning = &summary[1];
+        assert_eq!(spanning.account_id, "spanning");
+        assert!((spanning.start_balance.unwrap() - dec!(200)).abs() < tol);
+        assert!((spanning.end_balance.unwrap() - dec!(350)).abs() < tol);
+        assert!((spanning.delta.unwrap() - dec!(150)).abs() < tol);
     }
 
     #[test]
@@ -6791,6 +6939,186 @@ mod transaction_dryrun_tests {
         assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
         assert_eq!(previews[1].status, TransactionPreviewStatus::New);
     }
+
+    fn new_category(db: &Db, name: &str, parent_id: Option<&str>) -> String {
+        db.create_category(&CreateCategoryPayload {
+            name: name.to_string(),
+            parent_id: parent_id.map(|s| s.to_string()),
+            display_order: None,
+            description: None,
+            category_type: CategoryType::Spending,
+        })
+        .unwrap()
+        .id
+    }
+
+    fn gbp_fx() -> crate::util::fx::FxRateMap {
+        crate::util::fx::FxRateMap::new(vec![crate::model::Currency {
+            code: "GBP".to_string(),
+            is_preferred: true,
+            fx_rate: Decimal::ONE,
+            updated_at: None,
+        }])
+        .unwrap()
+    }
+
+    #[test]
+    fn bulk_insert_mixed_batch_reports_counts_and_persists_valid_rows() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+        let parent_id = new_category(&db, "Bulk Parent", None);
+        let leaf_id = new_category(&db, "Bulk Leaf", Some(&parent_id));
+
+        db.insert_transactions_bulk("acc1", &[make_txn((2025, 1, 15), "Coffee", -350, 2)])
+            .unwrap();
+
+        let mut valid = make_txn((2025, 1, 16), "Groceries", -2500, 2);
+        valid.category_id = Some(leaf_id.clone());
+        let mut with_parent_cat = make_txn((2025, 1, 17), "Bad Parent", -100, 2);
+        with_parent_cat.category_id = Some(parent_id.clone());
+        let mut with_unknown_cat = make_txn((2025, 1, 18), "Bad Unknown", -100, 2);
+        with_unknown_cat.category_id = Some("no-such-category".to_string());
+        let duplicate = make_txn((2025, 1, 15), "Coffee", -350, 2);
+
+        let result = db
+            .insert_transactions_bulk(
+                "acc1",
+                &[valid, with_parent_cat, with_unknown_cat, duplicate],
+            )
+            .unwrap();
+
+        assert_eq!(result.rows_total, 4);
+        assert_eq!(result.rows_inserted, 1);
+        assert_eq!(result.rows_duplicate, 1);
+        assert_eq!(result.errors.len(), 2);
+        assert_eq!(result.errors[0].index, 1);
+        assert!(result.errors[0].reason.contains("is a parent, not a leaf"));
+        assert_eq!(result.errors[1].index, 2);
+        assert!(result.errors[1].reason.contains("not found or inactive"));
+
+        let (rows, total) = db.get_transactions(&TransactionFilters::default()).unwrap();
+        assert_eq!(total, 2, "valid rows commit despite per-row errors");
+        let grocery = rows.iter().find(|t| t.description == "Groceries").unwrap();
+        assert_eq!(grocery.category_id.as_deref(), Some(leaf_id.as_str()));
+    }
+
+    #[test]
+    fn bulk_insert_duplicate_merges_source_documents() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let mut first = make_txn((2025, 2, 1), "Rent", -90000, 2);
+        first.source_document_ids = vec!["doc-a".to_string()];
+        let result = db.insert_transactions_bulk("acc1", &[first]).unwrap();
+        assert_eq!(result.rows_inserted, 1);
+
+        let mut reimport = make_txn((2025, 2, 1), "Rent", -90000, 2);
+        reimport.source_document_ids = vec!["doc-b".to_string()];
+        let result = db.insert_transactions_bulk("acc1", &[reimport]).unwrap();
+        assert_eq!(result.rows_inserted, 0);
+        assert_eq!(result.rows_duplicate, 1);
+
+        let (rows, _) = db.get_transactions(&TransactionFilters::default()).unwrap();
+        assert_eq!(rows.len(), 1);
+        let mut doc_ids = rows[0].source_document_ids.clone();
+        doc_ids.sort();
+        assert_eq!(doc_ids, vec!["doc-a".to_string(), "doc-b".to_string()]);
+    }
+
+    #[test]
+    fn search_treats_backslash_literally() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        db.insert_transactions_bulk(
+            "acc1",
+            &[
+                make_txn((2025, 3, 1), r"ACME C:\Users refund", -1000, 2),
+                make_txn((2025, 3, 2), r"100\% cotton shirt", -2000, 2),
+                make_txn((2025, 3, 3), "plain coffee", -300, 2),
+            ],
+        )
+        .unwrap();
+
+        let filters = TransactionFilters {
+            search: Some(r"C:\Users".to_string()),
+            ..TransactionFilters::default()
+        };
+        let (rows, total) = db.get_transactions(&filters).unwrap();
+        assert_eq!(total, 1, "a description containing a backslash is found");
+        assert!(rows[0].description.contains(r"C:\Users"));
+
+        // Backslash-percent must match the literal sequence, not act as a
+        // wildcard that matches everything.
+        let filters = TransactionFilters {
+            search: Some(r"\%".to_string()),
+            ..TransactionFilters::default()
+        };
+        let (rows, total) = db.get_transactions(&filters).unwrap();
+        assert_eq!(total, 1);
+        assert!(rows[0].description.contains(r"\%"));
+    }
+
+    #[test]
+    fn by_category_uncategorized_sentinel_groups_null_rows() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+        let parent_id = new_category(&db, "Sentinel Parent", None);
+        let leaf_id = new_category(&db, "Sentinel Leaf", Some(&parent_id));
+
+        let mut categorized = make_txn((2025, 4, 1), "Groceries", -1000, 2);
+        categorized.category_id = Some(leaf_id.clone());
+        let uncategorized = make_txn((2025, 4, 2), "Mystery", -500, 2);
+        db.insert_transactions_bulk("acc1", &[categorized, uncategorized])
+            .unwrap();
+
+        let fx = gbp_fx();
+
+        // Default: NULL-category rows stay excluded.
+        let totals = db
+            .get_transactions_by_category(&TransactionFilters::default(), None, &fx)
+            .unwrap();
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].category_id.as_deref(), Some(leaf_id.as_str()));
+
+        // Sentinel only: NULL rows come back as their own group.
+        let filters = TransactionFilters {
+            categories: Some(vec!["__uncategorized__".to_string()]),
+            ..TransactionFilters::default()
+        };
+        let totals = db
+            .get_transactions_by_category(&filters, None, &fx)
+            .unwrap();
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].category_id, None);
+        assert_eq!(
+            totals[0].total.parse::<Decimal>().unwrap(),
+            Decimal::new(-500, 2)
+        );
+
+        // Sentinel alongside a real category: both groups.
+        let filters = TransactionFilters {
+            categories: Some(vec![leaf_id.clone(), "__uncategorized__".to_string()]),
+            ..TransactionFilters::default()
+        };
+        let totals = db
+            .get_transactions_by_category(&filters, None, &fx)
+            .unwrap();
+        assert_eq!(totals.len(), 2);
+        let null_group = totals.iter().find(|t| t.category_id.is_none()).unwrap();
+        assert_eq!(
+            null_group.total.parse::<Decimal>().unwrap(),
+            Decimal::new(-500, 2)
+        );
+        let leaf_group = totals
+            .iter()
+            .find(|t| t.category_id.as_deref() == Some(leaf_id.as_str()))
+            .unwrap();
+        assert_eq!(
+            leaf_group.total.parse::<Decimal>().unwrap(),
+            Decimal::new(-1000, 2)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -7058,7 +7386,9 @@ mod investment_dedup_tests {
         let (db, _file) = test_db();
         make_test_account(&db, "acct-1");
 
-        let (created, _) = db.create_investment_event(&make_event_body("VUSA")).unwrap();
+        let (created, _) = db
+            .create_investment_event(&make_event_body("VUSA"))
+            .unwrap();
         let patched = db
             .update_investment_event(
                 &created.id,
@@ -7122,7 +7452,7 @@ mod document_tests {
             .unwrap();
         assert!(dup2, "identical bytes should dedup");
         assert_eq!(d1.id, d2.id);
-        assert_eq!(db.list_documents().unwrap().len(), 1);
+        assert_eq!(db.list_documents(false).unwrap().len(), 1);
     }
 
     #[test]
@@ -7132,7 +7462,7 @@ mod document_tests {
             .unwrap();
         db.store_document("b.csv", "text/csv", b"bbb", "parse", None)
             .unwrap();
-        assert_eq!(db.list_documents().unwrap().len(), 2);
+        assert_eq!(db.list_documents(false).unwrap().len(), 2);
     }
 
     #[test]
@@ -7154,7 +7484,7 @@ mod document_tests {
         let (manual, _) = db
             .store_document("ref.pdf", "application/pdf", b"x", "manual", None)
             .unwrap();
-        let summaries = db.list_documents().unwrap();
+        let summaries = db.list_documents(false).unwrap();
         let s = summaries.iter().find(|s| s.id == manual.id).unwrap();
         assert_eq!(
             s.reference_count, None,
@@ -7197,7 +7527,7 @@ mod document_tests {
         assert_eq!(refs.total(), 2);
 
         let summary = db
-            .list_documents()
+            .list_documents(false)
             .unwrap()
             .into_iter()
             .find(|s| s.id == doc.id)
@@ -7241,6 +7571,139 @@ mod document_tests {
             )
             .unwrap();
         assert_eq!(h_ids, "[]");
+    }
+
+    #[test]
+    fn list_documents_include_refs_matches_per_document_counts() {
+        let (db, _f) = test_db();
+        make_account(&db, "acct-1");
+
+        let (linked, _) = db
+            .store_document("s.csv", "text/csv", b"data", "parse", Some("acct-1"))
+            .unwrap();
+        let (orphan, _) = db
+            .store_document("o.pdf", "application/pdf", b"x", "manual", None)
+            .unwrap();
+        let ids = format!("[\"{}\"]", linked.id);
+
+        db.conn
+            .execute(
+                "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
+                 account_id, fingerprint, source_document_ids) \
+                 VALUES ('tx1','2026-01-01T00:00:00','x','x','-1','GBP','acct-1','fp1', ?1)",
+                rusqlite::params![ids],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
+                 account_id, fingerprint, source_document_ids) \
+                 VALUES ('tx2','2026-01-02T00:00:00','y','y','-2','GBP','acct-1','fp2', ?1)",
+                rusqlite::params![ids],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO holdings (account_id, symbol, name, holding_type, quantity, value, \
+                 currency, as_of, source_document_ids) \
+                 VALUES ('acct-1','VUSA','Vanguard','etf','1','10','GBP','2026-01-01T00:00:00', ?1)",
+                rusqlite::params![ids],
+            )
+            .unwrap();
+        db.create_investment_event(&crate::model::CreateInvestmentEventBody {
+            account_id: "acct-1".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "VUSA".to_string(),
+            date: "2026-01-03T00:00:00".to_string(),
+            quantity: "1".to_string(),
+            price_per_share: "10".to_string(),
+            fee: None,
+            currency: "GBP".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: vec![linked.id.clone()],
+        })
+        .unwrap();
+
+        let summaries = db.list_documents(true).unwrap();
+        for s in &summaries {
+            let expected = db.document_references(&s.id).unwrap().total();
+            assert_eq!(
+                s.reference_count,
+                Some(expected),
+                "batched count for {} must match the per-document endpoint",
+                s.id
+            );
+            assert_eq!(s.orphaned, expected == 0);
+        }
+
+        let linked_row = summaries.iter().find(|s| s.id == linked.id).unwrap();
+        assert_eq!(linked_row.reference_count, Some(4));
+        assert!(!linked_row.orphaned);
+
+        let orphan_row = summaries.iter().find(|s| s.id == orphan.id).unwrap();
+        assert_eq!(orphan_row.reference_count, Some(0));
+        assert!(orphan_row.orphaned);
+    }
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn last_used(db: &Db) -> Option<String> {
+        db.list_tokens().unwrap()[0].last_used.clone()
+    }
+
+    fn set_last_used_relative(db: &Db, modifier: &str) {
+        db.conn
+            .execute(
+                "UPDATE api_tokens SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
+                params![modifier],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn validate_token_debounces_last_used_writes() {
+        let (db, _f) = test_db();
+        let raw = db.create_token("ci").unwrap();
+
+        // NULL last_used gets set on the first validation.
+        assert!(last_used(&db).is_none());
+        assert_eq!(db.validate_token(&raw).unwrap().as_deref(), Some("ci"));
+        assert!(last_used(&db).is_some());
+
+        // A fresh last_used (10s old, well within the 60s window) is left
+        // untouched by a second validation.
+        set_last_used_relative(&db, "-10 seconds");
+        let recent = last_used(&db).unwrap();
+        assert_eq!(db.validate_token(&raw).unwrap().as_deref(), Some("ci"));
+        assert_eq!(last_used(&db).as_deref(), Some(recent.as_str()));
+
+        // Older than 60s: refreshed.
+        set_last_used_relative(&db, "-2 minutes");
+        let stale = last_used(&db).unwrap();
+        assert_eq!(db.validate_token(&raw).unwrap().as_deref(), Some("ci"));
+        let refreshed = last_used(&db).unwrap();
+        assert!(refreshed > stale, "stale last_used must be refreshed");
+    }
+
+    #[test]
+    fn validate_token_still_rejects_bad_and_revoked_tokens() {
+        let (db, _f) = test_db();
+        let raw = db.create_token("ci").unwrap();
+
+        assert_eq!(db.validate_token("fyn_nope").unwrap(), None);
+        db.revoke_token("ci").unwrap();
+        assert_eq!(db.validate_token(&raw).unwrap(), None);
     }
 }
 

@@ -174,10 +174,7 @@ mod tests {
         .expect("create investment event");
 
         let err = delete(&db, "a1", true).unwrap_err().to_string();
-        assert!(
-            err.contains("investment event"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("investment event"), "unexpected error: {err}");
     }
 
     #[test]
