@@ -247,15 +247,6 @@ export class RealApiService implements ApiService {
     })
   }
 
-  async getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>> {
-    const nodes = await get<CategoryNode[]>(`${BASE}/transactions/categories`)
-    return nodes.flatMap(node => {
-      const children = node.children ?? []
-      if (children.length === 0) return [{ id: node.id, name: node.name }]
-      return children.map(c => ({ id: c.id, name: `${node.name}: ${c.name}` }))
-    })
-  }
-
   async getAccounts(profileId?: string): Promise<Account[]> {
     const params: Record<string, string> = {}
     if (profileId) params.profile_id = profileId

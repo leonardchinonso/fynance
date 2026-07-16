@@ -45,7 +45,7 @@ let _redacted = (() => {
 
 // Subscribers notified when the flag flips. Components that format money during
 // render subscribe via useRedactedFlag() so a toggle re-renders them in place
-// (no remount, so page state — dialogs, selections, wizard edits — survives).
+// (no remount, so page state like dialogs, selections, and wizard edits survives).
 const redactedListeners = new Set<() => void>()
 
 export function getRedacted(): boolean {

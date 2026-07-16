@@ -295,26 +295,6 @@ export class MockApiService implements ApiService {
     return Array.from(cats).sort()
   }
 
-  async getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>> {
-    await delay(DELAY_MS)
-    const cats = new Set<string>()
-    for (const t of MOCK_TRANSACTIONS) {
-      if (t.category_id) cats.add(t.category_id)
-    }
-    const fromMock = Array.from(cats)
-      .sort()
-      .map((name) => ({ id: name, name }))
-    // Demo ids returned by mock `parseDocuments` so the preview can resolve
-    // them to readable names in the SelectCell.
-    return [
-      ...fromMock,
-      { id: "cat-transport", name: "Transport" },
-      { id: "cat-groceries", name: "Groceries" },
-      { id: "cat-eating-out", name: "Eating Out" },
-      { id: "cat-subscriptions", name: "Subscriptions" },
-    ]
-  }
-
   async getAccounts(profileId?: string): Promise<Account[]> {
     await delay(DELAY_MS)
     if (profileId) {
@@ -1041,19 +1021,19 @@ export class MockApiService implements ApiService {
 
     const txRows = wantTx
       ? [
-          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "cat-transport", category_confidence: 0.95, source_document_ids: [] },
-          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null, category_id: "cat-groceries", category_confidence: 0.97, source_document_ids: [] },
-          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "cat-eating-out", category_confidence: 0.78, source_document_ids: [] },
-          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "cat-subscriptions", category_confidence: 0.45, source_document_ids: [] },
+          { index: 0, date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "transport-general", category_confidence: 0.95, source_document_ids: [] },
+          { index: 1, date: "2026-05-15T00:00:00", description: "Lidl", amount: "-23.45", currency: "GBP", status: "duplicate" as const, existing_id: "tx_abc123", existing_description: "Lidl", error_reason: null, category_id: "groceries", category_confidence: 0.97, source_document_ids: [] },
+          { index: 2, date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "dining", category_confidence: 0.78, source_document_ids: [] },
+          { index: 3, date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", status: "new" as const, existing_id: null, existing_description: null, error_reason: null, category_id: "entertainment", category_confidence: 0.45, source_document_ids: [] },
         ]
       : []
     const txPayload: ImportPayload | null = wantTx
       ? {
           account_id: accountId,
           transactions: [
-            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category_id: "cat-transport", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
-            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category_id: "cat-eating-out", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
-            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category_id: "cat-subscriptions", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: true, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-15T00:00:00", description: "TfL", amount: "-2.80", currency: "GBP", category_id: "transport-general", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-16T00:00:00", description: "Pret a Manger", amount: "-4.50", currency: "GBP", category_id: "dining", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: null, exclude_from_summary: null, source_document_ids: [] },
+            { date: "2026-05-17T00:00:00", description: "Spotify", amount: "-9.99", currency: "GBP", category_id: "entertainment", category_source: "agent" satisfies CategorySource, notes: null, is_recurring: true, exclude_from_summary: null, source_document_ids: [] },
           ],
         }
       : null

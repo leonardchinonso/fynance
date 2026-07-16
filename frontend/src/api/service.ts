@@ -116,8 +116,6 @@ export interface ApiService {
     filters: CategoryTotalFilters
   ): Promise<CategoryTotal[]>
   getCategories(): Promise<string[]>
-  /** Leaf categories as `{id, name}` where name is `"Parent: Child"`. */
-  getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>>
   getAccounts(profileId?: string): Promise<Account[]>
 
   // Budget

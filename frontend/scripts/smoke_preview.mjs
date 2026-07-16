@@ -266,7 +266,7 @@ async function runView(browser, view) {
 
   // 12r. Privacy toggle re-renders money in place (no app remount): select a
   //      row on the Transactions view, hide amounts, and confirm the selection
-  //      survives while the amount column is masked. Desktop only — the toggle
+  //      survives while the amount column is masked. Desktop only: the toggle
   //      lives in the mobile menu sheet on small viewports.
   if (view.name === "desktop") {
     await page.goto(`${BASE}/budget?view=table`, { waitUntil: "domcontentloaded" })

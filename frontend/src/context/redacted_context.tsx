@@ -15,8 +15,8 @@ const RedactedContext = createContext<RedactedContextValue | null>(null)
  * The flag lives at module scope in lib/utils (formatCurrency reads it at call
  * time) with a subscriber list. Components that format money during render
  * subscribe via useRedactedFlag(), so toggling re-renders exactly those
- * components in place — no remount, so open dialogs, selections, and unsaved
- * edits survive the toggle.
+ * components in place. There is no remount, so open dialogs, selections, and
+ * unsaved edits survive the toggle.
  */
 export function RedactedProvider({ children }: { children: React.ReactNode }) {
   const redacted = useRedactedFlag()

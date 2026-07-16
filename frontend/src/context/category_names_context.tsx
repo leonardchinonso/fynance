@@ -9,9 +9,9 @@ import { useCategories } from "@/hooks/data/use_categories"
  *
  * The API returns ids only; the human-readable name, type and hierarchy live in
  * the categories table. The maps derive from the shared cached category query
- * (same cache entry as {@link useCategories}), so category mutations — which
- * invalidate the whole cache via the api client — refresh names everywhere
- * without a page reload. Unknown ids fall through to the id verbatim — which is
+ * (same cache entry as {@link useCategories}), so category mutations, which
+ * invalidate the whole cache via the api client, refresh names everywhere
+ * without a page reload. Unknown ids fall through to the id verbatim, which is
  * also how mock mode works, where `category_id` carries the display-name string
  * directly.
  */
@@ -35,7 +35,6 @@ interface CategoryNamesContextValue {
   /** Leaf child ids under a parent id (empty if unknown). */
   childIdsOf: (parentId: string | null | undefined) => string[]
   parentOrder: string[]
-  refresh: () => void
 }
 
 const CategoryNamesContext = createContext<CategoryNamesContextValue | null>(null)
@@ -69,7 +68,7 @@ const EMPTY_MAPS: CategoryMaps = {
 }
 
 export function CategoryNamesProvider({ children }: { children: React.ReactNode }) {
-  const [categoriesData, refresh] = useCategories()
+  const [categoriesData] = useCategories()
   const tree =
     categoriesData.status === "succeeded" || categoriesData.status === "reloading"
       ? categoriesData.value
@@ -110,7 +109,7 @@ export function CategoryNamesProvider({ children }: { children: React.ReactNode 
 
   return (
     <CategoryNamesContext.Provider
-      value={{ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder, refresh }}
+      value={{ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder }}
     >
       {children}
     </CategoryNamesContext.Provider>
@@ -125,10 +124,6 @@ function useCategoryNamesContext(): CategoryNamesContextValue {
 
 export function useResolveCategoryName(): (id: string | null | undefined) => string {
   return useCategoryNamesContext().resolve
-}
-
-export function useRefreshCategoryNames(): () => void {
-  return useCategoryNamesContext().refresh
 }
 
 /** Full category metadata: name resolution, type lookup, parent name/order. */

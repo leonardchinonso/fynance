@@ -1,4 +1,4 @@
-//! `fynance budget …` — set per-month budget overrides and inspect the
+//! `fynance budget ...`: set per-month budget overrides and inspect the
 //! effective budget (standing targets merged with overrides, plus actual
 //! spend). Writes through the same storage methods as the REST API.
 
