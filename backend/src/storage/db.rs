@@ -546,6 +546,12 @@ impl Db {
     /// SUM(holdings.value) per account, carrying each (account, symbol,
     /// sub_account) forward to the most recent snapshot on/before `as_of`.
     /// Returns `account_id -> (balance, latest_as_of_among_carried_rows)`.
+    ///
+    /// Same carry-forward rule as `carried_holdings_sql`, kept separate on
+    /// purpose: `get_accounts` / `get_account_by_id` report balances for
+    /// inactive accounts too, so this must not join on `a.is_active`. Any
+    /// change to the rule must be mirrored there (and vice versa) to keep the
+    /// reconciliation invariant: account balances sum to summary net worth.
     fn balances_from_holdings_as_of(
         &self,
         as_of: NaiveDate,
@@ -2798,37 +2804,74 @@ impl Db {
 
     // ── Portfolio queries ─────────────────────────────────────────────────────
 
-    /// Every holdings snapshot on an active account with `as_of <= to` (end
-    /// of day), profile-filtered, sorted by `as_of` ascending: the input to
-    /// [`CarryForward`]. Replaying these in order and keeping the last
-    /// snapshot per (account, symbol, sub_account) reproduces
-    /// `get_holdings_for_summary` for any period end without re-scanning the
-    /// table once per period.
-    fn holding_snapshots_until(
+    /// Snapshot stream for a [`CarryForward`] walk over `[from, to]`: the
+    /// latest snapshot per (account, symbol, sub_account) at or before
+    /// end-of-day `from`, plus every snapshot inside `(from, to]`, sorted by
+    /// `as_of` ascending. Replaying it reproduces `get_holdings_for_summary`
+    /// for any period end in the range, at a cost that scales with live
+    /// holdings plus in-range snapshots rather than full history depth.
+    ///
+    /// `account_types` / `account_ids` filter by owning account; both are
+    /// safe to push into SQL because a key's carry-forward never depends on
+    /// other accounts' snapshots.
+    fn holding_snapshots_in_range(
         &self,
+        from: NaiveDate,
         to: NaiveDate,
         profile_id: Option<&str>,
+        account_types: Option<&[AccountType]>,
+        account_ids: &[String],
     ) -> Result<Vec<HoldingSnapshot>> {
+        // A degenerate from > to reduces to a point query at to, matching the
+        // pre-windowed behavior.
+        let from = from.min(to);
+        let from_str = from.format("%Y-%m-%dT23:59:59").to_string();
         let to_str = to.format("%Y-%m-%dT23:59:59").to_string();
-        let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
-        {
-            (
-                "AND a.profile_ids LIKE ?2".to_string(),
-                Some(format!("%\"{pid}\"%")),
-            )
-        } else {
-            (String::new(), None)
-        };
 
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(from_str), Box::new(to_str)];
+        let mut filters = String::new();
+        if let Some(pid) = profile_id {
+            args.push(Box::new(format!("%\"{pid}\"%")));
+            filters.push_str(&format!(" AND a.profile_ids LIKE ?{}", args.len()));
+        }
+        if let Some(types) = account_types {
+            let placeholders = types
+                .iter()
+                .map(|t| {
+                    args.push(Box::new(t.as_str().to_string()));
+                    format!("?{}", args.len())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            filters.push_str(&format!(" AND a.type IN ({placeholders})"));
+        }
+        if !account_ids.is_empty() {
+            let placeholders = account_ids
+                .iter()
+                .map(|id| {
+                    args.push(Box::new(id.clone()));
+                    format!("?{}", args.len())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            filters.push_str(&format!(" AND h.account_id IN ({placeholders})"));
+        }
+
+        let carried_at_from = carried_holdings_sql(
+            "account_id, symbol, COALESCE(sub_account, '') AS sub_account, as_of,
+             value, currency, is_closed, account_type",
+            &format!("AND h.as_of <= ?1{filters}"),
+        );
         let sql = format!(
-            r"SELECT h.account_id, h.symbol, COALESCE(h.sub_account, ''), h.as_of,
+            r"{carried_at_from}
+              UNION ALL
+              SELECT h.account_id, h.symbol, COALESCE(h.sub_account, ''), h.as_of,
                      h.value, h.currency, h.is_closed, a.type
               FROM holdings h
               JOIN accounts a ON a.id = h.account_id
-              WHERE a.is_active = 1
-                {profile_filter}
-                AND h.as_of <= ?1
-              ORDER BY h.as_of"
+              WHERE a.is_active = 1 AND h.as_of > ?1 AND h.as_of <= ?2{filters}
+              ORDER BY as_of"
         );
 
         let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<HoldingSnapshot> {
@@ -2848,13 +2891,12 @@ impl Db {
         };
 
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = if let Some(ref pat) = profile_arg {
-            stmt.query_map(rusqlite::params![to_str, pat], map_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        } else {
-            stmt.query_map(rusqlite::params![to_str], map_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+                map_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -2873,7 +2915,8 @@ impl Db {
         use crate::util::fx::CurrencyAggregator;
 
         let periods = generate_period_end_dates(from, to, granularity);
-        let mut carry = CarryForward::new(self.holding_snapshots_until(to, profile_id)?);
+        let mut carry =
+            CarryForward::new(self.holding_snapshots_in_range(from, to, profile_id, None, &[])?);
         let mut rows = Vec::with_capacity(periods.len());
 
         for (label, period_end) in periods {
@@ -2996,7 +3039,13 @@ impl Db {
             .collect();
 
         let periods = generate_period_end_dates(from, to, granularity);
-        let mut carry = CarryForward::new(self.holding_snapshots_until(to, profile_id)?);
+        let mut carry = CarryForward::new(self.holding_snapshots_in_range(
+            from,
+            to,
+            profile_id,
+            Some(&[AccountType::Investment, AccountType::InvestmentIsa]),
+            account_ids,
+        )?);
         let mut rows = Vec::with_capacity(periods.len());
         let mut pools: HashMap<String, (Decimal, Decimal)> = HashMap::new();
         let mut invested = Decimal::ZERO;
@@ -3042,17 +3091,15 @@ impl Db {
             }
             let net_invested = any_event.then(|| invested.to_string());
 
-            // Market value of active (unclosed) investment + ISA holdings.
+            // Market value of active (unclosed) holdings. Account type and id
+            // filters are already applied by the snapshot fetch; is_closed is
+            // per snapshot, so it must stay a walk-time check (filtering it in
+            // SQL would carry a stale pre-close value forward instead).
             carry.advance_to(period_end);
             let mut mv = CurrencyAggregator::default();
             let mut has_active = false;
             for s in carry.effective() {
-                if matches!(
-                    s.account_type,
-                    AccountType::Investment | AccountType::InvestmentIsa
-                ) && !s.is_closed
-                    && (account_ids.is_empty() || account_ids.contains(&s.account_id))
-                {
+                if !s.is_closed {
                     mv.add(s.value, &s.currency, fx);
                     has_active = true;
                 }
@@ -3420,7 +3467,9 @@ impl Db {
     /// to `as_of`) with account metadata, for the given profile.
     ///
     /// Single source of truth: the summary handler, `accounts_as_of`, and
-    /// `get_monthly_net_worth` all reduce this, so they reconcile.
+    /// `get_monthly_net_worth` all reduce this, so they reconcile. The rule
+    /// itself lives in `carried_holdings_sql`, shared with
+    /// `holding_snapshots_in_range`.
     ///
     /// Does not filter `is_closed`; closed holdings are invariant-zeroed
     /// (`close_holding` / `upsert_holdings` / `replace_holdings`), so a
@@ -3441,23 +3490,14 @@ impl Db {
         };
 
         let sql = format!(
-            r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
-                     h.quantity, h.price_per_unit, h.value, h.currency,
-                     h.as_of, h.short_name, h.sub_account, h.is_closed,
-                     a.type AS account_type, a.institution, a.profile_ids,
-                     h.source_document_ids
-              FROM holdings h
-              JOIN accounts a ON a.id = h.account_id
-              WHERE a.is_active = 1
-                {profile_filter}
-                AND h.as_of = (
-                    SELECT MAX(h2.as_of) FROM holdings h2
-                    WHERE h2.account_id = h.account_id
-                      AND h2.symbol = h.symbol
-                      AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
-                      AND h2.as_of <= ?1
-                )
-              ORDER BY h.account_id, h.symbol"
+            "{} ORDER BY account_id, symbol",
+            carried_holdings_sql(
+                "account_id, symbol, name, holding_type,
+                 quantity, price_per_unit, value, currency,
+                 as_of, short_name, sub_account, is_closed,
+                 account_type, institution, source_document_ids",
+                &format!("AND h.as_of <= ?1 {profile_filter}"),
+            )
         );
 
         let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<HoldingSummaryRow> {
@@ -3689,12 +3729,13 @@ impl Db {
         Ok(inserted)
     }
 
-    /// Investment performance for `[start, end]`. Start/end values reduce
-    /// `get_holdings_for_summary` (Investment accounts only), FX-converted via
-    /// `fx` per holding/transaction currency, so they stay consistent with
-    /// net worth. `new_cash_invested` = net buys minus sells in range
-    /// (see [`Self::compute_new_cash_invested`]). `market_growth` strips that
-    /// out of the total value change to isolate price movement.
+    /// Investment performance for `[start, end]`. Start/end values apply the
+    /// same carry-forward rule as `get_holdings_for_summary` (Investment
+    /// accounts only), FX-converted via `fx` per holding/transaction currency,
+    /// so they stay consistent with net worth. `new_cash_invested` = net buys
+    /// minus sells in range (see [`Self::compute_new_cash_invested`]).
+    /// `market_growth` strips that out of the total value change to isolate
+    /// price movement.
     pub fn compute_investment_metrics(
         &self,
         start: NaiveDate,
@@ -3717,17 +3758,26 @@ impl Db {
         fx: &crate::util::fx::FxRateMap,
         new_cash_invested: Decimal,
     ) -> Result<InvestmentMetrics> {
-        let sum_carry_forward = |date: NaiveDate| -> Result<Decimal> {
-            Ok(self
-                .get_holdings_for_summary(date, profile_id)?
-                .iter()
-                .filter(|r| matches!(r.account_type, AccountType::Investment))
-                .map(|r| fx.convert(r.holding.value, &r.holding.currency))
-                .sum())
+        // One windowed fetch instead of two full carry-forward scans: advance
+        // to start for the opening sum, then on to end for the closing sum.
+        // Closed holdings are invariant-zeroed, so no is_closed filter.
+        let mut carry = CarryForward::new(self.holding_snapshots_in_range(
+            start,
+            end,
+            profile_id,
+            Some(&[AccountType::Investment]),
+            &[],
+        )?);
+        let sum_effective = |carry: &CarryForward| -> Decimal {
+            carry
+                .effective()
+                .map(|s| fx.convert(s.value, &s.currency))
+                .sum()
         };
-
-        let start_value = sum_carry_forward(start)?;
-        let end_value = sum_carry_forward(end)?;
+        carry.advance_to(start);
+        let start_value = sum_effective(&carry);
+        carry.advance_to(end);
+        let end_value = sum_effective(&carry);
 
         let total_growth = end_value - start_value;
         let market_growth = total_growth - new_cash_invested;
@@ -4495,10 +4545,32 @@ pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
     }
 }
 
-/// Generate (label, period_end_date) pairs for a date range and granularity.
-/// Each period_end is clamped to `to` if it exceeds it.
+/// The single SQL form of the holdings carry-forward rule: the latest
+/// snapshot per (account_id, symbol, COALESCE(sub_account, '')) on an active
+/// account, restricted by `filters` (which must bind the `h.as_of <= ?N`
+/// cutoff plus any profile/account predicates; `h` = holdings, `a` =
+/// accounts). `select` projects holdings columns plus `account_type` /
+/// `institution`. `get_holdings_for_summary` and `holding_snapshots_in_range`
+/// both build on this; `balances_from_holdings_as_of` intentionally does not
+/// (it must include inactive accounts). rowid breaks `as_of` ties
+/// deterministically, though `uq_holdings_identity` makes ties impossible.
+fn carried_holdings_sql(select: &str, filters: &str) -> String {
+    format!(
+        r"SELECT {select} FROM (
+              SELECT h.*, a.type AS account_type, a.institution,
+                     ROW_NUMBER() OVER (
+                         PARTITION BY h.account_id, h.symbol, COALESCE(h.sub_account, '')
+                         ORDER BY h.as_of DESC, h.rowid DESC
+                     ) AS rn
+              FROM holdings h
+              JOIN accounts a ON a.id = h.account_id
+              WHERE a.is_active = 1 {filters}
+          ) WHERE rn = 1"
+    )
+}
+
 /// One holdings row as stored, joined with its account type. Produced by
-/// `Db::holding_snapshots_until` for the [`CarryForward`] walk.
+/// `Db::holding_snapshots_in_range` for the [`CarryForward`] walk.
 struct HoldingSnapshot {
     account_id: String,
     symbol: String,
@@ -4519,40 +4591,51 @@ struct HoldingSnapshot {
 /// must advance with non-decreasing dates.
 struct CarryForward {
     snapshots: Vec<HoldingSnapshot>,
+    /// Interned (account, symbol, sub_account) key per snapshot; indexes
+    /// `effective` so `advance_to` hashes and clones nothing.
+    key_ids: Vec<usize>,
     cursor: usize,
-    effective: HashMap<(String, String, String), usize>,
+    /// Latest consumed snapshot index per key id.
+    effective: Vec<Option<usize>>,
 }
 
 impl CarryForward {
     fn new(snapshots: Vec<HoldingSnapshot>) -> Self {
+        let mut ids: HashMap<(&str, &str, &str), usize> = HashMap::new();
+        let mut key_ids = Vec::with_capacity(snapshots.len());
+        for s in &snapshots {
+            let next = ids.len();
+            let key = (
+                s.account_id.as_str(),
+                s.symbol.as_str(),
+                s.sub_account.as_str(),
+            );
+            key_ids.push(*ids.entry(key).or_insert(next));
+        }
+        let effective = vec![None; ids.len()];
         Self {
             snapshots,
+            key_ids,
             cursor: 0,
-            effective: HashMap::new(),
+            effective,
         }
     }
 
     fn advance_to(&mut self, period_end: NaiveDate) {
         let end = period_end.format("%Y-%m-%dT23:59:59").to_string();
         while self.cursor < self.snapshots.len() && self.snapshots[self.cursor].as_of <= end {
-            let s = &self.snapshots[self.cursor];
-            self.effective.insert(
-                (
-                    s.account_id.clone(),
-                    s.symbol.clone(),
-                    s.sub_account.clone(),
-                ),
-                self.cursor,
-            );
+            self.effective[self.key_ids[self.cursor]] = Some(self.cursor);
             self.cursor += 1;
         }
     }
 
     fn effective(&self) -> impl Iterator<Item = &HoldingSnapshot> {
-        self.effective.values().map(|&i| &self.snapshots[i])
+        self.effective.iter().flatten().map(|&i| &self.snapshots[i])
     }
 }
 
+/// Generate (label, period_end_date) pairs for a date range and granularity.
+/// Each period_end is clamped to `to` if it exceeds it.
 pub fn generate_period_end_dates(
     from: NaiveDate,
     to: NaiveDate,
@@ -6136,6 +6219,78 @@ mod consolidation_tests {
                 Some("120".to_string()),
             ]
         );
+    }
+
+    // The windowed snapshot fetch must still carry positions whose only
+    // snapshots predate the range start.
+    #[test]
+    fn history_window_start_carries_pre_range_snapshots() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2025, 1, 15),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "MSFT",
+                HoldingType::Stock,
+                dec!(50),
+                naive_dt(2025, 2, 5),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(120),
+                naive_dt(2025, 3, 10),
+            )],
+        )
+        .unwrap();
+
+        let fx = gbp_fx();
+        // Range opens after both positions did; only the AAPL re-snapshot
+        // falls inside it, so MSFT must arrive via the window-start carry.
+        let from = naive_date(2025, 3, 1);
+        let to = naive_date(2025, 4, 30);
+
+        let history = db
+            .get_monthly_net_worth(from, to, &Granularity::Monthly, None, &fx)
+            .unwrap();
+        let totals: Vec<Decimal> = history.iter().map(|r| r.total_wealth).collect();
+        assert_eq!(totals, vec![dec!(170), dec!(170)]);
+        assert_eq!(
+            history.last().unwrap().total_wealth,
+            summary_net_worth(&db, to, &fx)
+        );
+
+        let inv = db
+            .get_investment_history(from, to, &Granularity::Monthly, None, &[], &fx)
+            .unwrap();
+        let mv: Vec<Option<String>> = inv.iter().map(|r| r.market_value.clone()).collect();
+        assert_eq!(mv, vec![Some("170".to_string()), Some("170".to_string())]);
+
+        // Metrics window opening mid-history carries AAPL@100 + MSFT@50.
+        let m = db
+            .compute_investment_metrics(naive_date(2025, 2, 15), to, None, &fx)
+            .unwrap();
+        assert_eq!(m.start_value, dec!(150));
+        assert_eq!(m.end_value, dec!(170));
     }
 
     #[test]
