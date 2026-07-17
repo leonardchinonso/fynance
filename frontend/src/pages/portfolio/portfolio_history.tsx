@@ -15,6 +15,7 @@ import { DualAmount } from "@/components/currency"
 import { cn } from "@/lib/utils"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
 import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { useChartContextMenu, ChartContextMenu } from "@/components/charts/chart_context_menu"
 
 /**
@@ -108,6 +109,7 @@ function aggregateHistory(
 }
 
 function PortfolioHistoryInternal({ history, granularity }: PortfolioHistoryProps) {
+  useRedactedFlag()
   const preferredCurrency = usePreferredCurrency()
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const { setFilter } = useUrlFilters()

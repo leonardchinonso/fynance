@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/table"
 import { TrendingUp, TrendingDown, Wallet, Receipt, Coins, Scale, Layers } from "lucide-react"
 import { formatCurrency, formatMonthShort } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 
 interface Props {
   data: RemoteData<InvestmentsOverviewData>
@@ -54,10 +55,13 @@ function InvestmentsOverviewInternal({
   start: string
   end: string
 }) {
+  useRedactedFlag()
   const { holdings, pools, events, investmentHistory, currencies, realisedGains, preferredCurrency } = value
 
   const toPreferred = makeFxConverter(currencies)
 
+  // FX-converted sums stay float on purpose (rates exceed 2dp); see the
+  // contract in lib/money.ts.
   const currentValue = holdings.reduce(
     (sum, h) => sum + toPreferred(parseFloat(h.value), h.currency),
     0,
@@ -146,6 +150,7 @@ function InvestmentsOverviewInternal({
                 <InteractivePie
                   data={pieData}
                   colorMap={pieColorMap}
+                  currency={preferredCurrency}
                   height={260}
                   innerRadius={55}
                   outerRadius={95}
@@ -229,6 +234,7 @@ function SummaryCard({
 }
 
 function RealisedValue({ summary }: { summary: CgtSummary | null }) {
+  useRedactedFlag()
   if (!summary) {
     return <span className="text-sm font-normal text-muted-foreground">-</span>
   }
@@ -243,6 +249,7 @@ function RealisedValue({ summary }: { summary: CgtSummary | null }) {
 }
 
 function PoolsTable({ pools }: { pools: S104PoolState[] }) {
+  useRedactedFlag()
   const open = pools.filter((p) => parseFloat(p.current_shares) > 0)
   if (open.length === 0) {
     return (

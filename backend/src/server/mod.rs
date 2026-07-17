@@ -15,6 +15,7 @@ use axum::{
     middleware,
     routing::{delete, get, patch, post},
 };
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
@@ -235,5 +236,8 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         ))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
+        // Outermost: a panicking handler becomes a 500 instead of a dropped
+        // connection (the db mutex guard recovers from the poisoning).
+        .layer(CatchPanicLayer::new())
         .with_state(state)
 }

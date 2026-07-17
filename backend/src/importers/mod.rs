@@ -41,7 +41,7 @@ pub(crate) fn deserialize_tool_use<T: serde::de::DeserializeOwned>(
         let mut preview = serde_json::to_string(&raw).unwrap_or_default();
         const MAX: usize = 1024;
         if preview.len() > MAX {
-            preview.truncate(MAX);
+            preview.truncate(crate::util::char_boundary_floor(&preview, MAX));
             preview.push_str("\u{2026}(truncated)");
         }
         anyhow::anyhow!(

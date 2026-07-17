@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { MoneyDisplay } from "@/components/currency"
 import { daysSince, formatCurrency, formatDate } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 import { EmptyState } from "@/components/empty_state"
 import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
@@ -147,6 +148,7 @@ function AccountCard({
   toPreferred: (value: number, currency: string) => number
   onClick: () => void
 }) {
+  useRedactedFlag()
   const stale =
     account.balance_date !== null && daysSince(account.balance_date) > 30
   const typeColor =

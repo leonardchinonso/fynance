@@ -1,6 +1,7 @@
 import { api } from "@/api/client"
 import type { Account, AccountSnapshot, Currency } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
+import { combineRemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
 
 /** Data needed by the Accounts view. */
@@ -11,13 +12,13 @@ export interface PortfolioAccountsData {
 }
 
 /**
- * Fetches accounts and per-account balance snapshots for the Accounts view.
+ * Composes the Accounts view data set from per-endpoint cache entries.
  *
  * - Hard dep: `profileId`
  * - Soft deps: `start`, `end`
  *
- * `enabled` gates the fetch so the data loads only when the Accounts view (or
- * the account drill-down sheet, which also consumes it) is shown.
+ * `enabled` gates the fetches so the data loads only when the Accounts view
+ * (or the account drill-down sheet, which also consumes it) is shown.
  */
 export function usePortfolioAccounts(
   start: string,
@@ -25,19 +26,28 @@ export function usePortfolioAccounts(
   profileId: string | undefined,
   enabled = true,
 ): RemoteData<PortfolioAccountsData> {
-  const [data] = useQuery(
-    async () => {
-      const [portfolioResponse, accountBalances, currencies] = await Promise.all([
-        // Balances as of the range end date: the most recent snapshot on/before
-        // `end` (carry-forward), so a past end date shows historical balances
-        // rather than today's.
-        api.getPortfolio(profileId, end),
-        api.getAccountBalances(start, end, profileId),
-        api.getCurrencies(),
-      ])
-      return { accounts: portfolioResponse.accounts, accountBalances, currencies }
-    },
-    { tag: "portfolio-accounts", hard: [profileId], soft: [start, end], enabled },
+  // Balances as of the range end date: the most recent snapshot on/before
+  // `end` (carry-forward), so a past end date shows historical balances
+  // rather than today's.
+  const [portfolio] = useQuery(
+    () => api.getPortfolio(profileId, end),
+    { tag: "holdings-summary", hard: [profileId], soft: [end], enabled },
   )
-  return data
+  const [balances] = useQuery(
+    () => api.getAccountBalances(start, end),
+    { tag: "holdings-balances", hard: [], soft: [start, end], enabled },
+  )
+  const [currencies] = useQuery(
+    () => api.getCurrencies(),
+    { tag: "currencies", hard: [], soft: [], static: true, enabled },
+  )
+
+  return combineRemoteData(
+    [portfolio, balances, currencies] as const,
+    ([p, accountBalances, c]) => ({
+      accounts: p.accounts,
+      accountBalances,
+      currencies: c,
+    }),
+  )
 }

@@ -10,6 +10,7 @@ import { useProfileColorsContext } from "@/context/profile_colors_context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { ConfirmDialog } from "@/components/confirm_dialog"
 import { Input } from "@/components/ui/input"
 import { Trash2, Pencil, Plus, User } from "lucide-react"
 
@@ -42,6 +43,8 @@ function ProfilesList({ profiles, onRefresh }: { profiles: Profile[]; onRefresh:
   const { profileColors, syncProfiles, setColor, removeColor } = useProfileColorsContext()
   const [editing, setEditing] = useState<Profile | null>(null)
   const [deleting, setDeleting] = useState<Profile | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     syncProfiles(profiles.map((p) => p.id))
@@ -51,15 +54,24 @@ function ProfilesList({ profiles, onRefresh }: { profiles: Profile[]; onRefresh:
     <p className="text-sm text-muted-foreground py-4 text-center">No profiles yet. Create one to get started.</p>
   )
 
+  function requestDelete(profile: Profile) {
+    setDeleteError(null)
+    setDeleting(profile)
+  }
+
   async function handleDeleteConfirm() {
     if (!deleting) return
+    setDeleteBusy(true)
+    setDeleteError(null)
     try {
       await api.deleteProfile(deleting.id)
       removeColor(deleting.id)
       setDeleting(null)
       onRefresh()
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      setDeleteError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -96,7 +108,7 @@ function ProfilesList({ profiles, onRefresh }: { profiles: Profile[]; onRefresh:
               variant="ghost"
               size="icon"
               className="h-8 w-8 opacity-0 group-hover:opacity-100"
-              onClick={() => setDeleting(p)}
+              onClick={() => requestDelete(p)}
               title="Delete profile"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -113,18 +125,16 @@ function ProfilesList({ profiles, onRefresh }: { profiles: Profile[]; onRefresh:
         />
       )}
 
-      <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null) }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>Delete profile?</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This removes <strong>{deleting?.name}</strong>. Accounts assigned to this profile must be reassigned first; otherwise the delete will fail.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>Delete</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!deleting}
+        onOpenChange={(open) => { if (!open) setDeleting(null) }}
+        title="Delete profile?"
+        busy={deleteBusy}
+        error={deleteError}
+        onConfirm={handleDeleteConfirm}
+      >
+        This removes <strong>{deleting?.name}</strong>. Accounts assigned to this profile must be reassigned first; otherwise the delete will fail.
+      </ConfirmDialog>
     </>
   )
 }
@@ -132,6 +142,7 @@ function ProfilesList({ profiles, onRefresh }: { profiles: Profile[]; onRefresh:
 function EditProfileDialog({ profile, onClose, onSaved }: { profile: Profile; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(profile.name)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   async function handleSave() {
     if (!name.trim() || name.trim() === profile.name) {
@@ -139,11 +150,12 @@ function EditProfileDialog({ profile, onClose, onSaved }: { profile: Profile; on
       return
     }
     setSaving(true)
+    setSaveError(null)
     try {
       await api.updateProfile(profile.id, { name: name.trim() })
       onSaved()
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      setSaveError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }
@@ -166,6 +178,9 @@ function EditProfileDialog({ profile, onClose, onSaved }: { profile: Profile; on
           <p className="text-xs text-muted-foreground">
             ID stays as <span className="font-mono">{profile.id}</span> (immutable).
           </p>
+          {saveError && (
+            <p className="text-xs text-destructive whitespace-pre-wrap">{saveError}</p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
@@ -183,6 +198,7 @@ function AddProfileButton({ onRefresh }: { onRefresh: () => void }) {
   const [name, setName] = useState("")
   const [id, setId] = useState("")
   const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   function slugify(text: string) {
     return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
@@ -191,12 +207,15 @@ function AddProfileButton({ onRefresh }: { onRefresh: () => void }) {
   async function handleCreate() {
     if (!name.trim() || !id.trim()) return
     setCreating(true)
+    setCreateError(null)
     try {
       await api.createProfile({ id: id.trim(), name: name.trim() })
       setShowAdd(false)
       setName("")
       setId("")
       onRefresh()
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : String(err))
     } finally {
       setCreating(false)
     }
@@ -204,7 +223,7 @@ function AddProfileButton({ onRefresh }: { onRefresh: () => void }) {
 
   return (
     <>
-      <Button size="sm" className="gap-1.5" onClick={() => setShowAdd(true)}>
+      <Button size="sm" className="gap-1.5" onClick={() => { setCreateError(null); setShowAdd(true) }}>
         <Plus className="h-3.5 w-3.5" /> Add Profile
       </Button>
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
@@ -220,6 +239,9 @@ function AddProfileButton({ onRefresh }: { onRefresh: () => void }) {
               <Input placeholder="e.g. alex" value={id} onChange={(e) => setId(e.target.value)} />
               <p className="text-xs text-muted-foreground mt-1">Unique identifier, auto-generated from name</p>
             </div>
+            {createError && (
+              <p className="text-xs text-destructive whitespace-pre-wrap">{createError}</p>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
               <Button size="sm" onClick={handleCreate} disabled={!name.trim() || !id.trim() || creating}>

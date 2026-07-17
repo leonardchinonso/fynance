@@ -32,6 +32,34 @@ export const RemoteData = {
 
 // ── Visitors ──────────────────────────────────────────────────────────────────
 
+type RemoteValues<T extends readonly RemoteData<unknown>[]> = {
+  [K in keyof T]: T[K] extends RemoteData<infer V> ? V : never
+}
+
+/**
+ * Combine several queries into one `RemoteData`: failed if any part failed,
+ * a mapped value once every part has one (reloading if any part is
+ * refetching), otherwise loading. Lets view hooks compose per-endpoint
+ * cache entries while consumers keep seeing a single async state.
+ */
+export function combineRemoteData<T extends readonly RemoteData<unknown>[], R>(
+  parts: readonly [...T],
+  map: (values: RemoteValues<T>) => R,
+): RemoteData<R> {
+  for (const p of parts) {
+    if (p.status === "failed") return RemoteData.failed(p.error)
+  }
+  if (parts.every((p) => p.status === "succeeded" || p.status === "reloading")) {
+    const values = parts.map((p) => (p as { value: unknown }).value) as RemoteValues<T>
+    const value = map(values)
+    return parts.some((p) => p.status === "reloading")
+      ? RemoteData.reloading(value)
+      : RemoteData.succeeded(value)
+  }
+  if (parts.every((p) => p.status === "idle")) return RemoteData.idle()
+  return RemoteData.loading()
+}
+
 /**
  * Visit a `RemoteData` value with a 3-branch handler (the common case).
  *

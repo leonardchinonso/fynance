@@ -5,6 +5,7 @@ import type { InvestmentHistoryRow } from "@/bindings/InvestmentHistoryRow"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CgtSummary } from "@/bindings/CgtSummary"
 import type { RemoteData } from "@/lib/remote_data"
+import { sumMoney } from "@/lib/money"
 import { useQuery } from "@/hooks/use_query"
 import { accountTypeToAssetClass } from "@/lib/account_type_utils"
 
@@ -36,8 +37,7 @@ function preferredCode(currencies: Currency[]): string {
 /** Sum CGT summaries field-by-field (realised gains are additive across profiles). */
 function sumCgtSummaries(items: CgtSummary[]): CgtSummary | null {
   if (items.length === 0) return null
-  const sum = (pick: (s: CgtSummary) => string) =>
-    items.reduce((acc, s) => acc + (parseFloat(pick(s)) || 0), 0).toFixed(2)
+  const sum = (pick: (s: CgtSummary) => string) => sumMoney(items.map(pick))
   return {
     total_proceeds: sum((s) => s.total_proceeds),
     total_allowable_costs: sum((s) => s.total_allowable_costs),

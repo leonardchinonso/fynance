@@ -14,7 +14,6 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Star, Plus, Trash2, Check, ChevronsUpDown } from "lucide-react"
 import { cn, daysSince } from "@/lib/utils"
-import { useRefreshPreferredCurrency } from "@/context/preferred_currency_context"
 
 const ISO_CURRENCY_NAMES: Record<string, string> = {
   GBP: "British Pound",
@@ -132,7 +131,6 @@ function CurrencyRow({
   preferredCode: string
   onRefresh: () => void
 }) {
-  const refreshPreferredCurrency = useRefreshPreferredCurrency()
   const [rate, setRate] = useState(currency.fx_rate)
   const [rateDirty, setRateDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -156,7 +154,6 @@ function CurrencyRow({
   async function handleSetPreferred() {
     setConfirmPreferred(false)
     await api.updateCurrency(currency.code, { is_preferred: true })
-    refreshPreferredCurrency()
     onRefresh()
   }
 

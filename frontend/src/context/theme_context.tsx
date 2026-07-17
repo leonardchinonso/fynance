@@ -39,15 +39,20 @@ const ThemeContext = createContext<ThemeContextValue | null>(null)
  */
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(getStoredTheme)
+  // Held in state so an OS theme switch re-renders `resolvedTheme` consumers
+  // (chart palettes etc.), not just the DOM class.
+  const [systemTheme, setSystemTheme] = useState(getSystemTheme)
 
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
 
   useEffect(() => {
-    if (theme !== "system") return
     const mq = window.matchMedia("(prefers-color-scheme: dark)")
-    const handler = () => applyTheme("system")
+    const handler = () => {
+      setSystemTheme(getSystemTheme())
+      if (theme === "system") applyTheme("system")
+    }
     mq.addEventListener("change", handler)
     return () => mq.removeEventListener("change", handler)
   }, [theme])
@@ -61,7 +66,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const resolvedTheme = theme === "system" ? getSystemTheme() : theme
+  const resolvedTheme = theme === "system" ? systemTheme : theme
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>

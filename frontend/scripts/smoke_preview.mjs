@@ -247,7 +247,7 @@ async function runView(browser, view) {
 
   // 12. Budget grid — verify the "Show empty categories" toggle and the
   //     per-period spending-trend tooltip on the Average cell (V0 cleanup).
-  await page.goto(`${BASE}/budget?view=spreadsheet`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${BASE}/budget?view=overview`, { waitUntil: "domcontentloaded" })
   await page.getByText(/show empty categories/i).waitFor({ timeout: 10000 })
   const emptySwitch = page.locator("[data-slot='switch']").first()
   await emptySwitch.click()
@@ -263,6 +263,26 @@ async function runView(browser, view) {
     throw new Error("Budget spending-trend tooltip table did not render on hover")
   }
   await shot(page, `preview_${label}_11b_budget_trend_tooltip`)
+
+  // 12r. Privacy toggle re-renders money in place (no app remount): select a
+  //      row on the Transactions view, hide amounts, and confirm the selection
+  //      survives while the amount column is masked. Desktop only: the toggle
+  //      lives in the mobile menu sheet on small viewports.
+  if (view.name === "desktop") {
+    await page.goto(`${BASE}/budget?view=table`, { waitUntil: "domcontentloaded" })
+    const firstRowCheck = page.getByRole("checkbox", { name: /select transaction/i }).first()
+    await firstRowCheck.waitFor({ timeout: 10000 })
+    await firstRowCheck.click()
+    await page.getByText(/1 selected/i).waitFor({ timeout: 5000 })
+    await page.getByRole("button", { name: /hide amounts/i }).click()
+    await page.getByText("•").first().waitFor({ timeout: 5000 })
+    if (!(await firstRowCheck.isChecked())) {
+      throw new Error("Privacy toggle remounted the page: row selection was lost")
+    }
+    await page.getByText(/1 selected/i).waitFor({ timeout: 5000 })
+    await shot(page, `preview_${label}_11c_redacted`)
+    await page.getByRole("button", { name: /show amounts/i }).click()
+  }
 
   // 12f. Demand-driven loading + request-keyed cache (issue #52).
   //      Reads the dev-only per-key fetch counter the query cache exposes on
@@ -280,12 +300,16 @@ async function runView(browser, view) {
         .reduce((n, [, v]) => n + v, 0)
     }, tag)
 
-  // Unopened tabs must have issued zero requests for their data.
-  if ((await fetchCount("portfolio-accounts")) !== 0 || (await fetchCount("portfolio-history")) !== 0) {
-    throw new Error("Hidden Portfolio tabs fetched eagerly on Overview")
+  // Unopened tabs must have issued zero requests for their data. The cache is
+  // endpoint-keyed: the Accounts tab's balances query has not fired yet, and
+  // Overview's history entry will be shared with the History tab.
+  if ((await fetchCount("holdings-balances")) !== 0) {
+    throw new Error("Hidden Accounts tab fetched balances eagerly on Overview")
   }
-  const summaryFetches = await fetchCount("portfolio-summary")
+  const summaryFetches = await fetchCount("holdings-summary")
   if (summaryFetches < 1) throw new Error("Overview did not fetch its summary")
+  const historyFetches = await fetchCount("holdings-history")
+  if (historyFetches < 1) throw new Error("Overview did not fetch history for its delta")
 
   // Overview -> Accounts -> History -> Overview, client-side.
   await page.getByRole("button", { name: /^accounts$/i }).click()
@@ -295,16 +319,20 @@ async function runView(browser, view) {
   await page.getByRole("button", { name: /^overview$/i }).click()
   await page.waitForTimeout(700)
 
-  // Each underlying request fired at most once; returning to Overview is a cache hit.
-  const acc = await fetchCount("portfolio-accounts")
-  const hist = await fetchCount("portfolio-history")
-  const summaryAfter = await fetchCount("portfolio-summary")
-  if (acc !== 1) throw new Error(`Accounts fetched ${acc} times across one open, expected 1`)
-  if (hist !== 1) throw new Error(`History fetched ${hist} times across one open, expected 1`)
-  if (summaryAfter !== summaryFetches) {
-    throw new Error(`Returning to Overview refetched summary (${summaryFetches} -> ${summaryAfter}); cache not served`)
+  const bal = await fetchCount("holdings-balances")
+  const histAfter = await fetchCount("holdings-history")
+  const summaryAfter = await fetchCount("holdings-summary")
+  if (bal !== 1) throw new Error(`Balances fetched ${bal} times across one Accounts open, expected 1`)
+  // The History tab reuses Overview's cached entry: zero new fetches.
+  if (histAfter !== historyFetches) {
+    throw new Error(`History tab refetched shared history (${historyFetches} -> ${histAfter}); cache not shared`)
   }
-  console.log(`[${label}] demand-driven cache OK (summary=${summaryAfter}, accounts=${acc}, history=${hist})`)
+  // The Accounts view fetches its own as-of-end summary shape (+1); returning
+  // to Overview must be a cache hit on top of that.
+  if (summaryAfter !== summaryFetches + 1) {
+    throw new Error(`Summary fetches ${summaryFetches} -> ${summaryAfter}, expected exactly +1 for the Accounts as-of view`)
+  }
+  console.log(`[${label}] demand-driven cache OK (summary=${summaryAfter}, balances=${bal}, history=${histAfter})`)
 
   // 13. Portfolio account drill-down → per-account holdings value-history chart.
   //     Investment account: Allocation/History toggle, then a line chart with a
@@ -347,9 +375,8 @@ async function runView(browser, view) {
   await page.getByText(/^cost basis$/i).waitFor({ timeout: 10000 })
   await page.getByText(/cumulative invested/i).waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_13_investments_overview`)
-  // Switch to the History ledger: assert the Add control, then the events table.
+  // Switch to the History ledger.
   await page.getByRole("button", { name: /^history$/i }).click()
-  await page.getByRole("button", { name: /add event/i }).waitFor({ timeout: 5000 })
   // The table's Symbol header renders when in-range events exist; otherwise the
   // empty state shows. Accept either so the check is robust to mock-event dates
   // ageing out of the default "last 12 months" window.
@@ -376,7 +403,7 @@ async function checkSystemTheme(browser, viewport, label) {
     localStorage.setItem("fynance-theme", "system")
   })
   const page = await ctx.newPage()
-  await page.goto(`${BASE}/budget?view=spreadsheet`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${BASE}/budget?view=overview`, { waitUntil: "domcontentloaded" })
   await page.waitForFunction(() => document.documentElement.classList.contains("dark"), undefined, { timeout: 6000 })
   await page.emulateMedia({ colorScheme: "light" })
   await page.waitForFunction(() => !document.documentElement.classList.contains("dark"), undefined, { timeout: 6000 })

@@ -1,6 +1,7 @@
 import type { DisplayCurrency } from "@/types"
 import { cn, formatCurrency } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 
 interface MoneyDisplayProps {
   amount: string
@@ -22,6 +23,7 @@ export function MoneyDisplay({
   preferredCurrency,
   fxRate,
 }: MoneyDisplayProps) {
+  useRedactedFlag()
   const num = parseFloat(amount)
   const formatted = formatCurrency(amount, currency)
 
@@ -79,6 +81,7 @@ interface DualAmountProps {
 }
 
 export function DualAmount({ value, preferredCurrency, display, className, secondaryFirst, tooltip }: DualAmountProps) {
+  useRedactedFlag()
   const primary = display
     ? formatCurrency(display.value, display.currency)
     : formatCurrency(value, preferredCurrency)

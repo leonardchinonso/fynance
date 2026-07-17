@@ -23,7 +23,7 @@ pub async fn create_category(
     }
 
     let category = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.create_category(&body)?
     };
 
@@ -34,7 +34,7 @@ pub async fn create_category(
 
 pub async fn list_categories(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
     let tree = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_categories_tree()?
     };
     Ok(Json(serde_json::to_value(tree)?))
@@ -51,7 +51,7 @@ pub async fn resolve_category(
     State(state): State<AppState>,
     Query(q): Query<ResolveQuery>,
 ) -> Result<Json<Category>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let category = db
         .resolve_category_by_name(&q.name)?
         .ok_or_else(|| AppError::NotFound(format!("category '{}' not found", q.name)))?;
@@ -64,7 +64,7 @@ pub async fn get_category(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Category>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let category = db
         .get_category_by_id(&id)?
         .ok_or_else(|| AppError::NotFound(format!("category {id} not found")))?;
@@ -100,7 +100,7 @@ pub async fn update_category(
     }
 
     let category = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.update_category(&id, &body)?
     };
     Ok(Json(category))
@@ -121,7 +121,7 @@ pub async fn delete_category(
     Path(id): Path<String>,
     Query(q): Query<DeleteQuery>,
 ) -> Result<Json<Value>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     if q.hard {
         db.hard_delete_category(&id)?;
     } else {

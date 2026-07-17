@@ -18,7 +18,7 @@ pub async fn get_checklist(
 ) -> Result<Json<Value>, AppError> {
     parse_month(&month)?;
     let items = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_checklist(&month)?
     };
     Ok(Json(serde_json::to_value(items)?))
@@ -41,7 +41,7 @@ pub async fn mark_complete(
     let notes = body.and_then(|b| b.notes.clone());
 
     {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         if !db.account_exists(&account_id)? {
             return Err(AppError::NotFound(format!(
                 "account {account_id} not found"

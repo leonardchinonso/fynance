@@ -43,7 +43,7 @@ impl LlmPeriodicHoldingsParser {
                 max_bytes = MAX_CSV_BYTES,
                 "CSV is large; truncating before sending to LLM for periodic holdings"
             );
-            &raw[..MAX_CSV_BYTES]
+            &raw[..crate::util::char_boundary_floor(raw, MAX_CSV_BYTES)]
         } else {
             raw
         };

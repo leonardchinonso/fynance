@@ -43,16 +43,28 @@ export function DateRangeSelector({
   const [startPickerOpen, setStartPickerOpen] = useState(false)
   const [endPickerOpen, setEndPickerOpen] = useState(false)
 
+  // When a pick would invert the range, clamp the other bound to the picked
+  // date in the same update (yyyy-MM-dd strings compare lexicographically).
   function handleStartDateChange(date: Date | undefined) {
     if (date) {
-      setFilter({ start: format(date, "yyyy-MM-dd"), preset: "custom" })
+      const picked = format(date, "yyyy-MM-dd")
+      setFilter({
+        start: picked,
+        ...(picked > end ? { end: picked } : {}),
+        preset: "custom",
+      })
       setStartPickerOpen(false)
     }
   }
 
   function handleEndDateChange(date: Date | undefined) {
     if (date) {
-      setFilter({ end: format(date, "yyyy-MM-dd"), preset: "custom" })
+      const picked = format(date, "yyyy-MM-dd")
+      setFilter({
+        end: picked,
+        ...(picked < start ? { start: picked } : {}),
+        preset: "custom",
+      })
       setEndPickerOpen(false)
     }
   }

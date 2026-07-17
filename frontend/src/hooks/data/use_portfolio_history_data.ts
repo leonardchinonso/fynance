@@ -25,8 +25,10 @@ export function usePortfolioHistoryData(
   enabled = true,
 ): RemoteData<PortfolioHistoryRow[]> {
   const [data] = useQuery(
+    // Same tag and request shape as the Overview's history sub-query, so the
+    // two views share one cache entry (opening History after Overview is a hit).
     () => api.getPortfolioHistory(start, end, granularity, profileId),
-    { tag: "portfolio-history", hard: [profileId, granularity], soft: [start, end], enabled },
+    { tag: "holdings-history", hard: [profileId, granularity], soft: [start, end], enabled },
   )
   return data
 }

@@ -6,15 +6,31 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::model::{
-    CreateInvestmentEventBody, InvestmentEvent, InvestmentImportError, InvestmentImportResult,
-    InvestmentsImportPayload, ListInvestmentEventsQuery, PatchInvestmentEventBody,
+    CreateInvestmentEventBody, InsertOutcome, InvestmentEvent, InvestmentImportError,
+    InvestmentImportResult, InvestmentsImportPayload, ListInvestmentEventsQuery,
+    PatchInvestmentEventBody,
 };
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 use crate::server::validation::{
-    parse_date, parse_granularity, split_csv_param, validate_date_range,
+    parse_date, parse_granularity, split_csv_param, validate_currency, validate_date_range,
 };
+use crate::storage::db::Db;
 use crate::util::fx::FxRateMap;
+
+/// Reject unconfigured trade / fee currencies before anything is written,
+/// matching the transaction and holdings import paths.
+fn validate_event_currencies(
+    db: &Db,
+    currency: &str,
+    fee_currency: Option<&str>,
+) -> Result<(), AppError> {
+    validate_currency(db, currency)?;
+    if let Some(fc) = fee_currency.filter(|s| !s.is_empty()) {
+        validate_currency(db, fc)?;
+    }
+    Ok(())
+}
 
 // ── POST /api/investments ────────────────────────────────────────────────────
 
@@ -42,9 +58,12 @@ pub async fn create_investment(
     }
 
     let event = {
-        let db = state.db.lock().expect("db mutex poisoned");
-        db.create_investment_event(&body)
-            .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?
+        let db = state.db();
+        validate_event_currencies(&db, &body.currency, body.fee_currency.as_deref())?;
+        let (event, _outcome) = db
+            .create_investment_event(&body)
+            .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?;
+        event
     };
 
     Ok(Json(event))
@@ -57,7 +76,7 @@ pub async fn list_investments(
     Query(q): Query<ListInvestmentEventsQuery>,
 ) -> Result<Json<Value>, AppError> {
     let events = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.list_investment_events(
             q.account_id.as_deref(),
             q.symbol.as_deref(),
@@ -110,7 +129,7 @@ pub async fn get_investment_history(
         .unwrap_or_default();
 
     let (rows, preferred_currency) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let fx = FxRateMap::new(db.get_currencies()?)?;
         let rows =
             db.get_investment_history(start, end, &granularity, profile_id, &account_ids, &fx)?;
@@ -147,7 +166,13 @@ pub async fn update_investment(
     }
 
     let event = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
+        if let Some(ref c) = body.currency {
+            validate_currency(&db, c)?;
+        }
+        if let Some(fc) = body.fee_currency.as_deref().filter(|s| !s.is_empty()) {
+            validate_currency(&db, fc)?;
+        }
         db.update_investment_event(&id, &body)
             .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?
     };
@@ -164,7 +189,7 @@ pub async fn delete_investment(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let deleted = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.delete_investment_event(&id)?
     };
 
@@ -214,7 +239,13 @@ pub async fn import_investments(
     let mut errors: Vec<InvestmentImportError> = Vec::new();
 
     {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
+
+        // Validate currencies for the whole batch before writing anything.
+        for event in &payload.events {
+            validate_event_currencies(&db, &event.currency, event.fee_currency.as_deref())?;
+        }
+
         for (index, event) in payload.events.iter().enumerate() {
             let body = CreateInvestmentEventBody {
                 account_id: payload.account_id.clone(),
@@ -231,17 +262,12 @@ pub async fn import_investments(
             };
 
             match db.create_investment_event(&body) {
-                Ok(_) => {
-                    inserted += 1;
-                }
-                Err(e) => {
-                    let reason = e.to_string();
-                    if reason.contains("UNIQUE constraint") || reason.contains("duplicate") {
-                        duplicates += 1;
-                    } else {
-                        errors.push(InvestmentImportError { index, reason });
-                    }
-                }
+                Ok((_, InsertOutcome::Inserted)) => inserted += 1,
+                Ok((_, InsertOutcome::Duplicate)) => duplicates += 1,
+                Err(e) => errors.push(InvestmentImportError {
+                    index,
+                    reason: e.to_string(),
+                }),
             }
         }
     }

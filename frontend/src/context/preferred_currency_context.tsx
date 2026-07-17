@@ -1,31 +1,39 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react"
-import { api } from "@/api/client"
+import { createContext, useContext, useMemo, useRef } from "react"
 import type { Currency } from "@/types"
+import { useCurrencies } from "@/hooks/data/use_currencies"
 
 interface PreferredCurrencyContextValue {
   preferredCurrency: string
   currencies: Currency[]
-  refreshPreferredCurrency: () => void
 }
 
 const PreferredCurrencyContext = createContext<PreferredCurrencyContextValue | null>(null)
 
+/**
+ * Preferred currency + FX rates, derived from the shared cached currencies
+ * query (same cache entry as {@link useCurrencies}). Currency mutations
+ * invalidate the whole cache via the api client, so this stays fresh without
+ * manual wiring.
+ */
 export function PreferredCurrencyProvider({ children }: { children: React.ReactNode }) {
-  const [preferredCurrency, setPreferredCurrency] = useState("GBP")
-  const [currencies, setCurrencies] = useState<Currency[]>([])
+  const [currenciesData] = useCurrencies()
+  const fresh =
+    currenciesData.status === "succeeded" || currenciesData.status === "reloading"
+      ? currenciesData.value
+      : null
+  // Keep the last good rates through a failed refetch: a backend blip must not
+  // re-base every money label to GBP or wipe FX conversions.
+  const lastGood = useRef<Currency[]>([])
+  if (fresh) lastGood.current = fresh
+  const currencies = fresh ?? lastGood.current
+  const preferredCurrency = currencies.find((c) => c.is_preferred)?.code ?? "GBP"
 
-  const load = useCallback(() => {
-    api.getCurrencies().then((result) => {
-      setCurrencies(result)
-      const preferred = result.find((c) => c.is_preferred)
-      if (preferred) setPreferredCurrency(preferred.code)
-    }).catch(() => {})
-  }, [])
-
-  useEffect(() => { load() }, [load])
+  // Stable value identity: consumers re-render only when the rates change,
+  // not on every stale-while-revalidate emit.
+  const value = useMemo(() => ({ preferredCurrency, currencies }), [preferredCurrency, currencies])
 
   return (
-    <PreferredCurrencyContext.Provider value={{ preferredCurrency, currencies, refreshPreferredCurrency: load }}>
+    <PreferredCurrencyContext.Provider value={value}>
       {children}
     </PreferredCurrencyContext.Provider>
   )
@@ -41,10 +49,4 @@ export function useCurrenciesFromContext(): Currency[] {
   const ctx = useContext(PreferredCurrencyContext)
   if (!ctx) throw new Error("useCurrenciesFromContext must be used inside PreferredCurrencyProvider")
   return ctx.currencies
-}
-
-export function useRefreshPreferredCurrency(): () => void {
-  const ctx = useContext(PreferredCurrencyContext)
-  if (!ctx) throw new Error("useRefreshPreferredCurrency must be used inside PreferredCurrencyProvider")
-  return ctx.refreshPreferredCurrency
 }

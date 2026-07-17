@@ -429,7 +429,7 @@ td code { font-size: 12px; }
     <tr><td><code>invalid_category</code></td><td>Category not found or is a parent (not leaf)</td></tr>
     <tr><td><code>account_not_found</code></td><td>Account ID does not exist</td></tr>
     <tr><td><code>account_exists</code></td><td>Account ID already taken (409)</td></tr>
-    <tr><td><code>account_in_use</code></td><td>Account has transactions/holdings, cannot delete (409)</td></tr>
+    <tr><td><code>account_in_use</code></td><td>Account has transactions/holdings/investment events, cannot delete (409)</td></tr>
     <tr><td><code>profile_exists</code></td><td>Profile ID already taken (409)</td></tr>
     <tr><td><code>profile_in_use</code></td><td>Profile referenced by accounts, cannot delete (409)</td></tr>
     <tr><td><code>currency_exists</code></td><td>Currency code already exists (409)</td></tr>
@@ -1274,7 +1274,7 @@ td code { font-size: 12px; }
     <span class="method-badge method-delete">DELETE</span>
     <code class="endpoint-path">/api/accounts/:id</code>
   </div>
-  <p class="endpoint-summary">Delete an account. Fails if referenced by transactions or holdings. Defaults to a soft delete (sets <code>is_active = 0</code>); pass <code>?hard=true</code> to permanently remove the row. Either way the account must be empty first.</p>
+  <p class="endpoint-summary">Delete an account. Fails if referenced by transactions, holdings, or investment events. Defaults to a soft delete (sets <code>is_active = 0</code>); pass <code>?hard=true</code> to permanently remove the row. Either way the account must be empty first. A hard delete also removes the account's ingestion-checklist rows.</p>
   <h4>Parameters</h4>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -1294,7 +1294,7 @@ td code { font-size: 12px; }
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
       <tr><td>404</td><td><code>not_found</code></td><td>Account does not exist</td></tr>
-      <tr><td>409</td><td><code>account_in_use</code></td><td>Account has transactions or holdings</td></tr>
+      <tr><td>409</td><td><code>account_in_use</code></td><td>Account has transactions, holdings, or investment events</td></tr>
     </tbody>
   </table>
 </section>
@@ -2204,7 +2204,14 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <span class="method-badge method-get">GET</span>
     <code class="endpoint-path">/api/documents</code>
   </div>
-  <p class="endpoint-summary">List all stored documents with their orphan flag. <code>reference_count</code> is <code>null</code> here: the exact per-document count is expensive over the whole dataset, so it is computed lazily. Fetch it per document via <code>GET /api/documents/:id</code>. <code>orphaned</code> is always populated.</p>
+  <p class="endpoint-summary">List all stored documents with their orphan flag. <code>reference_count</code> is <code>null</code> by default; pass <code>include=refs</code> to populate it for every row in one batched query, or fetch it per document via <code>GET /api/documents/:id</code>. <code>orphaned</code> is always populated.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>include</code></td><td>query</td><td>string</td><td>No</td><td>Set to <code>refs</code> to populate <code>reference_count</code> for every row.</td></tr>
+    </tbody>
+  </table>
   <h4>Example Response <span class="status-code">200</span></h4>
   <pre class="example-response"><code>[
   {

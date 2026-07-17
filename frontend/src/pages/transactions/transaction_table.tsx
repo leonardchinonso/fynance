@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, type ReactNode } from "react"
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react"
 import type { Transaction } from "@/types"
 import { useResolveCategoryName } from "@/context/category_names_context"
 import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { api } from "@/api/client"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
+import { useDocuments } from "@/hooks/data"
 import type { TransactionsData } from "@/hooks/data"
 import { TableSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
@@ -296,7 +297,16 @@ function TransactionTableInternal({
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getStoredColumns)
   const [transactions, setTransactions] = useState(initialTransactions)
   // id -> {filename, uploaded_at} for the per-row "Source" document chips.
-  const [docsMap, setDocsMap] = useState<Map<string, SourceDocMeta>>(new Map())
+  // Only fetched while the Source column is visible; failures fall back to an
+  // empty map (documents are optional context).
+  const [docsData] = useDocuments(visibleColumns.has("source"))
+  const docsMap = useMemo(() => {
+    const docs =
+      docsData.status === "succeeded" || docsData.status === "reloading" ? docsData.value : []
+    return new Map<string, SourceDocMeta>(
+      docs.map((d) => [d.id, { filename: d.filename, uploaded_at: d.uploaded_at }]),
+    )
+  }, [docsData])
   // Shift-click range selection: anchor row + whether Shift was held on the click.
   const lastIndexRef = useRef<number | null>(null)
   const shiftRef = useRef(false)
@@ -335,18 +345,6 @@ function TransactionTableInternal({
   function toggleAll() {
     onSelectedChange(allSelected ? new Set() : new Set(allIds))
   }
-
-  useEffect(() => {
-    let cancelled = false
-    api
-      .listDocuments()
-      .then((docs) => {
-        if (cancelled) return
-        setDocsMap(new Map(docs.map((d) => [d.id, { filename: d.filename, uploaded_at: d.uploaded_at }])))
-      })
-      .catch(() => { /* documents are optional context; ignore */ })
-    return () => { cancelled = true }
-  }, [])
 
   async function toggleExclude(id: string, current: boolean) {
     setTransactions(prev => prev.map(t => t.id === id ? { ...t, exclude_from_summary: !current } : t))

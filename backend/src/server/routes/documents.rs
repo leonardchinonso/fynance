@@ -35,13 +35,21 @@ fn require_token_if_remote(state: &AppState, auth: &AuthContext) -> Result<(), A
 
 // ── GET /api/documents ────────────────────────────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+pub struct ListDocumentsQuery {
+    /// `refs` populates `reference_count` for every row (batched, not per-doc).
+    pub include: Option<String>,
+}
+
 pub async fn list_documents(
     State(state): State<AppState>,
     auth: axum::extract::Extension<AuthContext>,
+    Query(q): Query<ListDocumentsQuery>,
 ) -> Result<Json<Vec<DocumentSummary>>, AppError> {
     require_token_if_remote(&state, &auth)?;
-    let db = state.db.lock().expect("db mutex poisoned");
-    Ok(Json(db.list_documents()?))
+    let include_refs = q.include.as_deref() == Some("refs");
+    let db = state.db();
+    Ok(Json(db.list_documents(include_refs)?))
 }
 
 // ── GET /api/documents/:id ────────────────────────────────────────────────────
@@ -52,7 +60,7 @@ pub async fn get_document(
     Path(id): Path<String>,
 ) -> Result<Json<DocumentSummary>, AppError> {
     require_token_if_remote(&state, &auth)?;
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let doc = db
         .get_document(&id)?
         .ok_or_else(|| AppError::NotFound(format!("document {id} not found")))?;
@@ -79,7 +87,7 @@ pub async fn download_document(
 ) -> Result<Response, AppError> {
     require_token_if_remote(&state, &auth)?;
     let doc = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_document(&id)?
             .ok_or_else(|| AppError::NotFound(format!("document {id} not found")))?
     };
@@ -183,7 +191,7 @@ pub async fn upload_document(
     }
 
     let account_id = account_id.or(form_account_id);
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let mut out = Vec::with_capacity(stored.len());
     for (filename, mime, bytes) in stored {
         let (doc, _deduped) =
@@ -222,7 +230,7 @@ pub async fn delete_document(
     let force = q.force.unwrap_or(false);
 
     let outcome = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.delete_document(&id, force)?
     };
 

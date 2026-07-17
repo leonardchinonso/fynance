@@ -164,6 +164,9 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "wal_autocheckpoint", 100)?;
+        // A CLI command and `serve` can hold connections to the same file;
+        // without a timeout a write collision fails immediately with SQLITE_BUSY.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
         conn.execute_batch(SCHEMA_SQL)
             .context("running schema.sql")?;
@@ -543,34 +546,35 @@ impl Db {
     /// SUM(holdings.value) per account, carrying each (account, symbol,
     /// sub_account) forward to the most recent snapshot on/before `as_of`.
     /// Returns `account_id -> (balance, latest_as_of_among_carried_rows)`.
+    ///
+    /// Uses `carried_holdings_sql` with `active_only = false`: `get_accounts`
+    /// / `get_account_by_id` report balances for inactive accounts too, which
+    /// keeps the reconciliation invariant that account balances sum to
+    /// summary net worth.
     fn balances_from_holdings_as_of(
         &self,
         as_of: NaiveDate,
     ) -> Result<std::collections::HashMap<String, (Decimal, NaiveDateTime)>> {
         use std::collections::HashMap;
         let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
-        let mut stmt = self.conn.prepare(
-            r"SELECT h.account_id, h.value, h.as_of
-              FROM holdings h
-              WHERE h.as_of = (
-                  SELECT MAX(h2.as_of) FROM holdings h2
-                  WHERE h2.account_id = h.account_id
-                    AND h2.symbol = h.symbol
-                    AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
-                    AND h2.as_of <= ?1
-              )",
-        )?;
+        let sql = carried_holdings_sql("account_id, value, as_of", "AND h.as_of <= ?1", false);
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![as_of_str], |row| {
             let account_id: String = row.get(0)?;
             let value_str: String = row.get(1)?;
             let as_of_str: String = row.get(2)?;
-            Ok((account_id, value_str, as_of_str))
+            let value: Decimal = value_str.parse().map_err(|_| {
+                column_error(
+                    1,
+                    format!("invalid holding value {value_str:?} for account {account_id}"),
+                )
+            })?;
+            Ok((account_id, value, as_of_str))
         })?;
 
         let mut agg: HashMap<String, (Decimal, NaiveDateTime)> = HashMap::new();
         for r in rows {
-            let (account_id, value_str, as_of_str) = r?;
-            let value: Decimal = value_str.parse().unwrap_or(Decimal::ZERO);
+            let (account_id, value, as_of_str) = r?;
             let snapshot_dt = parse_transaction_datetime(&as_of_str)
                 .unwrap_or_else(|| chrono::Utc::now().naive_utc());
             let entry = agg
@@ -716,22 +720,20 @@ impl Db {
             .ok_or_else(|| anyhow!("account {id} not found after update"))
     }
 
-    pub fn count_transactions_for_account(&self, id: &str) -> Result<i64> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM transactions WHERE account_id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        Ok(count)
-    }
-
-    pub fn count_holdings_for_account(&self, id: &str) -> Result<i64> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM holdings WHERE account_id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        Ok(count)
+    /// `(transactions, holdings, investment events)` referencing this account.
+    /// Delete guards must check all three: holdings and investments carry an
+    /// FK to accounts, so a hard delete with any left would hit an FK violation.
+    pub fn account_reference_counts(&self, id: &str) -> Result<(i64, i64, i64)> {
+        self.conn
+            .query_row(
+                r"SELECT
+                    (SELECT COUNT(*) FROM transactions WHERE account_id = ?1),
+                    (SELECT COUNT(*) FROM holdings WHERE account_id = ?1),
+                    (SELECT COUNT(*) FROM investments WHERE account_id = ?1)",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(Into::into)
     }
 
     /// Soft-delete by setting `is_active = 0`. Hard delete is unsafe because
@@ -750,24 +752,34 @@ impl Db {
 
     /// Permanently remove the account row, unlike [`Self::delete_account`] which
     /// only flips `is_active`. Callers must verify the account has no
-    /// transactions or holdings first (the DELETE route guard does this) so no
-    /// rows are orphaned.
+    /// transactions, holdings, or investment events first (see
+    /// [`Self::account_reference_counts`]) so no rows are orphaned. Ingestion
+    /// checklist rows are per-month bookkeeping metadata and are removed with
+    /// the account.
     pub fn hard_delete_account(&self, id: &str) -> Result<()> {
-        let deleted = self
-            .conn
-            .execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM ingestion_checklist WHERE account_id = ?1",
+            params![id],
+        )?;
+        let deleted = tx.execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
         if deleted == 0 {
             return Err(anyhow!("account {id} not found"));
         }
+        tx.commit()?;
         Ok(())
     }
 
     // ── Investments ───────────────────────────────────────────────────────────
 
+    /// Insert one investment event. `INSERT OR IGNORE` on the unique
+    /// fingerprint makes creation idempotent; the returned [`InsertOutcome`]
+    /// says whether a row was inserted or the fingerprint already existed
+    /// (the existing event is returned either way).
     pub fn create_investment_event(
         &self,
         body: &CreateInvestmentEventBody,
-    ) -> Result<InvestmentEvent> {
+    ) -> Result<(InvestmentEvent, InsertOutcome)> {
         let event_type = InvestmentEventType::parse(&body.event_type)
             .ok_or_else(|| anyhow::anyhow!("invalid event_type: {}", body.event_type))?;
         let quantity = body
@@ -814,7 +826,7 @@ impl Db {
         let source_ids_json =
             serde_json::to_string(&body.source_document_ids).unwrap_or_else(|_| "[]".to_string());
 
-        self.conn.execute(
+        let rows = self.conn.execute(
             "INSERT OR IGNORE INTO investments
              (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
@@ -835,6 +847,11 @@ impl Db {
                 fee_currency,
             ],
         )?;
+        let outcome = if rows == 1 {
+            InsertOutcome::Inserted
+        } else {
+            InsertOutcome::Duplicate
+        };
 
         // On a duplicate (INSERT ignored) the row already exists; union any new
         // source documents into it so re-imports keep the audit trail complete.
@@ -854,7 +871,7 @@ impl Db {
             params![fingerprint],
             row_to_investment_event,
         )?;
-        Ok(event)
+        Ok((event, outcome))
     }
 
     pub fn list_investment_events(
@@ -911,56 +928,84 @@ impl Db {
         Ok(rows)
     }
 
+    /// Patch an investment event. All field updates land in one transaction,
+    /// and the fingerprint is recomputed whenever an identity field
+    /// (event_type, symbol, date, quantity, price_per_share) changes so that
+    /// dedup on re-import keeps working. A recompute that collides with
+    /// another event's fingerprint fails the whole patch.
     pub fn update_investment_event(
         &self,
         id: &str,
         body: &PatchInvestmentEventBody,
     ) -> Result<Option<InvestmentEvent>> {
-        let exists: bool = self.conn.query_row(
-            "SELECT COUNT(*) > 0 FROM investments WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        if !exists {
+        let tx = self.conn.unchecked_transaction()?;
+
+        let current = tx
+            .query_row(
+                "SELECT account_id, event_type, symbol, date, quantity, price_per_share
+                 FROM investments WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((account_id, mut event_type, mut symbol, mut date_str, mut quantity, mut price)) =
+            current
+        else {
             return Ok(None);
-        }
+        };
 
         if let Some(ref et) = body.event_type {
-            InvestmentEventType::parse(et)
+            let parsed = InvestmentEventType::parse(et)
                 .ok_or_else(|| anyhow::anyhow!("invalid event_type: {}", et))?;
-            self.conn.execute(
+            event_type = parsed.as_str().to_string();
+            tx.execute(
                 "UPDATE investments SET event_type = ?1 WHERE id = ?2",
-                params![et, id],
+                params![event_type, id],
             )?;
         }
         if let Some(ref s) = body.symbol {
-            self.conn.execute(
+            symbol = s.clone();
+            tx.execute(
                 "UPDATE investments SET symbol = ?1 WHERE id = ?2",
-                params![s, id],
+                params![symbol, id],
             )?;
         }
         if let Some(ref d) = body.date {
             let dt = parse_transaction_datetime(d)
                 .ok_or_else(|| anyhow::anyhow!("invalid date format"))?;
-            self.conn.execute(
+            date_str = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+            tx.execute(
                 "UPDATE investments SET date = ?1 WHERE id = ?2",
-                params![dt.format("%Y-%m-%dT%H:%M:%S").to_string(), id],
+                params![date_str, id],
             )?;
         }
         if let Some(ref q) = body.quantity {
-            q.parse::<Decimal>()
-                .map_err(|_| anyhow::anyhow!("invalid quantity"))?;
-            self.conn.execute(
+            quantity = q
+                .parse::<Decimal>()
+                .map_err(|_| anyhow::anyhow!("invalid quantity"))?
+                .to_string();
+            tx.execute(
                 "UPDATE investments SET quantity = ?1 WHERE id = ?2",
-                params![q, id],
+                params![quantity, id],
             )?;
         }
         if let Some(ref p) = body.price_per_share {
-            p.parse::<Decimal>()
-                .map_err(|_| anyhow::anyhow!("invalid price_per_share"))?;
-            self.conn.execute(
+            price = p
+                .parse::<Decimal>()
+                .map_err(|_| anyhow::anyhow!("invalid price_per_share"))?
+                .to_string();
+            tx.execute(
                 "UPDATE investments SET price_per_share = ?1 WHERE id = ?2",
-                params![p, id],
+                params![price, id],
             )?;
         }
         if body.fee.is_some() {
@@ -969,29 +1014,62 @@ impl Db {
                 f.parse::<Decimal>()
                     .map_err(|_| anyhow::anyhow!("invalid fee"))?;
             }
-            self.conn.execute(
+            tx.execute(
                 "UPDATE investments SET fee = ?1 WHERE id = ?2",
                 params![fee_str, id],
             )?;
         }
         if let Some(ref c) = body.currency {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE investments SET currency = ?1 WHERE id = ?2",
                 params![c, id],
             )?;
         }
         if let Some(ref fc) = body.fee_currency {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE investments SET fee_currency = ?1 WHERE id = ?2",
                 params![fc, id],
             )?;
         }
         if body.notes.is_some() {
-            self.conn.execute(
+            tx.execute(
                 "UPDATE investments SET notes = ?1 WHERE id = ?2",
                 params![body.notes.as_deref(), id],
             )?;
         }
+
+        let identity_changed = body.event_type.is_some()
+            || body.symbol.is_some()
+            || body.date.is_some()
+            || body.quantity.is_some()
+            || body.price_per_share.is_some();
+        if identity_changed {
+            // Same formula as create_investment_event: decimals go through
+            // Decimal Display and event_type through as_str(), so the stored
+            // fingerprint stays comparable with future imports.
+            let quantity_dec = quantity.parse::<Decimal>().map_err(|_| {
+                anyhow!("stored quantity {quantity:?} on investment event {id} is not a decimal")
+            })?;
+            let price_dec = price.parse::<Decimal>().map_err(|_| {
+                anyhow!(
+                    "stored price_per_share {price:?} on investment event {id} is not a decimal"
+                )
+            })?;
+            let canonical_event_type = InvestmentEventType::parse(&event_type)
+                .ok_or_else(|| {
+                    anyhow!("unknown event_type {event_type:?} stored on investment event {id}")
+                })?
+                .as_str();
+            let fingerprint = sha256_hex(&format!(
+                "{account_id}|{symbol}|{date_str}|{quantity_dec}|{price_dec}|{canonical_event_type}"
+            ));
+            tx.execute(
+                "UPDATE investments SET fingerprint = ?1 WHERE id = ?2",
+                params![fingerprint, id],
+            )?;
+        }
+
+        tx.commit()?;
 
         let event = self.conn.query_row(
             "SELECT id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency
@@ -1062,13 +1140,15 @@ impl Db {
 
     /// Batch-insert a slice of `ImportTransaction`s from the JSON API.
     /// Inserts valid rows and skips bad ones (partial success). Returns an
-    /// `ImportResult` with per-row error details for any skipped rows.
+    /// `ImportResult` with per-row error details for any skipped rows. All
+    /// valid rows commit in a single transaction at the end.
     pub fn insert_transactions_bulk(
         &self,
         account_id: &str,
         txns: &[ImportTransaction],
     ) -> Result<ImportResult> {
         use crate::util::{fingerprint, normalize_description};
+        use std::collections::HashSet;
         use uuid::Uuid;
 
         let mut result = ImportResult {
@@ -1077,67 +1157,125 @@ impl Db {
             ..ImportResult::default()
         };
 
-        for (i, t) in txns.iter().enumerate() {
-            result.rows_total += 1;
-            let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
-            let amount_str = t.amount.to_string();
-            let currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
-            let normalized = normalize_description(&t.description);
-            let fp = fingerprint(&date_iso, &amount_str, account_id);
+        // Category validity, preloaded once (a per-row lookup made large
+        // imports issue O(rows) queries). Assignable = active leaf; parents
+        // get a distinct error message regardless of their active flag,
+        // mirroring the old per-row get_category_by_id match.
+        let mut active_leaves: HashSet<String> = HashSet::new();
+        let mut parent_ids: HashSet<String> = HashSet::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, parent_id IS NULL, is_active FROM categories")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)? != 0,
+                    row.get::<_, i64>(2)? != 0,
+                ))
+            })?;
+            for row in rows {
+                let (id, is_parent, is_active) = row?;
+                if is_parent {
+                    parent_ids.insert(id);
+                } else if is_active {
+                    active_leaves.insert(id);
+                }
+            }
+        }
 
-            // Validate the category_id (must be an active leaf) when provided.
-            let category_id = if let Some(ref cid) = t.category_id {
-                match self.get_category_by_id(cid)? {
-                    Some(cat) if cat.parent_id.is_some() && cat.is_active => Some(cid.clone()),
-                    Some(cat) if cat.parent_id.is_none() => {
+        let db_tx = self.conn.unchecked_transaction()?;
+        {
+            let mut insert_stmt = self.conn.prepare_cached(
+                r"INSERT OR IGNORE INTO transactions (
+                    id, date, description, normalized, amount, currency,
+                    account_id, category_id, category_source, confidence, notes,
+                    is_recurring, exclude_from_summary, fingerprint, fitid, source_document_ids
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            )?;
+
+            for (i, t) in txns.iter().enumerate() {
+                result.rows_total += 1;
+                let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
+                let amount_str = t.amount.to_string();
+                let currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
+                let normalized = normalize_description(&t.description);
+                let fp = fingerprint(&date_iso, &amount_str, account_id);
+
+                let category_id = match &t.category_id {
+                    Some(cid) if active_leaves.contains(cid) => Some(cid.as_str()),
+                    Some(cid) if parent_ids.contains(cid) => {
                         result.errors.push(ImportRowError {
                             index: i,
                             reason: format!("category {cid} is a parent, not a leaf"),
                         });
                         continue;
                     }
-                    _ => {
+                    Some(cid) => {
                         result.errors.push(ImportRowError {
                             index: i,
                             reason: format!("category {cid} not found or inactive"),
                         });
                         continue;
                     }
-                }
-            } else {
-                None
-            };
+                    None => None,
+                };
 
-            let tx = Transaction {
-                id: Uuid::new_v4().to_string(),
-                date: t.date,
-                description: t.description.clone(),
-                normalized,
-                amount: t.amount,
-                currency,
-                account_id: account_id.to_string(),
-                category_id,
-                category_source: t.category_source.clone(),
-                confidence: None,
-                notes: t.notes.clone(),
-                is_recurring: t.is_recurring.unwrap_or(false),
-                exclude_from_summary: t.exclude_from_summary.unwrap_or(false),
-                fingerprint: fp,
-                fitid: None,
-                source_document_ids: t.source_document_ids.clone(),
-            };
+                let source_ids_json = serde_json::to_string(&t.source_document_ids)
+                    .unwrap_or_else(|_| "[]".to_string());
+                let inserted = insert_stmt.execute(params![
+                    Uuid::new_v4().to_string(),
+                    date_iso,
+                    t.description,
+                    normalized,
+                    amount_str,
+                    currency,
+                    account_id,
+                    category_id,
+                    t.category_source.as_ref().map(|s| s.as_str()),
+                    Option::<f64>::None,
+                    t.notes,
+                    t.is_recurring.unwrap_or(false) as i64,
+                    t.exclude_from_summary.unwrap_or(false) as i64,
+                    fp,
+                    Option::<String>::None,
+                    source_ids_json,
+                ]);
 
-            match self.insert_transaction(&tx) {
-                Ok(InsertOutcome::Inserted) => result.rows_inserted += 1,
-                Ok(InsertOutcome::Duplicate) => result.rows_duplicate += 1,
-                Err(e) => {
-                    result.errors.push(ImportRowError {
+                match inserted {
+                    Ok(1) => result.rows_inserted += 1,
+                    Ok(_) => {
+                        // Duplicate (same fingerprint). Merge any new source
+                        // documents into the existing row so the audit trail
+                        // stays complete across re-imports of overlapping
+                        // statements.
+                        let merged = if t.source_document_ids.is_empty() {
+                            Ok(())
+                        } else {
+                            merge_source_documents(
+                                &self.conn,
+                                "transactions",
+                                "fingerprint",
+                                &fp,
+                                &source_ids_json,
+                            )
+                        };
+                        match merged {
+                            Ok(()) => result.rows_duplicate += 1,
+                            Err(e) => result.errors.push(ImportRowError {
+                                index: i,
+                                reason: e.to_string(),
+                            }),
+                        }
+                    }
+                    Err(e) => result.errors.push(ImportRowError {
                         index: i,
                         reason: e.to_string(),
-                    });
+                    }),
                 }
             }
         }
+        db_tx.commit()?;
         Ok(result)
     }
 
@@ -1353,7 +1491,15 @@ impl Db {
             conditions.push(format!("t.category_source = ?{}", args.len()));
         }
         if let Some(search) = &filters.search {
-            let pattern = format!("%{}%", search.replace('%', "\\%").replace('_', "\\_"));
+            // Escape the escape character itself first, or a search containing
+            // `\` builds a malformed pattern.
+            let pattern = format!(
+                "%{}%",
+                search
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+            );
             args.push(Box::new(pattern.clone()));
             let idx = args.len();
             conditions.push(format!(
@@ -1464,10 +1610,29 @@ impl Db {
         use crate::util::fx::CurrencyAggregator;
         use std::collections::HashMap;
 
-        let mut conditions: Vec<String> = vec![
-            "t.category_id IS NOT NULL".to_string(),
-            "t.exclude_from_summary = 0".to_string(),
-        ];
+        // Same "__uncategorized__" sentinel contract as get_transactions:
+        // when the categories filter includes it, NULL-category rows come
+        // back as their own group (category_id = null). By default they are
+        // excluded.
+        let mut want_uncategorized = false;
+        let real_cats: Vec<&String> = filters
+            .categories
+            .iter()
+            .flatten()
+            .filter(|v| {
+                if v.as_str() == "__uncategorized__" {
+                    want_uncategorized = true;
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let mut conditions: Vec<String> = vec!["t.exclude_from_summary = 0".to_string()];
+        if !want_uncategorized {
+            conditions.push("t.category_id IS NOT NULL".to_string());
+        }
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut need_account_join = false;
 
@@ -1491,18 +1656,22 @@ impl Db {
                 conditions.push(format!("t.account_id IN ({})", placeholders.join(",")));
             }
         }
-        if let Some(cats) = &filters.categories {
-            if !cats.is_empty() {
-                let placeholders: Vec<String> = cats
+        if !real_cats.is_empty() || want_uncategorized {
+            let mut clauses: Vec<String> = Vec::new();
+            if !real_cats.is_empty() {
+                let placeholders: Vec<String> = real_cats
                     .iter()
                     .map(|v| {
-                        args.push(Box::new(v.clone()));
+                        args.push(Box::new((*v).clone()));
                         format!("?{}", args.len())
                     })
                     .collect();
-                let ph = placeholders.join(",");
-                conditions.push(format!("t.category_id IN ({ph})"));
+                clauses.push(format!("t.category_id IN ({})", placeholders.join(",")));
             }
+            if want_uncategorized {
+                clauses.push("t.category_id IS NULL".to_string());
+            }
+            conditions.push(format!("({})", clauses.join(" OR ")));
         }
         let mut need_category_join = false;
         if let Some(ctypes) = &filters.category_types {
@@ -1574,7 +1743,9 @@ impl Db {
 
         let mut categories_map: HashMap<Option<String>, CurrencyAggregator> = HashMap::new();
         for (category_id, currency, total_f64) in raw {
-            let total = Decimal::try_from(total_f64).unwrap_or_default();
+            let total = Decimal::try_from(total_f64).map_err(|e| {
+                anyhow!("total for category {category_id:?} ({currency}) is not representable: {e}")
+            })?;
             categories_map
                 .entry(category_id)
                 .or_default()
@@ -1686,6 +1857,31 @@ impl Db {
         if updated == 0 {
             return Err(anyhow!("unknown transaction: {id}"));
         }
+        Ok(())
+    }
+
+    /// Apply a transaction patch atomically: category, notes and
+    /// exclude_from_summary all land or none do. The individual update
+    /// helpers run on the same connection, so they execute inside the
+    /// transaction opened here.
+    pub fn patch_transaction_fields(
+        &self,
+        id: &str,
+        category: Option<(&str, CategorySource)>,
+        notes: Option<&str>,
+        exclude_from_summary: Option<bool>,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        if let Some((category_id, source)) = category {
+            self.update_transaction_category(id, category_id, source)?;
+        }
+        if let Some(n) = notes {
+            self.update_transaction_notes(id, Some(n))?;
+        }
+        if let Some(e) = exclude_from_summary {
+            self.update_transaction_exclude_summary(id, e)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1897,7 +2093,9 @@ impl Db {
     /// so no dangling references remain (FK enforcement is off, so this is
     /// done explicitly rather than relying on ON DELETE).
     pub fn hard_delete_category(&self, id: &str) -> Result<()> {
-        let child_count: i64 = self.conn.query_row(
+        let tx = self.conn.unchecked_transaction()?;
+
+        let child_count: i64 = tx.query_row(
             "SELECT COUNT(*) FROM categories WHERE parent_id = ?1",
             params![id],
             |row| row.get(0),
@@ -1908,27 +2106,25 @@ impl Db {
             ));
         }
 
-        self.conn.execute(
+        tx.execute(
             "UPDATE transactions SET category_id = NULL WHERE category_id = ?1",
             params![id],
         )?;
-        self.conn
-            .execute("DELETE FROM budgets WHERE category_id = ?1", params![id])?;
-        self.conn.execute(
+        tx.execute("DELETE FROM budgets WHERE category_id = ?1", params![id])?;
+        tx.execute(
             "DELETE FROM standing_budgets WHERE category_id = ?1",
             params![id],
         )?;
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM budget_overrides WHERE category_id = ?1",
             params![id],
         )?;
 
-        let deleted = self
-            .conn
-            .execute("DELETE FROM categories WHERE id = ?1", params![id])?;
+        let deleted = tx.execute("DELETE FROM categories WHERE id = ?1", params![id])?;
         if deleted == 0 {
             return Err(anyhow!("category {id} not found"));
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -2074,7 +2270,7 @@ impl Db {
         );
         let mut stmt = self.conn.prepare(sql)?;
         let raw: Vec<RawBudgetRow> = stmt
-            .query_map(params![month, month, month], |row| {
+            .query_map(params![month], |row| {
                 Ok((
                     row.get(0)?,
                     row.get(1)?,
@@ -2282,7 +2478,9 @@ impl Db {
             ),
         > = HashMap::new();
         for (gkey, cat_id, parent_id, period, currency, total_f64) in raw {
-            let total_dec = Decimal::try_from(total_f64).unwrap_or_default();
+            let total_dec = Decimal::try_from(total_f64).map_err(|e| {
+                anyhow!("spending total for {gkey} in period {period} is not representable: {e}")
+            })?;
             let entry = grid.entry(gkey.clone()).or_insert_with(|| {
                 let (category_id, parent_id_field, group_key) = match group_by {
                     SpendingGroupBy::LeafCategory => (cat_id.clone(), parent_id.clone(), None),
@@ -2367,35 +2565,6 @@ impl Db {
                 .then(a.category_id.cmp(&b.category_id))
         });
         Ok(result)
-    }
-
-    // ── Legacy budget (CLI compat) ─────────────────────────────────────────────
-
-    pub fn set_budget(&self, month: &str, category: &str, amount: Decimal) -> Result<()> {
-        self.conn.execute(
-            r"INSERT INTO budgets (month, category, amount)
-              VALUES (?1, ?2, ?3)
-              ON CONFLICT(month, category) DO UPDATE SET amount = excluded.amount",
-            params![month, category, amount.to_string()],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_budgets_for_month(&self, month: &str) -> Result<Vec<crate::model::Budget>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT month, category, amount FROM budgets WHERE month = ?1 ORDER BY category",
-        )?;
-        let rows = stmt
-            .query_map(params![month], |row| {
-                let amount: String = row.get(2)?;
-                Ok(crate::model::Budget {
-                    month: row.get(0)?,
-                    category: row.get(1)?,
-                    amount: amount.parse::<Decimal>().unwrap_or_default(),
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
     }
 
     // ── Portfolio ─────────────────────────────────────────────────────────────
@@ -2632,18 +2801,31 @@ impl Db {
             .map_err(Into::into)
     }
 
-    /// List every stored document with its orphan flag. The exact reference
-    /// count is intentionally NOT computed here: the three correlated `COUNT`s
-    /// over `json_each` are slow over the whole dataset and block the list.
-    /// `reference_count` is left `None`; clients fetch it lazily per row via
-    /// `get_document`. Orphaned is still computed, but cheaply: `NOT EXISTS`
-    /// short-circuits on the first referencing row instead of counting them all.
-    pub fn list_documents(&self) -> Result<Vec<DocumentSummary>> {
-        // Collect every referenced document id in a single pass per table. The
-        // previous per-document correlated `NOT EXISTS` was O(docs x rows) and
-        // re-scanned/re-parsed every source_document_ids JSON array once per
-        // document; this scans each table's json arrays exactly once.
-        let referenced: std::collections::HashSet<String> = {
+    /// List every stored document with its orphan flag. `reference_count` is
+    /// left `None` by default (clients fetch it lazily per row via
+    /// `get_document`); with `include_refs` it is populated for every row via
+    /// one grouped scan over the three referencing link sources, matching
+    /// `document_references(id).total()` per document.
+    pub fn list_documents(&self, include_refs: bool) -> Result<Vec<DocumentSummary>> {
+        // Single pass per table over the source_document_ids JSON arrays.
+        // Without include_refs a UNION collects the distinct referenced ids
+        // (orphan flag only); with it, UNION ALL + GROUP BY counts every
+        // referencing row. Either way the query count is constant.
+        let referenced: std::collections::HashMap<String, usize> = if include_refs {
+            let mut stmt = self.conn.prepare(
+                r"SELECT value, COUNT(*) FROM (
+                    SELECT j.value FROM transactions t, json_each(t.source_document_ids) j
+                    UNION ALL
+                    SELECT j.value FROM holdings h, json_each(h.source_document_ids) j
+                    UNION ALL
+                    SELECT j.value FROM investments i, json_each(i.source_document_ids) j
+                  ) GROUP BY value",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+            })?;
+            rows.collect::<rusqlite::Result<_>>()?
+        } else {
             let mut stmt = self.conn.prepare(
                 r"SELECT j.value FROM transactions t, json_each(t.source_document_ids) j
                   UNION
@@ -2651,8 +2833,8 @@ impl Db {
                   UNION
                   SELECT j.value FROM investments i, json_each(i.source_document_ids) j",
             )?;
-            let ids = stmt.query_map([], |row| row.get::<_, String>(0))?;
-            ids.collect::<rusqlite::Result<std::collections::HashSet<String>>>()?
+            let ids = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, 0usize)))?;
+            ids.collect::<rusqlite::Result<_>>()?
         };
 
         let mut stmt = self.conn.prepare(
@@ -2663,7 +2845,7 @@ impl Db {
         let rows = stmt
             .query_map([], |row| {
                 let id: String = row.get(0)?;
-                let orphaned = !referenced.contains(&id);
+                let refs = referenced.get(&id).copied();
                 Ok(DocumentSummary {
                     id,
                     filename: row.get(1)?,
@@ -2672,8 +2854,12 @@ impl Db {
                     origin: row.get(4)?,
                     account_id: row.get(5)?,
                     uploaded_at: row.get(6)?,
-                    reference_count: None,
-                    orphaned,
+                    reference_count: if include_refs {
+                        Some(refs.unwrap_or(0))
+                    } else {
+                        None
+                    },
+                    orphaned: refs.is_none(),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -2808,8 +2994,15 @@ impl Db {
             .ok();
         match row {
             Some((name, active)) if active != 0 => {
+                // Debounced: refreshing last_used on every request turns each
+                // authenticated read into a write. Only touch it when unset or
+                // older than 60s. The stored format is fixed-width ISO 8601
+                // UTC, so string comparison is chronological.
                 self.conn.execute(
-                    "UPDATE api_tokens SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE name = ?1",
+                    "UPDATE api_tokens SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                     WHERE name = ?1
+                       AND (last_used IS NULL
+                            OR last_used < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-60 seconds'))",
                     params![name],
                 )?;
                 Ok(Some(name))
@@ -2820,9 +3013,107 @@ impl Db {
 
     // ── Portfolio queries ─────────────────────────────────────────────────────
 
+    /// Snapshot stream for a [`CarryForward`] walk over `[from, to]`: the
+    /// latest snapshot per (account, symbol, sub_account) at or before
+    /// end-of-day `from`, plus every snapshot inside `(from, to]`, sorted by
+    /// `as_of` ascending. Replaying it reproduces `get_holdings_for_summary`
+    /// for any period end in the range, at a cost that scales with live
+    /// holdings plus in-range snapshots rather than full history depth.
+    ///
+    /// `account_types` / `account_ids` filter by owning account; both are
+    /// safe to push into SQL because a key's carry-forward never depends on
+    /// other accounts' snapshots.
+    fn holding_snapshots_in_range(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+        profile_id: Option<&str>,
+        account_types: Option<&[AccountType]>,
+        account_ids: &[String],
+    ) -> Result<Vec<HoldingSnapshot>> {
+        // A degenerate from > to reduces to a point query at to, matching the
+        // pre-windowed behavior.
+        let from = from.min(to);
+        let from_str = from.format("%Y-%m-%dT23:59:59").to_string();
+        let to_str = to.format("%Y-%m-%dT23:59:59").to_string();
+
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(from_str), Box::new(to_str)];
+        let mut filters = String::new();
+        if let Some(pid) = profile_id {
+            args.push(Box::new(format!("%\"{pid}\"%")));
+            filters.push_str(&format!(" AND a.profile_ids LIKE ?{}", args.len()));
+        }
+        if let Some(types) = account_types {
+            let placeholders = types
+                .iter()
+                .map(|t| {
+                    args.push(Box::new(t.as_str().to_string()));
+                    format!("?{}", args.len())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            filters.push_str(&format!(" AND a.type IN ({placeholders})"));
+        }
+        if !account_ids.is_empty() {
+            let placeholders = account_ids
+                .iter()
+                .map(|id| {
+                    args.push(Box::new(id.clone()));
+                    format!("?{}", args.len())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            filters.push_str(&format!(" AND h.account_id IN ({placeholders})"));
+        }
+
+        let carried_at_from = carried_holdings_sql(
+            "account_id, symbol, COALESCE(sub_account, '') AS sub_account, as_of,
+             value, currency, is_closed, account_type",
+            &format!("AND h.as_of <= ?1{filters}"),
+            true,
+        );
+        let sql = format!(
+            r"{carried_at_from}
+              UNION ALL
+              SELECT h.account_id, h.symbol, COALESCE(h.sub_account, ''), h.as_of,
+                     h.value, h.currency, h.is_closed, a.type
+              FROM holdings h
+              JOIN accounts a ON a.id = h.account_id
+              WHERE a.is_active = 1 AND h.as_of > ?1 AND h.as_of <= ?2{filters}
+              ORDER BY as_of"
+        );
+
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<HoldingSnapshot> {
+            let value_str: String = row.get(4)?;
+            let account_type_str: String = row.get(7)?;
+            Ok(HoldingSnapshot {
+                account_id: row.get(0)?,
+                symbol: row.get(1)?,
+                sub_account: row.get(2)?,
+                as_of: row.get(3)?,
+                value: parse_decimal_column(4, "holding value", &value_str)?,
+                currency: row.get(5)?,
+                is_closed: row.get::<_, i64>(6)? != 0,
+                account_type: AccountType::parse(&account_type_str).ok_or_else(|| {
+                    column_error(7, format!("unknown account type: {account_type_str:?}"))
+                })?,
+            })
+        };
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+                map_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// One `HoldingsHistoryRow` per period in `[from, to]`. The last point
     /// reconciles with the portfolio summary's net worth for the same
-    /// `as_of` (both reduce `get_holdings_for_summary`).
+    /// `as_of` (history replays the same snapshots `get_holdings_for_summary`
+    /// reduces, via [`CarryForward`]).
     pub fn get_monthly_net_worth(
         &self,
         from: NaiveDate,
@@ -2834,19 +3125,20 @@ impl Db {
         use crate::util::fx::CurrencyAggregator;
 
         let periods = generate_period_end_dates(from, to, granularity);
-        let mut rows = Vec::new();
+        let mut carry =
+            CarryForward::new(self.holding_snapshots_in_range(from, to, profile_id, None, &[])?);
+        let mut rows = Vec::with_capacity(periods.len());
 
         for (label, period_end) in periods {
-            let holdings = self.get_holdings_for_summary(period_end, profile_id)?;
+            carry.advance_to(period_end);
             let mut available_agg: CurrencyAggregator = Default::default();
             let mut unavailable_agg: CurrencyAggregator = Default::default();
 
-            for row in holdings {
-                let h = &row.holding;
-                if is_available_account(&row.account_type) {
-                    available_agg.add(h.value, &h.currency, fx);
+            for s in carry.effective() {
+                if is_available_account(&s.account_type) {
+                    available_agg.add(s.value, &s.currency, fx);
                 } else {
-                    unavailable_agg.add(h.value, &h.currency, fx);
+                    unavailable_agg.add(s.value, &s.currency, fx);
                 }
             }
 
@@ -2942,21 +3234,37 @@ impl Db {
         // at event time so each pool's average cost is in a single currency.
         let events: Vec<InvestmentEventParsed> = raw
             .into_iter()
-            .filter_map(
+            .map(
                 |(date, event_type, symbol, q, p, fee, currency, fee_currency)| {
-                    let q: Decimal = q.parse().ok()?;
-                    let p: Decimal = p.parse().ok()?;
+                    let q: Decimal = q.parse().map_err(|_| {
+                        anyhow!("invalid quantity {q:?} on {event_type} {symbol} at {date}")
+                    })?;
+                    let p: Decimal = p.parse().map_err(|_| {
+                        anyhow!("invalid price_per_share {p:?} on {event_type} {symbol} at {date}")
+                    })?;
                     let principal = fx.convert(q * p, &currency);
-                    let fee = fee
-                        .and_then(|f| f.parse::<Decimal>().ok())
-                        .map(|f| fx.convert(f, fee_currency.as_deref().unwrap_or(&currency)))
-                        .unwrap_or(Decimal::ZERO);
-                    Some((date, event_type, symbol, q, principal, fee))
+                    let fee = match fee {
+                        Some(f) => {
+                            let f: Decimal = f.parse().map_err(|_| {
+                                anyhow!("invalid fee {f:?} on {event_type} {symbol} at {date}")
+                            })?;
+                            fx.convert(f, fee_currency.as_deref().unwrap_or(&currency))
+                        }
+                        None => Decimal::ZERO,
+                    };
+                    Ok((date, event_type, symbol, q, principal, fee))
                 },
             )
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let periods = generate_period_end_dates(from, to, granularity);
+        let mut carry = CarryForward::new(self.holding_snapshots_in_range(
+            from,
+            to,
+            profile_id,
+            Some(&[AccountType::Investment, AccountType::InvestmentIsa]),
+            account_ids,
+        )?);
         let mut rows = Vec::with_capacity(periods.len());
         let mut pools: HashMap<String, (Decimal, Decimal)> = HashMap::new();
         let mut invested = Decimal::ZERO;
@@ -3002,17 +3310,16 @@ impl Db {
             }
             let net_invested = any_event.then(|| invested.to_string());
 
-            // Market value of active (unclosed) investment + ISA holdings.
+            // Market value of active (unclosed) holdings. Account type and id
+            // filters are already applied by the snapshot fetch; is_closed is
+            // per snapshot, so it must stay a walk-time check (filtering it in
+            // SQL would carry a stale pre-close value forward instead).
+            carry.advance_to(period_end);
             let mut mv = CurrencyAggregator::default();
             let mut has_active = false;
-            for r in self.get_holdings_for_summary(period_end, profile_id)? {
-                if matches!(
-                    r.account_type,
-                    AccountType::Investment | AccountType::InvestmentIsa
-                ) && !r.holding.is_closed
-                    && (account_ids.is_empty() || account_ids.contains(&r.holding.account_id))
-                {
-                    mv.add(r.holding.value, &r.holding.currency, fx);
+            for s in carry.effective() {
+                if !s.is_closed {
+                    mv.add(s.value, &s.currency, fx);
                     has_active = true;
                 }
             }
@@ -3091,7 +3398,9 @@ impl Db {
 
             for r in mapped {
                 let (symbol, name, short_name, value_str, currency, holding_type) = r?;
-                let value = value_str.parse::<Decimal>().unwrap_or_default();
+                let value = value_str.parse::<Decimal>().map_err(|_| {
+                    anyhow!("invalid holding value {value_str:?} for {account_id}/{symbol}")
+                })?;
                 let converted = fx.convert(value, &currency);
                 *by_symbol.entry(symbol.clone()).or_insert(Decimal::ZERO) += converted;
 
@@ -3121,8 +3430,10 @@ impl Db {
         Ok((series, rows))
     }
 
-    /// Returns the first and last balance (SUM of holdings) per account within `[start, end]`,
-    /// and the delta between them.
+    /// Returns the first and last balance (SUM of holdings) per account within
+    /// `[start, end]`, and the delta between them. Accounts with no snapshot
+    /// inside the range are omitted entirely; snapshots outside the range
+    /// never contribute.
     pub fn get_balance_summary(
         &self,
         start: NaiveDate,
@@ -3131,66 +3442,41 @@ impl Db {
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
-        let account_ids: Vec<String> = {
-            let mut stmt = self.conn.prepare(
-                "SELECT DISTINCT account_id FROM holdings WHERE as_of >= ?1 AND as_of <= ?2",
-            )?;
-            stmt.query_map(rusqlite::params![start_str, end_str], |row| row.get(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
+        // One query total: per-account first/last snapshot date over the
+        // range-filtered rows, joined back to sum the balances at those two
+        // dates. The old shape issued ~4 queries per account.
+        let mut stmt = self.conn.prepare(
+            r"WITH bounds AS (
+                SELECT account_id, MIN(as_of) AS first_date, MAX(as_of) AS last_date
+                FROM holdings
+                WHERE as_of >= ?1 AND as_of <= ?2
+                GROUP BY account_id
+              )
+              SELECT b.account_id,
+                     SUM(CASE WHEN h.as_of = b.first_date THEN CAST(h.value AS REAL) ELSE 0 END),
+                     SUM(CASE WHEN h.as_of = b.last_date THEN CAST(h.value AS REAL) ELSE 0 END)
+              FROM bounds b
+              JOIN holdings h
+                ON h.account_id = b.account_id
+               AND h.as_of IN (b.first_date, b.last_date)
+              GROUP BY b.account_id
+              ORDER BY b.account_id",
+        )?;
+
+        let rows = stmt.query_map(rusqlite::params![start_str, end_str], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<f64>>(1)?,
+                row.get::<_, Option<f64>>(2)?,
+            ))
+        })?;
 
         let mut result = Vec::new();
-        for account_id in account_ids {
-            let first_date: Option<String> = self
-                .conn
-                .query_row(
-                    r"SELECT MIN(as_of) FROM holdings
-                      WHERE account_id = ?1 AND as_of >= ?2",
-                    rusqlite::params![account_id, start_str],
-                    |row| row.get(0),
-                )
-                .ok()
-                .flatten();
-
-            let last_date: Option<String> = self
-                .conn
-                .query_row(
-                    r"SELECT MAX(as_of) FROM holdings
-                      WHERE account_id = ?1 AND as_of <= ?2",
-                    rusqlite::params![account_id, end_str],
-                    |row| row.get(0),
-                )
-                .ok()
-                .flatten();
-
-            let start_balance: Option<Decimal> = first_date.as_ref().and_then(|d| {
-                self.conn
-                    .query_row(
-                        r"SELECT SUM(CAST(value AS REAL)) FROM holdings
-                          WHERE account_id = ?1 AND as_of = ?2",
-                        rusqlite::params![account_id, d],
-                        |row| row.get::<_, Option<f64>>(0),
-                    )
-                    .ok()
-                    .flatten()
-                    .and_then(|f| Decimal::try_from(f).ok())
-            });
-
-            let end_balance: Option<Decimal> = last_date.as_ref().and_then(|d| {
-                self.conn
-                    .query_row(
-                        r"SELECT SUM(CAST(value AS REAL)) FROM holdings
-                          WHERE account_id = ?1 AND as_of = ?2",
-                        rusqlite::params![account_id, d],
-                        |row| row.get::<_, Option<f64>>(0),
-                    )
-                    .ok()
-                    .flatten()
-                    .and_then(|f| Decimal::try_from(f).ok())
-            });
-
+        for row in rows {
+            let (account_id, start_f, end_f) = row?;
+            let start_balance = start_f.and_then(|f| Decimal::try_from(f).ok());
+            let end_balance = end_f.and_then(|f| Decimal::try_from(f).ok());
             let delta = start_balance.zip(end_balance).map(|(s, e)| e - s);
-
             result.push(BalanceDelta {
                 account_id,
                 start_balance,
@@ -3198,7 +3484,6 @@ impl Db {
                 delta,
             });
         }
-
         Ok(result)
     }
 
@@ -3346,8 +3631,12 @@ impl Db {
         let mut periods_map: HashMap<String, (CurrencyAggregator, CurrencyAggregator)> =
             HashMap::new();
         for (period, currency, income_f, spending_f) in raw {
-            let income = Decimal::try_from(income_f).unwrap_or_default();
-            let spending = Decimal::try_from(spending_f).unwrap_or_default();
+            let income = Decimal::try_from(income_f).map_err(|e| {
+                anyhow!("income total for period {period} ({currency}) is not representable: {e}")
+            })?;
+            let spending = Decimal::try_from(spending_f).map_err(|e| {
+                anyhow!("spending total for period {period} ({currency}) is not representable: {e}")
+            })?;
             let entry = periods_map
                 .entry(period)
                 .or_insert_with(|| (Default::default(), Default::default()));
@@ -3379,7 +3668,9 @@ impl Db {
     /// to `as_of`) with account metadata, for the given profile.
     ///
     /// Single source of truth: the summary handler, `accounts_as_of`, and
-    /// `get_monthly_net_worth` all reduce this, so they reconcile.
+    /// `get_monthly_net_worth` all reduce this, so they reconcile. The rule
+    /// itself lives in `carried_holdings_sql`, shared with
+    /// `holding_snapshots_in_range`.
     ///
     /// Does not filter `is_closed`; closed holdings are invariant-zeroed
     /// (`close_holding` / `upsert_holdings` / `replace_holdings`), so a
@@ -3400,23 +3691,15 @@ impl Db {
         };
 
         let sql = format!(
-            r"SELECT h.account_id, h.symbol, h.name, h.holding_type,
-                     h.quantity, h.price_per_unit, h.value, h.currency,
-                     h.as_of, h.short_name, h.sub_account, h.is_closed,
-                     a.type AS account_type, a.institution, a.profile_ids,
-                     h.source_document_ids
-              FROM holdings h
-              JOIN accounts a ON a.id = h.account_id
-              WHERE a.is_active = 1
-                {profile_filter}
-                AND h.as_of = (
-                    SELECT MAX(h2.as_of) FROM holdings h2
-                    WHERE h2.account_id = h.account_id
-                      AND h2.symbol = h.symbol
-                      AND COALESCE(h2.sub_account, '') = COALESCE(h.sub_account, '')
-                      AND h2.as_of <= ?1
-                )
-              ORDER BY h.account_id, h.symbol"
+            "{} ORDER BY account_id, symbol",
+            carried_holdings_sql(
+                "account_id, symbol, name, holding_type,
+                 quantity, price_per_unit, value, currency,
+                 as_of, short_name, sub_account, is_closed,
+                 account_type, institution, source_document_ids",
+                &format!("AND h.as_of <= ?1 {profile_filter}"),
+                true,
+            )
         );
 
         let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<HoldingSummaryRow> {
@@ -3425,8 +3708,9 @@ impl Db {
             let holding = row_to_holding(row)?;
             Ok(HoldingSummaryRow {
                 holding,
-                account_type: AccountType::parse(&account_type_str)
-                    .unwrap_or(AccountType::Checking),
+                account_type: AccountType::parse(&account_type_str).ok_or_else(|| {
+                    column_error(12, format!("unknown account type: {account_type_str:?}"))
+                })?,
                 institution,
             })
         };
@@ -3494,7 +3778,8 @@ impl Db {
             let profile_ids: Vec<String> = serde_json::from_str(&profile_ids_str)
                 .unwrap_or_else(|_| vec!["default".to_string()]);
 
-            let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
+            let account_type = AccountType::parse(&type_str)
+                .ok_or_else(|| column_error(3, format!("unknown account type: {type_str:?}")))?;
             let is_available = is_available_account(&account_type);
 
             let (balance, balance_date) = match agg.get(&id) {
@@ -3648,12 +3933,13 @@ impl Db {
         Ok(inserted)
     }
 
-    /// Investment performance for `[start, end]`. Start/end values reduce
-    /// `get_holdings_for_summary` (Investment accounts only), FX-converted via
-    /// `fx` per holding/transaction currency, so they stay consistent with
-    /// net worth. `new_cash_invested` = net buys minus sells in range
-    /// (see [`Self::compute_new_cash_invested`]). `market_growth` strips that
-    /// out of the total value change to isolate price movement.
+    /// Investment performance for `[start, end]`. Start/end values apply the
+    /// same carry-forward rule as `get_holdings_for_summary` (Investment
+    /// accounts only), FX-converted via `fx` per holding/transaction currency,
+    /// so they stay consistent with net worth. `new_cash_invested` = net buys
+    /// minus sells in range (see [`Self::compute_new_cash_invested`]).
+    /// `market_growth` strips that out of the total value change to isolate
+    /// price movement.
     pub fn compute_investment_metrics(
         &self,
         start: NaiveDate,
@@ -3661,19 +3947,41 @@ impl Db {
         profile_id: Option<&str>,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<InvestmentMetrics> {
-        let sum_carry_forward = |date: NaiveDate| -> Result<Decimal> {
-            Ok(self
-                .get_holdings_for_summary(date, profile_id)?
-                .iter()
-                .filter(|r| matches!(r.account_type, AccountType::Investment))
-                .map(|r| fx.convert(r.holding.value, &r.holding.currency))
-                .sum())
-        };
-
-        let start_value = sum_carry_forward(start)?;
-        let end_value = sum_carry_forward(end)?;
-
         let new_cash_invested = self.compute_new_cash_invested(start, end, profile_id, fx)?;
+        self.compute_investment_metrics_with(start, end, profile_id, fx, new_cash_invested)
+    }
+
+    /// [`Self::compute_investment_metrics`] for callers that already computed
+    /// `new_cash_invested` for the same range and filters, so it is not
+    /// recomputed per request.
+    pub fn compute_investment_metrics_with(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
+        new_cash_invested: Decimal,
+    ) -> Result<InvestmentMetrics> {
+        // One windowed fetch instead of two full carry-forward scans: advance
+        // to start for the opening sum, then on to end for the closing sum.
+        // Closed holdings are invariant-zeroed, so no is_closed filter.
+        let mut carry = CarryForward::new(self.holding_snapshots_in_range(
+            start,
+            end,
+            profile_id,
+            Some(&[AccountType::Investment]),
+            &[],
+        )?);
+        let sum_effective = |carry: &CarryForward| -> Decimal {
+            carry
+                .effective()
+                .map(|s| fx.convert(s.value, &s.currency))
+                .sum()
+        };
+        carry.advance_to(start);
+        let start_value = sum_effective(&carry);
+        carry.advance_to(end);
+        let end_value = sum_effective(&carry);
 
         let total_growth = end_value - start_value;
         let market_growth = total_growth - new_cash_invested;
@@ -3747,8 +4055,12 @@ impl Db {
 
         let mut agg = CurrencyAggregator::default();
         for (event_type, qty, price, fee, currency, fee_currency) in rows {
-            let q = qty.parse::<Decimal>().unwrap_or_default();
-            let p = price.parse::<Decimal>().unwrap_or_default();
+            let q = qty
+                .parse::<Decimal>()
+                .map_err(|_| anyhow!("invalid quantity {qty:?} on {event_type} event"))?;
+            let p = price
+                .parse::<Decimal>()
+                .map_err(|_| anyhow!("invalid price_per_share {price:?} on {event_type} event"))?;
             // In (+): buy, vest, transfer-in. Out (-): sell, withhold. transfer
             // carries its direction in the quantity sign, so it is added as-is.
             // Fee is always a cost (+).
@@ -3760,7 +4072,9 @@ impl Db {
             };
             agg.add(signed, &currency, fx);
             if let Some(fee) = fee {
-                let f = fee.parse::<Decimal>().unwrap_or_default();
+                let f = fee
+                    .parse::<Decimal>()
+                    .map_err(|_| anyhow!("invalid fee {fee:?} on {event_type} event"))?;
                 if !f.is_zero() {
                     agg.add(f, fee_currency.as_deref().unwrap_or(&currency), fx);
                 }
@@ -3857,7 +4171,9 @@ impl Db {
             let Some(ctype) = CategoryType::parse(&ctype_str) else {
                 continue;
             };
-            let amount = Decimal::try_from(total_f64).unwrap_or_default();
+            let amount = Decimal::try_from(total_f64).map_err(|e| {
+                anyhow!("cash total for category type {ctype_str} is not representable: {e}")
+            })?;
             if CategoryType::INCOME.contains(&ctype) {
                 income.add(amount, &currency, fx);
             } else if CategoryType::SPENDING.contains(&ctype) {
@@ -4276,7 +4592,22 @@ fn parse_transaction_datetime(s: &str) -> Option<NaiveDateTime> {
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
+/// Column-level conversion failure for row mappers. Corrupt stored values
+/// (unparseable decimals, unknown enum strings) must surface as errors, never
+/// silently coerce to a default that misreports data.
+fn column_error(idx: usize, msg: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, msg.into())
+}
+
+fn parse_decimal_column(idx: usize, field: &str, s: &str) -> rusqlite::Result<Decimal> {
+    s.parse()
+        .map_err(|_| column_error(idx, format!("invalid {field}: {s:?}")))
+}
+
 fn row_to_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {
+    let category_type_str: String = row.get(6)?;
+    let category_type = CategoryType::parse(&category_type_str)
+        .ok_or_else(|| column_error(6, format!("unknown category type: {category_type_str:?}")))?;
     Ok(Category {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -4284,8 +4615,7 @@ fn row_to_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {
         display_order: row.get(3)?,
         is_active: row.get::<_, i64>(4)? != 0,
         description: row.get(5)?,
-        category_type: CategoryType::parse(&row.get::<_, String>(6)?)
-            .unwrap_or(CategoryType::Spending),
+        category_type,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
     })
@@ -4302,10 +4632,15 @@ fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<Holding> {
         account_id: row.get(0)?,
         symbol: row.get(1)?,
         name: row.get(2)?,
-        holding_type: HoldingType::parse(&holding_type_str).unwrap_or(HoldingType::Stock),
-        quantity: quantity_str.parse::<Decimal>().unwrap_or_default(),
-        price_per_unit: price_str.and_then(|s| s.parse::<Decimal>().ok()),
-        value: value_str.parse::<Decimal>().unwrap_or_default(),
+        holding_type: HoldingType::parse(&holding_type_str).ok_or_else(|| {
+            column_error(3, format!("unknown holding type: {holding_type_str:?}"))
+        })?,
+        quantity: parse_decimal_column(4, "holding quantity", &quantity_str)?,
+        price_per_unit: price_str
+            .as_deref()
+            .map(|s| parse_decimal_column(5, "holding price_per_unit", s))
+            .transpose()?,
+        value: parse_decimal_column(6, "holding value", &value_str)?,
         currency: row.get(7)?,
         as_of: parse_transaction_datetime(&as_of_str)
             .unwrap_or_else(|| chrono::Local::now().naive_local()),
@@ -4338,7 +4673,7 @@ fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction> 
         })?,
         description: row.get(2)?,
         normalized: row.get(3)?,
-        amount: amount.parse::<Decimal>().unwrap_or_default(),
+        amount: parse_decimal_column(4, "transaction amount", &amount)?,
         currency: row.get(5)?,
         account_id: row.get(6)?,
         category_id: row.get(7)?, // FK to categories.id
@@ -4365,7 +4700,8 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
     let profile_ids_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
     let profile_ids: Vec<String> =
         serde_json::from_str(&profile_ids_str).unwrap_or_else(|_| vec!["default".to_string()]);
-    let account_type = AccountType::parse(&type_str).unwrap_or(AccountType::Checking);
+    let account_type = AccountType::parse(&type_str)
+        .ok_or_else(|| column_error(3, format!("unknown account type: {type_str:?}")))?;
     let is_available = is_available_account(&account_type);
     Ok(Account {
         id: row.get(0)?,
@@ -4388,16 +4724,26 @@ fn row_to_investment_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Investme
     let date_str: String = row.get(4)?;
     let created_at_str: String = row.get(11)?;
     let fee: Option<String> = row.get(7)?;
+    let quantity_str: String = row.get(5)?;
+    let price_str: String = row.get(6)?;
     Ok(InvestmentEvent {
         id: row.get(0)?,
         account_id: row.get(1)?,
-        event_type: InvestmentEventType::parse(&event_type_str).unwrap_or(InvestmentEventType::Buy),
+        event_type: InvestmentEventType::parse(&event_type_str).ok_or_else(|| {
+            column_error(
+                2,
+                format!("unknown investment event type: {event_type_str:?}"),
+            )
+        })?,
         symbol: row.get(3)?,
         date: parse_transaction_datetime(&date_str)
             .unwrap_or_else(|| chrono::Utc::now().naive_utc()),
-        quantity: row.get::<_, String>(5)?.parse().unwrap_or_default(),
-        price_per_share: row.get::<_, String>(6)?.parse().unwrap_or_default(),
-        fee: fee.and_then(|s| s.parse::<Decimal>().ok()),
+        quantity: parse_decimal_column(5, "investment quantity", &quantity_str)?,
+        price_per_share: parse_decimal_column(6, "investment price_per_share", &price_str)?,
+        fee: fee
+            .as_deref()
+            .map(|s| parse_decimal_column(7, "investment fee", s))
+            .transpose()?,
         currency: row.get(8)?,
         // Read by name so SELECTs that omit it fall back to None.
         fee_currency: row.get::<_, Option<String>>("fee_currency").ok().flatten(),
@@ -4438,6 +4784,108 @@ pub fn account_type_to_asset_class(t: &AccountType) -> AssetClass {
         | AccountType::EmergencyFund
         | AccountType::Credit => AssetClass::Cash,
         AccountType::Property => AssetClass::Property,
+    }
+}
+
+/// The single SQL form of the holdings carry-forward rule: the latest
+/// snapshot per (account_id, symbol, COALESCE(sub_account, '')), restricted
+/// by `filters` (which must bind the `h.as_of <= ?N` cutoff plus any
+/// profile/account predicates; `h` = holdings, `a` = accounts). With
+/// `active_only`, holdings are joined to accounts and restricted to
+/// `a.is_active = 1`, and `select` may project `account_type` /
+/// `institution` alongside holdings columns; without it there is no accounts
+/// join at all, so every holdings row counts regardless of account state.
+/// `get_holdings_for_summary` and `holding_snapshots_in_range` use
+/// `active_only = true`; `balances_from_holdings_as_of` uses `false` because
+/// account balances are reported for inactive accounts too. rowid breaks
+/// `as_of` ties deterministically, though `uq_holdings_identity` makes ties
+/// impossible.
+fn carried_holdings_sql(select: &str, filters: &str, active_only: bool) -> String {
+    let (join, account_cols, where_head) = if active_only {
+        (
+            "JOIN accounts a ON a.id = h.account_id",
+            ", a.type AS account_type, a.institution",
+            "a.is_active = 1",
+        )
+    } else {
+        ("", "", "1=1")
+    };
+    format!(
+        r"SELECT {select} FROM (
+              SELECT h.*{account_cols},
+                     ROW_NUMBER() OVER (
+                         PARTITION BY h.account_id, h.symbol, COALESCE(h.sub_account, '')
+                         ORDER BY h.as_of DESC, h.rowid DESC
+                     ) AS rn
+              FROM holdings h
+              {join}
+              WHERE {where_head} {filters}
+          ) WHERE rn = 1"
+    )
+}
+
+/// One holdings row as stored, joined with its account type. Produced by
+/// `Db::holding_snapshots_in_range` for the [`CarryForward`] walk.
+struct HoldingSnapshot {
+    account_id: String,
+    symbol: String,
+    /// Normalized: NULL stored as `''`, matching the summary query's COALESCE.
+    sub_account: String,
+    /// ISO datetime string as stored; lexicographic order is chronological.
+    as_of: String,
+    value: Decimal,
+    currency: String,
+    is_closed: bool,
+    account_type: AccountType,
+}
+
+/// Replays snapshots in `as_of` order, keeping the latest per
+/// (account, symbol, sub_account). After `advance_to(d)`, `effective()`
+/// yields the same set of carried holdings `get_holdings_for_summary(d)`
+/// returns (closed snapshots included; they are invariant-zeroed). Callers
+/// must advance with non-decreasing dates.
+struct CarryForward {
+    snapshots: Vec<HoldingSnapshot>,
+    /// Interned (account, symbol, sub_account) key per snapshot; indexes
+    /// `effective` so `advance_to` hashes and clones nothing.
+    key_ids: Vec<usize>,
+    cursor: usize,
+    /// Latest consumed snapshot index per key id.
+    effective: Vec<Option<usize>>,
+}
+
+impl CarryForward {
+    fn new(snapshots: Vec<HoldingSnapshot>) -> Self {
+        let mut ids: HashMap<(&str, &str, &str), usize> = HashMap::new();
+        let mut key_ids = Vec::with_capacity(snapshots.len());
+        for s in &snapshots {
+            let next = ids.len();
+            let key = (
+                s.account_id.as_str(),
+                s.symbol.as_str(),
+                s.sub_account.as_str(),
+            );
+            key_ids.push(*ids.entry(key).or_insert(next));
+        }
+        let effective = vec![None; ids.len()];
+        Self {
+            snapshots,
+            key_ids,
+            cursor: 0,
+            effective,
+        }
+    }
+
+    fn advance_to(&mut self, period_end: NaiveDate) {
+        let end = period_end.format("%Y-%m-%dT23:59:59").to_string();
+        while self.cursor < self.snapshots.len() && self.snapshots[self.cursor].as_of <= end {
+            self.effective[self.key_ids[self.cursor]] = Some(self.cursor);
+            self.cursor += 1;
+        }
+    }
+
+    fn effective(&self) -> impl Iterator<Item = &HoldingSnapshot> {
+        self.effective.iter().flatten().map(|&i| &self.snapshots[i])
     }
 }
 
@@ -5278,6 +5726,58 @@ mod consolidation_tests {
     }
 
     #[test]
+    fn get_balance_summary_multi_account_range_semantics() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("single", AccountType::Checking))
+            .unwrap();
+        db.create_account(&make_account("spanning", AccountType::Checking))
+            .unwrap();
+        db.create_account(&make_account("outside", AccountType::Checking))
+            .unwrap();
+
+        // Exactly one snapshot inside the range.
+        db.set_account_balance("single", dec!(500), naive_dt(2025, 2, 10))
+            .unwrap();
+
+        // Snapshots on both sides of the range plus two inside it: the
+        // out-of-range ones must not contribute.
+        db.set_account_balance("spanning", dec!(100), naive_dt(2024, 12, 1))
+            .unwrap();
+        db.set_account_balance("spanning", dec!(200), naive_dt(2025, 1, 10))
+            .unwrap();
+        db.set_account_balance("spanning", dec!(350), naive_dt(2025, 3, 20))
+            .unwrap();
+        db.set_account_balance("spanning", dec!(900), naive_dt(2025, 5, 1))
+            .unwrap();
+
+        // Only out-of-range snapshots: must not appear at all.
+        db.set_account_balance("outside", dec!(42), naive_dt(2024, 6, 1))
+            .unwrap();
+        db.set_account_balance("outside", dec!(43), naive_dt(2025, 6, 1))
+            .unwrap();
+
+        let mut summary = db
+            .get_balance_summary(naive_date(2025, 1, 1), naive_date(2025, 3, 31))
+            .unwrap();
+        summary.sort_by(|a, b| a.account_id.cmp(&b.account_id));
+        assert_eq!(summary.len(), 2, "out-of-range-only account is omitted");
+
+        let tol = Decimal::from_str("0.01").unwrap();
+
+        let single = &summary[0];
+        assert_eq!(single.account_id, "single");
+        assert!((single.start_balance.unwrap() - dec!(500)).abs() < tol);
+        assert!((single.end_balance.unwrap() - dec!(500)).abs() < tol);
+        assert!(single.delta.unwrap().abs() < tol);
+
+        let spanning = &summary[1];
+        assert_eq!(spanning.account_id, "spanning");
+        assert!((spanning.start_balance.unwrap() - dec!(200)).abs() < tol);
+        assert!((spanning.end_balance.unwrap() - dec!(350)).abs() < tol);
+        assert!((spanning.delta.unwrap() - dec!(150)).abs() < tol);
+    }
+
+    #[test]
     fn get_balances_in_range_aggregates_per_date() {
         let (db, _file) = test_db();
         db.create_account(&make_account("t212", AccountType::Investment))
@@ -5912,6 +6412,194 @@ mod consolidation_tests {
         );
     }
 
+    // One-scan carry-forward must reproduce per-period recomputation: values
+    // carry forward between snapshots, an account whose first snapshot lands
+    // mid-range contributes only from then on, and a closed (zeroed) holding
+    // contributes 0 to net worth but drops out of investment market value.
+    #[test]
+    fn history_carry_forward_mid_range_and_closed_holding() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+        db.create_account(&make_account("sav", AccountType::Savings))
+            .unwrap();
+
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2025, 1, 15),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "MSFT",
+                HoldingType::Stock,
+                dec!(50),
+                naive_dt(2025, 2, 5),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(120),
+                naive_dt(2025, 3, 10),
+            )],
+        )
+        .unwrap();
+        // Savings account's first snapshot lands mid-range.
+        db.upsert_holdings(
+            "sav",
+            &[make_holding(
+                "sav",
+                "_CASH",
+                HoldingType::Cash,
+                dec!(1000),
+                naive_dt(2025, 3, 20),
+            )],
+        )
+        .unwrap();
+        // MSFT zeroed and closed in April.
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "MSFT",
+                HoldingType::Stock,
+                dec!(0),
+                naive_dt(2025, 4, 10),
+            )],
+        )
+        .unwrap();
+        db.close_holding("t212", "MSFT", None, naive_dt(2025, 4, 10))
+            .unwrap();
+
+        let fx = gbp_fx();
+        let from = naive_date(2025, 1, 1);
+        let to = naive_date(2025, 5, 31);
+
+        let history = db
+            .get_monthly_net_worth(from, to, &Granularity::Monthly, None, &fx)
+            .unwrap();
+        let totals: Vec<(String, Decimal)> = history
+            .iter()
+            .map(|r| (r.month.clone(), r.total_wealth))
+            .collect();
+        assert_eq!(
+            totals,
+            vec![
+                ("2025-01".to_string(), dec!(100)),
+                ("2025-02".to_string(), dec!(150)),
+                ("2025-03".to_string(), dec!(1170)),
+                ("2025-04".to_string(), dec!(1120)),
+                ("2025-05".to_string(), dec!(1120)),
+            ]
+        );
+        assert_eq!(
+            history.last().unwrap().total_wealth,
+            summary_net_worth(&db, to, &fx)
+        );
+
+        // Investment market value drops the closed MSFT position from April
+        // on and never includes the savings account.
+        let inv = db
+            .get_investment_history(from, to, &Granularity::Monthly, None, &[], &fx)
+            .unwrap();
+        let mv: Vec<Option<String>> = inv.iter().map(|r| r.market_value.clone()).collect();
+        assert_eq!(
+            mv,
+            vec![
+                Some("100".to_string()),
+                Some("150".to_string()),
+                Some("170".to_string()),
+                Some("120".to_string()),
+                Some("120".to_string()),
+            ]
+        );
+    }
+
+    // The windowed snapshot fetch must still carry positions whose only
+    // snapshots predate the range start.
+    #[test]
+    fn history_window_start_carries_pre_range_snapshots() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2025, 1, 15),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "MSFT",
+                HoldingType::Stock,
+                dec!(50),
+                naive_dt(2025, 2, 5),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(120),
+                naive_dt(2025, 3, 10),
+            )],
+        )
+        .unwrap();
+
+        let fx = gbp_fx();
+        // Range opens after both positions did; only the AAPL re-snapshot
+        // falls inside it, so MSFT must arrive via the window-start carry.
+        let from = naive_date(2025, 3, 1);
+        let to = naive_date(2025, 4, 30);
+
+        let history = db
+            .get_monthly_net_worth(from, to, &Granularity::Monthly, None, &fx)
+            .unwrap();
+        let totals: Vec<Decimal> = history.iter().map(|r| r.total_wealth).collect();
+        assert_eq!(totals, vec![dec!(170), dec!(170)]);
+        assert_eq!(
+            history.last().unwrap().total_wealth,
+            summary_net_worth(&db, to, &fx)
+        );
+
+        let inv = db
+            .get_investment_history(from, to, &Granularity::Monthly, None, &[], &fx)
+            .unwrap();
+        let mv: Vec<Option<String>> = inv.iter().map(|r| r.market_value.clone()).collect();
+        assert_eq!(mv, vec![Some("170".to_string()), Some("170".to_string())]);
+
+        // Metrics window opening mid-history carries AAPL@100 + MSFT@50.
+        let m = db
+            .compute_investment_metrics(naive_date(2025, 2, 15), to, None, &fx)
+            .unwrap();
+        assert_eq!(m.start_value, dec!(150));
+        assert_eq!(m.end_value, dec!(170));
+    }
+
     #[test]
     fn close_holding_rejects_nonzero_value() {
         let (db, _file) = test_db();
@@ -6251,6 +6939,186 @@ mod transaction_dryrun_tests {
         assert_eq!(previews[0].status, TransactionPreviewStatus::Duplicate);
         assert_eq!(previews[1].status, TransactionPreviewStatus::New);
     }
+
+    fn new_category(db: &Db, name: &str, parent_id: Option<&str>) -> String {
+        db.create_category(&CreateCategoryPayload {
+            name: name.to_string(),
+            parent_id: parent_id.map(|s| s.to_string()),
+            display_order: None,
+            description: None,
+            category_type: CategoryType::Spending,
+        })
+        .unwrap()
+        .id
+    }
+
+    fn gbp_fx() -> crate::util::fx::FxRateMap {
+        crate::util::fx::FxRateMap::new(vec![crate::model::Currency {
+            code: "GBP".to_string(),
+            is_preferred: true,
+            fx_rate: Decimal::ONE,
+            updated_at: None,
+        }])
+        .unwrap()
+    }
+
+    #[test]
+    fn bulk_insert_mixed_batch_reports_counts_and_persists_valid_rows() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+        let parent_id = new_category(&db, "Bulk Parent", None);
+        let leaf_id = new_category(&db, "Bulk Leaf", Some(&parent_id));
+
+        db.insert_transactions_bulk("acc1", &[make_txn((2025, 1, 15), "Coffee", -350, 2)])
+            .unwrap();
+
+        let mut valid = make_txn((2025, 1, 16), "Groceries", -2500, 2);
+        valid.category_id = Some(leaf_id.clone());
+        let mut with_parent_cat = make_txn((2025, 1, 17), "Bad Parent", -100, 2);
+        with_parent_cat.category_id = Some(parent_id.clone());
+        let mut with_unknown_cat = make_txn((2025, 1, 18), "Bad Unknown", -100, 2);
+        with_unknown_cat.category_id = Some("no-such-category".to_string());
+        let duplicate = make_txn((2025, 1, 15), "Coffee", -350, 2);
+
+        let result = db
+            .insert_transactions_bulk(
+                "acc1",
+                &[valid, with_parent_cat, with_unknown_cat, duplicate],
+            )
+            .unwrap();
+
+        assert_eq!(result.rows_total, 4);
+        assert_eq!(result.rows_inserted, 1);
+        assert_eq!(result.rows_duplicate, 1);
+        assert_eq!(result.errors.len(), 2);
+        assert_eq!(result.errors[0].index, 1);
+        assert!(result.errors[0].reason.contains("is a parent, not a leaf"));
+        assert_eq!(result.errors[1].index, 2);
+        assert!(result.errors[1].reason.contains("not found or inactive"));
+
+        let (rows, total) = db.get_transactions(&TransactionFilters::default()).unwrap();
+        assert_eq!(total, 2, "valid rows commit despite per-row errors");
+        let grocery = rows.iter().find(|t| t.description == "Groceries").unwrap();
+        assert_eq!(grocery.category_id.as_deref(), Some(leaf_id.as_str()));
+    }
+
+    #[test]
+    fn bulk_insert_duplicate_merges_source_documents() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let mut first = make_txn((2025, 2, 1), "Rent", -90000, 2);
+        first.source_document_ids = vec!["doc-a".to_string()];
+        let result = db.insert_transactions_bulk("acc1", &[first]).unwrap();
+        assert_eq!(result.rows_inserted, 1);
+
+        let mut reimport = make_txn((2025, 2, 1), "Rent", -90000, 2);
+        reimport.source_document_ids = vec!["doc-b".to_string()];
+        let result = db.insert_transactions_bulk("acc1", &[reimport]).unwrap();
+        assert_eq!(result.rows_inserted, 0);
+        assert_eq!(result.rows_duplicate, 1);
+
+        let (rows, _) = db.get_transactions(&TransactionFilters::default()).unwrap();
+        assert_eq!(rows.len(), 1);
+        let mut doc_ids = rows[0].source_document_ids.clone();
+        doc_ids.sort();
+        assert_eq!(doc_ids, vec!["doc-a".to_string(), "doc-b".to_string()]);
+    }
+
+    #[test]
+    fn search_treats_backslash_literally() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        db.insert_transactions_bulk(
+            "acc1",
+            &[
+                make_txn((2025, 3, 1), r"ACME C:\Users refund", -1000, 2),
+                make_txn((2025, 3, 2), r"100\% cotton shirt", -2000, 2),
+                make_txn((2025, 3, 3), "plain coffee", -300, 2),
+            ],
+        )
+        .unwrap();
+
+        let filters = TransactionFilters {
+            search: Some(r"C:\Users".to_string()),
+            ..TransactionFilters::default()
+        };
+        let (rows, total) = db.get_transactions(&filters).unwrap();
+        assert_eq!(total, 1, "a description containing a backslash is found");
+        assert!(rows[0].description.contains(r"C:\Users"));
+
+        // Backslash-percent must match the literal sequence, not act as a
+        // wildcard that matches everything.
+        let filters = TransactionFilters {
+            search: Some(r"\%".to_string()),
+            ..TransactionFilters::default()
+        };
+        let (rows, total) = db.get_transactions(&filters).unwrap();
+        assert_eq!(total, 1);
+        assert!(rows[0].description.contains(r"\%"));
+    }
+
+    #[test]
+    fn by_category_uncategorized_sentinel_groups_null_rows() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+        let parent_id = new_category(&db, "Sentinel Parent", None);
+        let leaf_id = new_category(&db, "Sentinel Leaf", Some(&parent_id));
+
+        let mut categorized = make_txn((2025, 4, 1), "Groceries", -1000, 2);
+        categorized.category_id = Some(leaf_id.clone());
+        let uncategorized = make_txn((2025, 4, 2), "Mystery", -500, 2);
+        db.insert_transactions_bulk("acc1", &[categorized, uncategorized])
+            .unwrap();
+
+        let fx = gbp_fx();
+
+        // Default: NULL-category rows stay excluded.
+        let totals = db
+            .get_transactions_by_category(&TransactionFilters::default(), None, &fx)
+            .unwrap();
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].category_id.as_deref(), Some(leaf_id.as_str()));
+
+        // Sentinel only: NULL rows come back as their own group.
+        let filters = TransactionFilters {
+            categories: Some(vec!["__uncategorized__".to_string()]),
+            ..TransactionFilters::default()
+        };
+        let totals = db
+            .get_transactions_by_category(&filters, None, &fx)
+            .unwrap();
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].category_id, None);
+        assert_eq!(
+            totals[0].total.parse::<Decimal>().unwrap(),
+            Decimal::new(-500, 2)
+        );
+
+        // Sentinel alongside a real category: both groups.
+        let filters = TransactionFilters {
+            categories: Some(vec![leaf_id.clone(), "__uncategorized__".to_string()]),
+            ..TransactionFilters::default()
+        };
+        let totals = db
+            .get_transactions_by_category(&filters, None, &fx)
+            .unwrap();
+        assert_eq!(totals.len(), 2);
+        let null_group = totals.iter().find(|t| t.category_id.is_none()).unwrap();
+        assert_eq!(
+            null_group.total.parse::<Decimal>().unwrap(),
+            Decimal::new(-500, 2)
+        );
+        let leaf_group = totals
+            .iter()
+            .find(|t| t.category_id.as_deref() == Some(leaf_id.as_str()))
+            .unwrap();
+        assert_eq!(
+            leaf_group.total.parse::<Decimal>().unwrap(),
+            Decimal::new(-1000, 2)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -6389,11 +7257,11 @@ mod investment_dedup_tests {
         };
 
         // Fee present, no fee_currency -> defaults to the trade currency.
-        let defaulted = db.create_investment_event(&base).unwrap();
+        let (defaulted, _) = db.create_investment_event(&base).unwrap();
         assert_eq!(defaulted.fee_currency.as_deref(), Some("USD"));
 
         // Fee present with an explicit, different fee_currency -> preserved.
-        let explicit = db
+        let (explicit, _) = db
             .create_investment_event(&crate::model::CreateInvestmentEventBody {
                 symbol: "MSFT".to_string(),
                 fee_currency: Some("GBP".to_string()),
@@ -6403,7 +7271,7 @@ mod investment_dedup_tests {
         assert_eq!(explicit.fee_currency.as_deref(), Some("GBP"));
 
         // No fee -> fee_currency stays null.
-        let no_fee = db
+        let (no_fee, _) = db
             .create_investment_event(&crate::model::CreateInvestmentEventBody {
                 symbol: "TSLA".to_string(),
                 fee: None,
@@ -6412,6 +7280,134 @@ mod investment_dedup_tests {
             })
             .unwrap();
         assert_eq!(no_fee.fee_currency, None);
+    }
+
+    fn make_test_account(db: &Db, id: &str) {
+        db.create_account(&crate::model::Account {
+            id: id.to_string(),
+            name: "Test".to_string(),
+            institution: "Test Bank".to_string(),
+            account_type: crate::model::AccountType::Investment,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+    }
+
+    fn make_event_body(symbol: &str) -> crate::model::CreateInvestmentEventBody {
+        crate::model::CreateInvestmentEventBody {
+            account_id: "acct-1".to_string(),
+            event_type: "buy".to_string(),
+            symbol: symbol.to_string(),
+            date: "2026-03-15T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            fee: None,
+            currency: "GBP".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn create_investment_event_reports_duplicate_on_reimport() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+
+        let body = make_event_body("VUSA");
+        let (first, outcome) = db.create_investment_event(&body).unwrap();
+        assert_eq!(outcome, crate::model::InsertOutcome::Inserted);
+
+        let (second, outcome) = db.create_investment_event(&body).unwrap();
+        assert_eq!(outcome, crate::model::InsertOutcome::Duplicate);
+        assert_eq!(second.id, first.id, "duplicate returns the existing row");
+
+        let events = db
+            .list_investment_events(Some("acct-1"), None, None, None)
+            .unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn update_investment_event_recomputes_fingerprint() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+
+        let body = make_event_body("VUSA");
+        let (created, _) = db.create_investment_event(&body).unwrap();
+
+        let patched = db
+            .update_investment_event(
+                &created.id,
+                &crate::model::PatchInvestmentEventBody {
+                    event_type: None,
+                    symbol: None,
+                    date: None,
+                    quantity: Some("12".to_string()),
+                    price_per_share: None,
+                    fee: None,
+                    currency: None,
+                    fee_currency: None,
+                    notes: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(patched.fingerprint, created.fingerprint);
+        assert_eq!(
+            patched.fingerprint,
+            sha256_hex("acct-1|VUSA|2026-03-15T00:00:00|12|76.32|buy"),
+            "fingerprint must match what create_investment_event would compute"
+        );
+
+        // Dedup follows the new identity: re-importing the original body
+        // inserts a fresh row, re-importing the patched identity is a duplicate.
+        let (_, outcome) = db.create_investment_event(&body).unwrap();
+        assert_eq!(outcome, crate::model::InsertOutcome::Inserted);
+        let (_, outcome) = db
+            .create_investment_event(&crate::model::CreateInvestmentEventBody {
+                quantity: "12".to_string(),
+                ..body.clone()
+            })
+            .unwrap();
+        assert_eq!(outcome, crate::model::InsertOutcome::Duplicate);
+    }
+
+    #[test]
+    fn update_investment_event_notes_only_keeps_fingerprint() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+
+        let (created, _) = db
+            .create_investment_event(&make_event_body("VUSA"))
+            .unwrap();
+        let patched = db
+            .update_investment_event(
+                &created.id,
+                &crate::model::PatchInvestmentEventBody {
+                    event_type: None,
+                    symbol: None,
+                    date: None,
+                    quantity: None,
+                    price_per_share: None,
+                    fee: None,
+                    currency: None,
+                    fee_currency: None,
+                    notes: Some("hello".to_string()),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(patched.fingerprint, created.fingerprint);
+        assert_eq!(patched.notes.as_deref(), Some("hello"));
     }
 }
 
@@ -6456,7 +7452,7 @@ mod document_tests {
             .unwrap();
         assert!(dup2, "identical bytes should dedup");
         assert_eq!(d1.id, d2.id);
-        assert_eq!(db.list_documents().unwrap().len(), 1);
+        assert_eq!(db.list_documents(false).unwrap().len(), 1);
     }
 
     #[test]
@@ -6466,7 +7462,7 @@ mod document_tests {
             .unwrap();
         db.store_document("b.csv", "text/csv", b"bbb", "parse", None)
             .unwrap();
-        assert_eq!(db.list_documents().unwrap().len(), 2);
+        assert_eq!(db.list_documents(false).unwrap().len(), 2);
     }
 
     #[test]
@@ -6488,7 +7484,7 @@ mod document_tests {
         let (manual, _) = db
             .store_document("ref.pdf", "application/pdf", b"x", "manual", None)
             .unwrap();
-        let summaries = db.list_documents().unwrap();
+        let summaries = db.list_documents(false).unwrap();
         let s = summaries.iter().find(|s| s.id == manual.id).unwrap();
         assert_eq!(
             s.reference_count, None,
@@ -6531,7 +7527,7 @@ mod document_tests {
         assert_eq!(refs.total(), 2);
 
         let summary = db
-            .list_documents()
+            .list_documents(false)
             .unwrap()
             .into_iter()
             .find(|s| s.id == doc.id)
@@ -6575,6 +7571,139 @@ mod document_tests {
             )
             .unwrap();
         assert_eq!(h_ids, "[]");
+    }
+
+    #[test]
+    fn list_documents_include_refs_matches_per_document_counts() {
+        let (db, _f) = test_db();
+        make_account(&db, "acct-1");
+
+        let (linked, _) = db
+            .store_document("s.csv", "text/csv", b"data", "parse", Some("acct-1"))
+            .unwrap();
+        let (orphan, _) = db
+            .store_document("o.pdf", "application/pdf", b"x", "manual", None)
+            .unwrap();
+        let ids = format!("[\"{}\"]", linked.id);
+
+        db.conn
+            .execute(
+                "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
+                 account_id, fingerprint, source_document_ids) \
+                 VALUES ('tx1','2026-01-01T00:00:00','x','x','-1','GBP','acct-1','fp1', ?1)",
+                rusqlite::params![ids],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
+                 account_id, fingerprint, source_document_ids) \
+                 VALUES ('tx2','2026-01-02T00:00:00','y','y','-2','GBP','acct-1','fp2', ?1)",
+                rusqlite::params![ids],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO holdings (account_id, symbol, name, holding_type, quantity, value, \
+                 currency, as_of, source_document_ids) \
+                 VALUES ('acct-1','VUSA','Vanguard','etf','1','10','GBP','2026-01-01T00:00:00', ?1)",
+                rusqlite::params![ids],
+            )
+            .unwrap();
+        db.create_investment_event(&crate::model::CreateInvestmentEventBody {
+            account_id: "acct-1".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "VUSA".to_string(),
+            date: "2026-01-03T00:00:00".to_string(),
+            quantity: "1".to_string(),
+            price_per_share: "10".to_string(),
+            fee: None,
+            currency: "GBP".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: vec![linked.id.clone()],
+        })
+        .unwrap();
+
+        let summaries = db.list_documents(true).unwrap();
+        for s in &summaries {
+            let expected = db.document_references(&s.id).unwrap().total();
+            assert_eq!(
+                s.reference_count,
+                Some(expected),
+                "batched count for {} must match the per-document endpoint",
+                s.id
+            );
+            assert_eq!(s.orphaned, expected == 0);
+        }
+
+        let linked_row = summaries.iter().find(|s| s.id == linked.id).unwrap();
+        assert_eq!(linked_row.reference_count, Some(4));
+        assert!(!linked_row.orphaned);
+
+        let orphan_row = summaries.iter().find(|s| s.id == orphan.id).unwrap();
+        assert_eq!(orphan_row.reference_count, Some(0));
+        assert!(orphan_row.orphaned);
+    }
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn last_used(db: &Db) -> Option<String> {
+        db.list_tokens().unwrap()[0].last_used.clone()
+    }
+
+    fn set_last_used_relative(db: &Db, modifier: &str) {
+        db.conn
+            .execute(
+                "UPDATE api_tokens SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
+                params![modifier],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn validate_token_debounces_last_used_writes() {
+        let (db, _f) = test_db();
+        let raw = db.create_token("ci").unwrap();
+
+        // NULL last_used gets set on the first validation.
+        assert!(last_used(&db).is_none());
+        assert_eq!(db.validate_token(&raw).unwrap().as_deref(), Some("ci"));
+        assert!(last_used(&db).is_some());
+
+        // A fresh last_used (10s old, well within the 60s window) is left
+        // untouched by a second validation.
+        set_last_used_relative(&db, "-10 seconds");
+        let recent = last_used(&db).unwrap();
+        assert_eq!(db.validate_token(&raw).unwrap().as_deref(), Some("ci"));
+        assert_eq!(last_used(&db).as_deref(), Some(recent.as_str()));
+
+        // Older than 60s: refreshed.
+        set_last_used_relative(&db, "-2 minutes");
+        let stale = last_used(&db).unwrap();
+        assert_eq!(db.validate_token(&raw).unwrap().as_deref(), Some("ci"));
+        let refreshed = last_used(&db).unwrap();
+        assert!(refreshed > stale, "stale last_used must be refreshed");
+    }
+
+    #[test]
+    fn validate_token_still_rejects_bad_and_revoked_tokens() {
+        let (db, _f) = test_db();
+        let raw = db.create_token("ci").unwrap();
+
+        assert_eq!(db.validate_token("fyn_nope").unwrap(), None);
+        db.revoke_token("ci").unwrap();
+        assert_eq!(db.validate_token(&raw).unwrap(), None);
     }
 }
 

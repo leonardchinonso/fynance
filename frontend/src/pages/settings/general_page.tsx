@@ -1,6 +1,5 @@
 import { useProfiles } from "@/context/profile_context"
 import { useCurrencies } from "@/hooks/data"
-import { useRefreshPreferredCurrency } from "@/context/preferred_currency_context"
 import { ProfilesSection } from "./profiles_section"
 import { CurrenciesSection } from "./currencies_section"
 import { AppearanceSection } from "./appearance_section"
@@ -8,13 +7,13 @@ import { DataSourceSection } from "./data_source_section"
 
 export function SettingsGeneralPage() {
   const { profilesData, refreshProfiles } = useProfiles()
+  // PreferredCurrencyProvider shares this cache entry, so one refresh updates
+  // both the section list and every money label app-wide.
   const [currenciesData, refreshCurrencies] = useCurrencies()
-  const refreshContextCurrencies = useRefreshPreferredCurrency()
 
   function refresh() {
     refreshProfiles()
     refreshCurrencies()
-    refreshContextCurrencies()
   }
 
   return (

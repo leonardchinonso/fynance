@@ -6,7 +6,9 @@ import { CATEGORY_COLORS } from "@/lib/colors"
 import { groupLabelForType, colorForGroupLabel } from "@/lib/category_types"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { useCategoryMeta } from "@/context/category_names_context"
+import { usePreferredCurrency } from "@/context/preferred_currency_context"
 import { useUrlFilters } from "@/hooks/use_url_filters"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { useChartContextMenu, ChartContextMenu } from "@/components/charts/chart_context_menu"
 import { categoryFilterForSeries } from "./chart_drill"
 
@@ -22,6 +24,8 @@ const PALETTE = Object.values(CATEGORY_COLORS)
 const NEUTRAL = "#78716c"
 
 export function BudgetPieChart({ rows, groupBy, accountNameMap }: BudgetPieChartProps) {
+  useRedactedFlag()
+  const preferredCurrency = usePreferredCurrency()
   const { categoryColors } = useCategoryColorsContext()
   const { resolve, parentName, childIdsOf } = useCategoryMeta()
   const { setFilter } = useUrlFilters()
@@ -92,7 +96,8 @@ export function BudgetPieChart({ rows, groupBy, accountNameMap }: BudgetPieChart
       <InteractivePie
         data={data}
         colors={colors}
-        label={`Total: ${formatCurrency(totalSpending.toFixed(2))}`}
+        currency={preferredCurrency}
+        label={`Total: ${formatCurrency(totalSpending.toFixed(2), preferredCurrency)}`}
         height={320}
         innerRadius={70}
         outerRadius={120}

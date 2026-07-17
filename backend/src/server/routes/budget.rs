@@ -24,7 +24,7 @@ pub async fn get_budget_for_month(
 ) -> Result<Json<Value>, AppError> {
     parse_month(&month)?;
     let (rows, preferred_currency) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let rows = db.get_effective_budget(&month, &fx)?;
@@ -105,7 +105,7 @@ pub async fn get_spending_grid(
         .unwrap_or_default();
 
     let (rows, preferred_currency) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let rows = db.get_spending_grid(
@@ -152,13 +152,14 @@ pub async fn get_cash_summary(
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
 
     let resp = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let (income, spending) = db.compute_category_type_cash(start, end, profile_id, &fx)?;
         let savings_growth = db.compute_savings_growth(start, end, profile_id, &fx)?;
         let new_cash_invested = db.compute_new_cash_invested(start, end, profile_id, &fx)?;
-        let investment_metrics = db.compute_investment_metrics(start, end, profile_id, &fx)?;
+        let investment_metrics =
+            db.compute_investment_metrics_with(start, end, profile_id, &fx, new_cash_invested)?;
         CashSummaryResponse {
             preferred_currency: fx.preferred().to_string(),
             income,
@@ -191,7 +192,7 @@ pub async fn set_standing_budget(
     let amount = parse_decimal(&body.amount)?;
     require_non_negative(amount)?;
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     if body.category_id.is_empty() {
         return Err(AppError::bad_request(
@@ -225,7 +226,7 @@ pub async fn set_budget_override(
     let amount = parse_decimal(&body.amount)?;
     require_non_negative(amount)?;
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     if body.category_id.is_empty() {
         return Err(AppError::bad_request(

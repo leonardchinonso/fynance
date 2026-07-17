@@ -1,6 +1,7 @@
 import { api } from "@/api/client"
 import type { CategoryTotal, CategoryTotalFilters, Paginated, SortDir, Transaction, TransactionFilters, TransactionSortColumn } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
+import { combineRemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
 
 /** Transaction rows plus a map of accountId → display name for the table. */
@@ -10,7 +11,9 @@ export interface TransactionsData {
 }
 
 /**
- * Fetches paginated transaction rows and an account name map in parallel.
+ * Composes paginated transaction rows with the account name map from
+ * per-endpoint cache entries: page flips refetch only the rows, and the
+ * `accounts` entry is shared with every other consumer of the same shape.
  *
  * - Hard dep: `profileId`
  * - Soft deps: all filter values (date range, accounts, categories, search, pagination, sort)
@@ -31,12 +34,14 @@ export function useTransactions(
   sortDir: SortDir,
   enabled = true,
 ): RemoteData<TransactionsData> {
-  const accountsKey = selectedAccounts.join(",")
-  const categoriesKey = selectedCategories.join(",")
-  const typesKey = selectedCategoryTypes.join(",")
+  // Sorted so the cache key is order-insensitive, matching stableKey's array
+  // normalization (same selection in a different order must not refetch).
+  const accountsKey = [...selectedAccounts].sort().join(",")
+  const categoriesKey = [...selectedCategories].sort().join(",")
+  const typesKey = [...selectedCategoryTypes].sort().join(",")
 
-  const [data] = useQuery(
-    async () => {
+  const [result] = useQuery(
+    () => {
       const filters: TransactionFilters = {
         start,
         end,
@@ -50,13 +55,7 @@ export function useTransactions(
         sort,
         sort_dir: sort ? sortDir : undefined,
       }
-      const [result, accounts] = await Promise.all([
-        api.getTransactions(filters),
-        api.getAccounts(profileId),
-      ])
-      const accountNameMap: Record<string, string> = {}
-      for (const a of accounts) accountNameMap[a.id] = a.name
-      return { result, accountNameMap }
+      return api.getTransactions(filters)
     },
     {
       tag: "transactions",
@@ -65,7 +64,16 @@ export function useTransactions(
       enabled,
     },
   )
-  return data
+  const [accounts] = useQuery(
+    () => api.getAccounts(profileId),
+    { tag: "accounts", hard: [profileId], soft: [], enabled },
+  )
+
+  return combineRemoteData([result, accounts] as const, ([rows, accountList]) => {
+    const accountNameMap: Record<string, string> = {}
+    for (const a of accountList) accountNameMap[a.id] = a.name
+    return { result: rows, accountNameMap }
+  })
 }
 
 /** Fetches per-category spending totals for charts. */
@@ -78,9 +86,10 @@ export function useTransactionCharts(
   profileId: string | undefined,
   enabled = true,
 ): RemoteData<CategoryTotal[]> {
-  const accountsKey = selectedAccounts.join(",")
-  const categoriesKey = selectedCategories.join(",")
-  const typesKey = selectedCategoryTypes.join(",")
+  // Sorted for order-insensitive cache keys, as in useTransactions above.
+  const accountsKey = [...selectedAccounts].sort().join(",")
+  const categoriesKey = [...selectedCategories].sort().join(",")
+  const typesKey = [...selectedCategoryTypes].sort().join(",")
 
   const [data] = useQuery(
     () => {
@@ -95,7 +104,7 @@ export function useTransactionCharts(
       }
       return api.getTransactionsByCategory(filters)
     },
-    { tag: "transaction-charts", hard: [profileId], soft: [start, end, accountsKey, categoriesKey, typesKey], enabled },
+    { tag: "transactions-by-category", hard: [profileId], soft: [start, end, accountsKey, categoriesKey, typesKey], enabled },
   )
   return data
 }

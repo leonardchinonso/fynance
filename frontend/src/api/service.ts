@@ -116,8 +116,6 @@ export interface ApiService {
     filters: CategoryTotalFilters
   ): Promise<CategoryTotal[]>
   getCategories(): Promise<string[]>
-  /** Leaf categories as `{id, name}` where name is `"Parent: Child"`. */
-  getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>>
   getAccounts(profileId?: string): Promise<Account[]>
 
   // Budget
@@ -168,12 +166,10 @@ export interface ApiService {
     excludeCategoryIds?: string[]
   ): Promise<CashFlowMonth[]>
 
-  // Account balances (per-account monthly balances for delta calculations)
-  getAccountBalances(
-    start: string,
-    end: string,
-    profileId?: string
-  ): Promise<AccountSnapshot[]>
+  // Account balances (per-account monthly balances for delta calculations).
+  // No profile filter: the endpoint has none; callers join against their own
+  // (already profile-filtered) account list.
+  getAccountBalances(start: string, end: string): Promise<AccountSnapshot[]>
 
   // Export
   exportData(format: string): Promise<void>
@@ -257,10 +253,11 @@ export interface ApiService {
   // ── Documents ─────────────────────────────────────────────────────
   /**
    * List all stored source documents with their orphan flag. `reference_count`
-   * is `null` here (computed lazily); fetch the real count per doc via
-   * {@link getDocument}.
+   * is `null` by default; pass `includeRefs` to populate it for every row
+   * (maps to `GET /api/documents?include=refs`). Without it, fetch the count
+   * per doc via {@link getDocument}.
    */
-  listDocuments(): Promise<DocumentSummary[]>
+  listDocuments(includeRefs?: boolean): Promise<DocumentSummary[]>
   /**
    * Fetch one document with its computed `reference_count`. Maps to
    * `GET /api/documents/:id`. Used to resolve the lazy per-row link count.

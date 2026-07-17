@@ -8,11 +8,13 @@ import {
 import {
   cn, formatCurrency, categoryLeaf, formatPeriodKey, periodKeyForMonth, periodKeysFromRows,
 } from "@/lib/utils"
+import { absMoney, fromCents, scaleMoney, toCents } from "@/lib/money"
 import { INCOME_TYPES } from "@/bindings/category_type_groups"
 import type { CategoryType } from "@/bindings/CategoryType"
 import { DualAmount } from "@/components/currency"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
 import { useCategoryMeta } from "@/context/category_names_context"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { SpreadsheetSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
@@ -82,7 +84,7 @@ function BudgetSpreadsheetInternal({ rows, months, granularity, onBudgetSaved }:
     if (!monthlyBudget) return null
     // Scale the monthly budget by how many of the range's months fall in this period.
     const monthCount = months.filter((m) => periodKeyForMonth(m, granularity) === periodKey).length
-    return (parseFloat(monthlyBudget) * monthCount).toFixed(2)
+    return scaleMoney(monthlyBudget, monthCount)
   }
 
   function getPeriodValue(row: SpendingGridRow, periodKey: string): string | null {
@@ -183,18 +185,20 @@ function ParentBlock({
   categoryType: (id: string | null | undefined) => CategoryType | undefined
   onBudgetSaved?: () => void
 }) {
+  useRedactedFlag()
+  // Per-period totals in integer cents, so column sums stay exact.
   const totals: Record<string, number | null> = {}
   for (const p of periods) totals[p] = null
   for (const row of rows) {
     for (const p of periods) {
       const val = getPeriodValue(row, p)
-      if (val !== null) totals[p] = (totals[p] ?? 0) + Math.abs(parseFloat(val))
+      if (val !== null) totals[p] = (totals[p] ?? 0) + Math.abs(toCents(val))
     }
   }
   const periodsWithTotals = Object.values(totals).filter((v) => v !== null) as number[]
   const totalAvg = periodsWithTotals.length > 0
-    ? periodsWithTotals.reduce((s, v) => s + v, 0) / periodsWithTotals.length
-    : 0
+    ? fromCents(periodsWithTotals.reduce((s, v) => s + v, 0) / periodsWithTotals.length)
+    : "0.00"
 
   return (
     <>
@@ -206,8 +210,9 @@ function ParentBlock({
       {rows.map((row) => {
         const rowValues = periods.map((p) => getPeriodValue(row, p))
         const nonNullValues = rowValues.filter((v) => v !== null) as string[]
+        // Sum in cents, divide by count, round to the cent for display.
         const rowAvg = nonNullValues.length > 0
-          ? nonNullValues.reduce((s, v) => s + Math.abs(parseFloat(v)), 0) / nonNullValues.length
+          ? fromCents(nonNullValues.reduce((s, v) => s + Math.abs(toCents(v)), 0) / nonNullValues.length)
           : null
         const income = isIncomeType(categoryType(row.category_id))
 
@@ -225,7 +230,7 @@ function ParentBlock({
               const periodDisplay = (row.periods_display ?? {})[p] ?? null
               return (
                 <TableCell key={p} className={cn("text-right text-sm", !income && cellColor(val, periodBudget))}>
-                  <DualAmount value={Math.abs(parseFloat(val)).toFixed(2)} preferredCurrency={preferredCurrency} display={periodDisplay} tooltip />
+                  <DualAmount value={absMoney(val)} preferredCurrency={preferredCurrency} display={periodDisplay} tooltip />
                 </TableCell>
               )
             })}
@@ -233,7 +238,7 @@ function ParentBlock({
               {rowAvg !== null ? (
                 <Tooltip>
                   <TooltipTrigger className="cursor-default underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
-                    <DualAmount value={rowAvg.toFixed(2)} preferredCurrency={preferredCurrency} display={row.average_display} secondaryFirst />
+                    <DualAmount value={rowAvg} preferredCurrency={preferredCurrency} display={row.average_display} secondaryFirst />
                   </TooltipTrigger>
                   <TooltipContent
                     side="left"
@@ -248,7 +253,7 @@ function ParentBlock({
                             return (
                               <tr key={p}>
                                 <td className="pr-3 text-left text-[10px] text-muted-foreground">{formatPeriodKey(p, granularity)}</td>
-                                <td className="text-right">{v !== null ? formatCurrency(Math.abs(parseFloat(v)).toFixed(2), preferredCurrency) : "—"}</td>
+                                <td className="text-right">{v !== null ? formatCurrency(absMoney(v), preferredCurrency) : "—"}</td>
                               </tr>
                             )
                           })}
@@ -276,11 +281,11 @@ function ParentBlock({
         </TableCell>
         {periods.map((p) => (
           <TableCell key={p} className="text-right text-sm tabular-nums font-medium">
-            {totals[p] !== null ? formatCurrency(totals[p]!.toFixed(2), preferredCurrency) : <span className="text-muted-foreground/30">-</span>}
+            {totals[p] !== null ? formatCurrency(fromCents(totals[p]!), preferredCurrency) : <span className="text-muted-foreground/30">-</span>}
           </TableCell>
         ))}
         <TableCell className="text-right text-sm tabular-nums font-medium">
-          {formatCurrency(totalAvg.toFixed(2), preferredCurrency)}
+          {formatCurrency(totalAvg, preferredCurrency)}
         </TableCell>
         <TableCell />
       </TableRow>

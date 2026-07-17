@@ -12,6 +12,7 @@ import type { PieSectorDataItem } from "recharts/types/polar/Pie"
 import { PieTooltip, useClampedTooltipPosition } from "./chart_tooltip"
 import { ChartLegend } from "@/components/chart_legend"
 import { formatCurrency, cn } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { ChevronDown, ChevronUp } from "lucide-react"
 
 const DEFAULT_COLORS = [
@@ -33,6 +34,8 @@ interface InteractivePieProps {
   colors?: string[]
   /** Stable color map keyed by item name — takes precedence over positional `colors` */
   colorMap?: Map<string, string>
+  /** Currency code for the active-slice center label. Defaults to GBP. */
+  currency?: string
   label?: string
   height?: number
   className?: string
@@ -51,6 +54,7 @@ export function InteractivePie({
   data,
   colors = DEFAULT_COLORS,
   colorMap,
+  currency,
   label,
   height = 280,
   className,
@@ -59,6 +63,7 @@ export function InteractivePie({
   legendPosition = "bottom",
   onContextMenu,
 }: InteractivePieProps) {
+  useRedactedFlag()
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
   const chartAreaRef = useRef<HTMLDivElement>(null)
@@ -108,9 +113,6 @@ export function InteractivePie({
     }
   }, [data])
 
-  const pieTooltip = (props: Parameters<typeof PieTooltip>[0]) =>
-    PieTooltip({ ...props, total, data })
-
   const chart = (
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
@@ -123,7 +125,7 @@ export function InteractivePie({
           dataKey="value"
           nameKey="name"
           activeIndex={activeIndex}
-          activeShape={renderActiveShape}
+          activeShape={(p: PieSectorDataItem) => renderActiveShape(p, currency)}
           onMouseEnter={(_, index) => setActiveIndex(index)}
           onMouseLeave={clearHover}
           onClick={undefined}
@@ -147,7 +149,7 @@ export function InteractivePie({
           ))}
         </Pie>
         <Tooltip
-          content={pieTooltip}
+          content={<PieTooltip total={total} data={data} />}
           position={pos}
           wrapperStyle={{ pointerEvents: "none", zIndex: 50, transition: "transform 50ms ease-out, left 50ms ease-out, top 50ms ease-out" }}
           isAnimationActive={false}
@@ -272,7 +274,7 @@ function ScrollArrow({
   )
 }
 
-function renderActiveShape(props: PieSectorDataItem) {
+function renderActiveShape(props: PieSectorDataItem, currency?: string) {
   const {
     cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, percent,
   } = props
@@ -317,7 +319,7 @@ function renderActiveShape(props: PieSectorDataItem) {
         textAnchor="middle"
         className="fill-muted-foreground text-xs"
       >
-        {formatCurrency(((props.value as number) ?? 0).toFixed(2))} ({((percent ?? 0) * 100).toFixed(1)}%)
+        {formatCurrency(((props.value as number) ?? 0).toFixed(2), currency)} ({((percent ?? 0) * 100).toFixed(1)}%)
       </text>
     </g>
   )

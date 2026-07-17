@@ -98,7 +98,7 @@ pub async fn list_transactions(
     };
 
     let (data, total) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_transactions(&filters)?
     };
 
@@ -157,7 +157,7 @@ pub async fn transactions_by_category(
     };
 
     let (totals, preferred_currency) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let totals = db.get_transactions_by_category(&filters, direction, &fx)?;
@@ -175,7 +175,7 @@ pub async fn transactions_by_category(
 
 pub async fn list_categories(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
     let tree = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_all_categories()?
     };
     Ok(Json(serde_json::to_value(tree)?))
@@ -203,23 +203,20 @@ pub async fn patch_transaction(
         ));
     }
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     let tx = db
         .get_transaction_by_id(&id)?
         .ok_or_else(|| AppError::NotFound(format!("transaction {id} not found")))?;
 
-    if let Some(ref cat_id) = body.category_id {
-        db.update_transaction_category(&id, cat_id, CategorySource::Manual)?;
-    }
-
-    if let Some(ref notes) = body.notes {
-        db.update_transaction_notes(&id, Some(notes.as_str()))?;
-    }
-
-    if let Some(exclude) = body.exclude_from_summary {
-        db.update_transaction_exclude_summary(&id, exclude)?;
-    }
+    db.patch_transaction_fields(
+        &id,
+        body.category_id
+            .as_deref()
+            .map(|cat_id| (cat_id, CategorySource::Manual)),
+        body.notes.as_deref(),
+        body.exclude_from_summary,
+    )?;
 
     let updated = db.get_transaction_by_id(&id)?.unwrap_or(tx);
     Ok(Json(updated))
@@ -231,7 +228,7 @@ pub async fn delete_transaction(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let deleted = db.delete_transaction(&id)?;
     if deleted == 0 {
         return Err(AppError::NotFound(format!("transaction {id} not found")));
@@ -268,7 +265,7 @@ pub async fn bulk_patch_transactions(
         ));
     }
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let updated =
         db.bulk_update_transaction_category(&body.ids, &body.category_id, CategorySource::Manual)?;
     Ok(Json(serde_json::json!({ "ok": true, "updated": updated })))
@@ -293,7 +290,7 @@ pub async fn bulk_delete_transactions(
     let account_id = body.account_id.filter(|s| !s.is_empty());
     let ids = body.ids.filter(|v| !v.is_empty());
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let deleted = match (ids, account_id) {
         (Some(ids), None) => db.delete_transactions(&ids)?,
         (None, Some(account_id)) => db.delete_transactions_for_account(&account_id)?,
@@ -320,7 +317,7 @@ pub async fn list_transaction_accounts(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, AppError> {
     let accounts = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.get_accounts(None)?
     };
     Ok(Json(serde_json::to_value(accounts)?))

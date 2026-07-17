@@ -75,6 +75,13 @@ Several backend behaviours key off category *display names* hardcoded in Rust, i
   - Attempts that did not fully resolve it: moving `onMouseLeave` to `<PieChart>` (bounding box vs SVG path), `mouseInsideRef` guard on slice enter, interval-based position check, `pointerleave` + `pointerenter` listeners, `effectiveActiveIndex` derived from `mousePos`.
   - Likely fix direction: pass `active={false}` explicitly to `<Tooltip>` when we want it hidden (controlled mode), which bypasses Recharts' internal state entirely. Not yet attempted.
 
+### Backend Hardening (from the 2026-07 architecture review, PR #96)
+
+- [ ] **Move DB work off the async runtime.** Every request locks the single rusqlite connection and runs the query on a tokio worker thread, so one slow query or bulk import stalls the whole API and blocks a runtime thread besides. Staged:
+  - [ ] Step 1 (**approved, ready to implement**): wrap `Db` calls in `tokio::task::spawn_blocking`, acquiring the mutex inside the closure. Mechanical, no behavior change; requests still serialize, but slow queries no longer starve the async runtime.
+  - [ ] Step 2 (deferred until import latency actually hurts): keep a single writer connection and add a small read-only pool (r2d2 or deadpool) under WAL so reads never queue behind writes. The risk is pragma drift: every pooled connection must get exactly the setup `Db::open` applies today, so route all opens through one constructor.
+- [ ] **Error handling cleanup, all layers.** (a) Storage: a typed `StorageError` enum (`NotFound`, `Conflict`, `InvalidInput`, `Other(anyhow)`) with `From<StorageError> for AppError`, replacing the message-substring matching in `routes/currencies.rs` and the blanket 400s in `routes/investments.rs`; today a reworded message can flip a 404 into a 500, and internal errors leak as `invalid_body`. (b) Parameterize the one string-interpolated query, `list_investment_events` (quote-escaping is correct today, but it defeats statement caching and is one refactor from injection; use the numbered-placeholder pattern from `get_transactions`). (c) The user-facing error envelope is specced in `23_capital_gains_post_v0.md` §7.9; implement (a) and (c) together so handlers map `StorageError` variants straight into the envelope.
+
 ---
 
 ## V2
@@ -98,6 +105,10 @@ Summary:
 ### Backups
 
 Frequent automatic snapshots and backups of db so user can't loose months of work at a time
+
+### Refactoring
+
+- [ ] **Split `storage/db.rs` into per-entity modules.** ~7k lines and ~90 methods across every entity in one file. Split into `storage/{transactions,holdings,investments,categories,budgets,documents,meta}.rs` as `impl Db` blocks (one struct's impls can live across files): pure file moves, zero logic change, compiler-verified, tests unchanged. Timing matters more than effort: ship as its own logic-free PR at a quiet moment (right after a big branch merges), since it conflicts with anything in flight that touches `db.rs`. The CGT-engine relocation is tracked separately in `23_capital_gains_post_v0.md` §7.11.
 
 ---
 

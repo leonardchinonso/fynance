@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { formatCurrency } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import type { SymbolSummary } from "@/bindings/SymbolSummary"
 
 interface CgtPerSymbolTableProps {
@@ -22,6 +23,7 @@ export function CgtPerSymbolTable({
   baseCurrency,
   perSymbolCounts,
 }: CgtPerSymbolTableProps) {
+  useRedactedFlag()
   if (rows.length === 0) return null
   return (
     <Card>

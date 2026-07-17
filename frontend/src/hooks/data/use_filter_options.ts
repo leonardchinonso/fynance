@@ -1,6 +1,7 @@
 import { api } from "@/api/client"
 import type { Account } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
+import { combineRemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
 
 /** Accounts and category names available for filter dropdowns. */
@@ -10,8 +11,8 @@ export interface FilterOptions {
 }
 
 /**
- * Fetches filter dropdown options (accounts + categories) once per profile.
- * These populate the MultiSelect filters on the Transactions page.
+ * Composes filter dropdown options (accounts + category names) from
+ * per-endpoint cache entries shared with the table and settings queries.
  *
  * - Hard dep: `profileId` — re-fetches when the profile changes.
  * - No soft deps — not date-range dependent.
@@ -19,15 +20,17 @@ export interface FilterOptions {
 export function useFilterOptions(
   profileId: string | undefined,
 ): RemoteData<FilterOptions> {
-  const [data] = useQuery(
-    async () => {
-      const [accounts, categories] = await Promise.all([
-        api.getAccounts(profileId),
-        api.getCategories(),
-      ])
-      return { accounts, categories }
-    },
-    { tag: "filter-options", hard: [profileId], soft: [] },
+  const [accounts] = useQuery(
+    () => api.getAccounts(profileId),
+    { tag: "accounts", hard: [profileId], soft: [] },
   )
-  return data
+  const [categories] = useQuery(
+    () => api.getCategories(),
+    { tag: "category-names", hard: [], soft: [], static: true },
+  )
+
+  return combineRemoteData([accounts, categories] as const, ([accountList, names]) => ({
+    accounts: accountList,
+    categories: names,
+  }))
 }

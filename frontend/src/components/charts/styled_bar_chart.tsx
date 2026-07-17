@@ -12,6 +12,7 @@ import {
 } from "recharts"
 import { ChartTooltip, useClampedTooltipPosition } from "./chart_tooltip"
 import { formatCurrencyCompact } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 
 const DEFAULT_COLORS = [
   "#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ec4899",
@@ -50,6 +51,7 @@ export function StyledBarChart({
   showTotal = false,
   onContextMenu,
 }: StyledBarChartProps) {
+  useRedactedFlag()
   const [activeBarIndex, setActiveBarIndex] = useState<number | null>(null)
   const [activeCatIndex, setActiveCatIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -154,6 +156,7 @@ export function ColoredBarChart({
   height?: number
   className?: string
 }) {
+  useRedactedFlag()
   const [activeBarIndex, setActiveBarIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const { pos, onMouseMove, onMouseLeave } = useClampedTooltipPosition(containerRef)

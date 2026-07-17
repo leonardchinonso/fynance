@@ -162,6 +162,17 @@ pub fn parse_amount(raw: &str) -> Result<Decimal> {
     Decimal::from_str_exact(&cleaned).with_context(|| format!("parsing amount {raw:?}"))
 }
 
+/// Largest byte index `<= max` that is a char boundary of `s`. Safe cut point
+/// for truncating user-supplied text: the cp1252 fallback decoder produces
+/// multibyte £/é, and slicing mid-char panics.
+pub fn char_boundary_floor(s: &str, max: usize) -> usize {
+    let mut n = max.min(s.len());
+    while !s.is_char_boundary(n) {
+        n -= 1;
+    }
+    n
+}
+
 /// Validate that a string looks like `YYYY-MM`. Used by budget CLI args.
 pub fn parse_month(s: &str) -> Result<String> {
     let trimmed = s.trim();
@@ -274,6 +285,21 @@ mod tests {
     #[test]
     fn parse_date_rejects_garbage() {
         assert!(parse_date("yesterday").is_err());
+    }
+
+    #[test]
+    fn char_boundary_floor_backs_off_multibyte() {
+        // '£' is 2 bytes starting at index 4; cutting at 5 would split it.
+        let s = "cost£100";
+        assert_eq!(char_boundary_floor(s, 5), 4);
+        assert_eq!(char_boundary_floor(s, 6), 6);
+        assert!(s.is_char_boundary(char_boundary_floor(s, 5)));
+    }
+
+    #[test]
+    fn char_boundary_floor_clamps_to_len() {
+        assert_eq!(char_boundary_floor("abc", 10), 3);
+        assert_eq!(char_boundary_floor("", 10), 0);
     }
 
     #[test]

@@ -88,7 +88,6 @@ import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
-import { MockApiService } from "./mock_service"
 
 const BASE = "/api"
 
@@ -188,13 +187,10 @@ async function del(path: string, body?: unknown): Promise<void> {
   if (!res.ok) throw await parseError(res)
 }
 
-// Mock fallback for endpoints the backend doesn't have yet
-const mock = new MockApiService()
-
 /**
  * RealApiService calls the Rust backend for every endpoint that has
- * server-side support. The only remaining mock fallback is exportData
- * which isn't built on the backend yet.
+ * server-side support. The only remaining stub is exportData, which
+ * isn't built on the backend yet.
  */
 export class RealApiService implements ApiService {
   // ── Real endpoints ──────────────────────────────────────────────
@@ -244,15 +240,6 @@ export class RealApiService implements ApiService {
       const children = node.children ?? []
       if (children.length === 0) return [node.name]
       return children.map(c => `${node.name}: ${c.name}`)
-    })
-  }
-
-  async getCategoriesWithIds(): Promise<Array<{ id: string; name: string }>> {
-    const nodes = await get<CategoryNode[]>(`${BASE}/transactions/categories`)
-    return nodes.flatMap(node => {
-      const children = node.children ?? []
-      if (children.length === 0) return [{ id: node.id, name: node.name }]
-      return children.map(c => ({ id: c.id, name: `${node.name}: ${c.name}` }))
     })
   }
 
@@ -386,11 +373,7 @@ export class RealApiService implements ApiService {
     return res.rows
   }
 
-  async getAccountBalances(
-    start: string,
-    end: string,
-    _profileId?: string
-  ): Promise<AccountSnapshot[]> {
+  async getAccountBalances(start: string, end: string): Promise<AccountSnapshot[]> {
     return get<AccountSnapshot[]>(`${BASE}/holdings/balances`, { start, end })
   }
 
@@ -575,8 +558,8 @@ export class RealApiService implements ApiService {
 
   // ── Documents ─────────────────────────────────────────────────────
 
-  async listDocuments(): Promise<DocumentSummary[]> {
-    return get<DocumentSummary[]>(`${BASE}/documents`)
+  async listDocuments(includeRefs = false): Promise<DocumentSummary[]> {
+    return get<DocumentSummary[]>(`${BASE}/documents${includeRefs ? "?include=refs" : ""}`)
   }
 
   async getDocument(id: string): Promise<DocumentSummary> {
@@ -616,9 +599,9 @@ export class RealApiService implements ApiService {
     return `${BASE}/documents/${encodeURIComponent(id)}/download`
   }
 
-  // ── Mock fallback (backend endpoint doesn't exist yet) ──────────
+  // ── Stub (backend endpoint doesn't exist yet) ───────────────────
 
   async exportData(format: string): Promise<void> {
-    return mock.exportData(format)
+    console.log(`[stub] Export requested: format=${format}`)
   }
 }

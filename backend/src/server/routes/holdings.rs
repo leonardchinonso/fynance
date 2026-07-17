@@ -56,7 +56,7 @@ pub async fn list_holdings(
     State(state): State<AppState>,
     Query(q): Query<HoldingsQuery>,
 ) -> Result<Json<Vec<Holding>>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let include_closed = q.include_closed.unwrap_or(false);
 
     let account_ids: Vec<String> = if let Some(ref id) = q.account_id {
@@ -122,7 +122,7 @@ pub async fn get_holdings_summary(
         .unwrap_or(as_of);
 
     let (accounts, holding_rows, investment_metrics, fx) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let accounts = db.accounts_as_of(as_of, profile_id)?;
         let holding_rows = db.get_holdings_for_summary(as_of, profile_id)?;
         let currencies = db.get_currencies()?;
@@ -262,7 +262,7 @@ pub async fn get_holdings_history(
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
 
     let (rows, preferred_currency) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let rows = db.get_monthly_net_worth(start, end, &granularity, profile_id, &fx)?;
@@ -315,7 +315,7 @@ pub async fn get_account_holdings_history(
         .and_then(parse_granularity)?;
 
     let (symbols, rows, preferred_currency) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let (symbols, rows) =
@@ -365,7 +365,7 @@ pub async fn get_holdings_balances(
 
     let summary = q.summary.as_deref().unwrap_or("false") == "true";
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     if summary {
         let deltas = db.get_balance_summary(start, end)?;
         Ok(Json(serde_json::to_value(deltas)?))
@@ -417,7 +417,7 @@ pub async fn get_holdings_cash_flow(
         .unwrap_or_default();
 
     let (rows, preferred_currency) = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let rows = db.get_cash_flow(
@@ -465,7 +465,7 @@ pub async fn import_holdings(
     Json(payload): Json<HoldingsWritePayload>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     require_token_if_remote(&state, &auth)?;
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     let account_id = payload.account_id;
     if !db.account_exists(&account_id)? {
@@ -511,7 +511,7 @@ pub async fn post_holdings(
     let holdings = holdings_from_writes(body, &account_id)?;
 
     let holdings_updated = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         if db.get_account_by_id(&account_id)?.is_none() {
             return Err(AppError::NotFound(format!(
                 "account {account_id} not found"
@@ -538,7 +538,7 @@ pub async fn get_holding_history(
     State(state): State<AppState>,
     Path((account_id, symbol)): Path<(String, String)>,
 ) -> Result<Json<Vec<Holding>>, AppError> {
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let snapshots = db.get_holding_snapshots(&account_id, &symbol)?;
     Ok(Json(snapshots))
 }
@@ -561,7 +561,7 @@ pub async fn delete_holding_handler(
     let as_of = parse_naive_datetime(&q.as_of)?
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
     let rows = db.delete_holding(&account_id, &symbol, &as_of, q.sub_account.as_deref())?;
     if rows == 0 {
         return Err(AppError::NotFound(format!(
@@ -613,7 +613,7 @@ pub async fn patch_holding(
         return Err(AppError::bad_request("nothing to update", "empty_patch"));
     }
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     if let Some(ref c) = body.currency {
         validate_currency(&db, c)?;

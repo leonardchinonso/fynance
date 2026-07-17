@@ -368,6 +368,8 @@ Closely linked to 7.4 — the tax computation should include an `aea_remaining`,
 
 Audit pass: walk every handler in `backend/src/server/routes/`, replace any "this throws a 500 because we panicked / unwrapped" with a `UserFacingError` (or accept it as a true internal). The fx panic was the canonical example; there are probably more.
 
+The storage-side half of this (a typed `StorageError` enum replacing the message-substring matching that routes do today, plus parameterizing the one string-built query) is tracked in `20_post_v0_plans.md` under "Backend Hardening"; implement the two together so handlers map `StorageError` variants straight into this envelope.
+
 ### 7.10 Historical FX rates (the big rock)
 
 Engine takes one rate per currency and uses it for every event regardless of date. PLTR (USD) figures last tax year differ from the filing by ~£80k because of this alone.
@@ -382,6 +384,14 @@ Engine takes one rate per currency and uses it for every event regardless of dat
 - Backfill on demand: when a CGT report is generated, the engine collects every `(currency, date)` pair it needs and fetches/caches them in one pass.
 
 **Open for the call:** do we backfill lazily (on report request) or proactively (background job on currency change)? Lazy is simpler; proactive is faster on the user's first report.
+
+### 7.11 Move the engine out of the routes layer
+
+`run_cgt_engine` and its supporting types (~900 lines of matching-rule business logic) live inside the HTTP route file, [`backend/src/server/routes/capital_gains.rs`](../../backend/src/server/routes/capital_gains.rs). Move them to a dedicated `backend/src/cgt/` module, leaving the route as a thin adapter that parses query params and maps the engine result into the response. Pure relocation, no behavior change; the integration tests pin the outputs.
+
+While there, add cross-references between the engine and the second average-cost pooling implementation in `Db::get_investment_history`: they intentionally differ (history applies plain S104 averaging and skips same-day/30-day matching, which is fine for a value-over-time chart), but nothing at either site says so today, which invites someone to "fix" one to match the other.
+
+Sequencing: best done after the `storage/db.rs` module split tracked in `20_post_v0_plans.md` §V2 Refactoring, so each diff stays a pure file move.
 
 ---
 

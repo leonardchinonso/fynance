@@ -1,5 +1,6 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatCurrency } from "@/lib/utils"
+import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import { usePreferredCurrency, useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import type { EstimatedPrice } from "@/bindings/EstimatedPrice"
 import type { ParserCallCost } from "@/bindings/ParserCallCost"
@@ -20,6 +21,7 @@ function formatDuration(ms: number): string {
 }
 
 export function CostTag({ price, className }: Props) {
+  useRedactedFlag()
   const preferred = usePreferredCurrency()
   const currencies = useCurrenciesFromContext()
 

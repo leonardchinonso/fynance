@@ -11,13 +11,13 @@ import { TransactionTable, BulkCategoryPicker } from "./transactions/transaction
 import { Grid3X3, Table2, BarChart3, Search, Trash2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { invalidateVolatile } from "@/lib/query_cache"
+import { ConfirmDialog } from "@/components/confirm_dialog"
+import { showErrorToast } from "@/components/toast"
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from "@/components/ui/select"
 import { getMonthsInRange } from "@/lib/utils"
-import { useSpendingGrid, useTransactions, useFilterOptions } from "@/hooks/data"
+import { useSpendingGrid, useTransactions, useFilterOptions, useCategoryOptions } from "@/hooks/data"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { api } from "@/api/client"
 import type { CategoryType } from "@/bindings/CategoryType"
@@ -68,14 +68,7 @@ export function BudgetPage() {
 
   // Leaf categories with ids: powers the Category filter (we filter by id) and
   // the table's inline category editor.
-  const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; name: string }>>([])
-  useEffect(() => {
-    let cancelled = false
-    api.getCategoriesWithIds()
-      .then((list) => { if (!cancelled) setCategoryOptions(list) })
-      .catch(() => { if (!cancelled) setCategoryOptions([]) })
-    return () => { cancelled = true }
-  }, [])
+  const categoryOptions = useCategoryOptions()
   const categoryNameById = useMemo(
     () => Object.fromEntries(categoryOptions.map((c) => [c.id, c.name])),
     [categoryOptions],
@@ -130,6 +123,7 @@ export function BudgetPage() {
   const [selectedTxnIds, setSelectedTxnIds] = useState<Set<string>>(new Set())
   const [deletingIds, setDeletingIds] = useState<string[] | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   // Clear selection whenever the visible result set changes.
   const txKey = [
     start, end, selectedAccounts.join(","), selectedCategories.join(","),
@@ -140,21 +134,26 @@ export function BudgetPage() {
   async function bulkSetCategory(opt: { id: string; name: string }) {
     const ids = [...selectedTxnIds]
     setSelectedTxnIds(new Set())
-    try { await api.bulkSetCategory(ids, opt.id); invalidateVolatile() }
-    catch (e) { alert(e instanceof Error ? e.message : String(e)) }
+    try { await api.bulkSetCategory(ids, opt.id) }
+    catch (e) { showErrorToast(e instanceof Error ? e.message : String(e)) }
+  }
+
+  function requestDeleteTxns(ids: string[]) {
+    setDeleteError(null)
+    setDeletingIds(ids)
   }
 
   async function confirmDeleteTxns() {
     if (!deletingIds) return
     const ids = deletingIds
     setDeleteBusy(true)
+    setDeleteError(null)
     try {
       if (ids.length === 1) await api.deleteTransaction(ids[0])
       else await api.bulkDeleteTransactions(ids)
       setSelectedTxnIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n })
       setDeletingIds(null)
-      invalidateVolatile()
-    } catch (e) { alert(e instanceof Error ? e.message : String(e)) }
+    } catch (e) { setDeleteError(e instanceof Error ? e.message : String(e)) }
     finally { setDeleteBusy(false) }
   }
 
@@ -226,7 +225,7 @@ export function BudgetPage() {
               variant="outline"
               size="sm"
               className="h-8 gap-1.5 text-destructive hover:text-destructive"
-              onClick={() => setDeletingIds([...selectedTxnIds])}
+              onClick={() => requestDeleteTxns([...selectedTxnIds])}
             >
               <Trash2 className="h-3.5 w-3.5" /> Delete
             </Button>
@@ -266,31 +265,23 @@ export function BudgetPage() {
           onResetFilters={hasFilters ? clearFilters : undefined}
           selectedIds={selectedTxnIds}
           onSelectedChange={setSelectedTxnIds}
-          onRequestDelete={(ids) => setDeletingIds(ids)}
+          onRequestDelete={requestDeleteTxns}
         />
       )}
       {view === "charts" && (
         <BudgetCharts data={chartGrid} months={months} granularity={granularity} groupBy={groupBy} accountNameMap={accountNameMap} />
       )}
 
-      <Dialog open={deletingIds !== null} onOpenChange={(o) => { if (!o && !deleteBusy) setDeletingIds(null) }}>
-        <DialogContent className="sm:max-w-sm p-6">
-          <DialogHeader>
-            <DialogTitle>
-              Delete {deletingIds && deletingIds.length === 1 ? "transaction" : `${deletingIds?.length ?? 0} transactions`}?
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This permanently deletes {deletingIds && deletingIds.length === 1 ? "this transaction" : "these transactions"}. This cannot be undone.
-          </p>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" size="sm" onClick={() => setDeletingIds(null)} disabled={deleteBusy}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={confirmDeleteTxns} disabled={deleteBusy}>
-              {deleteBusy ? "Deleting..." : "Delete"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={deletingIds !== null}
+        onOpenChange={(o) => { if (!o) setDeletingIds(null) }}
+        title={`Delete ${deletingIds && deletingIds.length === 1 ? "transaction" : `${deletingIds?.length ?? 0} transactions`}?`}
+        busy={deleteBusy}
+        error={deleteError}
+        onConfirm={confirmDeleteTxns}
+      >
+        This permanently deletes {deletingIds && deletingIds.length === 1 ? "this transaction" : "these transactions"}. This cannot be undone.
+      </ConfirmDialog>
     </div>
   )
 }

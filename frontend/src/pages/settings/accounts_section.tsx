@@ -1,16 +1,17 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { api } from "@/api/client"
 import type { Account, Profile, AccountType } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
 import { useIngestionPreferences } from "@/hooks/use_ingestion_preferences"
 import { useProfileColorsContext } from "@/context/profile_colors_context"
+import { useCurrenciesFromContext } from "@/context/preferred_currency_context"
 import { DraggableList, DragHandle } from "@/components/draggable_list"
 import { SettingsListSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -22,7 +23,9 @@ import {
 } from "@/components/ui/command"
 import { Trash2, Pencil, Plus, Building2, Eye, EyeOff, Check, ChevronsUpDown, CircleHelp } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
-import { cn, formatCurrency } from "@/lib/utils"
+import { cn } from "@/lib/utils"
+import { MoneyDisplay } from "@/components/currency"
+import { ConfirmDialog } from "@/components/confirm_dialog"
 import { accountTypeClasses } from "@/lib/account_type_colors"
 import { ACCOUNT_TYPE_COLORS, ACCOUNT_TYPE_LABELS } from "@/lib/colors"
 
@@ -136,6 +139,8 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
   const [dragId, setDragId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Account | null>(null)
   const [deleting, setDeleting] = useState<Account | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const {
     getOrderedAccounts,
     getHiddenAccounts,
@@ -144,14 +149,23 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
     reorderAccounts,
   } = useIngestionPreferences()
 
+  function requestDelete(account: Account) {
+    setDeleteError(null)
+    setDeleting(account)
+  }
+
   async function handleDeleteConfirm() {
     if (!deleting) return
+    setDeleteBusy(true)
+    setDeleteError(null)
     try {
       await api.deleteAccount(deleting.id)
       setDeleting(null)
       onRefresh()
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      setDeleteError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -179,13 +193,13 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
               <TypeBadge type={a.type} />
               {a.balance && (
                 <p className="text-sm font-medium tabular-nums shrink-0">
-                  {formatCurrency(a.balance, a.currency)}
+                  <MoneyDisplay amount={a.balance} currency={a.currency} colorize={false} />
                 </p>
               )}
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setDeleting(a)} title="Delete account">
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => requestDelete(a)} title="Delete account">
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </div>
@@ -201,18 +215,17 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
           />
         )}
 
-        <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null) }}>
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader><DialogTitle>Delete account?</DialogTitle></DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              This deactivates <strong>{deleting?.name}</strong>. If the account still has transactions or holdings, the delete will be rejected — clear those first.
-            </p>
-            <DialogFooter>
-              <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
-              <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>Delete</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ConfirmDialog
+          open={!!deleting}
+          onOpenChange={(open) => { if (!open) setDeleting(null) }}
+          title="Delete account?"
+          busy={deleteBusy}
+          error={deleteError}
+          onConfirm={handleDeleteConfirm}
+        >
+          This deactivates <strong>{deleting?.name}</strong>. If the account still has
+          transactions, holdings, or investment events, the delete is rejected: clear those first.
+        </ConfirmDialog>
       </>
     )
   }
@@ -247,7 +260,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
             <TypeBadge type={a.type} />
             {a.balance && (
               <p className="text-sm font-medium tabular-nums shrink-0">
-                {formatCurrency(a.balance, a.currency)}
+                <MoneyDisplay amount={a.balance} currency={a.currency} colorize={false} />
               </p>
             )}
             <Tooltip>
@@ -269,7 +282,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
               variant="ghost"
               size="icon"
               className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
-              onClick={() => setDeleting(a)}
+              onClick={() => requestDelete(a)}
               title="Delete account"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -306,7 +319,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setDeleting(a)} title="Delete account">
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => requestDelete(a)} title="Delete account">
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -324,18 +337,17 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
         />
       )}
 
-      <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null) }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader><DialogTitle>Delete account?</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This deactivates <strong>{deleting?.name}</strong>. If the account still has transactions or holdings, the delete will be rejected — clear those first.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>Delete</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!deleting}
+        onOpenChange={(open) => { if (!open) setDeleting(null) }}
+        title="Delete account?"
+        busy={deleteBusy}
+        error={deleteError}
+        onConfirm={handleDeleteConfirm}
+      >
+        This deactivates <strong>{deleting?.name}</strong>. If the account still has
+        transactions, holdings, or investment events, the delete is rejected: clear those first.
+      </ConfirmDialog>
     </div>
   )
 }
@@ -354,11 +366,13 @@ function EditAccountDialog({ account, profiles, onClose, onSaved }: {
     profileIds: account.profile_ids ?? [],
   })
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const currencies = useCurrencyOptions()
 
   async function handleSave() {
     if (!form.name.trim() || !form.institution.trim()) return
     setSaving(true)
+    setSaveError(null)
     try {
       await api.updateAccount(account.id, {
         name: form.name.trim(),
@@ -369,7 +383,7 @@ function EditAccountDialog({ account, profiles, onClose, onSaved }: {
       })
       onSaved()
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      setSaveError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }
@@ -393,6 +407,9 @@ function EditAccountDialog({ account, profiles, onClose, onSaved }: {
             currencies={currencies}
             onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
           />
+          {saveError && (
+            <p className="text-xs text-destructive whitespace-pre-wrap">{saveError}</p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
             <Button size="sm" onClick={handleSave} disabled={!form.name.trim() || !form.institution.trim() || saving}>
@@ -581,20 +598,16 @@ function AccountCommonFields({
   )
 }
 
-/** Currency code options for the account dialogs, fetched once. */
+/** Currency code options for the account dialogs, from the shared currencies context. */
 function useCurrencyOptions(): string[] {
-  const [codes, setCodes] = useState<string[]>([])
-  useEffect(() => {
-    let alive = true
-    api.getCurrencies().then((cs) => { if (alive) setCodes(cs.map((c) => c.code)) }).catch(() => {})
-    return () => { alive = false }
-  }, [])
-  return codes
+  const currencies = useCurrenciesFromContext()
+  return currencies.map((c) => c.code)
 }
 
 function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefresh: () => void }) {
   const [showAdd, setShowAdd] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [form, setForm] = useState({
     name: "", id: "", institution: "",
     type: "checking" as AccountType,
@@ -612,6 +625,7 @@ function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefr
   async function handleCreate() {
     if (!form.name.trim() || !form.id.trim() || !form.institution.trim()) return
     setCreating(true)
+    setCreateError(null)
     try {
       await api.createAccount({
         id: form.id.trim(), name: form.name.trim(), institution: form.institution.trim(),
@@ -622,6 +636,8 @@ function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefr
       setShowAdd(false)
       resetForm()
       onRefresh()
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : String(err))
     } finally {
       setCreating(false)
     }
@@ -631,7 +647,7 @@ function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefr
 
   return (
     <>
-      <Button size="sm" className="gap-1.5" onClick={() => { resetForm(); setShowAdd(true) }}>
+      <Button size="sm" className="gap-1.5" onClick={() => { resetForm(); setCreateError(null); setShowAdd(true) }}>
         <Plus className="h-3.5 w-3.5" /> Add Account
       </Button>
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
@@ -664,6 +680,9 @@ function AddAccountButton({ profiles, onRefresh }: { profiles: Profile[]; onRefr
               <Input className="mt-1.5" placeholder="Any additional notes" value={form.notes}
                 onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
+            {createError && (
+              <p className="text-xs text-destructive whitespace-pre-wrap">{createError}</p>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
               <Button size="sm" onClick={handleCreate}

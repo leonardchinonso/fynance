@@ -1,16 +1,19 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react"
-import { api } from "@/api/client"
+import { createContext, useContext, useMemo, useCallback, useRef } from "react"
 import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { CategoryType } from "@/bindings/CategoryType"
+import { useCategories } from "@/hooks/data/use_categories"
 
 /**
  * Resolves a `category_id` to its display name ("Parent: Child"), its
  * `category_type`, and parent grouping/ordering info.
  *
  * The API returns ids only; the human-readable name, type and hierarchy live in
- * the categories table, which this context loads once. Unknown ids fall through
- * to the id verbatim — which is also how mock mode works, where `category_id`
- * carries the display-name string directly.
+ * the categories table. The maps derive from the shared cached category query
+ * (same cache entry as {@link useCategories}), so category mutations, which
+ * invalidate the whole cache via the api client, refresh names everywhere
+ * without a page reload. Unknown ids fall through to the id verbatim, which is
+ * also how mock mode works, where `category_id` carries the display-name string
+ * directly.
  */
 interface CategoryMaps {
   /** leaf/parent id -> "Parent: Child" (or "Parent" for a parent id) */
@@ -32,7 +35,6 @@ interface CategoryNamesContextValue {
   /** Leaf child ids under a parent id (empty if unknown). */
   childIdsOf: (parentId: string | null | undefined) => string[]
   parentOrder: string[]
-  refresh: () => void
 }
 
 const CategoryNamesContext = createContext<CategoryNamesContextValue | null>(null)
@@ -66,18 +68,17 @@ const EMPTY_MAPS: CategoryMaps = {
 }
 
 export function CategoryNamesProvider({ children }: { children: React.ReactNode }) {
-  const [maps, setMaps] = useState<CategoryMaps>(EMPTY_MAPS)
-
-  const load = useCallback(() => {
-    api
-      .getCategoryDetails()
-      .then((tree) => setMaps(buildMaps(tree)))
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    load()
-  }, [load])
+  const [categoriesData] = useCategories()
+  const fresh =
+    categoriesData.status === "succeeded" || categoriesData.status === "reloading"
+      ? categoriesData.value
+      : null
+  // Keep the last good tree through a failed refetch (e.g. a forced
+  // invalidation while the backend restarts): stale names beat raw ids.
+  const lastGood = useRef<CategoryNode[] | null>(null)
+  if (fresh) lastGood.current = fresh
+  const tree = fresh ?? lastGood.current
+  const maps = useMemo(() => (tree ? buildMaps(tree) : EMPTY_MAPS), [tree])
 
   const resolve = useCallback(
     (id: string | null | undefined): string => {
@@ -111,10 +112,15 @@ export function CategoryNamesProvider({ children }: { children: React.ReactNode 
     [maps],
   )
 
+  // Everything derives from `maps`, so consumers only re-render when the tree
+  // actually changed, not on every stale-while-revalidate emit.
+  const value = useMemo<CategoryNamesContextValue>(
+    () => ({ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder }),
+    [resolve, categoryType, parentName, childIdsOf, maps],
+  )
+
   return (
-    <CategoryNamesContext.Provider
-      value={{ resolve, categoryType, parentName, childIdsOf, parentOrder: maps.parentOrder, refresh: load }}
-    >
+    <CategoryNamesContext.Provider value={value}>
       {children}
     </CategoryNamesContext.Provider>
   )
@@ -128,10 +134,6 @@ function useCategoryNamesContext(): CategoryNamesContextValue {
 
 export function useResolveCategoryName(): (id: string | null | undefined) => string {
   return useCategoryNamesContext().resolve
-}
-
-export function useRefreshCategoryNames(): () => void {
-  return useCategoryNamesContext().refresh
 }
 
 /** Full category metadata: name resolution, type lookup, parent name/order. */

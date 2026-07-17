@@ -77,7 +77,7 @@ pub async fn import_json(
         ));
     }
 
-    let db = state.db.lock().expect("db mutex poisoned");
+    let db = state.db();
 
     if !db.account_exists(&payload.account_id)? {
         return Err(AppError::bad_request(
@@ -168,7 +168,7 @@ pub async fn import_csv(
     })?;
 
     {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         if !db.account_exists(&account_id)? {
             return Err(AppError::bad_request(
                 format!("account {account_id} not found"),
@@ -196,7 +196,7 @@ pub async fn import_csv(
     }
 
     if q.dry_run.unwrap_or(false) {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         let preview_rows =
             db.dry_run_transactions_from_parsed(&account_id, &parsed.rows, min_row_confidence)?;
 
@@ -259,12 +259,12 @@ pub async fn import_csv(
     }
 
     let result = {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         process_parsed_statement(&db, &account_id, &filename, parsed, min_row_confidence)?
     };
 
     {
-        let db = state.db.lock().expect("db mutex poisoned");
+        let db = state.db();
         db.log_import(&ImportLog {
             filename: filename.clone(),
             account_id: account_id.to_string(),
@@ -350,7 +350,7 @@ pub async fn import_bulk(
         }
 
         let account_exists = {
-            let db = state.db.lock().expect("db mutex poisoned");
+            let db = state.db();
             db.account_exists(&account_id)?
         };
         if !account_exists {
@@ -398,7 +398,7 @@ pub async fn import_bulk(
                 }
 
                 let result = {
-                    let db = state.db.lock().expect("db mutex poisoned");
+                    let db = state.db();
                     match process_parsed_statement(
                         &db,
                         &account_id,
@@ -420,7 +420,7 @@ pub async fn import_bulk(
                 };
 
                 {
-                    let db = state.db.lock().expect("db mutex poisoned");
+                    let db = state.db();
                     let _ = db.log_import(&ImportLog {
                         filename: filename.clone(),
                         account_id: account_id.clone(),
