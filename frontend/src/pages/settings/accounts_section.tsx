@@ -140,12 +140,12 @@ function AccountBalance({ account, preferredCurrency, toPreferred }: {
   if (!account.balance) return null
   return (
     <p className="text-sm font-medium tabular-nums shrink-0 flex items-baseline gap-1.5">
-      <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
       {account.currency !== preferredCurrency && (
         <span className="text-xs font-normal text-muted-foreground">
           {formatCurrency(toPreferred(parseFloat(account.balance), account.currency).toFixed(2), preferredCurrency)}
         </span>
       )}
+      <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
     </p>
   )
 }
