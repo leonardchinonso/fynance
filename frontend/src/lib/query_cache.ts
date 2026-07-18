@@ -35,6 +35,12 @@ interface Entry {
 
 const store = new Map<string, Entry>()
 const listeners = new Map<string, Set<() => void>>()
+// Monotonic per-key request counter. Each real fetch claims the next number;
+// on resolve it commits only if it is still the latest request for the key.
+// This supersedes stale writes regardless of resolution order — comparing the
+// entry's in-flight `promise` alone misses the case where the newer request has
+// already resolved (which clears `promise`) and a lagging older one then clobbers it.
+const requestSeq = new Map<string, number>()
 
 /**
  * Dev-only per-key counter of *real* fetches (cache misses that actually hit the
@@ -107,12 +113,13 @@ export function fetchQuery<T>(
   }
 
   recordFetch(key)
+  const seq = (requestSeq.get(key) ?? 0) + 1
+  requestSeq.set(key, seq)
   const promise = fetcher().then(
     (value) => {
-      const current = store.get(key)
-      // A later force-refresh may have superseded this request; only commit if
-      // our promise is still the active one.
-      if (current && current.promise && current.promise !== promise) return value
+      // A newer request for this key was started after ours; discard our result
+      // so a lagging response can't clobber the fresher one.
+      if (requestSeq.get(key) !== seq) return value
       store.set(key, {
         status: { kind: "success", value, updatedAt: Date.now() },
         fetcher: fetcher as () => Promise<unknown>,
@@ -123,8 +130,7 @@ export function fetchQuery<T>(
       return value
     },
     (err: unknown) => {
-      const current = store.get(key)
-      if (current && current.promise && current.promise !== promise) throw err
+      if (requestSeq.get(key) !== seq) throw err
       const message = err instanceof Error ? err.message : "Failed to load"
       store.set(key, {
         status: { kind: "error", error: message, updatedAt: Date.now() },
@@ -184,5 +190,9 @@ export function invalidateAll(): void {
 export function clearCache(): void {
   const keys = [...store.keys(), ...listeners.keys()]
   store.clear()
+  // Advance (never reset) each key's sequence so any request already in flight is
+  // superseded and can't commit its now-stale result into the cleared cache.
+  // Resetting the counter would let numbers be reused and reintroduce that race.
+  for (const [key, seq] of requestSeq) requestSeq.set(key, seq + 1)
   for (const key of keys) emit(key)
 }
