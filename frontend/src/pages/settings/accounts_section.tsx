@@ -6,6 +6,7 @@ import { visitRemoteData } from "@/lib/remote_data"
 import { useIngestionPreferences } from "@/hooks/use_ingestion_preferences"
 import { useProfileColorsContext } from "@/context/profile_colors_context"
 import { useCurrenciesFromContext } from "@/context/preferred_currency_context"
+import { formatCurrency } from "@/lib/utils"
 import { DraggableList, DragHandle } from "@/components/draggable_list"
 import { SettingsListSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
@@ -126,6 +127,29 @@ function ProfileTags({ profileIds, profiles }: { profileIds: string[]; profiles:
   )
 }
 
+/**
+ * Account balance in its native currency, with the preferred-currency
+ * equivalent in muted text alongside when the account isn't already in the
+ * preferred currency. Mirrors the portfolio account cards.
+ */
+function AccountBalance({ account, preferredCurrency, toPreferred }: {
+  account: Account
+  preferredCurrency: string
+  toPreferred: (value: number, currency: string) => number
+}) {
+  if (!account.balance) return null
+  return (
+    <p className="text-sm font-medium tabular-nums shrink-0 flex items-baseline gap-1.5">
+      <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
+      {account.currency !== preferredCurrency && (
+        <span className="text-xs font-normal text-muted-foreground">
+          {formatCurrency(toPreferred(parseFloat(account.balance), account.currency).toFixed(2), preferredCurrency)}
+        </span>
+      )}
+    </p>
+  )
+}
+
 /** The account-type badge, shown on the right of a row before the balance. */
 function TypeBadge({ type }: { type: AccountType }) {
   return (
@@ -148,6 +172,12 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
     hideAccount,
     reorderAccounts,
   } = useIngestionPreferences()
+
+  const currencies = useCurrenciesFromContext()
+  const preferredCurrency = currencies.find((c) => c.is_preferred)?.code ?? "GBP"
+  const fxRates = new Map(currencies.map((c) => [c.code, parseFloat(c.fx_rate)]))
+  const toPreferred = (value: number, currency: string) =>
+    value * (fxRates.get(currency) ?? 1)
 
   function requestDelete(account: Account) {
     setDeleteError(null)
@@ -191,11 +221,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
                 <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
               </div>
               <TypeBadge type={a.type} />
-              {a.balance && (
-                <p className="text-sm font-medium tabular-nums shrink-0">
-                  <MoneyDisplay amount={a.balance} currency={a.currency} colorize={false} />
-                </p>
-              )}
+              <AccountBalance account={a} preferredCurrency={preferredCurrency} toPreferred={toPreferred} />
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
@@ -258,11 +284,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
               <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
             </div>
             <TypeBadge type={a.type} />
-            {a.balance && (
-              <p className="text-sm font-medium tabular-nums shrink-0">
-                <MoneyDisplay amount={a.balance} currency={a.currency} colorize={false} />
-              </p>
-            )}
+            <AccountBalance account={a} preferredCurrency={preferredCurrency} toPreferred={toPreferred} />
             <Tooltip>
               <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => hideAccount(a.id, accounts)} />}>
                 <Eye className="h-3.5 w-3.5" />
