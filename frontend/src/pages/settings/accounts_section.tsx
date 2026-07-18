@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { api } from "@/api/client"
 import type { Account, Profile, AccountType } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/command"
 import { Trash2, Pencil, Plus, Building2, Eye, EyeOff, Check, ChevronsUpDown, CircleHelp } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
+import { cn, formatCurrency } from "@/lib/utils"
 import { MoneyDisplay } from "@/components/currency"
 import { ConfirmDialog } from "@/components/confirm_dialog"
 import { accountTypeClasses } from "@/lib/account_type_colors"
@@ -126,12 +126,91 @@ function ProfileTags({ profileIds, profiles }: { profileIds: string[]; profiles:
   )
 }
 
+/**
+ * Account balance: native amount with the preferred-currency equivalent inline
+ * (muted) when the account isn't already in the preferred currency. From sm up
+ * it's a fixed 160px right-aligned column so the type badges line up across
+ * rows; below sm it's a full-width left-aligned row in the stacked card layout.
+ */
+function AccountBalance({ account, preferredCurrency, fxRate }: {
+  account: Account
+  preferredCurrency: string
+  fxRate?: string
+}) {
+  if (!account.balance) return null
+  const foreign = account.currency !== preferredCurrency
+  // Only show a converted figure when we actually have a usable rate; otherwise
+  // showing balance × 1 would fabricate a bogus 1:1 conversion.
+  const rate = fxRate != null ? parseFloat(fxRate) : NaN
+  const converted = foreign && Number.isFinite(rate) && rate > 0
+    ? formatCurrency((parseFloat(account.balance) * rate).toFixed(2), preferredCurrency)
+    : null
+  return (
+    <p className="text-sm font-medium tabular-nums sm:w-40 sm:text-right sm:whitespace-nowrap">
+      <span className="inline-flex items-baseline gap-1.5">
+        {converted && <span className="text-xs font-normal text-muted-foreground">{converted}</span>}
+        <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
+      </span>
+    </p>
+  )
+}
+
 /** The account-type badge, shown on the right of a row before the balance. */
 function TypeBadge({ type }: { type: AccountType }) {
   return (
     <span className={cn("inline-flex items-center text-[10px] py-0 px-1.5 h-4 font-normal rounded-full border shrink-0", accountTypeClasses(type))}>
       {ACCOUNT_TYPE_LABELS[type]}
     </span>
+  )
+}
+
+/**
+ * One account list row: icon, identity, type badge, balance, and caller-supplied
+ * leading (e.g. a drag handle) and trailing (action buttons) controls. Below sm
+ * the identity, badge, and balance stack into three rows so nothing is crushed;
+ * from sm up they sit inline with the badge and balance right of the name.
+ */
+function AccountRow({
+  account, profiles, preferredCurrency, fxRate, showBalance = true, dashed = false, leading, trailing,
+}: {
+  account: Account
+  profiles: Profile[]
+  preferredCurrency: string
+  fxRate?: string
+  showBalance?: boolean
+  dashed?: boolean
+  leading?: ReactNode
+  trailing: ReactNode
+}) {
+  return (
+    <div className={cn(
+      "flex items-center gap-3 rounded-lg border p-3 group",
+      dashed ? "border-dashed opacity-60 hover:opacity-100 transition-opacity" : "bg-background",
+    )}>
+      {leading}
+      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary shrink-0">
+        <Building2 className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <div className="flex-auto min-w-0 flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+        <div className="min-w-0 sm:flex-auto">
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-sm font-medium truncate">{account.name}</p>
+            <ProfileTags profileIds={account.profile_ids ?? []} profiles={profiles} />
+          </div>
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-xs text-muted-foreground truncate">{account.institution} &middot; {account.currency}</p>
+            {/* On stacked rows the type badge rides with the institution line. */}
+            <span className="sm:hidden shrink-0"><TypeBadge type={account.type} /></span>
+          </div>
+        </div>
+        {/* On inline rows the type badge sits before the balance. */}
+        <span className="hidden sm:inline-flex shrink-0"><TypeBadge type={account.type} /></span>
+        {showBalance && (
+          <AccountBalance account={account} preferredCurrency={preferredCurrency} fxRate={fxRate} />
+        )}
+      </div>
+      {trailing}
+    </div>
   )
 }
 
@@ -148,6 +227,11 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
     hideAccount,
     reorderAccounts,
   } = useIngestionPreferences()
+
+  const currencies = useCurrenciesFromContext()
+  const preferredCurrency = currencies.find((c) => c.is_preferred)?.code ?? "GBP"
+  const fxRates = new Map(currencies.map((c) => [c.code, c.fx_rate]))
+  const fxRateFor = (currency: string) => fxRates.get(currency)
 
   function requestDelete(account: Account) {
     setDeleteError(null)
@@ -179,30 +263,23 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
       <>
         <div className="space-y-2">
           {accounts.map((a) => (
-            <div key={a.id} className="flex items-center gap-3 rounded-lg border p-3 bg-background group">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary shrink-0">
-                <Building2 className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium truncate">{a.name}</p>
-                  <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
-                </div>
-                <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
-              </div>
-              <TypeBadge type={a.type} />
-              {a.balance && (
-                <p className="text-sm font-medium tabular-nums shrink-0">
-                  <MoneyDisplay amount={a.balance} currency={a.currency} colorize={false} />
-                </p>
-              )}
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => requestDelete(a)} title="Delete account">
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
+            <AccountRow
+              key={a.id}
+              account={a}
+              profiles={profiles}
+              preferredCurrency={preferredCurrency}
+              fxRate={fxRateFor(a.currency)}
+              trailing={
+                <>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => requestDelete(a)} title="Delete account">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              }
+            />
           ))}
         </div>
 
@@ -245,49 +322,41 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
         onReorder={reorderAccounts}
         listClassName="space-y-2"
         renderItem={(a) => (
-          <div className="flex items-center gap-3 rounded-lg border p-3 bg-background group">
-            <DragHandle />
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary shrink-0">
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium truncate">{a.name}</p>
-                <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
-              </div>
-              <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
-            </div>
-            <TypeBadge type={a.type} />
-            {a.balance && (
-              <p className="text-sm font-medium tabular-nums shrink-0">
-                <MoneyDisplay amount={a.balance} currency={a.currency} colorize={false} />
-              </p>
-            )}
-            <Tooltip>
-              <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => hideAccount(a.id, accounts)} />}>
-                <Eye className="h-3.5 w-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>Hide from import wizard</TooltipContent>
-            </Tooltip>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
-              onClick={() => setEditing(a)}
-              title="Edit account"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
-              onClick={() => requestDelete(a)}
-              title="Delete account"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+          <AccountRow
+            account={a}
+            profiles={profiles}
+            preferredCurrency={preferredCurrency}
+            fxRate={fxRateFor(a.currency)}
+            leading={<DragHandle />}
+            trailing={
+              <>
+                <Tooltip>
+                  <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => hideAccount(a.id, accounts)} />}>
+                    <Eye className="h-3.5 w-3.5" />
+                  </TooltipTrigger>
+                  <TooltipContent>Hide from import wizard</TooltipContent>
+                </Tooltip>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
+                  onClick={() => setEditing(a)}
+                  title="Edit account"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
+                  onClick={() => requestDelete(a)}
+                  title="Delete account"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            }
+          />
         )}
       />
 
@@ -298,31 +367,31 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
           </p>
           <div className="space-y-2">
             {hiddenAccounts.map(a => (
-              <div key={a.id} className="flex items-center gap-3 rounded-lg border border-dashed p-3 opacity-60 hover:opacity-100 transition-opacity">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary shrink-0">
-                  <Building2 className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium truncate">{a.name}</p>
-                    <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
-                  </div>
-                  <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
-                </div>
-                <TypeBadge type={a.type} />
-                <Tooltip>
-                  <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => showAccount(a.id, accounts)} />}>
-                    <EyeOff className="h-3.5 w-3.5" />
-                  </TooltipTrigger>
-                  <TooltipContent>Show in import wizard</TooltipContent>
-                </Tooltip>
-                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => requestDelete(a)} title="Delete account">
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
+              <AccountRow
+                key={a.id}
+                account={a}
+                profiles={profiles}
+                preferredCurrency={preferredCurrency}
+                fxRate={fxRateFor(a.currency)}
+                showBalance={false}
+                dashed
+                trailing={
+                  <>
+                    <Tooltip>
+                      <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => showAccount(a.id, accounts)} />}>
+                        <EyeOff className="h-3.5 w-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent>Show in import wizard</TooltipContent>
+                    </Tooltip>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => requestDelete(a)} title="Delete account">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                }
+              />
             ))}
           </div>
         </div>

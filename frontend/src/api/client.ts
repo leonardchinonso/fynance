@@ -119,8 +119,13 @@ export function getAuthToken(): string | null {
 }
 
 export function setAuthToken(token: string | null) {
+  const changed = token !== getAuthToken()
   try {
     if (token) localStorage.setItem(AUTH_TOKEN_KEY, token)
     else localStorage.removeItem(AUTH_TOKEN_KEY)
   } catch {}
+  // Every cached response was fetched under the old token's authorization.
+  // Refetch active queries (a cleared token now 401s; a new one re-authorizes)
+  // and drop inactive ones so the next mount fetches fresh.
+  if (changed) invalidateAll()
 }

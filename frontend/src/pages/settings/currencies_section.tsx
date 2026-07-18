@@ -180,38 +180,40 @@ function CurrencyRow({
           </TooltipContent>
         </Tooltip>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-mono font-semibold">{currency.code}</span>
-            <span className="text-sm text-muted-foreground">{name}</span>
+        {/* Identity + rate editor: stacked below sm so the code/name and the
+            rate input don't collide; inline from sm up. */}
+        <div className="flex-auto min-w-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <div className="flex items-center gap-2 min-w-0 sm:flex-auto">
+            <span className="font-mono font-semibold shrink-0">{currency.code}</span>
+            <span className="text-sm text-muted-foreground truncate">{name}</span>
             {isStale && (
-              <span className="text-xs text-amber-500">{staleDays}d old</span>
+              <span className="text-xs text-amber-500 shrink-0">{staleDays}d old</span>
             )}
           </div>
+
+          {!currency.is_preferred && (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                1 {currency.code} =
+              </span>
+              <Input
+                className="w-24 h-7 text-sm"
+                value={rate}
+                onChange={(e) => { setRate(e.target.value); setRateDirty(true) }}
+              />
+              <span className="text-xs text-muted-foreground">{preferredCode}</span>
+              {rateDirty && (
+                <Button size="sm" className="h-7 text-xs" onClick={handleRateSave} disabled={saving}>
+                  Save
+                </Button>
+              )}
+            </div>
+          )}
+
+          {currency.is_preferred && (
+            <span className="text-xs text-muted-foreground shrink-0">Preferred</span>
+          )}
         </div>
-
-        {!currency.is_preferred && (
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
-              1 {currency.code} =
-            </span>
-            <Input
-              className="w-24 h-7 text-sm"
-              value={rate}
-              onChange={(e) => { setRate(e.target.value); setRateDirty(true) }}
-            />
-            <span className="text-xs text-muted-foreground">{preferredCode}</span>
-            {rateDirty && (
-              <Button size="sm" className="h-7 text-xs" onClick={handleRateSave} disabled={saving}>
-                Save
-              </Button>
-            )}
-          </div>
-        )}
-
-        {currency.is_preferred && (
-          <span className="text-xs text-muted-foreground shrink-0">Preferred</span>
-        )}
 
         <Tooltip>
           <TooltipTrigger

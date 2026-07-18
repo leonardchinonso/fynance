@@ -1,5 +1,5 @@
 import { KeyRound } from "lucide-react"
-import { useNavigate, useLocation } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import { NonIdealState } from "./non_ideal_state"
 
 const AUTH_ERROR_PREFIXES = [
@@ -14,16 +14,10 @@ interface AuthAwareErrorProps {
 
 export function AuthAwareError({ error, onRetry }: AuthAwareErrorProps) {
   const navigate = useNavigate()
-  const location = useLocation()
   const isAuthError = AUTH_ERROR_PREFIXES.some((p) => error.startsWith(p))
 
   function goToAuth() {
-    if (location.pathname === "/settings") {
-      document.getElementById("auth")?.scrollIntoView({ behavior: "smooth", block: "start" })
-      history.replaceState(null, "", "#auth")
-    } else {
-      navigate("/settings#auth")
-    }
+    navigate("/settings/auth")
   }
 
   if (isAuthError) {
