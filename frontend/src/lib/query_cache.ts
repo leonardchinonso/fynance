@@ -190,6 +190,9 @@ export function invalidateAll(): void {
 export function clearCache(): void {
   const keys = [...store.keys(), ...listeners.keys()]
   store.clear()
-  requestSeq.clear()
+  // Advance (never reset) each key's sequence so any request already in flight is
+  // superseded and can't commit its now-stale result into the cleared cache.
+  // Resetting the counter would let numbers be reused and reintroduce that race.
+  for (const [key, seq] of requestSeq) requestSeq.set(key, seq + 1)
   for (const key of keys) emit(key)
 }

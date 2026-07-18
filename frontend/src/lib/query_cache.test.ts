@@ -58,6 +58,40 @@ describe("query cache — superseded requests", () => {
     expect(getEntry(key)?.status.kind).toBe("success")
     expect(value(key)).toBe("fresh")
   })
+
+  it("discards an in-flight request that resolves after clearCache", async () => {
+    const key = "holdings"
+    const inflight = deferred<string>()
+    const p = fetchQuery(key, () => inflight.promise, { ...OPTS, force: true })
+
+    clearCache()
+    inflight.resolve("stale-pre-clear")
+    await p
+
+    // The cache was cleared; a lagging pre-clear response must not repopulate it.
+    expect(getEntry(key)).toBeUndefined()
+  })
+
+  it("does not let a pre-clearCache response clobber a fresh post-clear one", async () => {
+    // Mirrors a mock/live switch (setApiMode → clearCache) while a request is
+    // in flight: the sequence must not reset, or the stale response reuses the
+    // fresh one's number and overwrites it.
+    const key = "accounts"
+    const preClear = deferred<string>()
+    const postClear = deferred<string>()
+
+    const pPre = fetchQuery(key, () => preClear.promise, { ...OPTS, force: true })
+    clearCache()
+    const pPost = fetchQuery(key, () => postClear.promise, { ...OPTS, force: true })
+
+    postClear.resolve("fresh")
+    await pPost
+    expect(value(key)).toBe("fresh")
+
+    preClear.resolve("stale")
+    await pPre
+    expect(value(key)).toBe("fresh")
+  })
 })
 
 describe("query cache — basics", () => {
