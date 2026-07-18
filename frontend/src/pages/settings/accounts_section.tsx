@@ -141,13 +141,13 @@ function AccountBalance({ account, preferredCurrency, fxRate }: {
 }) {
   if (!account.balance) return null
   const foreign = account.currency !== preferredCurrency
-  // A 160px right-aligned column gives the balance a consistent left edge, so the
-  // type badges to its left line up across rows. It shrinks to its own content
-  // (never clipping, via the default min-width: auto) when the row is too tight
-  // to hold the full width — e.g. narrow screens or a wide converted+native pair.
+  // From sm up, a fixed 160px right-aligned column gives the balance a consistent
+  // left edge so the type badges to its left line up across rows; it still shrinks
+  // toward its content (never clipping) if a row is too tight. Below sm the column
+  // is content-width so it never steals room from the name on a phone-width row.
   if (!foreign) {
     return (
-      <p className="text-sm font-medium tabular-nums w-40 text-right">
+      <p className="text-sm font-medium tabular-nums sm:w-40 text-right whitespace-nowrap">
         <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
       </p>
     )
@@ -157,7 +157,7 @@ function AccountBalance({ account, preferredCurrency, fxRate }: {
     preferredCurrency,
   )
   return (
-    <p className="text-sm font-medium tabular-nums w-40 text-right">
+    <p className="text-sm font-medium tabular-nums sm:w-40 text-right whitespace-nowrap">
       {/* Wide: converted value inline to the left of the native amount. */}
       <span className="hidden sm:inline-flex items-baseline gap-1.5">
         <span className="text-xs font-normal text-muted-foreground">{converted}</span>
@@ -239,12 +239,12 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary shrink-0">
                 <Building2 className="h-4 w-4 text-muted-foreground" />
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+              <div className="flex-auto min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
                   <p className="text-sm font-medium truncate">{a.name}</p>
                   <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
                 </div>
-                <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
+                <p className="text-xs text-muted-foreground truncate">{a.institution} &middot; {a.currency}</p>
               </div>
               <TypeBadge type={a.type} />
               <AccountBalance account={a} preferredCurrency={preferredCurrency} fxRate={fxRateFor(a.currency)} />
@@ -302,12 +302,12 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary shrink-0">
               <Building2 className="h-4 w-4 text-muted-foreground" />
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
+            <div className="flex-auto min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
                 <p className="text-sm font-medium truncate">{a.name}</p>
                 <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
               </div>
-              <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
+              <p className="text-xs text-muted-foreground truncate">{a.institution} &middot; {a.currency}</p>
             </div>
             <TypeBadge type={a.type} />
             <AccountBalance account={a} preferredCurrency={preferredCurrency} fxRate={fxRateFor(a.currency)} />
@@ -350,12 +350,12 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary shrink-0">
                   <Building2 className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                <div className="flex-auto min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
                     <p className="text-sm font-medium truncate">{a.name}</p>
                     <ProfileTags profileIds={a.profile_ids ?? []} profiles={profiles} />
                   </div>
-                  <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
+                  <p className="text-xs text-muted-foreground truncate">{a.institution} &middot; {a.currency}</p>
                 </div>
                 <TypeBadge type={a.type} />
                 <Tooltip>
