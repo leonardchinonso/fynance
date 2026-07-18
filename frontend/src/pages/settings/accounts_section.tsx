@@ -129,23 +129,46 @@ function ProfileTags({ profileIds, profiles }: { profileIds: string[]; profiles:
 
 /**
  * Account balance in its native currency, with the preferred-currency
- * equivalent in muted text alongside when the account isn't already in the
- * preferred currency. Mirrors the portfolio account cards.
+ * equivalent shown when the account isn't already in the preferred currency.
+ * On wide rows the converted value sits inline to the left; on narrow rows it
+ * moves into a hover/tap tooltip so the native amount and account name keep
+ * their space. Mirrors the portfolio account cards.
  */
-function AccountBalance({ account, preferredCurrency, toPreferred }: {
+function AccountBalance({ account, preferredCurrency, fxRate }: {
   account: Account
   preferredCurrency: string
-  toPreferred: (value: number, currency: string) => number
+  fxRate: string
 }) {
   if (!account.balance) return null
+  const foreign = account.currency !== preferredCurrency
+  if (!foreign) {
+    return (
+      <p className="text-sm font-medium tabular-nums shrink-0">
+        <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
+      </p>
+    )
+  }
+  const converted = formatCurrency(
+    (parseFloat(account.balance) * parseFloat(fxRate)).toFixed(2),
+    preferredCurrency,
+  )
   return (
-    <p className="text-sm font-medium tabular-nums shrink-0 flex items-baseline gap-1.5">
-      {account.currency !== preferredCurrency && (
-        <span className="text-xs font-normal text-muted-foreground">
-          {formatCurrency(toPreferred(parseFloat(account.balance), account.currency).toFixed(2), preferredCurrency)}
-        </span>
-      )}
-      <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
+    <p className="text-sm font-medium tabular-nums shrink-0">
+      {/* Wide: converted value inline to the left of the native amount. */}
+      <span className="hidden sm:inline-flex items-baseline gap-1.5">
+        <span className="text-xs font-normal text-muted-foreground">{converted}</span>
+        <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
+      </span>
+      {/* Narrow: native amount only; converted value revealed on hover/tap. */}
+      <span className="sm:hidden">
+        <MoneyDisplay
+          amount={account.balance}
+          currency={account.currency}
+          colorize={false}
+          preferredCurrency={preferredCurrency}
+          fxRate={fxRate}
+        />
+      </span>
     </p>
   )
 }
@@ -175,9 +198,8 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
 
   const currencies = useCurrenciesFromContext()
   const preferredCurrency = currencies.find((c) => c.is_preferred)?.code ?? "GBP"
-  const fxRates = new Map(currencies.map((c) => [c.code, parseFloat(c.fx_rate)]))
-  const toPreferred = (value: number, currency: string) =>
-    value * (fxRates.get(currency) ?? 1)
+  const fxRates = new Map(currencies.map((c) => [c.code, c.fx_rate]))
+  const fxRateFor = (currency: string) => fxRates.get(currency) ?? "1"
 
   function requestDelete(account: Account) {
     setDeleteError(null)
@@ -221,7 +243,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
                 <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
               </div>
               <TypeBadge type={a.type} />
-              <AccountBalance account={a} preferredCurrency={preferredCurrency} toPreferred={toPreferred} />
+              <AccountBalance account={a} preferredCurrency={preferredCurrency} fxRate={fxRateFor(a.currency)} />
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => setEditing(a)} title="Edit account">
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
@@ -284,7 +306,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
               <p className="text-xs text-muted-foreground">{a.institution} &middot; {a.currency}</p>
             </div>
             <TypeBadge type={a.type} />
-            <AccountBalance account={a} preferredCurrency={preferredCurrency} toPreferred={toPreferred} />
+            <AccountBalance account={a} preferredCurrency={preferredCurrency} fxRate={fxRateFor(a.currency)} />
             <Tooltip>
               <TooltipTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => hideAccount(a.id, accounts)} />}>
                 <Eye className="h-3.5 w-3.5" />
