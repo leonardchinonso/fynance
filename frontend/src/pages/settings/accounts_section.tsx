@@ -6,7 +6,6 @@ import { visitRemoteData } from "@/lib/remote_data"
 import { useIngestionPreferences } from "@/hooks/use_ingestion_preferences"
 import { useProfileColorsContext } from "@/context/profile_colors_context"
 import { useCurrenciesFromContext } from "@/context/preferred_currency_context"
-import { formatCurrency } from "@/lib/utils"
 import { DraggableList, DragHandle } from "@/components/draggable_list"
 import { SettingsListSkeleton } from "@/components/skeletons"
 import { AuthAwareError } from "@/components/auth_aware_error"
@@ -24,7 +23,7 @@ import {
 } from "@/components/ui/command"
 import { Trash2, Pencil, Plus, Building2, Eye, EyeOff, Check, ChevronsUpDown, CircleHelp } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
+import { cn, formatCurrency } from "@/lib/utils"
 import { MoneyDisplay } from "@/components/currency"
 import { ConfirmDialog } from "@/components/confirm_dialog"
 import { accountTypeClasses } from "@/lib/account_type_colors"
@@ -136,15 +135,18 @@ function ProfileTags({ profileIds, profiles }: { profileIds: string[]; profiles:
 function AccountBalance({ account, preferredCurrency, fxRate }: {
   account: Account
   preferredCurrency: string
-  fxRate: string
+  fxRate?: string
 }) {
   if (!account.balance) return null
   const foreign = account.currency !== preferredCurrency
-  const converted = foreign
-    ? formatCurrency((parseFloat(account.balance) * parseFloat(fxRate)).toFixed(2), preferredCurrency)
+  // Only show a converted figure when we actually have a usable rate; otherwise
+  // showing balance × 1 would fabricate a bogus 1:1 conversion.
+  const rate = fxRate != null ? parseFloat(fxRate) : NaN
+  const converted = foreign && Number.isFinite(rate) && rate > 0
+    ? formatCurrency((parseFloat(account.balance) * rate).toFixed(2), preferredCurrency)
     : null
   return (
-    <p className="text-sm font-medium tabular-nums whitespace-nowrap sm:w-40 sm:text-right">
+    <p className="text-sm font-medium tabular-nums sm:w-40 sm:text-right sm:whitespace-nowrap">
       <span className="inline-flex items-baseline gap-1.5">
         {converted && <span className="text-xs font-normal text-muted-foreground">{converted}</span>}
         <MoneyDisplay amount={account.balance} currency={account.currency} colorize={false} />
@@ -174,7 +176,7 @@ function AccountRow({
   account: Account
   profiles: Profile[]
   preferredCurrency: string
-  fxRate: string
+  fxRate?: string
   showBalance?: boolean
   dashed?: boolean
   leading?: ReactNode
@@ -229,7 +231,7 @@ function AccountsList({ accounts, profiles, onRefresh, wizardMode }: { accounts:
   const currencies = useCurrenciesFromContext()
   const preferredCurrency = currencies.find((c) => c.is_preferred)?.code ?? "GBP"
   const fxRates = new Map(currencies.map((c) => [c.code, c.fx_rate]))
-  const fxRateFor = (currency: string) => fxRates.get(currency) ?? "1"
+  const fxRateFor = (currency: string) => fxRates.get(currency)
 
   function requestDelete(account: Account) {
     setDeleteError(null)
