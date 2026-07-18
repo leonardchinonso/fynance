@@ -74,6 +74,7 @@ jobs:
       # behaviour and speed to `npm ci` for the cache-warmed case.
       - run: npm install --no-audit --no-fund --prefer-offline
       - run: npx tsc --noEmit
+      - run: npm test
       - run: npm run build
       - name: Upload frontend build
         uses: actions/upload-artifact@v7
