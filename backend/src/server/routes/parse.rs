@@ -445,20 +445,7 @@ async fn run_unified_path(
         let today = chrono::Local::now().date_naive();
         let last_open_holdings: Vec<HoldingSummary> = db
             .get_holdings_for_summary(today, None)
-            .map(|rows| {
-                rows.into_iter()
-                    .filter(|r| !r.holding.is_closed)
-                    .map(|r| HoldingSummary {
-                        symbol: r.holding.symbol,
-                        name: r.holding.name,
-                        holding_type: format!("{:?}", r.holding.holding_type).to_ascii_lowercase(),
-                        quantity: r.holding.quantity.to_string(),
-                        currency: r.holding.currency,
-                        value: Some(r.holding.value.to_string()),
-                        as_of: Some(r.holding.as_of.format("%Y-%m-%d").to_string()),
-                    })
-                    .collect()
-            })
+            .map(|rows| build_holdings_context(rows, &account_id))
             .unwrap_or_default();
         UnifiedContext {
             categories,
@@ -818,9 +805,111 @@ fn infer_mime(filename: &str) -> String {
     .to_string()
 }
 
+/// Build the parse "continuity context": the caller's latest open holdings, **scoped to the
+/// account being parsed**.
+///
+/// The scoping is load-bearing, not a nicety. `holdings_section.txt` tells the model these
+/// snapshots are "for each open holding on this account" and instructs it to anchor amounts to
+/// them "where the documents are silent" — i.e. exactly the month-end extrapolation path. If
+/// another account's balances reach the model here, it emits them as *this* account's holdings.
+/// That produced real cross-account (and cross-person) corruption before this was scoped.
+fn build_holdings_context(
+    rows: Vec<crate::model::HoldingSummaryRow>,
+    account_id: &str,
+) -> Vec<HoldingSummary> {
+    rows.into_iter()
+        .filter(|r| !r.holding.is_closed)
+        .filter(|r| r.holding.account_id == account_id)
+        .map(|r| HoldingSummary {
+            account_id: r.holding.account_id,
+            symbol: r.holding.symbol,
+            name: r.holding.name,
+            holding_type: format!("{:?}", r.holding.holding_type).to_ascii_lowercase(),
+            quantity: r.holding.quantity.to_string(),
+            currency: r.holding.currency,
+            value: Some(r.holding.value.to_string()),
+            as_of: Some(r.holding.as_of.format("%Y-%m-%d").to_string()),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn summary_row(
+        account_id: &str,
+        symbol: &str,
+        value: &str,
+        is_closed: bool,
+    ) -> crate::model::HoldingSummaryRow {
+        use crate::model::{AccountType, Holding, HoldingSummaryRow, HoldingType};
+        use rust_decimal::Decimal;
+        use std::str::FromStr;
+
+        HoldingSummaryRow {
+            holding: Holding {
+                account_id: account_id.to_string(),
+                symbol: symbol.to_string(),
+                name: symbol.to_string(),
+                holding_type: HoldingType::Cash,
+                quantity: Decimal::ZERO,
+                price_per_unit: None,
+                value: Decimal::from_str(value).unwrap(),
+                currency: "GBP".to_string(),
+                as_of: chrono::NaiveDate::from_ymd_opt(2026, 7, 31)
+                    .unwrap()
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap(),
+                short_name: None,
+                sub_account: None,
+                is_closed,
+                derived: false,
+                source_document_ids: Vec::new(),
+                source_file: None,
+            },
+            account_type: AccountType::Checking,
+            institution: "Test Bank".to_string(),
+        }
+    }
+
+    #[test]
+    fn holdings_context_excludes_other_accounts() {
+        // Regression: the continuity context used to be unscoped, so every account's
+        // balances were handed to the model as if they belonged to the parsed account.
+        let rows = vec![
+            summary_row("ope-monzo", "_CASH_MAIN", "218.79", false),
+            summary_row("ope-natwest-bills", "_CASH", "3360.21", false),
+            summary_row("ope-chase-main", "_CASH_MAIN", "0.66", false),
+        ];
+
+        let ctx = build_holdings_context(rows, "ope-monzo");
+
+        assert_eq!(
+            ctx.len(),
+            1,
+            "only the parsed account's holdings belong here"
+        );
+        assert_eq!(ctx[0].account_id, "ope-monzo");
+        assert_eq!(ctx[0].value.as_deref(), Some("218.79"));
+        assert!(
+            !ctx.iter().any(|h| h.value.as_deref() == Some("3360.21")),
+            "another account's balance must never reach the parse context"
+        );
+    }
+
+    #[test]
+    fn holdings_context_excludes_closed_positions() {
+        let rows = vec![
+            summary_row("ope-monzo", "_CASH_MAIN", "218.79", false),
+            summary_row("ope-monzo", "_CASH_HOUSE_FUND", "0.00", true),
+        ];
+
+        let ctx = build_holdings_context(rows, "ope-monzo");
+
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx[0].symbol, "_CASH_MAIN");
+    }
 
     #[test]
     fn progress_cleanup_guard_removes_channel_on_drop() {

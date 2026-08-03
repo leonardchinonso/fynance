@@ -57,6 +57,7 @@ pub struct CategorySummary {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct HoldingSummary {
+    pub account_id: String,
     pub symbol: String,
     pub name: String,
     pub holding_type: String,
