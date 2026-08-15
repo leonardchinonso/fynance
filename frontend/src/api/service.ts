@@ -40,6 +40,8 @@ import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEvent
 import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { ExchangeRate } from "@/bindings/ExchangeRate"
+import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingSeries } from "@/bindings/AccountHoldingSeries"
@@ -176,7 +178,11 @@ export interface ApiService {
 
   // ── Settings / CRUD ───────────────────────────────────────────────
   createProfile(body: { id: string; name: string }): Promise<Profile>
-  updateProfile(id: string, body: { name?: string }): Promise<Profile>
+  /**
+   * Update a profile. `utr` accepts `null` to clear the stored reference —
+   * omitting the key leaves it untouched, which is a different request.
+   */
+  updateProfile(id: string, body: { name?: string; utr?: string | null }): Promise<Profile>
   deleteProfile(id: string): Promise<void>
 
   createAccount(body: CreateAccountBody): Promise<Account>
@@ -200,6 +206,25 @@ export interface ApiService {
   createCurrency(body: { code: string; fx_rate: string }): Promise<Currency>
   updateCurrency(code: string, body: { fx_rate?: string; is_preferred?: boolean }): Promise<Currency>
   deleteCurrency(code: string): Promise<void>
+
+  // ── Exchange rates (date-keyed, user-owned) ───────────────────────
+  /**
+   * Stored date-keyed rates. `rate` is quote units per ONE base unit, so
+   * `amount_in_quote = amount_in_base * rate`.
+   */
+  getExchangeRates(filters?: {
+    base?: string
+    quote?: string
+    start_date?: string
+    end_date?: string
+  }): Promise<ExchangeRate[]>
+  /**
+   * Bulk upsert. A single tax-year report can need ~49 rates, so a batch is
+   * the normal case; `quote` defaults to the preferred currency server-side.
+   * The whole batch is validated before anything is written.
+   */
+  createExchangeRates(rates: ExchangeRateInput[]): Promise<ExchangeRate[]>
+  deleteExchangeRate(base: string, quote: string, date: string): Promise<void>
 
   // ── Import ────────────────────────────────────────────────────────
   importCsv(accountId: string, file: File): Promise<ImportResult>

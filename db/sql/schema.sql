@@ -192,9 +192,14 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 -- has zero profiles until one is created via the API/CLI (this is what lets a
 -- deleted profile stay deleted across restarts).
 -- See docs/plans/archive/12_frontend_backend_consolidation.md §Profile Semantics.
+-- `utr` is the HMRC Unique Taxpayer Reference (10 digits). Nullable: it is only
+-- needed to produce a filing-grade CGT report, and it is per-taxpayer rather
+-- than per-household, which is why it hangs off profiles — the two profiles
+-- file separately and CGT reports already scope by profile.
 CREATE TABLE IF NOT EXISTS profiles (
     id   TEXT PRIMARY KEY,
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    utr  TEXT
 );
 
 -- ── standing_budgets ──────────────────────────────────────────────────────────
@@ -255,3 +260,43 @@ CREATE TABLE IF NOT EXISTS currencies (
     fx_rate         TEXT NOT NULL,                   -- Decimal string. '1' for preferred.
     updated_at      TEXT                             -- nullable: NULL for preferred row
 );
+
+-- ── exchange_rates ────────────────────────────────────────────────────────
+-- Date-keyed FX rates, used by the CGT engine to convert each leg of a
+-- disposal at its own date's rate (HMRC requires the acquisition cost at the
+-- acquisition-date rate and the proceeds at the disposal-date rate; converting
+-- the resulting gain is explicitly not allowed).
+--
+-- RATE DIRECTION — the single most important thing about this table:
+--   `rate` is the number of `quote` units you get for ONE `base` unit, i.e.
+--       amount_in_quote = amount_in_base * rate
+--   So a row (base='USD', quote='GBP', rate='0.7862') means $1 = £0.7862, and
+--   converting $100 to GBP is 100 * 0.7862 = £78.62.
+--   This matches the direction of `currencies.fx_rate`, which is likewise a
+--   multiplier onto the preferred currency — the two never disagree about
+--   which way round a rate points. An inverted rate produces plausible-looking
+--   but wrong tax numbers, which is the exact failure this table exists to
+--   prevent, hence spelling it out here rather than in a commit message.
+--
+-- These rates are USER-OWNED. Nothing auto-fetches or interpolates them: HMRC
+-- mandates no particular rate source, only that the chosen basis is applied
+-- consistently, and the main use case is reproducing the rates a previously
+-- filed return was computed with. A missing rate is therefore a prompt to the
+-- user, never a silent fallback — so weekends and bank holidays need no gap
+-- policy.
+--
+-- `source` records provenance so a generated report can show which rate was
+-- used and where it came from: 'user' (typed in) or 'suggested' (pre-filled by
+-- a provider and then accepted by the user — the stored value is always what
+-- the user committed).
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    base       TEXT NOT NULL,                        -- currency being converted FROM, e.g. 'USD'
+    quote      TEXT NOT NULL,                        -- currency being converted TO, e.g. 'GBP'
+    date       TEXT NOT NULL,                        -- YYYY-MM-DD, the date the rate applies to
+    rate       TEXT NOT NULL,                        -- Decimal string; quote units per 1 base unit
+    source     TEXT NOT NULL DEFAULT 'user',         -- 'user' | 'suggested'
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (base, quote, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_exchange_rates_date ON exchange_rates(date);

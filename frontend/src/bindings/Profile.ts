@@ -3,4 +3,9 @@
 /**
  * A profile represents one person in a multi-person household.
  */
-export type Profile = { id: string, name: string, };
+export type Profile = { id: string, name: string, 
+/**
+ * HMRC Unique Taxpayer Reference (10 digits), used on SA108 pages of a
+ * generated CGT report. `None` until the user supplies one.
+ */
+utr: string | null, };

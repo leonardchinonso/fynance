@@ -7,6 +7,7 @@ pub mod categories;
 pub mod currencies;
 pub mod docs;
 pub mod documents;
+pub mod exchange_rates;
 pub mod health;
 pub mod holdings;
 pub mod import_api;

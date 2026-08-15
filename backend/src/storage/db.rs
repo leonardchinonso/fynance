@@ -18,11 +18,11 @@ use crate::model::{
     AccountType, AssetClass, BalanceDelta, BudgetRow, Category, CategoryNode, CategorySource,
     CategoryTotal, CategoryType, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
     CreateInvestmentEventBody, Currency, Document, DocumentReferences, DocumentSummary,
-    Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth,
-    HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError, ImportTransaction, InsertOutcome,
-    InvestmentEvent, InvestmentEventType, InvestmentHistoryRow, InvestmentMetrics,
-    PatchCategoryPayload, PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy,
-    Transaction, TransactionPreviewRow, TransactionPreviewStatus,
+    ExchangeRate, Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType,
+    HoldingsCashFlowMonth, HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError,
+    ImportTransaction, InsertOutcome, InvestmentEvent, InvestmentEventType, InvestmentHistoryRow,
+    InvestmentMetrics, PatchCategoryPayload, PatchInvestmentEventBody, Profile, SpendingGridRow,
+    SpendingGroupBy, Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -730,6 +730,146 @@ impl Db {
         Ok(report)
     }
 
+    // ── Exchange rates (date-keyed, user-owned) ──────────────────────────────
+    //
+    // `rate` is quote-units per ONE base unit: amount_in_quote = amount_in_base * rate.
+    // See the `exchange_rates` comment in db/sql/schema.sql for why that direction is
+    // spelled out everywhere it is touched.
+
+    /// Every stored rate quoting into `quote`, as `(base, date, rate)`.
+    /// Used to populate `FxRateMap::with_historical` for the CGT engine.
+    pub fn get_exchange_rates_for_quote(
+        &self,
+        quote: &str,
+    ) -> Result<Vec<(String, NaiveDate, Decimal)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT base, date, rate FROM exchange_rates WHERE quote = ?1 ORDER BY base, date",
+        )?;
+        let rows = stmt
+            .query_map(params![quote], |row| {
+                let base: String = row.get(0)?;
+                let date: String = row.get(1)?;
+                let rate: String = row.get(2)?;
+                Ok((base, date, rate))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        rows.into_iter()
+            .map(|(base, date_str, rate_str)| {
+                let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+                    .with_context(|| format!("invalid date '{date_str}' in exchange_rates"))?;
+                let rate = rate_str.parse::<Decimal>().with_context(|| {
+                    format!("invalid rate for {base}->{quote} on {date_str} in exchange_rates")
+                })?;
+                Ok((base, date, rate))
+            })
+            .collect()
+    }
+
+    /// List stored rates, optionally filtered by base currency and/or an inclusive date range.
+    pub fn list_exchange_rates(
+        &self,
+        base: Option<&str>,
+        quote: Option<&str>,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+    ) -> Result<Vec<ExchangeRate>> {
+        let mut sql = String::from(
+            "SELECT base, quote, date, rate, source, updated_at FROM exchange_rates WHERE 1=1",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(b) = base {
+            sql.push_str(" AND base = ?");
+            args.push(Box::new(b.to_string()));
+        }
+        if let Some(q) = quote {
+            sql.push_str(" AND quote = ?");
+            args.push(Box::new(q.to_string()));
+        }
+        if let Some(s) = start_date {
+            sql.push_str(" AND date >= ?");
+            args.push(Box::new(s.format("%Y-%m-%d").to_string()));
+        }
+        if let Some(e) = end_date {
+            sql.push_str(" AND date <= ?");
+            args.push(Box::new(e.format("%Y-%m-%d").to_string()));
+        }
+        sql.push_str(" ORDER BY base, quote, date");
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let arg_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
+        let rows = stmt
+            .query_map(arg_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        rows.into_iter()
+            .map(|(base, quote, date, rate_str, source, updated_at)| {
+                let rate = rate_str.parse::<Decimal>().with_context(|| {
+                    format!("invalid rate for {base}->{quote} on {date} in exchange_rates")
+                })?;
+                Ok(ExchangeRate {
+                    base,
+                    quote,
+                    date,
+                    rate,
+                    source,
+                    updated_at,
+                })
+            })
+            .collect()
+    }
+
+    /// Insert or replace a batch of rates in one transaction.
+    ///
+    /// Upsert rather than insert-only: correcting a rate you previously typed wrong is a
+    /// normal action, and the pre-flight screen re-submits the whole set. Returns the number
+    /// of rows written.
+    pub fn upsert_exchange_rates(&self, rates: &[ExchangeRate]) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO exchange_rates (base, quote, date, rate, source, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(base, quote, date) DO UPDATE SET
+                     rate = excluded.rate,
+                     source = excluded.source,
+                     updated_at = excluded.updated_at",
+            )?;
+            for r in rates {
+                stmt.execute(params![
+                    r.base,
+                    r.quote,
+                    r.date,
+                    r.rate.to_string(),
+                    r.source,
+                    now,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(rates.len())
+    }
+
+    /// Delete one rate. Returns false when no such row existed.
+    pub fn delete_exchange_rate(&self, base: &str, quote: &str, date: &str) -> Result<bool> {
+        let rows = self.conn.execute(
+            "DELETE FROM exchange_rates WHERE base = ?1 AND quote = ?2 AND date = ?3",
+            params![base, quote, date],
+        )?;
+        Ok(rows > 0)
+    }
+
     // ── Profiles ─────────────────────────────────────────────────────────────
 
     pub fn create_profile(&self, id: &str, name: &str) -> Result<()> {
@@ -743,16 +883,29 @@ impl Db {
     pub fn get_profiles(&self) -> Result<Vec<Profile>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, name FROM profiles ORDER BY name")?;
+            .prepare("SELECT id, name, utr FROM profiles ORDER BY name")?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(Profile {
                     id: row.get(0)?,
                     name: row.get(1)?,
+                    utr: row.get(2)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Set or clear a profile's HMRC Unique Taxpayer Reference. `None` clears it.
+    pub fn update_profile_utr(&self, id: &str, utr: Option<&str>) -> Result<()> {
+        let updated = self.conn.execute(
+            "UPDATE profiles SET utr = ?1 WHERE id = ?2",
+            params![utr, id],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("profile {id} not found"));
+        }
+        Ok(())
     }
 
     pub fn profile_exists(&self, id: &str) -> Result<bool> {
@@ -5959,6 +6112,14 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "UPDATE holdings SET holding_type = 'debt' WHERE holding_type IN ('loan', 'credit')",
     )?;
+
+    // ── 15. Add utr to profiles ──
+    // HMRC Unique Taxpayer Reference, needed on every SA108 page. Nullable, so
+    // existing rows are unaffected and a household that never files a CGT
+    // report never has to supply one.
+    if conn.prepare("SELECT utr FROM profiles LIMIT 0").is_err() {
+        conn.execute_batch("ALTER TABLE profiles ADD COLUMN utr TEXT")?;
+    }
 
     Ok(())
 }

@@ -17,6 +17,8 @@ import { CgtDisposalSchedule } from "./cgt_disposal_schedule"
 import { CgtPoolWorkings } from "./cgt_pool_workings"
 import { CgtHistoryList } from "./cgt_history_list"
 import { CgtPdfDocument } from "./cgt_pdf_document"
+import { CgtPreflight } from "./cgt_preflight"
+import type { MissingRatePair } from "@/bindings/MissingRatePair"
 import {
   deleteStoredReport,
   getStoredReport,
@@ -26,6 +28,36 @@ import {
   type StoredCgtReport,
 } from "./stored_reports"
 
+/**
+ * Extract the missing-rate list from a failed generate, or `null` if this wasn't that error.
+ *
+ * Reads the structured `missing`/`quote` fields the backend sends alongside `code`, rather than
+ * parsing the human-readable message — the message is prose for a person, the array is the form
+ * the user fills in. Shape-checks defensively so a malformed body falls back to the generic
+ * error card instead of rendering an empty pre-flight the user cannot get past.
+ */
+function missingRatesFrom(
+  err: unknown,
+): { missing: MissingRatePair[]; quote: string } | null {
+  if (!(err instanceof ApiError) || err.code !== "missing_exchange_rates") return null
+  const raw = err.body?.missing
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const missing: MissingRatePair[] = []
+  for (const item of raw) {
+    if (
+      item &&
+      typeof item === "object" &&
+      typeof (item as MissingRatePair).currency === "string" &&
+      typeof (item as MissingRatePair).date === "string"
+    ) {
+      missing.push(item as MissingRatePair)
+    }
+  }
+  if (missing.length === 0) return null
+  const quote = typeof err.body?.quote === "string" ? err.body.quote : "GBP"
+  return { missing, quote }
+}
+
 export function CgtReportPage() {
   const { reportId } = useParams<{ reportId?: string }>()
   const navigate = useNavigate()
@@ -34,6 +66,14 @@ export function CgtReportPage() {
   const { profileId: activeProfileId } = useUrlFilters()
   const { state, error: generateError, generate } = useCapitalGains()
   const [reports, setReports] = useState<StoredCgtReport[]>(() => listStoredReports())
+  // Set when the backend reports `missing_exchange_rates`. Holds the pairs to collect plus the
+  // filters that triggered it, so generation can be retried unchanged once they are saved.
+  const [preflight, setPreflight] = useState<{
+    missing: MissingRatePair[]
+    quote: string
+    filters: CgtFilters
+    higherRate: boolean
+  } | null>(null)
 
   const defaultFilters = useMemo<CgtFilters>(() => {
     const preselected =
@@ -56,19 +96,45 @@ export function CgtReportPage() {
     }
   }, [reportId, stored])
 
-  async function handleGenerate(filters: CgtFilters, higherRate: boolean) {
-    const response = await generate(filters)
-    const id = newReportId()
-    const report: StoredCgtReport = {
-      id,
-      generatedAt: new Date().toISOString(),
-      filters,
-      higherRate,
-      response,
+  /**
+   * Run the report, or divert to the pre-flight screen when the backend says rates are missing.
+   *
+   * `confirmedUtr` is supplied on the retry that follows pre-flight; on a first attempt the
+   * profile's stored UTR is used. It is snapshotted onto the stored report so reprinting an old
+   * report reproduces what was filed rather than picking up a later profile edit.
+   */
+  async function handleGenerate(
+    filters: CgtFilters,
+    higherRate: boolean,
+    confirmedUtr?: string | null,
+  ) {
+    try {
+      const response = await generate(filters)
+      const id = newReportId()
+      const utr =
+        confirmedUtr !== undefined
+          ? confirmedUtr
+          : (profiles.find((p) => p.id === filters.profileId)?.utr ?? null)
+      const report: StoredCgtReport = {
+        id,
+        generatedAt: new Date().toISOString(),
+        filters,
+        higherRate,
+        utr,
+        response,
+      }
+      saveStoredReport(report)
+      setReports(listStoredReports())
+      setPreflight(null)
+      navigate(`/reports/cgt/${id}`)
+    } catch (err) {
+      const missing = missingRatesFrom(err)
+      if (missing) {
+        setPreflight({ ...missing, filters, higherRate })
+        return
+      }
+      // Anything else stays a plain failure; `state`/`generateError` render it below.
     }
-    saveStoredReport(report)
-    setReports(listStoredReports())
-    navigate(`/reports/cgt/${id}`)
   }
 
   function handleDelete(id: string) {
@@ -124,7 +190,21 @@ export function CgtReportPage() {
         </Card>
       )}
 
-      {state.status === "failed" && <GenerateError error={generateError} />}
+      {preflight && (
+        <CgtPreflight
+          missing={preflight.missing}
+          quote={preflight.quote}
+          profile={profiles.find((p) => p.id === preflight.filters.profileId)}
+          onCancel={() => setPreflight(null)}
+          onReady={(confirmedUtr) =>
+            handleGenerate(preflight.filters, preflight.higherRate, confirmedUtr)
+          }
+        />
+      )}
+
+      {/* The pre-flight screen replaces the error card for missing rates: a rate that hasn't
+          been entered yet is a step in the workflow, not a failure to report. */}
+      {!preflight && state.status === "failed" && <GenerateError error={generateError} />}
 
       <CgtHistoryList reports={reports} onDelete={handleDelete} />
     </div>
