@@ -18,11 +18,26 @@ export class AuthError extends Error {
 export class ApiError extends Error {
   status: number
   code: string
-  constructor(status: number, code: string, message: string) {
+  /**
+   * The full parsed error body, when the response was JSON. Some errors carry
+   * structured data beside `error`/`code` that the caller must act on rather
+   * than display — `missing_exchange_rates` lists every `(currency, date)` pair
+   * the report needs, which the pre-flight screen renders as a form. Without
+   * this the list would be dropped and the user would be told a number they
+   * then had to discover one at a time.
+   */
+  body: Record<string, unknown> | null
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    body: Record<string, unknown> | null = null,
+  ) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.code = code
+    this.body = body
   }
 }
 
@@ -32,7 +47,9 @@ async function parseError(res: Response): Promise<ApiError> {
     const body = JSON.parse(text) as { error?: unknown; code?: unknown }
     const message = typeof body.error === "string" ? body.error : text
     const code = typeof body.code === "string" ? body.code : "unknown"
-    return new ApiError(res.status, code, message)
+    const bag =
+      body && typeof body === "object" ? (body as Record<string, unknown>) : null
+    return new ApiError(res.status, code, message, bag)
   } catch {
     return new ApiError(res.status, "unknown", text || `${res.status} ${res.statusText}`)
   }
@@ -83,6 +100,8 @@ import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEvent
 import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { ExchangeRate } from "@/bindings/ExchangeRate"
+import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent } from "./service"
@@ -383,7 +402,10 @@ export class RealApiService implements ApiService {
     return post<Profile>(`${BASE}/profiles`, body)
   }
 
-  async updateProfile(id: string, body: { name?: string }): Promise<Profile> {
+  async updateProfile(
+    id: string,
+    body: { name?: string; utr?: string | null },
+  ): Promise<Profile> {
     return patch<Profile>(`${BASE}/profiles/${encodeURIComponent(id)}`, body)
   }
 
@@ -554,6 +576,27 @@ export class RealApiService implements ApiService {
 
   async deleteCurrency(code: string): Promise<void> {
     return del(`${BASE}/currencies/${code}`)
+  }
+
+  // ── Exchange rates (date-keyed, user-owned) ───────────────────────
+
+  async getExchangeRates(filters?: {
+    base?: string
+    quote?: string
+    start_date?: string
+    end_date?: string
+  }): Promise<ExchangeRate[]> {
+    return get<ExchangeRate[]>(`${BASE}/exchange-rates`, filters)
+  }
+
+  async createExchangeRates(rates: ExchangeRateInput[]): Promise<ExchangeRate[]> {
+    return post<ExchangeRate[]>(`${BASE}/exchange-rates`, { rates })
+  }
+
+  async deleteExchangeRate(base: string, quote: string, date: string): Promise<void> {
+    return del(
+      `${BASE}/exchange-rates/${encodeURIComponent(base)}/${encodeURIComponent(quote)}/${encodeURIComponent(date)}`,
+    )
   }
 
   // ── Documents ─────────────────────────────────────────────────────

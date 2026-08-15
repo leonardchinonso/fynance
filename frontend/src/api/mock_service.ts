@@ -41,6 +41,8 @@ import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEvent
 import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
 import type { InvestmentEventType } from "@/bindings/InvestmentEventType"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { ExchangeRate } from "@/bindings/ExchangeRate"
+import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
 import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { SymbolSummary } from "@/bindings/SymbolSummary"
@@ -66,6 +68,9 @@ const mockCurrencies: Currency[] = [
   { code: "NGN", is_preferred: false, fx_rate: "0.00051", updated_at: "2026-04-01T10:00:00Z" },
   { code: "USD", is_preferred: false, fx_rate: "0.79", updated_at: "2026-03-15T08:00:00Z" },
 ]
+
+/** Date-keyed rates entered in mock mode. Empty at start — rates are user-owned. */
+const mockExchangeRates: ExchangeRate[] = []
 
 // Available/unavailable account type classification
 const AVAILABLE_TYPES = new Set(["checking", "savings", "emergency_fund", "investment", "cash", "credit"])
@@ -758,16 +763,24 @@ export class MockApiService implements ApiService {
 
   async createProfile(body: { id: string; name: string }): Promise<Profile> {
     await delay(DELAY_MS)
-    const profile: Profile = { id: body.id, name: body.name }
+    const profile: Profile = { id: body.id, name: body.name, utr: null }
     MOCK_PROFILES.push(profile)
     return profile
   }
 
-  async updateProfile(id: string, body: { name?: string }): Promise<Profile> {
+  async updateProfile(
+    id: string,
+    body: { name?: string; utr?: string | null },
+  ): Promise<Profile> {
     await delay(DELAY_MS)
     const idx = MOCK_PROFILES.findIndex((p) => p.id === id)
     if (idx === -1) throw new Error(`profile ${id} not found`)
-    const updated: Profile = { ...MOCK_PROFILES[idx], ...(body.name ? { name: body.name } : {}) }
+    const updated: Profile = {
+      ...MOCK_PROFILES[idx],
+      ...(body.name ? { name: body.name } : {}),
+      // An explicit null clears it; an absent key leaves it alone.
+      ...(body.utr !== undefined ? { utr: body.utr } : {}),
+    }
     MOCK_PROFILES[idx] = updated
     return updated
   }
@@ -976,6 +989,60 @@ export class MockApiService implements ApiService {
     const idx = mockCurrencies.findIndex(c => c.code === code)
     if (idx === -1) throw new Error(`Currency ${code} not found`)
     mockCurrencies.splice(idx, 1)
+  }
+
+  // ── Exchange rates (date-keyed, user-owned) ───────────────────────
+  //
+  // Starts empty on purpose. The mock CGT response is pre-computed rather than
+  // engine-derived, so it never raises `missing_exchange_rates`; these methods
+  // exist so the pre-flight screen's save/list path is exercisable in mock mode.
+
+  async getExchangeRates(filters?: {
+    base?: string
+    quote?: string
+    start_date?: string
+    end_date?: string
+  }): Promise<ExchangeRate[]> {
+    await delay(DELAY_MS)
+    return mockExchangeRates.filter((r) => {
+      if (filters?.base && r.base !== filters.base) return false
+      if (filters?.quote && r.quote !== filters.quote) return false
+      if (filters?.start_date && r.date < filters.start_date) return false
+      if (filters?.end_date && r.date > filters.end_date) return false
+      return true
+    })
+  }
+
+  async createExchangeRates(rates: ExchangeRateInput[]): Promise<ExchangeRate[]> {
+    await delay(DELAY_MS)
+    const preferred = mockCurrencies.find((c) => c.is_preferred)?.code ?? "GBP"
+    const saved: ExchangeRate[] = []
+    for (const input of rates) {
+      const stored: ExchangeRate = {
+        base: input.base.toUpperCase(),
+        quote: (input.quote ?? preferred).toUpperCase(),
+        date: input.date,
+        rate: input.rate,
+        source: input.source ?? "user",
+        updated_at: new Date().toISOString(),
+      }
+      const idx = mockExchangeRates.findIndex(
+        (r) => r.base === stored.base && r.quote === stored.quote && r.date === stored.date,
+      )
+      if (idx === -1) mockExchangeRates.push(stored)
+      else mockExchangeRates[idx] = stored
+      saved.push(stored)
+    }
+    return saved
+  }
+
+  async deleteExchangeRate(base: string, quote: string, date: string): Promise<void> {
+    await delay(DELAY_MS)
+    const idx = mockExchangeRates.findIndex(
+      (r) => r.base === base && r.quote === quote && r.date === date,
+    )
+    if (idx === -1) throw new Error(`No exchange rate for ${base}->${quote} on ${date}`)
+    mockExchangeRates.splice(idx, 1)
   }
 
   // ── Import ────────────────────────────────────────────────────────
