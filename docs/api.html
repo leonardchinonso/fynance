@@ -3477,12 +3477,12 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>as_at</code></td><td>query</td><td>string</td><td>No</td><td>Limit pooling to events on or before this date (YYYY-MM-DD)</td></tr>
+      <tr><td><code>end_date</code></td><td>query</td><td>string</td><td>No</td><td>Replay only events up to and including this date (YYYY-MM-DD) — truncates the event ledger itself, a genuine point-in-time snapshot. Omit for the current state.</td></tr>
       <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; includes events from accounts whose profiles intersect this set. Omit for all profiles.</td></tr>
     </tbody>
   </table>
   <h4>Example Request</h4>
-  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/pools?as_at=2026-04-05"</code></pre>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/pools?end_date=2026-04-05"</code></pre>
   <h4>Example Response <span class="status-code">200</span></h4>
   <pre class="example-response"><code>[
   {
@@ -3496,7 +3496,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <table class="errors-table">
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
-      <tr><td>400</td><td><code>invalid_date</code></td><td>as_at is not a valid YYYY-MM-DD date</td></tr>
+      <tr><td>400</td><td><code>invalid_date</code></td><td>end_date is not a valid YYYY-MM-DD date</td></tr>
     </tbody>
   </table>
 </section>
@@ -3506,22 +3506,20 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <span class="method-badge method-get">GET</span>
     <code class="endpoint-path">/api/investments/capital-gains</code>
   </div>
-  <p class="endpoint-summary">UK Capital Gains Tax report. Applies HMRC same-day, 30-day (bed &amp; breakfast), and S104 pool matching across all non-sheltered accounts; totals are normalized to the preferred base currency.</p>
+  <p class="endpoint-summary">UK Capital Gains Tax report. Applies HMRC same-day, 30-day (bed &amp; breakfast), and S104 pool matching across all non-sheltered accounts; totals are normalized to the preferred base currency. Unlike <code>/investments/pools</code>, <code>start_date</code>/<code>end_date</code> here only filter which disposals are <em>emitted</em> — the event ledger is never truncated, so the S104 pool (and the 30-day rule's ability to reach forward) always reflects the full history. Omitting <code>start_date</code> means "from time zero"; pass only <code>end_date</code> for a point-in-time "as at this date" report.</p>
   <h4>Parameters</h4>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>No</td><td>UK tax year as <code>YYYY-YY</code> (e.g. <code>2024-25</code> = 6 Apr 2024 to 5 Apr 2025). Overrides start_date/end_date.</td></tr>
-      <tr><td><code>start_date</code></td><td>query</td><td>string</td><td>No</td><td>Custom range start (YYYY-MM-DD); used when tax_year is omitted</td></tr>
-      <tr><td><code>end_date</code></td><td>query</td><td>string</td><td>No</td><td>Custom range end (YYYY-MM-DD); used when tax_year is omitted</td></tr>
+      <tr><td><code>start_date</code></td><td>query</td><td>string</td><td>No</td><td>Only disposals on or after this date are emitted (YYYY-MM-DD). Omit for no lower bound ("from time zero").</td></tr>
+      <tr><td><code>end_date</code></td><td>query</td><td>string</td><td>No</td><td>Only disposals on or before this date are emitted (YYYY-MM-DD). Omit for no upper bound.</td></tr>
       <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter disposals by account</td></tr>
       <tr><td><code>symbol</code></td><td>query</td><td>string</td><td>No</td><td>Filter by ticker symbol</td></tr>
-      <tr><td><code>as_at</code></td><td>query</td><td>string</td><td>No</td><td>Limit calculations to events on or before this date (YYYY-MM-DD)</td></tr>
       <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; includes events from accounts whose profiles intersect this set. Omit for all profiles.</td></tr>
     </tbody>
   </table>
   <h4>Example Request</h4>
-  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/capital-gains?tax_year=2025-26"</code></pre>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/capital-gains?start_date=2025-04-06&end_date=2026-04-05"</code></pre>
   <h4>Example Response <span class="status-code">200</span></h4>
   <pre class="example-response"><code>{
   "summary": {
@@ -3565,6 +3563,39 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
       ]
     }
   ],
+  "disposal_groups": [
+    {
+      "symbol": "VWRL",
+      "disposal_date": "2026-02-10T00:00:00",
+      "quantity": "10.000",
+      "proceeds": "1200.00",
+      "cost_basis": "950.00",
+      "gain_loss": "250.00",
+      "original_currency": "GBP",
+      "events": [
+        {
+          "symbol": "VWRL",
+          "disposal_id": "inv-050",
+          "disposal_date": "2026-02-10T00:00:00",
+          "quantity": "10.000",
+          "disposal_price": "120.00",
+          "proceeds": "1200.00",
+          "cost_basis": "950.00",
+          "gain_loss": "250.00",
+          "rule_applied": "S104 Pool",
+          "original_currency": "GBP",
+          "matches": [
+            {
+              "acquisition_id": "inv-001",
+              "acquisition_date": "2026-01-15T00:00:00",
+              "quantity": "10.000",
+              "price": "95.00"
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "pools": [
     {
       "symbol": "VWRL",
@@ -3574,13 +3605,12 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     }
   ]
 }</code></pre>
-  <p><code>rule_applied</code> is one of <code>Same-Day</code>, <code>30-Day Rule</code>, <code>S104 Pool</code>, or <code>Unmatched</code>.</p>
+  <p><code>rule_applied</code> is one of <code>Same-Day</code>, <code>30-Day Rule</code>, <code>S104 Pool</code>, or <code>Unmatched</code>. <code>disposal_groups</code> rolls <code>realized_events</code> up by <code>(symbol, disposal_date)</code> into one row per actual sale — additive, not a replacement; use it for an SA108-style disposal count, use <code>realized_events</code> for the per-rule cost-basis breakdown.</p>
   <h4>Errors</h4>
   <table class="errors-table">
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
-      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in YYYY-YY format</td></tr>
-      <tr><td>400</td><td><code>invalid_date</code></td><td>start_date, end_date, or as_at is not a valid date</td></tr>
+      <tr><td>400</td><td><code>invalid_date</code></td><td>start_date or end_date is not a valid date</td></tr>
       <tr><td>400</td><td><code>invalid_date_range</code></td><td>start_date is after end_date</td></tr>
     </tbody>
   </table>
@@ -3598,6 +3628,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <tbody>
     <tr><td>2026-05-30</td><td>Initial API reference: 45 endpoints across 13 groups, 39 models documented.</td></tr>
     <tr><td>2026-06-07</td><td>Added Capital Gains endpoints: <code>GET /api/investments/pools</code> (S104 pools) and <code>GET /api/investments/capital-gains</code> (UK CGT report).</td></tr>
+    <tr><td>2026-08-15</td><td><strong>BREAKING:</strong> Capital Gains endpoints drop <code>tax_year</code> and <code>as_at</code> in favour of <code>start_date</code>/<code>end_date</code> alone (plan 23 §0.2 decision 7.3). Added <code>disposal_groups</code> to <code>CapitalGainsResponse</code>, rolling <code>realized_events</code> up by <code>(symbol, disposal_date)</code>.</td></tr>
   </tbody>
 </table>
 

@@ -228,9 +228,36 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         }
                     }
                 },
+                "CgtDisposalGroup": {
+                    "type": "object",
+                    "description": concat!(
+                        "`realized_events` rolled up by (symbol, disposal_date) into one row per actual ",
+                        "sale — the honest answer to SA108 box 23 'number of disposals'. `realized_events` ",
+                        "emits one row per matched bucket (same-day / 30-day / S104), so a single sale ",
+                        "matching more than one rule becomes multiple rows there; this collapses those back ",
+                        "into one, with the constituent rows carried through in `events`. Deliberately NOT ",
+                        "grouped by rule_applied (realized_events already gives you that) or by rate band ",
+                        "(a tax-computation concern, out of scope here).",
+                    ),
+                    "required": ["symbol", "disposal_date", "quantity", "proceeds", "cost_basis", "gain_loss", "original_currency", "events"],
+                    "properties": {
+                        "symbol": { "type": "string" },
+                        "disposal_date": { "type": "string", "format": "date-time" },
+                        "quantity": { "type": "string", "description": "Summed across every matched bucket for this disposal." },
+                        "proceeds": { "type": "string", "description": "Summed proceeds, in the user's preferred (base) currency." },
+                        "cost_basis": { "type": "string", "description": "Summed cost basis, in the user's preferred (base) currency." },
+                        "gain_loss": { "type": "string", "description": "proceeds - cost_basis, in the user's preferred (base) currency." },
+                        "original_currency": { "type": "string" },
+                        "events": {
+                            "type": "array",
+                            "description": "The constituent realized_events rows this group rolls up.",
+                            "items": { "$ref": "#/components/schemas/CgtRealizedEvent" }
+                        }
+                    }
+                },
                 "CapitalGainsResponse": {
                     "type": "object",
-                    "required": ["summary", "symbol_summaries", "realized_events", "pools"],
+                    "required": ["summary", "symbol_summaries", "realized_events", "disposal_groups", "pools"],
                     "properties": {
                         "summary": { "$ref": "#/components/schemas/CgtSummary" },
                         "symbol_summaries": {
@@ -240,6 +267,11 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         "realized_events": {
                             "type": "array",
                             "items": { "$ref": "#/components/schemas/CgtRealizedEvent" }
+                        },
+                        "disposal_groups": {
+                            "type": "array",
+                            "description": "realized_events rolled up by (symbol, disposal_date) — one row per actual sale. Additive: use realized_events for the matching-rule breakdown, disposal_groups for the SA108-style disposal count.",
+                            "items": { "$ref": "#/components/schemas/CgtDisposalGroup" }
                         },
                         "pools": {
                             "type": "array",
@@ -1015,10 +1047,10 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     ),
                     "parameters": [
                         {
-                            "name": "as_at",
+                            "name": "end_date",
                             "in": "query",
                             "schema": { "type": "string", "format": "date", "example": "2026-04-05" },
-                            "description": "Replay only events up to and including this date. Omit for the current state."
+                            "description": "Replay only events up to and including this date (truncates the event ledger itself — a genuine point-in-time snapshot). Omit for the current state."
                         },
                         {
                             "name": "profile_ids",
@@ -1053,32 +1085,25 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         "`pools`, `summary`, and `symbol_summaries`) are converted into the user's ",
                         "preferred currency via the `currencies` table; only `disposal_price` and ",
                         "`original_currency` reflect the trade's native currency. ",
-                        "If `tax_year` is provided it overrides `start_date` and `end_date`."
+                        "`start_date` and `end_date` only filter which disposals are *emitted* — unlike ",
+                        "`/api/investments/pools`, the event ledger itself is never truncated here, so the ",
+                        "S104 pool (and therefore the 30-day rule's ability to reach forward to a later ",
+                        "acquisition) always sees the full history regardless of the window requested. ",
+                        "Omitting `start_date` means \"from time zero\", which is the report equivalent of ",
+                        "a point-in-time \"as at this date\" view: pass only `end_date`.",
                     ),
                     "parameters": [
-                        {
-                            "name": "tax_year",
-                            "in": "query",
-                            "schema": { "type": "string", "example": "2024-25" },
-                            "description": "UK tax year in `YYYY-YY` or `YYYY-YYYY` form. Resolves to 6 Apr YYYY1 to 5 Apr YYYY2."
-                        },
                         {
                             "name": "start_date",
                             "in": "query",
                             "schema": { "type": "string", "format": "date" },
-                            "description": "Custom range start (used when tax_year is omitted)."
+                            "description": "Only disposals on or after this date are emitted. Omit for no lower bound (\"from time zero\")."
                         },
                         {
                             "name": "end_date",
                             "in": "query",
                             "schema": { "type": "string", "format": "date" },
-                            "description": "Custom range end (used when tax_year is omitted)."
-                        },
-                        {
-                            "name": "as_at",
-                            "in": "query",
-                            "schema": { "type": "string", "format": "date" },
-                            "description": "Truncate the event replay at this date (point-in-time view)."
+                            "description": "Only disposals on or before this date are emitted. Omit for no upper bound."
                         },
                         {
                             "name": "account_id",
@@ -1101,7 +1126,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     ],
                     "responses": {
                         "200": {
-                            "description": "Full CGT report: summary, per-symbol breakdown, realized disposals, and final pool states.",
+                            "description": "Full CGT report: summary, per-symbol breakdown, realized disposals (both granular and grouped by actual sale), and final pool states.",
                             "content": {
                                 "application/json": {
                                     "schema": { "$ref": "#/components/schemas/CapitalGainsResponse" }
@@ -1109,7 +1134,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             }
                         },
                         "400": {
-                            "description": "Invalid tax_year format or invalid date range.",
+                            "description": "Invalid date format or start_date after end_date.",
                             "content": {
                                 "application/json": {
                                     "schema": { "$ref": "#/components/schemas/Error" }
