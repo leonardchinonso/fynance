@@ -80,7 +80,28 @@ Several backend behaviours key off category *display names* hardcoded in Rust, i
 - [ ] **Move DB work off the async runtime.** Every request locks the single rusqlite connection and runs the query on a tokio worker thread, so one slow query or bulk import stalls the whole API and blocks a runtime thread besides. Staged:
   - [ ] Step 1 (**approved, ready to implement**): wrap `Db` calls in `tokio::task::spawn_blocking`, acquiring the mutex inside the closure. Mechanical, no behavior change; requests still serialize, but slow queries no longer starve the async runtime.
   - [ ] Step 2 (deferred until import latency actually hurts): keep a single writer connection and add a small read-only pool (r2d2 or deadpool) under WAL so reads never queue behind writes. The risk is pragma drift: every pooled connection must get exactly the setup `Db::open` applies today, so route all opens through one constructor.
-- [ ] **Error handling cleanup, all layers.** (a) Storage: a typed `StorageError` enum (`NotFound`, `Conflict`, `InvalidInput`, `Other(anyhow)`) with `From<StorageError> for AppError`, replacing the message-substring matching in `routes/currencies.rs` and the blanket 400s in `routes/investments.rs`; today a reworded message can flip a 404 into a 500, and internal errors leak as `invalid_body`. (b) Parameterize the one string-interpolated query, `list_investment_events` (quote-escaping is correct today, but it defeats statement caching and is one refactor from injection; use the numbered-placeholder pattern from `get_transactions`). (c) The user-facing error envelope is specced in `23_capital_gains_post_v0.md` §7.9; implement (a) and (c) together so handlers map `StorageError` variants straight into the envelope.
+- [ ] **Error handling cleanup, all layers.** (a) Storage: a typed `StorageError` enum (`NotFound`, `Conflict`, `InvalidInput`, `Other(anyhow)`) with `From<StorageError> for AppError`, replacing the message-substring matching in `routes/currencies.rs` and the blanket 400s in `routes/investments.rs`; today a reworded message can flip a 404 into a 500, and internal errors leak as `invalid_body`. (b) Parameterize the one string-interpolated query, `list_investment_events` (quote-escaping is correct today, but it defeats statement caching and is one refactor from injection; use the numbered-placeholder pattern from `get_transactions`). (c) The user-facing error envelope, below; implement (a) and (c) together so handlers map `StorageError` variants straight into the envelope.
+- [ ] **User-facing error envelope.** _(Moved here from `23_capital_gains_post_v0.md` §7.9 on 2026-08-15 — it is a codebase-wide concern that only surfaced in plan 23 because the CGT report UI tripped over it. Plan 23 keeps a cross-reference.)_ Today errors are `{ error, code }` from `AppError`, and each page hand-matches on `code` (the CGT page has a bespoke CTA for `missing_currencies`). Replace with one envelope any handler can return and the frontend renders generically:
+
+  ```jsonc
+  {
+    "error": {
+      "title": "Configure currencies before generating",
+      "description": "Some investment events use currencies not yet configured: GBX. Add them under Settings → Currencies before generating this report.",
+      "code": "missing_currencies",
+      "action": {                              // optional
+        "label": "Go to Settings → Currencies",
+        "kind": "navigate",
+        "target": "/settings/general"
+      }
+    }
+  }
+  ```
+
+  - A `UserFacingError` helper constructs it. Anything that can fail for a reason the user can act on returns this shape with a 4xx.
+  - Backend bugs (panics, DB lock) still return a generic `{ error: { title: "Something went wrong", code: "internal" } }` with 500 and no leaked detail.
+  - Frontend gets *one* error renderer reading `title` / `description` / `action` — no per-code switch.
+  - Audit pass: walk every handler in `backend/src/server/routes/`, replacing "500 because we unwrapped" with a `UserFacingError` or an accepted internal. The FX panic (plan 23 §6.1) was the canonical example; there are likely more.
 
 ---
 

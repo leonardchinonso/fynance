@@ -31,12 +31,13 @@ const VALID_ISO_CODES: &[&str] = &[
     "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SYP", "SZL", "THB", "TJS",
     "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD", "UYU", "UZS", "VES",
     "VND", "VUV", "WST", "XAF", "XCD", "XOF", "XPF", "YER", "ZAR", "ZMW", "ZWL",
-    // Non-ISO sub-units widely quoted by brokers.
-    "GBX", "ZAC",
 ];
 
 fn is_valid_iso_code(code: &str) -> bool {
-    VALID_ISO_CODES.contains(&code)
+    // Broker sub-units (GBX, USX, ZAC, ILA) are accepted alongside real ISO codes, sourced from
+    // the one table that also drives conversion, so the two can never disagree about which codes
+    // exist. They stop being accepted once plan 23 §0.2 (7.1) converts them at import.
+    VALID_ISO_CODES.contains(&code) || crate::util::subunits::is_sub_unit(code)
 }
 
 // ── GET /api/currencies ─────────────────────────────────────────────────────

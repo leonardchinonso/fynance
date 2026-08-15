@@ -1430,12 +1430,14 @@ const MOCK_REALIZED_EVENTS: CgtRealizedEvent[] = [
 const MOCK_POOLS: S104PoolState[] = [
   {
     symbol: "VUSA",
+    original_currency: "GBP",
     current_shares: "120",
     total_allowable_expenditure: "8640.00",
     average_cost_per_share: "72.00",
   },
   {
     symbol: "AAPL",
+    original_currency: "USD",
     current_shares: "45",
     total_allowable_expenditure: "5688.00",
     average_cost_per_share: "126.40",
@@ -1551,11 +1553,11 @@ function mockEvent(
  * Not the real HMRC engine, just enough for the Overview table to render.
  */
 function derivePools(events: InvestmentEvent[]): S104PoolState[] {
-  const pools = new Map<string, { shares: number; cost: number }>()
+  const pools = new Map<string, { shares: number; cost: number; currency: string }>()
   const ordered = [...events].sort((a, b) => a.date.localeCompare(b.date))
 
   for (const e of ordered) {
-    const pool = pools.get(e.symbol) ?? { shares: 0, cost: 0 }
+    const pool = pools.get(e.symbol) ?? { shares: 0, cost: 0, currency: e.currency }
     const qty = parseFloat(e.quantity)
     const price = parseFloat(e.price_per_share)
     const fee = e.fee ? parseFloat(e.fee) : 0
@@ -1576,6 +1578,7 @@ function derivePools(events: InvestmentEvent[]): S104PoolState[] {
     .filter(([, p]) => p.shares > 0.0001)
     .map(([symbol, p]) => ({
       symbol,
+      original_currency: p.currency,
       current_shares: p.shares.toFixed(4),
       total_allowable_expenditure: p.cost.toFixed(2),
       average_cost_per_share: (p.shares > 0 ? p.cost / p.shares : 0).toFixed(2),

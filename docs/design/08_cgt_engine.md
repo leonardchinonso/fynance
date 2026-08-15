@@ -41,8 +41,8 @@ Event types and their CGT semantics:
 | Event type | CGT meaning |
 |------------|-------------|
 | `buy`, `vest` | Acquisition. Enters the S104 pool unless matched by the same-day or 30-day rules first. For RSU vests, the vest-date price is the acquisition cost. |
-| `sell`, `withhold` | Disposal. Matched against acquisitions in rule order. `withhold` represents employer shares retained at vest to cover income tax (HMRC treats this as an immediate disposal at vest price). |
-| `split` | Adjusts pool share count. `quantity` is interpreted as the split ratio (forward split: ratio > 1). Pool cost is unchanged; average cost per share is scaled accordingly. |
+| `sell`, `withhold` | Disposal. Matched against acquisitions in rule order. `withhold` represents employer shares retained at vest to cover income tax (HMRC treats this as an immediate disposal at vest price). Including these is a deliberate choice — see [Deliberate Divergences](#deliberate-divergences-from-common-practice). |
+| `split` | Adjusts pool share count. `quantity` is the number of shares **added** by the split, not a ratio (a 10-for-1 on 1.728 shares is stored as 15.554). Pool cost is unchanged; average cost per share falls accordingly. |
 | `transfer` | No-op for CGT. Pool state is global per symbol so account-to-account moves do not change anything. |
 
 ---
@@ -181,10 +181,49 @@ At personal-finance scale (hundreds to low thousands of events) the full replay 
 
 ---
 
+## Deliberate Divergences from Common Practice
+
+Choices where this engine knowingly produces different figures from how a return might otherwise be
+prepared. These are **decisions, not defects** — if you are reconciling against an externally
+prepared computation and the numbers differ here, that is expected.
+
+### Sell-to-cover (`withhold`) events are treated as disposals
+
+When RSUs vest, a portion is typically sold immediately to cover the income tax due. This engine
+counts those shares as disposals: they enter the disposal schedule, the disposal count, and total
+proceeds.
+
+**The alternative practice.** Some practitioners omit sell-to-cover from the CGT computation
+altogether. The reasoning is sound as far as tax due goes: the vest is taxed as income at market
+value, that value becomes the CGT base cost, and a same-day sale at (near) the same price nets a
+gain of approximately zero once same-day matching is applied. Since the gain is ~nil, the tax due is
+unchanged whether you include them or not — so leaving them out is a simplification that costs
+nothing in tax terms and shortens the schedule considerably.
+
+**Why we include them anyway.** A sell-to-cover is a disposal in law, and the simplification is only
+free if you care solely about the final tax number. It is not free if you care about the return
+being a faithful record:
+
+- **Disposal count and proceeds are materially understated.** Omitting them is not a rounding
+  difference. On this dataset, sell-to-cover accounts for more than half of gross disposal proceeds
+  in an active vesting year — including them roughly doubles reported proceeds.
+- **The gain is only ~zero, not exactly zero.** Fees, and any price movement between the vest price
+  and the actual execution price, produce a real (if small) gain or loss that is otherwise dropped.
+- **Nil-gain is a conclusion, not an assumption.** It holds only when a same-day acquisition is
+  actually present to match against. If vest data is missing or misdated, the disposal is real and
+  the engine should say so rather than having pre-emptively discarded it.
+
+**Consequence to expect.** A report from this engine will show more disposals and higher gross
+proceeds than a computation prepared the other way, while arriving at substantially the same tax.
+Both are defensible; this one is the more literal reading. Do not "fix" the divergence by filtering
+`withhold` out of the disposal path — that would silently revert a considered decision.
+
+---
+
 ## Known Limitations
 
 1. **FX uses today's rate for all historical disposals.** HMRC requires each leg of a foreign-currency trade to be converted at the rate on the leg's date (acquisition cost at acquisition-date rate, disposal proceeds at disposal-date rate). The engine currently applies one snapshot rate from `currencies` to every event. This is correct for a "rough position" view but not suitable for HMRC filing on non-preferred-currency trades. Resolving this is a V2 concern requiring a date-keyed historical rate store separate from `currencies`.
 2. **Unmatched disposals report `cost_basis = 0`.** All proceeds are counted as gain. Useful as a data-quality flag; not a tax position.
-3. **`split` only scales `pool_shares`, not `pool_cost`.** Correct for forward splits where total cost is unchanged and per-share cost falls. Reverse splits need the ratio expressed as a fraction in `quantity`; consolidations have not been tested end-to-end.
+3. **`split` only adjusts `pool_shares`, not `pool_cost`.** Correct, and required: a split is a reorganisation under TCGA 1992 s.126–131, so the new holding is the same asset acquired at the same time and cost — total cost is unchanged and per-share cost falls. `quantity` is the number of shares *added*, not a ratio. **Consolidations (reverse splits) are not handled:** the engine guards on `quantity > 0`, so an event expressing a share *reduction* is silently ignored and the pool keeps too many shares, understating average cost and overstating every later gain. Needs a representation for share removal plus an end-to-end test before any consolidation is imported.
 4. **No CGT annual exempt amount, no rate-band logic.** The engine produces raw gains/losses. Applying the annual exemption and computing tax due is left to the consumer (UI or accountant).
 5. **No persistence of generated SA108 worksheets.** Document generation is a planned frontend concern; the engine only emits the underlying data.

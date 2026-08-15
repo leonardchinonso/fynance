@@ -1,9 +1,112 @@
 # Plan 23: Capital Gains Tax — Post-V0
 
-**Date:** 2026-06-09 (updated)
-**Status:** Backend engine + V0 finishing work shipped; report UI in flight; design-review notes for the next API revision in §6–§7
+**Date:** 2026-06-09 (updated 2026-08-15)
+**Status:** Backend engine + V0 finishing work shipped; report UI in flight; **§7 design questions resolved 2026-08-15 — see §0**
 **Target version:** rolling, post-V0
 **Supersedes:** Implementation portions of [`21_capital_gains_tax.md`](archive/21_capital_gains_tax.md). Plan 21 (now archived) remains the design rationale and the HMRC background reference.
+
+---
+
+## 0. Decisions — 2026-08-15
+
+The §7 design questions were worked through and answered. §7 is retained below as the rationale and
+the detail; **this section is what was decided.** Where the two disagree, this section wins.
+
+### 0.1 What the filed 2024-25 return actually shows
+
+Several assumptions in this doc were checked against the real filed return (SA100/SA108 for the year
+ended 5 Apr 2025) rather than inferred. Corrections:
+
+- **CGT due was £6,314.60, not £6,315.48.** The £6,315.48 figure quoted in §7.4 is the *theoretical*
+  tax. HMRC's system does not compute it that way: it charges everything at the **old 20% rate**
+  (£30,248 × 20% = £6,049.60), then adds a **CGT51 adjustment rounded DOWN to whole pounds**
+  (£265.48 → £265.00). £6,049.60 + £265.00 = £6,314.60.
+  **❌ We are not reproducing this** — see 0.2.
+- **The highest-rate-band-first ordering is confirmed correct.** The Intermediary Summary shows both
+  the £1,454 current-year loss and the £3,000 AEA deducted from the **post-30-Oct (24%)** band,
+  leaving £6,647, with the pre-30-Oct £23,601 untouched. This was previously an assumption.
+- **Brought-forward losses were £0** for 2024-25, and income exceeded the higher-rate threshold with
+  no basic-rate band left — so every gain sat in the upper band. `allowable_income_remaining: 0` is
+  the correct default for this user.
+- **Filed proceeds £232,131 ÷ sells-only $295,277 = an implied rate of 0.7862**, against the 0.74
+  configured in `currencies`. That ~6% gap is the entire reason the report does not tie. Confirms
+  §7.10 as the sole remaining cause on the gains side.
+
+### 0.2 Decisions
+
+| # | Decision |
+|---|---|
+| **7.1** | **Convert sub-units at import.** A static subunit→parent mapping (`GBX → GBP ÷ 100`, `ZAC → ZAR ÷ 100`), not FX rates. The current rates approach only works while the preferred currency is GBP; switch it to USD and GBX needs 0.0074 maintained separately from GBP's rate, and they drift. Historical FX makes it worse — a GBX series is just the GBP series ÷ 100. **The list is short and closed in practice: `GBX` (British pence), `USX` (US cents), `ZAC` (South African cents), `ILA` (Israeli agorot).** These are *unofficial market conventions*, not ISO 4217 — which is exactly why they are hardcoded: there is no authoritative list to fetch, and other portfolio tools hardcode the same four. Own PR: mapping + importers + migration + drop from the allowlist. |
+| **7.2** | **Keep the API flexible; make CGT fail loudly.** `profile_ids` stays as-is and joint accounts remain representable — the data model should not forbid something lawful. But the **CGT endpoints refuse** when any in-scope account has more than one `profile_id`: `400` with a message along the lines of *"Cannot calculate capital gains for an investment account with multiple owners."* Rationale: the S104 pool has no concept of shared ownership, so today a joint GIA returns 100% of the gain to *each* profile, double-counting across two returns. Failing loudly beats silently computing the wrong number, and it scopes the breakage to the one computation that is genuinely ambiguous — everything else keeps working. Today: one joint account (Monzo Joint, `checking`), zero joint investment accounts. Revisit if ownership ratios are ever modelled. |
+| **7.3** | **Collapse the wire format to `start_date` + `end_date`; drop `tax_year` and `as_at`.** A breaking change, accepted deliberately in favour of the less error-prone contract. The two params genuinely differ — `as_at` truncates the event ledger so the 30-day rule cannot reach forward, while `end_date` only filters emissions so it *can*, giving the same disposal a different cost basis depending on which is used. That overlap is the bug. "Tax year" and "as at" become frontend arithmetic, which is where they already live: `cgt_filter_params.ts` sends only `start_date`/`end_date` today, so nothing in the app changes. Absent `start_date` means "from time zero", reproducing today's `as_at` semantics for the report use case. |
+| **7.4 / 7.5** | **Server-side, two new tables.** `tax_config` (rate bands, AEA per tax year, split dates — the law, seeded with UK values, overridable) and `tax_inputs` (brought-forward losses, allowable income remaining, AEA-claimed — the user's situation, keyed `(profile_id, tax_year)`). Two tables so a Budget change can reseed statutory values without touching personal inputs. **Must implement the CGT51 two-step** per §0.1. |
+| **7.6** | **Done 2026-08-15.** `original_currency` added to `S104PoolState` as a mandatory field, and the base-currency fallback bug it existed to fix was fixed in `cgt_pool_workings.tsx`. No migration — it is a computed response DTO, never persisted. |
+| **7.7** | **Group by `(symbol, disposal_date)`**, not the `(symbol, disposal_date, rule_applied)` in §7.7 below and not by rate band. The engine emits one row per *matched bucket*, so a single sale that matches same-day + 30-day + S104 becomes three rows — an artifact of the matching rules, not three sales. Rolling up per actual sale gives the honest answer to SA108 box 23. Rate-band bucketing belongs in the tax computation (7.4), not in presentation. Keep granular `realized_events` alongside. |
+| **7.8** | ❌ **Won't Do — dropped entirely.** Every candidate warning turned out to be an error. `fx_static_rate` is fixed by 7.10; `missing_pool_currency` was fixed by 7.6; `unmatched_disposals` blocks; a joint account in scope is a 400 (7.2); a symbol in two currencies is a 400; a consolidation exceeding its pool is a 400. Nothing was left to warn about. **A warnings array is a way of deferring the fail-or-pass decision — once every case is decided, it evaporates.** The one thing worth keeping from it is *provenance, not warnings*: record each rate's `source` so the artifact can show which rate was used and where it came from. That is an audit trail, not a caveat. |
+| **7.9** | **Moved out of this plan.** A codebase-wide error-envelope refactor with nothing to do with capital gains; it landed here only because the CGT UI tripped over it. Tracked in `20_post_v0_plans.md` alongside the `StorageError` work it is coupled to. |
+| **7.10** | **P0. User-owned rates — see §0.3.** |
+| **7.11** | **Agreed, but sequenced last.** Blocked on the `db.rs` split (plan 20 §V2) and on 7.10 + 7.4 landing first, or the diffs become unreviewable against a ~900-line file move. |
+| **BADR / IR** | ❌ **Won't Do** — see §4. |
+| **CGT51 two-step** | ❌ **Won't Do.** HMRC's calculator predates the 30 Oct 2024 rate change, so a mid-year return is computed at the old 20% rate and corrected via an adjustment box rounded down to whole pounds. Reproducing it would move our 2024-25 figure by **88p**. Dropped for three reasons: it is a **one-year artifact** (2025-26 onward sits wholly after the change, single rate, no adjustment); the complication is not worth 88p; and the "it validates the engine against a known-good filing" argument **does not survive our own sell-to-cover decision** — we deliberately include disposals the filed return omits, so our totals cannot tie to it regardless, and a tie was never available to be used as a test. ⚠️ **This drops only the presentational two-step, NOT the rate split**: bucketing gains pre/post 30 Oct and charging 20% vs 24% is still required and stays in scope. |
+| **Unmatched disposals** | **Block, do not warn.** `cost_basis = 0` counts 100% of proceeds as gain and **overstates tax**. A genuine short sale is effectively nonexistent in a retail portfolio; in practice it always means missing acquisition data. |
+| **Mixed currency per symbol** | **Error, at both write and read time.** One symbol whose events carry two currencies makes the S104 pool a sum of pence and pounds — a meaningless total. Realistic cause: the same LSE holding reported as `GBX` by one broker and `GBP` by another (7.1 removes that cause, but ticker collisions and data-entry errors remain). It is not blocked at DB level today because there is no symbols table — `symbol` is a TEXT column per event, so there is nowhere to hang the constraint. Follow the existing `validate_currency` / `check_required_currencies` pattern: reject at write time, and precheck at report time for rows predating the guard. |
+| **Consolidation exceeding its pool** | **Error — `consolidation_exceeds_pool`. Implemented 2026-08-15.** Removing more shares than the pool holds is impossible data (mistyped quantity, missing acquisition, wrong symbol). Clamping at zero — the first cut of this — leaves a pool with no shares but non-zero cost, so average cost becomes zero and every later disposal reports 100% of proceeds as gain: tax overstated, output looks perfectly ordinary. `run_cgt_engine` now returns `Result<_, AppError>` to carry refusals like this; the unmatched-disposal block reuses that signature. |
+| **Currency referential integrity** | **Make the unconfigured-currency state unreachable, from both ends.** Writes are already guarded — `validate_currency` runs on accounts, holdings, investments (currency *and* fee currency) and import. Deletes are **not fully guarded**: `Db::delete_currency` refuses when a code is used by `holdings`, `accounts` or `transactions`, but **does not check `investments`** — so a currency in use by investment events can still be deleted, which is precisely how the "configured currency vanished" state is reached. Add `investments` (both `currency` and `fee_currency`) to that guard. Once both ends hold, `missing_currencies` becomes genuinely unreachable rather than merely rare. |
+| **`missing_currencies`** | **Absorbed by the pre-flight step (§0.4).** It currently conflates two things: a currency with no row in `currencies` at all, and a rate that cannot be applied. Write-time validation already prevents the first for new data, so it degrades to a defensive internal error rather than a user-facing CTA; the second becomes the pre-flight "rates we need" list. The bespoke `missing_currencies` CTA card therefore leaves the frontend — worth noting, since it was the motivating example for the (now relocated) §7.9 error envelope. |
+| **Sell-to-cover** | **Included as disposals — a deliberate divergence from common practice.** Documented in `docs/design/08_cgt_engine.md` § Deliberate Divergences and in-code at the disposal branch. Reports will not tie to a computation prepared the other way; that is intentional. |
+
+### 0.3 Historical FX (§7.10) — the rates are the user's, not a provider's
+
+The §7.10 design below assumes the engine fetches rates from frankfurter.app and consumes them.
+**Inverted:** rates are user-owned data; auto-fetch is an optional frontend convenience that fills in
+a field the user still approves.
+
+This is not just a preference. HMRC does not mandate a rate source — *"The law does not provide for a
+particular exchange rate basis... taxpayers can use alternative rates from reputable sources. The
+basis chosen should be used consistently."* A user-entered rate is therefore fully legitimate, and
+silently fetching ECB dailies would be **less** correct here, because it would not reproduce the
+rates a previously-filed return was computed with.
+
+The per-leg requirement still binds absolutely: HMRC explicitly rejects computing a gain in foreign
+currency and converting the result. Acquisition converts at the acquisition-date rate, disposal at
+the disposal-date rate. **The engine already does this** — `run_cgt_engine` calls `convert_as_of` at
+every conversion site with the correct per-leg date, including passing the *acquisition* date for
+30-day matches. Only `convert_as_of`'s body is missing; no call-site changes are needed.
+
+**Scale (measured, not estimated).** 885 investment rows total, of which 256 are non-GBP in
+CGT-eligible accounts → **68 distinct `(currency, date)` pairs for all history**. A 2024-25 report
+needs **49** of them: 17 disposal dates plus 32 cumulative acquisition dates. Note the second number:
+the S104 pool is built from *every* acquisition ever, so prompting only for dates inside the tax year
+would silently use wrong cost bases.
+
+**No gap policy is needed.** Nothing is auto-resolved, so weekends and bank holidays are not a
+special case — a missing rate is a prompt, not a fallback.
+
+### 0.4 The pre-flight review step
+
+Rather than three separate blockers (a 400 for FX, a settings field for UTR, an unanswered question
+for losses), generation is preceded by **one review screen** that surfaces everything needing
+confirmation:
+
+- **Missing currency conversions** for the `(currency, date)` pairs this report needs — filled in
+  here, stored, never asked again. Optional auto-fill button if a rate provider is configured; the
+  stored value is still whatever the user accepted.
+- **The UTR being used**, so it is confirmed rather than silently pulled from settings.
+- **Carried-forward losses** — backend-derived prefill, editable.
+- **The AEA** for the year, editable.
+
+This replaces "missing rate → 400" entirely: a missing rate is neither an error nor a warning, it is
+a pre-flight item resolved before generation is offered.
+
+**Brought-forward losses are derived AND overridable.** Derivation is correct whenever fynance holds
+the history; the override covers every year filed elsewhere, which is currently all of them. Two
+requirements on the prefill: it must be **visibly labelled as derived**, showing which years it came
+from, and it must not look authoritative. UK losses must be *claimed* within four years of the end of
+the tax year in which they arose, and only the excess after same-year gains carries forward — so a
+naive "sum of past losses" prefill can overstate.
+
+**The generated artifact shows the rate used per disposal**, so the report is auditable against
+whatever basis was chosen.
 
 ---
 
@@ -77,9 +180,31 @@ Track unused capital losses from prior tax years. Let the user enter an opening 
 
 The user's filed SA100 already has a "Capital Losses Summary" page showing this. Mirror the layout.
 
-### BADR / Investors' Relief
+### BADR / Investors' Relief — ❌ Won't Do (for now)
 
-Per-disposal flag and reduced rate (currently 10% for BADR, 14% from 6 Apr 2025, 18% from 6 Apr 2026). UI: a checkbox on each row of the disposal schedule to mark "BADR claimed". Total relief-qualifying gains roll into the tax computation at the reduced rate.
+**Decision 2026-08-15: not building this.** Neither relief is reachable from the portfolio this app
+actually tracks, and the filed 2024-25 return has every BADR/IR box at zero (SA108 boxes 17.2–17.4,
+and the "Gains not qualifying for Business Asset Disposal Relief or Investors' Relief" heading
+carries the whole computation).
+
+- **BADR** (Business Asset Disposal Relief, formerly Entrepreneurs' Relief) applies to disposing of
+  *your own business* — a sole trade, a partnership interest, or shares in a personal trading
+  company where you have been an employee or officer for at least 2 years and hold at least 5% of
+  ordinary share capital and voting rights. Rate 14% for 2025-26, rising to 18% from 6 Apr 2026.
+  £1m lifetime limit.
+- **Investors' Relief** is the passive-investor counterpart: newly-issued unlisted trading company
+  shares subscribed for and held at least 3 years, where you are *not* an employee or officer. Rates
+  now aligned with BADR (14% → 18%), and the lifetime limit was cut from £10m to £1m on
+  30 Oct 2024.
+
+Neither can apply to listed shares and securities (PLTR, ETFs, funds), which is the entire holding
+base here. **Revisit if founder equity, an unlisted subscription, or a business disposal ever
+enters the picture** — at which point the original sketch stands: a per-disposal "relief claimed"
+flag, the reduced rate applied to qualifying gains, and lifetime-limit tracking across tax years.
+
+_Original plan, retained for whenever this is picked up:_ per-disposal flag and reduced rate. UI: a
+checkbox on each row of the disposal schedule to mark "BADR claimed". Total relief-qualifying gains
+roll into the tax computation at the reduced rate.
 
 ### Mid-year rate-split (2024/25 specifically)
 
@@ -149,7 +274,9 @@ Issues we hit while building the V1 report UI on top of the engine, and the work
 
 Two CGT tests added (`test_cgt_missing_currency_returns_400`, `test_cgt_profile_ids_no_match`).
 
-**Gap that remains:** investment-event ingest (`POST /api/investments/import`) still has no `validate_currency` call, so the data can keep arriving in unknown currencies. The precheck catches it at read time but the right fix is at write time. Tracked as an open question in §7.1 — depends on which currency-handling direction we pick.
+~~**Gap that remains:** investment-event ingest (`POST /api/investments/import`) still has no `validate_currency` call, so the data can keep arriving in unknown currencies. The precheck catches it at read time but the right fix is at write time.~~
+
+**✅ Closed (verified 2026-08-15).** Investment-event ingest now validates at write time: [`investments.rs`](../../backend/src/server/routes/investments.rs) checks both `currency` and `fee_currency` via `validate_currency` before the write. `FxRateMap::convert` documents the same invariant — a currency missing from the FX table can now only come from a row written before that validation existed. The read-time precheck in 6.2 stays as defence-in-depth, but it is no longer the only guard, and this is **not** blocked on the §7.1 direction.
 
 ### 6.3 `profile_ids` filter added to CGT endpoints (CSV)
 
@@ -341,7 +468,15 @@ A frontend "Health check" panel on the report can show what fired. The optional 
 
 Closely linked to 7.4 — the tax computation should include an `aea_remaining`, `losses_remaining` etc. so the user can see how the buffers are being eaten.
 
-### 7.9 Generic error envelope, fewer special-case error codes
+### 7.9 Generic error envelope — ➡️ MOVED to `20_post_v0_plans.md`
+
+**Moved 2026-08-15.** This is a codebase-wide error-handling refactor with nothing specific to
+capital gains; it was filed here only because the CGT report UI was the first thing to trip over it.
+It now lives in [`20_post_v0_plans.md`](20_post_v0_plans.md) under **Backend Hardening**, next to the
+typed `StorageError` work it must be implemented alongside.
+
+<details>
+<summary>Original §7.9 text, retained for history</summary>
 
 **Today.** Errors come back as `{ error, code }` from `AppError`. Frontend's `ApiError` class parses that into a typed exception, and each page has bespoke handling per code (e.g. CGT page has special CTA for `missing_currencies`).
 
@@ -369,6 +504,8 @@ Closely linked to 7.4 — the tax computation should include an `aea_remaining`,
 Audit pass: walk every handler in `backend/src/server/routes/`, replace any "this throws a 500 because we panicked / unwrapped" with a `UserFacingError` (or accept it as a true internal). The fx panic was the canonical example; there are probably more.
 
 The storage-side half of this (a typed `StorageError` enum replacing the message-substring matching that routes do today, plus parameterizing the one string-built query) is tracked in `20_post_v0_plans.md` under "Backend Hardening"; implement the two together so handlers map `StorageError` variants straight into this envelope.
+
+</details>
 
 ### 7.10 Historical FX rates (the big rock)
 
