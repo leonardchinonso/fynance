@@ -405,12 +405,16 @@ pub struct CgtMatchDetail {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct S104PoolState {
     pub symbol: String,
-    /// Native currency of `total_allowable_expenditure` and `average_cost_per_share`, which are
-    /// held in the symbol's own currency rather than the preferred one. Mandatory on purpose: a
-    /// pool always has at least one event to read it from, and making it optional would push the
-    /// ambiguity onto every consumer — which is the bug it exists to fix, since a symbol sitting
-    /// in the pool with no disposals in the window would otherwise be rendered against the base
-    /// currency and silently mislabelled.
+    /// Source metadata only: the currency the underlying trades were originally
+    /// denominated in. It does NOT describe the currency of `total_allowable_expenditure`
+    /// or `average_cost_per_share` — both of those are always in the preferred base
+    /// currency (GBP), converted via `fx.convert_as_of` as each event enters the pool.
+    /// Mirrors `CgtRealizedEvent.original_currency`, which is source metadata for the
+    /// same reason: `proceeds`/`cost_basis` there are base-currency too. Mandatory on
+    /// purpose: a pool always has at least one event to read it from, and making it
+    /// optional would push the ambiguity onto every consumer — which is the bug it
+    /// exists to fix, since a symbol sitting in the pool with no disposals in the
+    /// window would otherwise have no source currency to report at all.
     pub original_currency: String,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
@@ -956,12 +960,14 @@ fn run_cgt_engine(
 
     // 4. Replay the S104 pool and emit results, now that every rate is known to be present.
     for (symbol, mut events) in matched_groups {
-        // Pool figures stay in the symbol's native currency, so record which one that is while
-        // every event is still to hand. A symbol group is only created by pushing an event, so
-        // `first()` is always populated; the fallback exists to keep this total rather than
-        // introduce an unwrap. Events for one symbol are expected to share a currency — if that
-        // ever stops holding, this reports the earliest and the mismatch belongs in the warnings
-        // channel (plan 23 §7.8) rather than in a nullable field.
+        // Record the symbol's source trade currency as metadata while every event is
+        // still to hand — pool_cost itself is always converted to base currency (GBP)
+        // below, this is not the currency it is held in. A symbol group is only created
+        // by pushing an event, so `first()` is always populated; the fallback exists to
+        // keep this total rather than introduce an unwrap. Events for one symbol are
+        // expected to share a currency — if that ever stops holding, this reports the
+        // earliest and the mismatch belongs in the warnings channel (plan 23 §7.8)
+        // rather than in a nullable field.
         let pool_currency = events
             .first()
             .map(|e| e.currency.clone())
@@ -1071,6 +1077,16 @@ fn run_cgt_engine(
                         ));
                     }
                     pool_shares = after;
+                    // A consolidation to exactly zero is legitimate data (a holding fully
+                    // wound up), not an error — but it must clear pool_cost the same way
+                    // the Sell branch does above. Left unhandled, the orphaned cost sits on
+                    // a pool of zero shares; the next Buy restarts pool_shares from zero,
+                    // so avg_cost carries that stale cost over the new shares instead of
+                    // zero, and the following Sell reports the entire stale cost as
+                    // allowable expenditure against a disposal that never earned it.
+                    if pool_shares == Decimal::ZERO {
+                        pool_cost = Decimal::ZERO;
+                    }
                 }
                 InvestmentEventType::Transfer => {
                     // Internal transfers are neutral within a single S104 pool scope

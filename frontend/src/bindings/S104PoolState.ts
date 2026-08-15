@@ -2,11 +2,15 @@
 
 export type S104PoolState = { symbol: string, 
 /**
- * Native currency of `total_allowable_expenditure` and `average_cost_per_share`, which are
- * held in the symbol's own currency rather than the preferred one. Mandatory on purpose: a
- * pool always has at least one event to read it from, and making it optional would push the
- * ambiguity onto every consumer — which is the bug it exists to fix, since a symbol sitting
- * in the pool with no disposals in the window would otherwise be rendered against the base
- * currency and silently mislabelled.
+ * Source metadata only: the currency the underlying trades were originally
+ * denominated in. It does NOT describe the currency of `total_allowable_expenditure`
+ * or `average_cost_per_share` — both of those are always in the preferred base
+ * currency (GBP), converted via `fx.convert_as_of` as each event enters the pool.
+ * Mirrors `CgtRealizedEvent.original_currency`, which is source metadata for the
+ * same reason: `proceeds`/`cost_basis` there are base-currency too. Mandatory on
+ * purpose: a pool always has at least one event to read it from, and making it
+ * optional would push the ambiguity onto every consumer — which is the bug it
+ * exists to fix, since a symbol sitting in the pool with no disposals in the
+ * window would otherwise have no source currency to report at all.
  */
 original_currency: string, current_shares: string, total_allowable_expenditure: string, average_cost_per_share: string, };
