@@ -3143,6 +3143,99 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   </table>
 </section>
 
+<section class="endpoint" id="get-api-exchange-rates" data-method="GET" data-path="/api/exchange-rates">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/exchange-rates</code>
+  </div>
+  <p class="endpoint-summary">
+    List date-keyed exchange rates. These are user-owned: nothing is fetched or interpolated.
+    <code>rate</code> is the number of <code>quote</code> units per ONE <code>base</code> unit, so
+    <code>amount_in_quote = amount_in_base * rate</code>.
+  </p>
+  <h4>Query Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>base</code></td><td>query</td><td>string</td><td>No</td><td>Filter by base currency (e.g. "USD")</td></tr>
+      <tr><td><code>quote</code></td><td>query</td><td>string</td><td>No</td><td>Filter by quote currency (e.g. "GBP")</td></tr>
+      <tr><td><code>start_date</code></td><td>query</td><td>string</td><td>No</td><td>Inclusive lower bound, YYYY-MM-DD</td></tr>
+      <tr><td><code>end_date</code></td><td>query</td><td>string</td><td>No</td><td>Inclusive upper bound, YYYY-MM-DD</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/exchange-rates?base=USD&amp;quote=GBP"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>[
+  { "base": "USD", "quote": "GBP", "date": "2024-06-03", "rate": "0.7862", "source": "user", "updated_at": "2026-08-15T09:00:00Z" }
+]</code></pre>
+</section>
+
+<section class="endpoint" id="post-api-exchange-rates" data-method="POST" data-path="/api/exchange-rates">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/exchange-rates</code>
+  </div>
+  <p class="endpoint-summary">
+    Bulk create or update rates. A CGT report for one tax year can need ~49 rates, so a batch is
+    the normal case and a single rate is a batch of one. Existing
+    <code>(base, quote, date)</code> rows are overwritten. The whole batch is validated before
+    anything is written, so one bad row rejects the request rather than half-applying it.
+  </p>
+  <h4>Request Body <span class="content-type">application/json</span></h4>
+  <table class="params-table">
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>rates</code></td><td>array</td><td>Yes</td><td>One or more rate objects (below)</td></tr>
+      <tr><td><code>rates[].base</code></td><td>string</td><td>Yes</td><td>Currency converted FROM (e.g. "USD")</td></tr>
+      <tr><td><code>rates[].quote</code></td><td>string</td><td>No</td><td>Currency converted TO; defaults to the preferred currency</td></tr>
+      <tr><td><code>rates[].date</code></td><td>string</td><td>Yes</td><td>YYYY-MM-DD the rate applies to</td></tr>
+      <tr><td><code>rates[].rate</code></td><td>string</td><td>Yes</td><td>Positive decimal; quote units per 1 base unit</td></tr>
+      <tr><td><code>rates[].source</code></td><td>string</td><td>No</td><td><code>user</code> (default) or <code>suggested</code></td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X POST http://localhost:7433/api/exchange-rates \
+  -H "Content-Type: application/json" \
+  -d '{"rates": [{"base": "USD", "date": "2024-06-03", "rate": "0.7862"}]}'</code></pre>
+  <h4>Example Response <span class="status-code">201</span></h4>
+  <pre class="example-response"><code>[
+  { "base": "USD", "quote": "GBP", "date": "2024-06-03", "rate": "0.7862", "source": "user", "updated_at": "2026-08-15T09:00:00Z" }
+]</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_batch</code></td><td><code>rates</code> is empty</td></tr>
+      <tr><td>400</td><td><code>invalid_rate</code></td><td>A rate is not a positive decimal</td></tr>
+      <tr><td>400</td><td><code>invalid_rate_pair</code></td><td>Base and quote are the same currency</td></tr>
+      <tr><td>400</td><td><code>unknown_currency</code></td><td>Base or quote is not a configured currency</td></tr>
+      <tr><td>400</td><td><code>invalid_source</code></td><td>Source is not <code>user</code> or <code>suggested</code></td></tr>
+      <tr><td>400</td><td><code>invalid_date</code></td><td>Date is not a valid YYYY-MM-DD</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-exchange-rates" data-method="DELETE" data-path="/api/exchange-rates/:base/:quote/:date">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/exchange-rates/:base/:quote/:date</code>
+  </div>
+  <p class="endpoint-summary">Delete one stored rate.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/exchange-rates/USD/GBP/2024-06-03</code></pre>
+  <h4>Response <span class="status-code">204</span></h4>
+  <p>No body.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_date</code></td><td>Date is not a valid YYYY-MM-DD</td></tr>
+      <tr><td>404</td><td><code>not_found</code></td><td>No rate stored for that base/quote/date</td></tr>
+    </tbody>
+  </table>
+</section>
+
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════════ -->
