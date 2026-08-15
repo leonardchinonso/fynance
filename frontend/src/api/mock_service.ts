@@ -41,6 +41,7 @@ import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEvent
 import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
 import type { InvestmentEventType } from "@/bindings/InvestmentEventType"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { CgtDisposalGroup } from "@/bindings/CgtDisposalGroup"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
 import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
@@ -1511,6 +1512,38 @@ const MOCK_POOLS: S104PoolState[] = [
   },
 ]
 
+/**
+ * Mirrors the backend's `group_disposals` (backend/src/server/routes/capital_gains.rs):
+ * rolls `realized_events` up by `(symbol, disposal_date)` into one row per actual sale,
+ * summing the matched-bucket figures rather than just counting rows.
+ */
+function groupDisposals(events: CgtRealizedEvent[]): CgtDisposalGroup[] {
+  const groups = new Map<string, CgtDisposalGroup>()
+  for (const ev of events) {
+    const key = `${ev.symbol} ${ev.disposal_date}`
+    let group = groups.get(key)
+    if (!group) {
+      group = {
+        symbol: ev.symbol,
+        disposal_date: ev.disposal_date,
+        quantity: "0",
+        proceeds: "0",
+        cost_basis: "0",
+        gain_loss: "0",
+        original_currency: ev.original_currency,
+        events: [],
+      }
+      groups.set(key, group)
+    }
+    group.quantity = (Number.parseFloat(group.quantity) + Number.parseFloat(ev.quantity)).toString()
+    group.proceeds = (Number.parseFloat(group.proceeds) + Number.parseFloat(ev.proceeds)).toFixed(2)
+    group.cost_basis = (Number.parseFloat(group.cost_basis) + Number.parseFloat(ev.cost_basis)).toFixed(2)
+    group.gain_loss = (Number.parseFloat(group.gain_loss) + Number.parseFloat(ev.gain_loss)).toFixed(2)
+    group.events.push(ev)
+  }
+  return Array.from(groups.values())
+}
+
 function mockCapitalGains(filters: CgtFilters): CapitalGainsResponse {
   const params = cgtFiltersToParams(filters)
   const start = params.start_date ?? null
@@ -1577,6 +1610,7 @@ function mockCapitalGains(filters: CgtFilters): CapitalGainsResponse {
     },
     symbol_summaries,
     realized_events: events,
+    disposal_groups: groupDisposals(events),
     pools: MOCK_POOLS,
   }
 }

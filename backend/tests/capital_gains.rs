@@ -185,7 +185,7 @@ async fn test_cgt_same_day_matching() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -252,7 +252,7 @@ async fn test_cgt_30_day_matching() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -316,7 +316,7 @@ async fn test_cgt_s104_pool_matching() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -392,7 +392,7 @@ async fn test_cgt_stock_split() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -557,7 +557,7 @@ async fn test_cgt_complex_scenario() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -714,7 +714,7 @@ async fn test_cgt_tax_sheltered_exclusion() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -780,7 +780,7 @@ async fn test_cgt_transaction_fees() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -836,7 +836,7 @@ async fn test_cgt_short_sales_unmatched() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -898,7 +898,7 @@ async fn test_cgt_partially_unmatched_disposal_is_refused() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -949,7 +949,7 @@ async fn test_cgt_fully_matched_disposal_is_not_refused() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1028,7 +1028,7 @@ async fn test_cgt_multi_account_pooling() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1055,6 +1055,15 @@ async fn test_cgt_multi_account_pooling() {
     assert_eq!(aapl_pool["average_cost_per_share"], "15.00");
 }
 
+/// Covers the collapsed time-window contract (plan 23 §0.2, decision 7.3):
+/// `/api/investments/pools?end_date=` still truncates the *ledger* (a genuine
+/// point-in-time snapshot — there is nothing to emit-filter for pool state),
+/// while `/api/investments/capital-gains` no longer truncates the ledger at
+/// all — `end_date` there only filters which disposals are *emitted*, and
+/// the S104 pool embedded in that response always reflects the full replay.
+/// That is the whole point of dropping `as_at`: the old code let the same
+/// disposal get a different cost basis depending on which of the two
+/// interchangeable-sounding params the caller used.
 #[tokio::test]
 async fn test_cgt_point_in_time_filtering() {
     let (app, db) = test_router();
@@ -1099,32 +1108,72 @@ async fn test_cgt_point_in_time_filtering() {
         );
     }
 
-    // 1. Query point-in-time `as_at=2026-05-05`
-    // S104 pool tracks only first buy (100 shares @ 10), sale is completely ignored as it is after `as_at`
-    let response_pit = app
+    // 1. `/api/investments/pools?end_date=2026-05-05` — still a ledger truncation.
+    // Only the first buy (100 shares @ 10) has happened by this date; the second
+    // buy and the sale are both entirely excluded from the replay, not merely
+    // hidden from the output.
+    let response_pools = app
         .clone()
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27&as_at=2026-05-05",
+            "/api/investments/pools?end_date=2026-05-05",
         ))
         .await
         .unwrap();
 
-    assert_eq!(response_pit.status(), StatusCode::OK);
-    let body_pit = to_bytes(response_pit.into_body(), usize::MAX)
+    assert_eq!(response_pools.status(), StatusCode::OK);
+    let body_pools = to_bytes(response_pools.into_body(), usize::MAX)
         .await
         .unwrap();
-    let res_pit: serde_json::Value = serde_json::from_slice(&body_pit).unwrap();
+    let res_pools: serde_json::Value = serde_json::from_slice(&body_pools).unwrap();
 
-    assert_eq!(res_pit["realized_events"].as_array().unwrap().len(), 0);
-
-    let pools_pit = res_pit["pools"].as_array().unwrap();
-    let aapl_pool_pit = pools_pit.iter().find(|p| p["symbol"] == "AAPL").unwrap();
+    let aapl_pool_pit = res_pools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["symbol"] == "AAPL")
+        .unwrap();
     assert_eq!(aapl_pool_pit["current_shares"], "100");
     assert_eq!(aapl_pool_pit["total_allowable_expenditure"], "1000.00");
     assert_eq!(aapl_pool_pit["average_cost_per_share"], "10.00");
 
-    // 2. Query custom date range `start_date=2026-05-15&end_date=2026-05-25`
+    // 2. `/api/investments/capital-gains?end_date=2026-05-05` (no `start_date`) —
+    // absent `start_date` means "from time zero" (decision 7.3), so this is the
+    // "as at a date" report use case. Unlike (1), the ledger is NOT truncated:
+    // the replay still runs the May 20th sale against the pool (average cost 15,
+    // pool ends at 100 shares / 1500 expenditure — same final state as an
+    // unfiltered query), even though that sale is excluded from `realized_events`
+    // because its date falls after `end_date`. This is precisely the divergence
+    // decision 7.3 removes: the old `as_at` would have truncated the ledger here
+    // and left the pool at 100 shares @ cost 10 instead.
+    let response_asat = app
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?end_date=2026-05-05",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response_asat.status(), StatusCode::OK);
+    let body_asat = to_bytes(response_asat.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let res_asat: serde_json::Value = serde_json::from_slice(&body_asat).unwrap();
+
+    assert_eq!(res_asat["realized_events"].as_array().unwrap().len(), 0);
+
+    let aapl_pool_asat = res_asat["pools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["symbol"] == "AAPL")
+        .unwrap();
+    assert_eq!(aapl_pool_asat["current_shares"], "100");
+    assert_eq!(aapl_pool_asat["total_allowable_expenditure"], "1500.00");
+    assert_eq!(aapl_pool_asat["average_cost_per_share"], "15.00");
+
+    // 3. Query custom date range `start_date=2026-05-15&end_date=2026-05-25`
     // Realized events contains strictly the sale on May 20th. (Proceeds 2500, S104 pool average cost 15.00, Matched Cost 1500, Gain 1000)
     let response_range = app
         .oneshot(request(
@@ -1241,7 +1290,7 @@ async fn test_cgt_profile_ids_filter() {
         .clone()
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27&profile_ids=alice",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05&profile_ids=alice",
         ))
         .await
         .unwrap();
@@ -1274,7 +1323,7 @@ async fn test_cgt_profile_ids_filter() {
         .clone()
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27&profile_ids=bob",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05&profile_ids=bob",
         ))
         .await
         .unwrap();
@@ -1291,7 +1340,7 @@ async fn test_cgt_profile_ids_filter() {
     let resp_all = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1348,7 +1397,7 @@ async fn test_cgt_missing_currency_returns_400() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1394,7 +1443,7 @@ async fn test_cgt_profile_ids_no_match() {
     let resp = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27&profile_ids=ghost",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05&profile_ids=ghost",
         ))
         .await
         .unwrap();
@@ -1464,7 +1513,7 @@ async fn test_cgt_fee_in_different_currency() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1517,7 +1566,7 @@ async fn test_cgt_missing_fee_currency_returns_400() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1568,7 +1617,7 @@ async fn test_cgt_split_quantity_is_shares_added_not_a_ratio() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1635,7 +1684,7 @@ async fn test_cgt_consolidation_removes_shares_and_preserves_cost() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1706,7 +1755,7 @@ async fn test_cgt_consolidation_exceeding_pool_is_refused() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -1791,7 +1840,7 @@ async fn test_cgt_consolidation_to_exactly_zero_clears_orphaned_cost() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2012,7 +2061,7 @@ async fn test_cgt_refuses_multi_owner_investment_account() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2099,7 +2148,7 @@ async fn test_cgt_single_owner_account_is_not_refused() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2147,7 +2196,7 @@ async fn test_cgt_ignores_multi_owner_account_with_no_investment_events() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2204,7 +2253,7 @@ async fn test_cgt_ignores_multi_owner_isa_account() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2265,7 +2314,7 @@ async fn test_cgt_refuses_symbol_with_mixed_currencies() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2338,7 +2387,7 @@ async fn test_cgt_allows_fee_currency_differing_from_trade_currency() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2408,7 +2457,7 @@ async fn test_cgt_allows_different_symbols_in_different_currencies() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2814,6 +2863,147 @@ async fn test_import_investments_allows_consistent_currencies() {
     assert_eq!(res["inserted"], 2);
 }
 
+/// `disposal_groups`: two disposals of the SAME symbol on DIFFERENT dates must stay
+/// two groups, never merge into one just because the symbol matches — the grouping
+/// key is (symbol, disposal_date), not symbol alone.
+#[tokio::test]
+async fn test_cgt_disposal_groups_same_symbol_different_dates_stay_separate() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Pool: 200 NVDA @ 10 (cost 2000, avg 10.00)
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "NVDA",
+            "2026-05-01T10:00:00",
+            "200",
+            "10.00",
+            None,
+        );
+        // Sell 50 on May 10th — pure S104, gain = 50*(30-10) = 1000
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "NVDA",
+            "2026-05-10T10:00:00",
+            "50",
+            "30.00",
+            None,
+        );
+        // Sell 50 more on May 20th — same symbol, different date, gain = 50*(40-10) = 1500
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "NVDA",
+            "2026-05-20T10:00:00",
+            "50",
+            "40.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Two realized_events (each pure S104, no multi-rule splitting here) must
+    // remain two disposal_groups, NOT collapse to one just because they share a symbol.
+    assert_eq!(res["realized_events"].as_array().unwrap().len(), 2);
+    let groups = res["disposal_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+
+    let g_may10 = groups
+        .iter()
+        .find(|g| g["disposal_date"] == "2026-05-10 10:00:00")
+        .unwrap();
+    assert_eq!(g_may10["symbol"], "NVDA");
+    assert_eq!(g_may10["quantity"], "50");
+    assert_eq!(g_may10["proceeds"], "1500.00");
+    assert_eq!(g_may10["cost_basis"], "500.00");
+    assert_eq!(g_may10["gain_loss"], "1000.00");
+
+    let g_may20 = groups
+        .iter()
+        .find(|g| g["disposal_date"] == "2026-05-20 10:00:00")
+        .unwrap();
+    assert_eq!(g_may20["symbol"], "NVDA");
+    assert_eq!(g_may20["quantity"], "50");
+    assert_eq!(g_may20["proceeds"], "2000.00");
+    assert_eq!(g_may20["cost_basis"], "500.00");
+    assert_eq!(g_may20["gain_loss"], "1500.00");
+}
+
+/// Contract test for decision 7.3's "absent `start_date` means from time zero":
+/// a query with only `end_date` set must include disposals from BEFORE the tax
+/// year the report's date range would otherwise suggest, proving there is no
+/// implicit lower bound at all (not "start of this tax year", not "start of
+/// this calendar year" — genuinely unbounded).
+#[tokio::test]
+async fn test_cgt_absent_start_date_is_from_time_zero() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // A disposal years before any plausible "current" tax year.
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "IBM",
+            "2019-01-01T10:00:00",
+            "10",
+            "100.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "IBM",
+            "2019-06-01T10:00:00",
+            "10",
+            "150.00",
+            None,
+        );
+    }
+
+    // Only `end_date` set, far in the future — no `start_date` at all.
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?end_date=2026-01-01",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let realized = res["realized_events"].as_array().unwrap();
+    assert_eq!(realized.len(), 1);
+    assert_eq!(realized[0]["symbol"], "IBM");
+    assert_eq!(realized[0]["quantity"], "10");
+    assert_eq!(realized[0]["proceeds"], "1500.00");
+    assert_eq!(realized[0]["cost_basis"], "1000.00");
+    assert_eq!(realized[0]["gain_loss"], "500.00");
+}
+
 // ── Historical (date-keyed) FX ───────────────────────────────────────────────
 
 /// The whole point of the feature: each leg converts at ITS OWN date's rate.
@@ -2829,6 +3019,7 @@ async fn test_cgt_uses_date_specific_rates() {
     {
         let db_lock = db.lock().unwrap();
         setup_account(&db_lock, "gia", AccountType::Investment);
+
         // Buy 100 @ $10 on 2026-05-01, sell 100 @ $12 on 2026-06-01.
         insert_event_ccy(
             &db_lock,
@@ -2881,7 +3072,7 @@ async fn test_cgt_uses_date_specific_rates() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -2955,7 +3146,7 @@ async fn test_cgt_missing_exchange_rates_lists_every_pair() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -3031,7 +3222,7 @@ async fn test_cgt_precheck_requires_rates_for_prior_year_acquisitions() {
         .clone()
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -3055,7 +3246,7 @@ async fn test_cgt_precheck_requires_rates_for_prior_year_acquisitions() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
@@ -3104,7 +3295,7 @@ async fn test_cgt_preferred_currency_needs_no_rates() {
     let response = app
         .oneshot(request(
             Method::GET,
-            "/api/investments/capital-gains?tax_year=2026-27",
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
         ))
         .await
         .unwrap();
