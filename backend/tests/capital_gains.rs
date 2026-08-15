@@ -1627,7 +1627,9 @@ async fn test_cgt_consolidation_removes_shares_and_preserves_cost() {
         .parse()
         .unwrap();
     assert!((avg - 50.0).abs() < 1e-9, "average cost per share: {avg}");
-    // Pool figures are in the symbol's native currency, so the pool must say which.
+    // original_currency is source metadata (the symbol's own trade currency), not a
+    // label for total_allowable_expenditure / average_cost_per_share above — those
+    // are always base currency (GBP).
     assert_eq!(pool["original_currency"], "GBP");
 }
 
@@ -1686,9 +1688,113 @@ async fn test_cgt_consolidation_exceeding_pool_is_refused() {
     );
 }
 
-/// A pool holding a non-GBP symbol reports that symbol's own currency, not the
-/// preferred one. Without this the frontend falls back to the base currency and
-/// mislabels the pool workings for any symbol with no disposals in the window.
+/// A consolidation that removes EXACTLY every share the pool holds must clear
+/// pool_cost, the same way a Sell that empties the pool does. Left unhandled this
+/// orphans the cost: the pool sits at zero shares with non-zero cost, so the next
+/// Buy inherits that stale cost into its average, and a later Sell reports far too
+/// much allowable expenditure — understating the gain (or manufacturing a loss)
+/// on a disposal that never earned that cost.
+///
+/// This asserts the downstream tax outcome, not just the pool's post-consolidation
+/// state: buy 100 @ £10 (cost £1000), consolidate all 100 away, buy 10 @ £20 (cost
+/// £200), sell 10 @ £30 (proceeds £300). If the £1000 leaked through, the average
+/// cost per share would be computed over the orphaned + new cost and the sale would
+/// report a loss instead of the correct £100 gain (£300 - £200).
+#[tokio::test]
+async fn test_cgt_consolidation_to_exactly_zero_clears_orphaned_cost() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Buy 100 @ 10 (cost 1000).
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "TSCO",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        // Consolidation removes exactly the 100 shares the pool holds.
+        insert_event(
+            &db_lock,
+            "gia",
+            "split",
+            "TSCO",
+            "2026-05-10T10:00:00",
+            "-100",
+            "0.00",
+            None,
+        );
+        // Fresh acquisition into the now-empty pool: 10 @ 20 (cost 200).
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "TSCO",
+            "2026-06-01T10:00:00",
+            "10",
+            "20.00",
+            None,
+        );
+        // Sell all 10 @ 30 (proceeds 300).
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "TSCO",
+            "2026-06-15T10:00:00",
+            "10",
+            "30.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let pool = res["pools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["symbol"] == "TSCO")
+        .expect("TSCO pool");
+    // Pool state alone: all 10 shares were sold, so 0 remain and cost is 0 —
+    // not the orphaned 1000 left dangling on an empty pool.
+    assert_eq!(pool["current_shares"], "0");
+    assert_eq!(pool["total_allowable_expenditure"], "0");
+
+    let disposal = res["realized_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["symbol"] == "TSCO")
+        .expect("TSCO disposal");
+    // The downstream consequence: correct £100 gain (300 proceeds - 200 cost).
+    // Orphaned cost would report a £900 loss instead (300 - 1200).
+    assert_eq!(disposal["cost_basis"], "200.00");
+    assert_eq!(disposal["gain_loss"], "100.00");
+}
+
+/// A pool holding a non-GBP symbol reports that symbol's own currency as source
+/// metadata (`original_currency`), but the pool's cost/average figures are always
+/// converted to base currency (GBP) — `original_currency` must NOT be read as a
+/// format label for them. This asserts the amount alongside the currency string:
+/// a version that swapped the two (labelled the value USD but left it as a GBP
+/// amount, or vice versa) would pass a currency-only assertion while still being
+/// wrong, which is exactly how this shipped mislabelled before.
 #[tokio::test]
 async fn test_cgt_pool_reports_original_currency_for_foreign_symbol() {
     let (app, db) = test_router();
@@ -1735,7 +1841,81 @@ async fn test_cgt_pool_reports_original_currency_for_foreign_symbol() {
         .iter()
         .find(|p| p["symbol"] == "PLTR")
         .expect("PLTR pool");
+    // Source metadata: the trades were denominated in USD.
     assert_eq!(pool["original_currency"], "USD");
+    // But the value itself is base currency (GBP): 10 shares * $100 * fx_rate 2 = £2000,
+    // NOT $1000 (the USD cost) and NOT $2000 (the GBP amount mislabelled as USD).
+    assert_eq!(pool["total_allowable_expenditure"], "2000.00");
+    assert_eq!(pool["average_cost_per_share"], "200.00");
+}
+
+/// Pins a deliberate but previously-unverified choice: when a symbol's events don't
+/// all share a currency, the `/pools` endpoint refuses via
+/// `check_single_currency_per_symbol` rather than letting a mixed-currency symbol
+/// reach the engine — see `test_cgt_refuses_symbol_with_mixed_currencies` for the
+/// `/capital-gains` equivalent. The `pool_currency` fallback in `run_cgt_engine`
+/// that would pick the earliest event's currency for such a symbol is therefore
+/// unreachable through the API today; this test only pins that the `/pools`
+/// endpoint's own refusal fires for the same mixed-currency shape, not the
+/// fallback's tie-break rule.
+#[tokio::test]
+async fn test_s104_pools_refuses_mixed_currency_symbol() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "PLTR",
+            "2026-05-01T10:00:00",
+            "10",
+            "100.00",
+            None,
+            "USD",
+            None,
+        );
+        // Same symbol, different currency — the case check_single_currency_per_symbol
+        // exists to catch.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "PLTR",
+            "2026-05-15T10:00:00",
+            "5",
+            "50.00",
+            None,
+            "EUR",
+            None,
+        );
+    }
+
+    for (code, rate) in [("USD", "2"), ("EUR", "1.5")] {
+        let create = app
+            .clone()
+            .oneshot(request_json(
+                Method::POST,
+                "/api/currencies",
+                serde_json::json!({ "code": code, "fx_rate": rate }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::CREATED);
+    }
+
+    let response = app
+        .oneshot(request(Method::GET, "/api/investments/pools"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "mixed_symbol_currency");
+    let msg = res["error"].as_str().unwrap();
+    assert!(msg.contains("PLTR"), "message must name the symbol: {msg}");
 }
 
 // ── Refusal: multi-owner accounts ────────────────────────────────────────────
