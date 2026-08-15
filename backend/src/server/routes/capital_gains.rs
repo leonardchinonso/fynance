@@ -20,20 +20,30 @@ use crate::util::fx::FxRateMap;
 
 // ── Query Parameters ─────────────────────────────────────────────────────────
 
+// `tax_year` and `as_at` were removed from the wire format in favour of
+// `start_date` / `end_date` alone — see plan 23 §0.2 (decision 7.3). The two
+// dropped params looked interchangeable and were not: `as_at` truncated the
+// *event ledger* before matching, so the 30-day rule could not reach forward
+// to a later acquisition, while `end_date` only ever filtered which
+// disposals were *emitted* — the pool still replayed through every later
+// event, so the 30-day rule *could* reach forward. The same disposal got a
+// different cost basis depending on which param the caller used, and
+// nothing about the names told you that. "Tax year" is now frontend
+// arithmetic (`start = YYYY-04-06`, `end = (YYYY+1)-04-05`) and "as at a
+// date" is `end_date` alone — an absent `start_date` means "from time
+// zero", which reproduces the old `as_at` semantic for the report use case.
 #[derive(Debug, Deserialize)]
 pub struct CapitalGainsQuery {
     pub account_id: Option<String>,
     pub symbol: Option<String>,
-    pub start_date: Option<String>,  // YYYY-MM-DD
-    pub end_date: Option<String>,    // YYYY-MM-DD
-    pub tax_year: Option<String>,    // e.g. "2024-25" -> 6 Apr 2024 to 5 Apr 2025
-    pub as_at: Option<String>,       // YYYY-MM-DD (limit calculations to this date)
+    pub start_date: Option<String>, // YYYY-MM-DD; absent = from time zero
+    pub end_date: Option<String>,   // YYYY-MM-DD; absent = no upper bound
     pub profile_ids: Option<String>, // comma-separated; scope to accounts whose profile_ids JSON intersects this set
 }
 
 #[derive(Debug, Deserialize)]
 pub struct S104PoolsQuery {
-    pub as_at: Option<String>,       // YYYY-MM-DD
+    pub end_date: Option<String>, // YYYY-MM-DD; replay events up to and including this date only
     pub profile_ids: Option<String>, // comma-separated; same semantics as on /capital-gains
 }
 
@@ -100,7 +110,46 @@ pub struct CapitalGainsResponse {
     pub summary: CgtSummary,
     pub symbol_summaries: Vec<SymbolSummary>,
     pub realized_events: Vec<CgtRealizedEvent>,
+    /// One row per actual sale — `realized_events` rolled up by `(symbol,
+    /// disposal_date)`. See [`CgtDisposalGroup`] for why this exists
+    /// alongside, not instead of, the granular rows.
+    pub disposal_groups: Vec<CgtDisposalGroup>,
     pub pools: Vec<S104PoolState>,
+}
+
+/// A single real-world disposal, with HMRC's matching-rule buckets rolled back up.
+///
+/// `realized_events` emits one row per **matched bucket** — a sale of 500 shares that matches
+/// 100 same-day + 50 under the 30-day rule + 350 from the S104 pool becomes three rows, because
+/// the matching rules force three different cost-basis calculations. But nobody sold three
+/// times, and SA108 box 23 ("number of disposals") wants the honest count. This groups by
+/// `(symbol, disposal_date)` — the actual sale — and sums the constituent matches back together.
+///
+/// Deliberately NOT grouped by `rule_applied` (that's what `realized_events` already gives you —
+/// it would just re-introduce the same artifact) and NOT by rate band (a tax-computation concern,
+/// out of scope here — see plan 23 §7.7).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct CgtDisposalGroup {
+    pub symbol: String,
+    pub disposal_date: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub quantity: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub proceeds: Decimal, // in base currency, summed across matches
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub cost_basis: Decimal, // in base currency, summed across matches
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub gain_loss: Decimal, // proceeds - cost_basis
+    pub original_currency: String,
+    /// The individual matched-bucket rows this group rolls up. Same objects as in
+    /// `realized_events` (by `disposal_id` + `rule_applied`), repeated here so a
+    /// consumer that only fetched `disposal_groups` can still show the breakdown.
+    pub events: Vec<CgtRealizedEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -290,44 +339,18 @@ impl CalEvent {
     }
 }
 
-// ── Helper functions for UK tax year date conversion ─────────────────────────
-
-fn parse_tax_year(tax_year: &str) -> Option<(NaiveDate, NaiveDate)> {
-    // Expected format YYYY-YY or YYYY-YYYY, e.g. "2024-25" or "2024-2025"
-    let parts: Vec<&str> = tax_year.split('-').collect();
-    if parts.len() != 2 {
-        return None;
-    }
-
-    let start_year_str = parts[0];
-    let start_year = start_year_str.parse::<i32>().ok()?;
-
-    let end_year = if parts[1].len() == 2 {
-        let prefix = start_year / 100;
-        let suffix = parts[1].parse::<i32>().ok()?;
-        prefix * 100 + suffix
-    } else {
-        parts[1].parse::<i32>().ok()?
-    };
-
-    if end_year != start_year + 1 {
-        return None;
-    }
-
-    let start_date = NaiveDate::from_ymd_opt(start_year, 4, 6)?;
-    let end_date = NaiveDate::from_ymd_opt(end_year, 4, 5)?;
-
-    Some((start_date, end_date))
-}
-
 // ── S104 Pool state calculations ─────────────────────────────────────────────
 
 pub async fn get_s104_pools(
     State(state): State<AppState>,
     Query(q): Query<S104PoolsQuery>,
 ) -> Result<Json<Vec<S104PoolState>>, AppError> {
+    // A pool snapshot has no "start" — it is a point-in-time replay of the
+    // whole ledger, so `end_date` here truncates the ledger itself (the old
+    // `as_at` behaviour), not merely which disposals are emitted. There is
+    // nothing to emit-filter: this endpoint returns pool state, not disposals.
     let as_at = q
-        .as_at
+        .end_date
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(parse_date)
@@ -367,39 +390,26 @@ pub async fn get_capital_gains(
     State(state): State<AppState>,
     Query(q): Query<CapitalGainsQuery>,
 ) -> Result<Json<CapitalGainsResponse>, AppError> {
-    let as_at = q
-        .as_at
+    // `tax_year` and `as_at` are gone from the wire format (plan 23 §0.2,
+    // decision 7.3). The engine never truncates the event ledger here — the
+    // S104 pool always replays every event regardless of `end_date`, so the
+    // 30-day rule can always reach forward to a later acquisition. That is
+    // now the *only* behaviour, rather than one of two depending on which
+    // param the caller happened to use. Absent `start_date` means "from time
+    // zero", which reproduces the old `as_at` semantic for the report use
+    // case (a period with no lower bound).
+    let filter_start = q
+        .start_date
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(parse_date)
         .transpose()?;
-
-    // Date range logic
-    let (filter_start, filter_end) = match q.tax_year.as_deref().filter(|s| !s.is_empty()) {
-        Some(ty) => parse_tax_year(ty)
-            .map(|(s, e)| (Some(s), Some(e)))
-            .ok_or_else(|| {
-                AppError::bad_request(
-                    format!("invalid tax_year format: {ty} (expected YYYY-YY, e.g. 2024-25)"),
-                    "invalid_tax_year",
-                )
-            })?,
-        None => {
-            let start = q
-                .start_date
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(parse_date)
-                .transpose()?;
-            let end = q
-                .end_date
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(parse_date)
-                .transpose()?;
-            (start, end)
-        }
-    };
+    let filter_end = q
+        .end_date
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(parse_date)
+        .transpose()?;
 
     if let (Some(s), Some(e)) = (filter_start, filter_end) {
         validate_date_range(s, e)?;
@@ -442,7 +452,7 @@ pub async fn get_capital_gains(
     let mut response = run_cgt_engine(
         events,
         &excluded_accounts,
-        as_at,
+        None, // no ledger truncation — see the `filter_start`/`filter_end` comment above
         filter_start,
         filter_end,
         &fx,
@@ -953,6 +963,8 @@ fn run_cgt_engine(
     // Sort realized events chronologically
     all_realized.sort_by(|a, b| a.disposal_date.cmp(&b.disposal_date));
 
+    let disposal_groups = group_disposals(&all_realized);
+
     Ok(CapitalGainsResponse {
         summary: CgtSummary {
             total_proceeds: Decimal::ZERO,
@@ -964,6 +976,43 @@ fn run_cgt_engine(
         },
         symbol_summaries: Vec::new(),
         realized_events: all_realized,
+        disposal_groups,
         pools: all_pools,
     })
+}
+
+/// Rolls `realized_events` up by `(symbol, disposal_date)` into one row per actual sale.
+///
+/// `disposal_id` is deliberately NOT part of the grouping key: it identifies the underlying
+/// investment event, and a single disposal event is exactly what we're collapsing multiple
+/// matched-bucket rows back into — grouping by it would just reproduce `realized_events`
+/// one-for-one. `(symbol, disposal_date)` is what HMRC treats as one same-day disposal in
+/// aggregate; two distinct sell events for the same symbol on the same date are the same
+/// disposal for reporting purposes (see the same-day FIFO matching above, which already
+/// treats them jointly). Two disposals of the same symbol on *different* dates stay separate
+/// groups — the date is part of the key precisely so they don't collapse into each other.
+fn group_disposals(realized_events: &[CgtRealizedEvent]) -> Vec<CgtDisposalGroup> {
+    // BTreeMap keeps groups in (symbol, disposal_date) order without a separate sort pass.
+    let mut groups: BTreeMap<(String, String), CgtDisposalGroup> = BTreeMap::new();
+
+    for event in realized_events {
+        let key = (event.symbol.clone(), event.disposal_date.clone());
+        let group = groups.entry(key).or_insert_with(|| CgtDisposalGroup {
+            symbol: event.symbol.clone(),
+            disposal_date: event.disposal_date.clone(),
+            quantity: Decimal::ZERO,
+            proceeds: Decimal::ZERO,
+            cost_basis: Decimal::ZERO,
+            gain_loss: Decimal::ZERO,
+            original_currency: event.original_currency.clone(),
+            events: Vec::new(),
+        });
+        group.quantity += event.quantity;
+        group.proceeds += event.proceeds;
+        group.cost_basis += event.cost_basis;
+        group.gain_loss += event.gain_loss;
+        group.events.push(event.clone());
+    }
+
+    groups.into_values().collect()
 }
