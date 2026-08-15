@@ -337,11 +337,22 @@ impl Db {
             params![code],
             |r| r.get(0),
         )?;
+        // Investment events were missing from this guard, which is precisely how the
+        // "configured currency vanished" state was reached: deleting a currency still
+        // referenced by the investment ledger leaves the CGT engine unable to convert
+        // those events, so a report either refuses or (worse) sums unconverted figures.
+        // Both `currency` (the trade currency) and `fee_currency` are references — a
+        // fee charged in USD on a GBP trade keeps USD in use on its own.
+        let investment_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM investments WHERE currency = ?1 OR fee_currency = ?1",
+            params![code],
+            |r| r.get(0),
+        )?;
 
-        let total = holding_count + account_count + transaction_count;
+        let total = holding_count + account_count + transaction_count + investment_count;
         if total > 0 {
             anyhow::bail!(
-                "cannot delete currency '{code}': in use by {holding_count} holdings, {account_count} accounts, {transaction_count} transactions"
+                "cannot delete currency '{code}': in use by {holding_count} holdings, {account_count} accounts, {transaction_count} transactions, {investment_count} investment events"
             );
         }
 
@@ -1025,6 +1036,44 @@ impl Db {
             row_to_investment_event,
         )?;
         Ok((event, outcome))
+    }
+
+    /// The distinct trade currencies already recorded against a symbol, sorted.
+    ///
+    /// A symbol is a plain TEXT column on `investments` — there is no symbols
+    /// table — so there is nowhere to hang a DB-level constraint saying "one
+    /// symbol, one currency". This is the lookup the write-time guard uses
+    /// instead. Normally returns zero rows (a new symbol) or exactly one.
+    /// The `(symbol, currency)` pair of a single event, or `None` if it does not
+    /// exist. Used by the PATCH path to resolve the fields a partial body omits.
+    pub fn investment_event_symbol_currency(&self, id: &str) -> Result<Option<(String, String)>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT symbol, currency FROM investments WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    /// `exclude_id` omits one event from the answer, so a PATCH can ask "what
+    /// currencies would this symbol have if my row were not counted?" — without
+    /// it, editing the sole event of a symbol would always conflict with itself.
+    pub fn investment_currencies_for_symbol(
+        &self,
+        symbol: &str,
+        exclude_id: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT currency FROM investments
+             WHERE symbol = ?1 AND (?2 IS NULL OR id <> ?2) ORDER BY currency",
+        )?;
+        let rows = stmt
+            .query_map(params![symbol, exclude_id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn list_investment_events(
@@ -7441,6 +7490,75 @@ mod investment_dedup_tests {
             })
             .unwrap();
         assert_eq!(no_fee.fee_currency, None);
+    }
+
+    /// A currency still referenced by the investment ledger cannot be deleted.
+    /// Without this, deleting it leaves the CGT engine unable to convert those
+    /// events — the "configured currency vanished" state.
+    #[test]
+    fn delete_currency_refuses_when_used_by_investment_trade_currency() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+        db.create_currency("USD", Decimal::new(79, 2)).unwrap();
+
+        db.create_investment_event(&crate::model::CreateInvestmentEventBody {
+            currency: "USD".to_string(),
+            ..make_event_body("AAPL")
+        })
+        .unwrap();
+
+        let err = db.delete_currency("USD").unwrap_err().to_string();
+        assert!(err.contains("in use"), "unexpected error: {err}");
+        assert!(
+            err.contains("1 investment events"),
+            "error should count the investment events: {err}"
+        );
+        // Still present.
+        assert!(db.currency_exists("USD").unwrap());
+    }
+
+    /// A fee charged in another currency keeps THAT currency in use on its own,
+    /// even though no trade is denominated in it.
+    #[test]
+    fn delete_currency_refuses_when_used_only_as_investment_fee_currency() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+        db.create_currency("USD", Decimal::new(79, 2)).unwrap();
+
+        // Trade in GBP, fee in USD — USD appears only in fee_currency.
+        db.create_investment_event(&crate::model::CreateInvestmentEventBody {
+            currency: "GBP".to_string(),
+            fee: Some("2.50".to_string()),
+            fee_currency: Some("USD".to_string()),
+            ..make_event_body("AAPL")
+        })
+        .unwrap();
+
+        let err = db.delete_currency("USD").unwrap_err().to_string();
+        assert!(
+            err.contains("1 investment events"),
+            "fee_currency alone should block the delete: {err}"
+        );
+        assert!(db.currency_exists("USD").unwrap());
+    }
+
+    /// The guard must not over-reach: an unreferenced currency still deletes.
+    #[test]
+    fn delete_currency_allows_when_no_investment_references_it() {
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+        db.create_currency("USD", Decimal::new(79, 2)).unwrap();
+        db.create_currency("JPY", Decimal::new(52, 4)).unwrap();
+
+        // An investment event in USD must not keep the unrelated JPY row locked.
+        db.create_investment_event(&crate::model::CreateInvestmentEventBody {
+            currency: "USD".to_string(),
+            ..make_event_body("AAPL")
+        })
+        .unwrap();
+
+        db.delete_currency("JPY").unwrap();
+        assert!(!db.currency_exists("JPY").unwrap());
     }
 
     fn make_test_account(db: &Db, id: &str) {
