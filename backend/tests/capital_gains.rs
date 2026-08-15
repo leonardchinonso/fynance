@@ -123,6 +123,34 @@ fn insert_event_ccy(
     db.create_investment_event(&body).unwrap();
 }
 
+/// Seed date-keyed exchange rates through the real endpoint.
+///
+/// Every non-GBP CGT test needs this: the engine converts each leg at its own date's rate and
+/// refuses (`missing_exchange_rates`) rather than falling back to the flat `currencies` rate, so
+/// a foreign-currency test without stored rates is a 400, not a calculation. Rates are supplied
+/// per date deliberately — that is the unit the engine looks up, and it is what makes a test
+/// able to detect a rate being read for the wrong date.
+async fn seed_rates(app: &axum::Router, base: &str, dates_and_rates: &[(&str, &str)]) {
+    let rates: Vec<serde_json::Value> = dates_and_rates
+        .iter()
+        .map(|(date, rate)| serde_json::json!({ "base": base, "date": date, "rate": rate }))
+        .collect();
+    let response = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/exchange-rates",
+            serde_json::json!({ "rates": rates }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::CREATED,
+        "seeding exchange rates should succeed"
+    );
+}
+
 #[tokio::test]
 async fn test_cgt_same_day_matching() {
     let (app, db) = test_router();
@@ -1314,6 +1342,13 @@ async fn test_cgt_fee_in_different_currency() {
         .unwrap();
     assert_eq!(create.status(), StatusCode::CREATED);
 
+    // The engine converts each leg at its own date. Both dates carry the same rate (2) here so
+    // the arithmetic below stays the flat-rate arithmetic this test was written to check — the
+    // point of this test is the fee currency, not the date, and holding the rate constant keeps
+    // the two concerns from being tangled. `test_cgt_uses_date_specific_rates` is where a
+    // differing rate per date is asserted.
+    seed_rates(&app, "USD", &[("2026-05-01", "2"), ("2026-05-10", "2")]).await;
+
     let response = app
         .oneshot(request(
             Method::GET,
@@ -1608,6 +1643,10 @@ async fn test_cgt_pool_reports_original_currency_for_foreign_symbol() {
         .unwrap();
     assert_eq!(create.status(), StatusCode::CREATED);
 
+    // The pool's cost basis is built from acquisitions converted at their own dates, so even a
+    // pools-only request needs the acquisition-date rate stored.
+    seed_rates(&app, "USD", &[("2026-05-01", "2")]).await;
+
     let response = app
         .oneshot(request(Method::GET, "/api/investments/pools"))
         .await
@@ -1624,4 +1663,306 @@ async fn test_cgt_pool_reports_original_currency_for_foreign_symbol() {
         .find(|p| p["symbol"] == "PLTR")
         .expect("PLTR pool");
     assert_eq!(pool["original_currency"], "USD");
+}
+
+// ── Historical (date-keyed) FX ───────────────────────────────────────────────
+
+/// The whole point of the feature: each leg converts at ITS OWN date's rate.
+///
+/// Acquisition and disposal are given deliberately different rates, so the expected numbers are
+/// only reachable if the engine looks up per date. Under the old flat-rate behaviour — one rate
+/// applied to every event regardless of date — both legs would use the same number and the
+/// gain would be wrong; that is precisely the ~6% error against the owner's filed return that
+/// this feature exists to remove.
+#[tokio::test]
+async fn test_cgt_uses_date_specific_rates() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // Buy 100 @ $10 on 2026-05-01, sell 100 @ $12 on 2026-06-01.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-06-01T10:00:00",
+            "100",
+            "12.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            // The flat rate is deliberately neither of the historical rates: if the engine ever
+            // falls back to it, the numbers below cannot come out right.
+            serde_json::json!({ "code": "USD", "fx_rate": "0.5" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    // Acquisition at 0.80, disposal at 0.60 — a falling rate, so a position that gained in USD
+    // makes a LOSS in GBP. No single flat rate can produce this pair of numbers.
+    seed_rates(
+        &app,
+        "USD",
+        &[("2026-05-01", "0.80"), ("2026-06-01", "0.60")],
+    )
+    .await;
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let realized = res["realized_events"].as_array().unwrap();
+    assert_eq!(realized.len(), 1);
+    let event = &realized[0];
+
+    // Cost basis: 100 * $10 = $1000 at the 1 May rate 0.80 -> £800.00
+    assert_eq!(event["cost_basis"], "800.0000");
+    // Proceeds:   100 * $12 = $1200 at the 1 Jun rate 0.60 -> £720.00
+    assert_eq!(event["proceeds"], "720.0000");
+    // A $200 profit becomes an £80 LOSS once each leg is converted at its own date.
+    assert_eq!(event["gain_loss"], "-80.0000");
+}
+
+/// A missing rate must list EVERY missing pair in one response, not just the first.
+///
+/// One round-trip has to tell the user everything to supply; discovering ~49 missing rates one
+/// request at a time would be unusable. Also asserts the distinct `missing_exchange_rates` code
+/// (not `missing_currencies`, which means the currency has no row at all).
+#[tokio::test]
+async fn test_cgt_missing_exchange_rates_lists_every_pair() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-06-01T10:00:00",
+            "40",
+            "12.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "0.75" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    // Seed only ONE of the two required dates, so the response must report exactly the other.
+    seed_rates(&app, "USD", &[("2026-05-01", "0.80")]).await;
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(res["code"], "missing_exchange_rates");
+    assert_eq!(res["quote"], "GBP");
+    let missing = res["missing"].as_array().unwrap();
+    assert_eq!(missing.len(), 1, "only the unseeded date should be missing");
+    assert_eq!(missing[0]["currency"], "USD");
+    assert_eq!(missing[0]["date"], "2026-06-01");
+}
+
+/// A report for one tax year needs rates for acquisitions from EARLIER years.
+///
+/// The S104 pool is built from every acquisition ever, so its cost basis depends on rates going
+/// back as far as the ledger. Collecting only dates inside the requested window would leave the
+/// pool built at the wrong rates and silently produce a wrong cost basis — the report would look
+/// complete and be wrong. This is the subtlety that makes the precheck walk the event set rather
+/// than the date filter.
+#[tokio::test]
+async fn test_cgt_precheck_requires_rates_for_prior_year_acquisitions() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // Acquired two tax years before the reporting window.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2023-06-15T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        // Disposed inside 2026-27.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-06-01T10:00:00",
+            "50",
+            "20.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "0.75" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    // Seed only the in-window disposal date. The 2023 acquisition is outside the requested tax
+    // year, so a precheck that walked the date filter would think it had everything it needed.
+    seed_rates(&app, "USD", &[("2026-06-01", "0.60")]).await;
+
+    let response = app
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "the out-of-window acquisition rate must still be required"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "missing_exchange_rates");
+    let missing = res["missing"].as_array().unwrap();
+    assert_eq!(missing.len(), 1);
+    assert_eq!(
+        missing[0]["date"], "2023-06-15",
+        "the prior-year acquisition date is what is missing"
+    );
+
+    // Supplying it lets the report generate, and the cost basis uses the 2023 rate.
+    seed_rates(&app, "USD", &[("2023-06-15", "0.80")]).await;
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let realized = res["realized_events"].as_array().unwrap();
+    assert_eq!(realized.len(), 1);
+    // 50 shares at $10 = $500 at the 2023 rate 0.80 -> £400.
+    assert_eq!(realized[0]["cost_basis"], "400.0000");
+    // 50 shares at $20 = $1000 at the 2026 rate 0.60 -> £600.
+    assert_eq!(realized[0]["proceeds"], "600.0000");
+}
+
+/// A GBP-only portfolio needs no rates at all: the preferred currency converts to itself at 1
+/// and must never be prompted for. Guards against the precheck demanding GBP->GBP rates, which
+/// would make every existing GBP report unusable.
+#[tokio::test]
+async fn test_cgt_preferred_currency_needs_no_rates() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "TSCO",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "TSCO",
+            "2026-06-01T10:00:00",
+            "100",
+            "12.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let realized = res["realized_events"].as_array().unwrap();
+    assert_eq!(realized.len(), 1);
+    assert_eq!(realized[0]["gain_loss"], "200.00");
 }

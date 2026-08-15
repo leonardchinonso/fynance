@@ -349,6 +349,10 @@ impl AccountType {
 pub struct Profile {
     pub id: String,
     pub name: String,
+    /// HMRC Unique Taxpayer Reference (10 digits), used on SA108 pages of a
+    /// generated CGT report. `None` until the user supplies one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub utr: Option<String>,
 }
 
 /// Time granularity used by spending-grid and portfolio-history endpoints.
@@ -519,6 +523,80 @@ pub struct PatchCurrencyPayload {
     pub fx_rate: Option<Decimal>,
     #[serde(default)]
     pub is_preferred: Option<bool>,
+}
+
+/// A date-keyed exchange rate. Returned by GET /api/exchange-rates.
+///
+/// `rate` is the number of `quote` units per ONE `base` unit, so
+/// `amount_in_quote = amount_in_base * rate`. A row
+/// `(base: "USD", quote: "GBP", rate: "0.7862")` means $1 = £0.7862.
+/// The direction is restated on every type that carries a rate because an
+/// inverted rate yields plausible-looking but wrong tax figures.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ExchangeRate {
+    pub base: String,
+    pub quote: String,
+    /// YYYY-MM-DD.
+    pub date: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub rate: Decimal,
+    /// Provenance: "user" (typed in) or "suggested" (pre-filled then accepted).
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// One rate in a bulk create/update request.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct ExchangeRateInput {
+    pub base: String,
+    /// Defaults to the preferred currency when omitted, which is what the
+    /// pre-flight screen wants — every rate it collects quotes into the
+    /// currency the report is denominated in.
+    #[serde(default)]
+    pub quote: Option<String>,
+    /// YYYY-MM-DD.
+    pub date: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub rate: Decimal,
+    /// Defaults to "user".
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+/// Request body for POST /api/exchange-rates.
+///
+/// Always a batch: a report needs ~49 rates for a single tax year, so bulk
+/// entry is the normal case rather than the exception. A single rate is just a
+/// batch of one.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct CreateExchangeRatesPayload {
+    pub rates: Vec<ExchangeRateInput>,
+}
+
+/// Request body for PATCH /api/profiles/:id — name and/or UTR.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PatchProfilePayload {
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `Some(Some(v))` sets the UTR, `Some(None)` clears it, `None` leaves it
+    /// untouched. The double option is what distinguishes "not mentioned in
+    /// this request" from "explicitly set to null".
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub utr: Option<Option<String>>,
+}
+
+/// Lets a field distinguish an explicit JSON `null` from an absent key.
+fn deserialize_optional_field<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<String>::deserialize(deserializer)?))
 }
 
 /// Cash-flow direction filter for aggregation endpoints.

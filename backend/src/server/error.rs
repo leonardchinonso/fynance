@@ -17,6 +17,15 @@ pub enum AppError {
     NotFound(String),
     /// 400: bad input with a specific machine-readable code.
     BadRequest { message: String, code: &'static str },
+    /// 400 carrying a structured payload alongside the message, merged into the
+    /// response body. For errors the client must act on item-by-item rather than
+    /// display as prose — the CGT pre-flight lists ~49 missing `(currency, date)`
+    /// rates, which is a form to fill in, not a sentence to read.
+    BadRequestWithDetails {
+        message: String,
+        code: &'static str,
+        details: serde_json::Value,
+    },
     /// 409: conflict (e.g. duplicate ID). Specific machine-readable code.
     Conflict { message: String, code: &'static str },
     /// 401: missing or invalid bearer token. code = "unauthorized"
@@ -38,6 +47,20 @@ impl AppError {
         Self::BadRequest {
             message: message.into(),
             code,
+        }
+    }
+
+    /// Construct a 400 error whose body also carries a structured `details` object,
+    /// for clients that must act on the contents rather than render the message.
+    pub fn bad_request_with_details(
+        message: impl Into<String>,
+        code: &'static str,
+        details: serde_json::Value,
+    ) -> Self {
+        Self::BadRequestWithDetails {
+            message: message.into(),
+            code,
+            details,
         }
     }
 
@@ -73,7 +96,7 @@ impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::BadRequest { .. } => StatusCode::BAD_REQUEST,
+            Self::BadRequest { .. } | Self::BadRequestWithDetails { .. } => StatusCode::BAD_REQUEST,
             Self::Conflict { .. } => StatusCode::CONFLICT,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::BadGateway { .. } => StatusCode::BAD_GATEWAY,
@@ -87,6 +110,7 @@ impl AppError {
         match self {
             Self::NotFound(_) => "not_found",
             Self::BadRequest { code, .. } => code,
+            Self::BadRequestWithDetails { code, .. } => code,
             Self::Conflict { code, .. } => code,
             Self::Unauthorized(_) => "unauthorized",
             Self::BadGateway { code, .. } => code,
@@ -100,6 +124,7 @@ impl AppError {
         match self {
             Self::NotFound(m) | Self::Unauthorized(m) => m.clone(),
             Self::BadRequest { message, .. }
+            | Self::BadRequestWithDetails { message, .. }
             | Self::Conflict { message, .. }
             | Self::BadGateway { message, .. }
             | Self::GatewayTimeout { message, .. }
@@ -116,11 +141,24 @@ impl IntoResponse for AppError {
             tracing::error!(error = ?err, "handler failed");
         }
         let status = self.status_code();
-        let body = Json(json!({
+        let mut body = json!({
             "error": self.message(),
             "code":  self.code_str(),
-        }));
-        (status, body).into_response()
+        });
+        // Merge the structured payload in at the top level, so a client reads
+        // e.g. `missing` beside `error`/`code` rather than nested under a key it
+        // has to know about. `error` and `code` are written first and the merge
+        // skips them, so a details object can never shadow either.
+        if let Self::BadRequestWithDetails { details, .. } = &self {
+            if let (Some(obj), Some(extra)) = (body.as_object_mut(), details.as_object()) {
+                for (k, v) in extra {
+                    if k != "error" && k != "code" {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        (status, Json(body)).into_response()
     }
 }
 

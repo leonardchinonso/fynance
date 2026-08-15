@@ -198,6 +198,19 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/currencies/:code",
             delete(routes::currencies::delete_currency),
         )
+        // ── Exchange rates (date-keyed, user-owned) ───────────────────────────
+        .route(
+            "/exchange-rates",
+            get(routes::exchange_rates::list_exchange_rates),
+        )
+        .route(
+            "/exchange-rates",
+            post(routes::exchange_rates::create_exchange_rates),
+        )
+        .route(
+            "/exchange-rates/:base/:quote/:date",
+            delete(routes::exchange_rates::delete_exchange_rate),
+        )
         // ── Investments ───────────────────────────────────────────────────────
         .route("/investments", get(routes::investments::list_investments))
         .route("/investments", post(routes::investments::create_investment))

@@ -9,14 +9,14 @@ use axum::extract::{Query, State};
 use chrono::{Duration, NaiveDate, NaiveDateTime};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ts_rs::TS;
 
 use crate::model::{Account, AccountType, InvestmentEvent, InvestmentEventType};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 use crate::server::validation::{parse_date, split_csv_param, validate_date_range};
-use crate::util::fx::FxRateMap;
+use crate::util::fx::{FxRateMap, MissingRate};
 
 // ── Query Parameters ─────────────────────────────────────────────────────────
 
@@ -90,6 +90,132 @@ fn check_required_currencies(events: &[InvestmentEvent], fx: &FxRateMap) -> Resu
         ),
         "missing_currencies",
     ))
+}
+
+/// Every `(currency, date)` pair the engine will need a rate for, given the event set it is
+/// about to process.
+///
+/// **This walks the events, not the requested window, and that distinction is the whole
+/// point.** The S104 pool is built from *every* acquisition ever made, so the cost basis of a
+/// disposal in 2024-25 depends on rates going back as far as the ledger goes. Collecting only
+/// the dates inside the requested date range would leave the pool built at the wrong rates and
+/// silently produce a wrong cost basis — the report would look complete and be wrong, which is
+/// the failure mode this whole feature exists to eliminate. Measured on the real ledger: a
+/// 2024-25 report needs 49 pairs, of which only 17 are disposal dates in the year; the other 32
+/// are cumulative acquisitions from earlier years.
+///
+/// `events` must therefore be the post-exclusion, post-`as_at` set — the same one
+/// `run_cgt_engine` iterates — but must NOT have been narrowed to `filter_start`/`filter_end`,
+/// which only govern which disposals are *emitted*.
+///
+/// Mirrors the conversion sites in the engine exactly:
+///   * every event's trade currency at its own date (acquisitions into the pool, disposal
+///     proceeds, and same-day cost)
+///   * a non-zero fee's currency at that same date, which may differ from the trade currency
+///   * for a 30-day match, the *acquisition* date rather than the disposal date, because HMRC
+///     matches that leg at its own acquisition-date rate
+fn required_rate_pairs(events: &[CalEvent], fx: &FxRateMap) -> BTreeSet<(String, NaiveDate)> {
+    let preferred = fx.preferred();
+    let mut pairs: BTreeSet<(String, NaiveDate)> = BTreeSet::new();
+
+    for e in events {
+        let date = e.date.date();
+        if e.currency != preferred {
+            pairs.insert((e.currency.clone(), date));
+        }
+        if !e.fee.is_zero() && e.fee_currency != preferred {
+            pairs.insert((e.fee_currency.clone(), date));
+        }
+    }
+
+    // 30-day matches convert the acquisition leg at the acquisition date. That date always
+    // belongs to another event in this same set, so its trade currency is already covered
+    // above — but the *disposal's* currency is what the engine converts at the acquisition
+    // date (see the `m_cost` call in the 30-day branch), and that pair may not otherwise
+    // exist. Enumerate it explicitly rather than relying on the two currencies matching.
+    for e in events {
+        if !matches!(
+            e.event_type,
+            InvestmentEventType::Sell | InvestmentEventType::Withhold
+        ) {
+            continue;
+        }
+        for m in &e.thirty_day_matches {
+            if let Some(acq) = m.acquisition_date {
+                if e.currency != preferred {
+                    pairs.insert((e.currency.clone(), acq.date()));
+                }
+            }
+        }
+    }
+
+    pairs
+}
+
+/// Reject the request up-front when any rate the report needs is not stored, listing **every**
+/// missing pair in one response.
+///
+/// One round-trip has to tell the user everything they need to supply: making them discover ~49
+/// missing rates one 400 at a time would be unusable, and it is what the pre-flight screen
+/// renders. Deliberately distinct from `missing_currencies`, which means something else — a
+/// currency with no row in the `currencies` table at all.
+///
+/// The backend never invents a rate here. HMRC mandates no particular source, only that the
+/// chosen basis is applied consistently, so a user-entered rate is fully legitimate and
+/// auto-fetching would actively defeat the main use case (reproducing the rates a
+/// previously-filed return was computed with).
+fn check_required_exchange_rates(
+    events: &[CalEvent],
+    fx: &FxRateMap,
+) -> Result<(), MissingExchangeRates> {
+    let missing: Vec<MissingRatePair> = required_rate_pairs(events, fx)
+        .into_iter()
+        .filter(|(currency, date)| !fx.has_rate_as_of(currency, *date))
+        .map(|(currency, date)| MissingRatePair {
+            currency,
+            date: date.to_string(),
+        })
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(MissingExchangeRates {
+        quote: fx.preferred().to_string(),
+        missing,
+    })
+}
+
+/// A rate went missing *after* the precheck said every one was present.
+///
+/// Not reachable through the HTTP surface: `check_required_exchange_rates` enumerates the same
+/// conversion sites the engine uses, so anything it clears cannot then fail. If this ever fires
+/// the two have drifted apart, which is a bug in this file and not something the user can fix by
+/// entering a rate — hence a 500 rather than the actionable 400 the precheck raises.
+fn unreachable_missing_rate(m: MissingRate) -> AppError {
+    AppError::Internal(anyhow::anyhow!(
+        "internal error: no exchange rate for {m} during CGT calculation, but the pre-check \
+         reported none missing. required_rate_pairs() and the engine's conversion sites have \
+         diverged."
+    ))
+}
+
+/// One `(currency, date)` pair with no stored rate.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct MissingRatePair {
+    pub currency: String,
+    /// YYYY-MM-DD.
+    pub date: String,
+}
+
+/// The structured payload behind a `missing_exchange_rates` error.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct MissingExchangeRates {
+    /// The currency every missing rate must be quoted into — the preferred currency.
+    pub quote: String,
+    pub missing: Vec<MissingRatePair>,
 }
 
 // ── API Response Models ──────────────────────────────────────────────────────
@@ -275,8 +401,16 @@ impl From<InvestmentEvent> for CalEvent {
 }
 
 impl CalEvent {
-    /// Calculates the normalized proceeds and proportional fee in preferred base currency (GBP) for a matched quantity.
-    fn calculate_matched_finance(&self, match_qty: Decimal, fx: &FxRateMap) -> (Decimal, Decimal) {
+    /// Calculates the normalized proceeds and proportional fee in preferred base currency (GBP)
+    /// for a matched quantity, each converted at this event's own date.
+    ///
+    /// Fallible only because a rate could be absent, which the precheck has already ruled out
+    /// by the time the engine reaches here — see `unreachable_missing_rate`.
+    fn calculate_matched_finance(
+        &self,
+        match_qty: Decimal,
+        fx: &FxRateMap,
+    ) -> Result<(Decimal, Decimal), MissingRate> {
         let proceeds_raw = match_qty * self.price_per_share;
         let fee_raw = if self.quantity > Decimal::ZERO {
             self.fee * (match_qty / self.quantity)
@@ -284,9 +418,9 @@ impl CalEvent {
             Decimal::ZERO
         };
 
-        let proceeds = fx.convert_as_of(proceeds_raw, &self.currency, self.date.date());
-        let fee = fx.convert_as_of(fee_raw, &self.fee_currency, self.date.date());
-        (proceeds, fee)
+        let proceeds = fx.convert_as_of(proceeds_raw, &self.currency, self.date.date())?;
+        let fee = fx.convert_as_of(fee_raw, &self.fee_currency, self.date.date())?;
+        Ok((proceeds, fee))
     }
 }
 
@@ -352,9 +486,12 @@ pub async fn get_s104_pools(
 
     let events = db.list_investment_events(None, None, None, included_account_ids.as_deref())?;
 
-    // Compute pools
+    // Compute pools. The pool's cost basis is built from acquisitions converted at their own
+    // dates, so it needs the same date-keyed rates the full report does.
     let currencies = db.get_currencies()?;
     let fx = FxRateMap::new(currencies)?;
+    let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
+    let fx = fx.with_historical(historical);
     check_required_currencies(&events, &fx)?;
     let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None, &fx)?;
 
@@ -432,10 +569,13 @@ pub async fn get_capital_gains(
         included_account_ids.as_deref(),
     )?;
 
-    // Load currency exchange rates for final base-currency summary normalization
+    // Load currency exchange rates for final base-currency summary normalization, plus the
+    // date-keyed rates the engine converts each leg with.
     let currencies = db.get_currencies()?;
     let fx = FxRateMap::new(currencies)?;
     let base_currency = fx.preferred().to_string();
+    let historical = db.get_exchange_rates_for_quote(&base_currency)?;
+    let fx = fx.with_historical(historical);
 
     check_required_currencies(&events, &fx)?;
 
@@ -559,21 +699,16 @@ fn run_cgt_engine(
     let mut all_realized: Vec<CgtRealizedEvent> = Vec::new();
     let mut all_pools: Vec<S104PoolState> = Vec::new();
 
-    // 3. For each symbol group, run the HMRC matching rules
+    // 3. For each symbol group, run the HMRC matching rules.
+    //
+    // Matching is done for EVERY symbol before any conversion happens, so the FX precheck
+    // below sees the complete picture and can report every missing rate in one response.
+    // Interleaving them would fail on the first symbol that needs an unstored rate and hide
+    // the rest, turning a single pre-flight round-trip into one request per missing rate.
+    let mut matched_groups: Vec<(String, Vec<CalEvent>)> = Vec::new();
     for (symbol, mut events) in symbol_groups {
         // Sort chronologically
         events.sort_by_key(|e| e.date);
-
-        // Pool figures stay in the symbol's native currency, so record which one that is while
-        // every event is still to hand. A symbol group is only created by pushing an event, so
-        // `first()` is always populated; the fallback exists to keep this total rather than
-        // introduce an unwrap. Events for one symbol are expected to share a currency — if that
-        // ever stops holding, this reports the earliest and the mismatch belongs in the warnings
-        // channel (plan 23 §7.8) rather than in a nullable field.
-        let pool_currency = events
-            .first()
-            .map(|e| e.currency.clone())
-            .unwrap_or_else(|| fx.preferred().to_string());
 
         // -- Same-Day Rule matching --
         // Find Same-Day pairs: disposals matched against acquisitions on the same calendar date.
@@ -693,6 +828,51 @@ fn run_cgt_engine(
             }
         }
 
+        matched_groups.push((symbol, events));
+    }
+
+    // 3b. FX precheck — every rate the engine is about to need must already be stored.
+    //
+    // Runs here, after matching and before the first conversion, for two reasons: the 30-day
+    // matches now exist so their acquisition-date requirements are known, and nothing has been
+    // converted yet so no partially-computed figure can escape. Deliberately walks every event
+    // in the ledger rather than just those in the requested window, because the S104 pool is
+    // built from every acquisition ever — see `required_rate_pairs`.
+    let all_matched_events: Vec<CalEvent> = matched_groups
+        .iter()
+        .flat_map(|(_, events)| events.iter().cloned())
+        .collect();
+    if let Err(missing) = check_required_exchange_rates(&all_matched_events, fx) {
+        let count = missing.missing.len();
+        let quote = missing.quote.clone();
+        return Err(AppError::bad_request_with_details(
+            format!(
+                "This report needs {count} exchange rate{} that {} not been entered yet. \
+                 Each disposal must be converted at its own date's rate, and each acquisition \
+                 at the rate on the date it was acquired, so rates are needed for every \
+                 acquisition in the pool — including those from earlier tax years. \
+                 Supply the missing rates (quoted into {quote}) and generate the report again.",
+                if count == 1 { "" } else { "s" },
+                if count == 1 { "has" } else { "have" },
+            ),
+            "missing_exchange_rates",
+            serde_json::to_value(&missing).unwrap_or_else(|_| serde_json::json!({})),
+        ));
+    }
+
+    // 4. Replay the S104 pool and emit results, now that every rate is known to be present.
+    for (symbol, mut events) in matched_groups {
+        // Pool figures stay in the symbol's native currency, so record which one that is while
+        // every event is still to hand. A symbol group is only created by pushing an event, so
+        // `first()` is always populated; the fallback exists to keep this total rather than
+        // introduce an unwrap. Events for one symbol are expected to share a currency — if that
+        // ever stops holding, this reports the earliest and the mismatch belongs in the warnings
+        // channel (plan 23 §7.8) rather than in a nullable field.
+        let pool_currency = events
+            .first()
+            .map(|e| e.currency.clone())
+            .unwrap_or_else(|| fx.preferred().to_string());
+
         // -- S104 Pool Replay --
         // Chronological replay to maintain S104 state and complete matches
         let mut pool_shares = Decimal::ZERO;
@@ -711,12 +891,12 @@ fn run_cgt_engine(
                         };
                         // Price and fee can be in different currencies, so convert
                         // each at its own rate before summing into the pool cost.
-                        let price_cost = fx.convert_as_of(
-                            entering * e.price_per_share,
-                            &e.currency,
-                            e.date.date(),
-                        );
-                        let fee_cost = fx.convert_as_of(prop_fee, &e.fee_currency, e.date.date());
+                        let price_cost = fx
+                            .convert_as_of(entering * e.price_per_share, &e.currency, e.date.date())
+                            .map_err(unreachable_missing_rate)?;
+                        let fee_cost = fx
+                            .convert_as_of(prop_fee, &e.fee_currency, e.date.date())
+                            .map_err(unreachable_missing_rate)?;
                         let acq_cost = price_cost + fee_cost;
 
                         pool_shares += entering;
@@ -844,10 +1024,14 @@ fn run_cgt_engine(
 
             // Process same-day matches
             for m in &e.same_day_matches {
-                let (m_proceeds, fee_prop_matched) = e.calculate_matched_finance(m.quantity, fx);
+                let (m_proceeds, fee_prop_matched) = e
+                    .calculate_matched_finance(m.quantity, fx)
+                    .map_err(unreachable_missing_rate)?;
 
                 let m_cost_raw = m.quantity * m.price;
-                let m_cost = fx.convert_as_of(m_cost_raw, &e.currency, e.date.date());
+                let m_cost = fx
+                    .convert_as_of(m_cost_raw, &e.currency, e.date.date())
+                    .map_err(unreachable_missing_rate)?;
 
                 let api_match = m.to_cgt_match_detail();
                 matches_list.push(api_match.clone());
@@ -869,7 +1053,9 @@ fn run_cgt_engine(
 
             // Process 30-day matches
             for m in &e.thirty_day_matches {
-                let (m_proceeds, fee_prop_matched) = e.calculate_matched_finance(m.quantity, fx);
+                let (m_proceeds, fee_prop_matched) = e
+                    .calculate_matched_finance(m.quantity, fx)
+                    .map_err(unreachable_missing_rate)?;
 
                 let acq_date = m
                     .acquisition_date
@@ -877,7 +1063,9 @@ fn run_cgt_engine(
                     .unwrap_or_else(|| e.date.date());
 
                 let m_cost_raw = m.quantity * m.price;
-                let m_cost = fx.convert_as_of(m_cost_raw, &e.currency, acq_date);
+                let m_cost = fx
+                    .convert_as_of(m_cost_raw, &e.currency, acq_date)
+                    .map_err(unreachable_missing_rate)?;
 
                 let api_match = m.to_cgt_match_detail();
                 matches_list.push(api_match.clone());
@@ -899,7 +1087,9 @@ fn run_cgt_engine(
 
             // Process S104 pool matches
             for m in &e.pool_matches {
-                let (m_proceeds, fee_prop_matched) = e.calculate_matched_finance(m.quantity, fx);
+                let (m_proceeds, fee_prop_matched) = e
+                    .calculate_matched_finance(m.quantity, fx)
+                    .map_err(unreachable_missing_rate)?;
 
                 // m.price is avg_cost which is ALREADY in preferred base currency (GBP)
                 let m_cost = m.quantity * m.price;
@@ -926,7 +1116,9 @@ fn run_cgt_engine(
             let total_matched: Decimal = matches_list.iter().map(|m| m.quantity).sum();
             if total_matched < e.quantity {
                 let unmatched_qty = e.quantity - total_matched;
-                let (m_proceeds, fee_prop_matched) = e.calculate_matched_finance(unmatched_qty, fx);
+                let (m_proceeds, fee_prop_matched) = e
+                    .calculate_matched_finance(unmatched_qty, fx)
+                    .map_err(unreachable_missing_rate)?;
 
                 all_realized.push(CgtRealizedEvent {
                     symbol: symbol.clone(),
