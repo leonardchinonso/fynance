@@ -8,16 +8,9 @@ import type { S104PoolState } from "@/bindings/S104PoolState"
 
 interface CgtPoolWorkingsProps {
   pools: S104PoolState[]
-  /** Native-currency formatter uses the symbol's pool currency when known. */
-  symbolCurrencies: Record<string, string>
-  defaultCurrency: string
 }
 
-export function CgtPoolWorkings({
-  pools,
-  symbolCurrencies,
-  defaultCurrency,
-}: CgtPoolWorkingsProps) {
+export function CgtPoolWorkings({ pools }: CgtPoolWorkingsProps) {
   useRedactedFlag()
   const [open, setOpen] = useState(false)
   const nonEmpty = pools.filter((p) => Number.parseFloat(p.current_shares) > 0)
@@ -37,7 +30,11 @@ export function CgtPoolWorkings({
       {open && (
         <CardContent className="grid gap-3 sm:grid-cols-2">
           {nonEmpty.map((p) => {
-            const cur = symbolCurrencies[p.symbol] ?? defaultCurrency
+            // Pool figures are held in the symbol's own currency, which the pool now
+            // states outright. This used to be looked up from the disposals in the
+            // window and fell back to the base currency when a symbol had none — so a
+            // pool with no disposals this period was labelled in the wrong currency.
+            const cur = p.original_currency
             return (
               <div key={p.symbol} className="rounded-md border bg-card p-4">
                 <h3 className="text-sm font-semibold">{p.symbol}</h3>

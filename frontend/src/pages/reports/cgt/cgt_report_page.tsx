@@ -182,14 +182,6 @@ function SavedReportView({
     return counts
   }, [response.realized_events])
 
-  const symbolCurrencies = useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const ev of response.realized_events) {
-      m[ev.symbol] = ev.original_currency
-    }
-    return m
-  }, [response.realized_events])
-
   const filename = `fynance-cgt-${periodSlug(filters.period)}-${report.generatedAt.slice(0, 10)}.pdf`
 
   return (
@@ -221,11 +213,7 @@ function SavedReportView({
 
       <CgtDisposalSchedule rows={response.realized_events} />
 
-      <CgtPoolWorkings
-        pools={response.pools}
-        symbolCurrencies={symbolCurrencies}
-        defaultCurrency={response.summary.base_currency}
-      />
+      <CgtPoolWorkings pools={response.pools} />
 
       <div className="sticky bottom-4 flex justify-end">
         <PDFDownloadLink

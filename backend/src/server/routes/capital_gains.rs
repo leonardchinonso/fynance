@@ -189,6 +189,13 @@ pub struct CgtMatchDetail {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct S104PoolState {
     pub symbol: String,
+    /// Native currency of `total_allowable_expenditure` and `average_cost_per_share`, which are
+    /// held in the symbol's own currency rather than the preferred one. Mandatory on purpose: a
+    /// pool always has at least one event to read it from, and making it optional would push the
+    /// ambiguity onto every consumer — which is the bug it exists to fix, since a symbol sitting
+    /// in the pool with no disposals in the window would otherwise be rendered against the base
+    /// currency and silently mislabelled.
+    pub original_currency: String,
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub current_shares: Decimal,
@@ -349,7 +356,7 @@ pub async fn get_s104_pools(
     let currencies = db.get_currencies()?;
     let fx = FxRateMap::new(currencies)?;
     check_required_currencies(&events, &fx)?;
-    let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None, &fx);
+    let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None, &fx)?;
 
     Ok(Json(pools.pools))
 }
@@ -439,7 +446,7 @@ pub async fn get_capital_gains(
         filter_start,
         filter_end,
         &fx,
-    );
+    )?;
 
     // Aggregate the per-event figures (already converted to the preferred base
     // currency by run_cgt_engine) into the summary and per-symbol totals.
@@ -510,6 +517,12 @@ pub async fn get_capital_gains(
 
 // ── Core Engine Replay ────────────────────────────────────────────────────────
 
+/// Runs the HMRC matching rules over the event ledger.
+///
+/// Fallible on purpose: some ledger states have no honest answer, and the engine refuses them
+/// rather than emitting a number that looks authoritative. A silently-wrong tax figure is the
+/// failure mode this whole report exists to prevent, so ambiguity is surfaced as a 4xx the user
+/// can act on. See plan 23 §0.2.
 fn run_cgt_engine(
     raw_events: Vec<InvestmentEvent>,
     excluded_accounts: &HashSet<String>,
@@ -517,7 +530,7 @@ fn run_cgt_engine(
     filter_start: Option<NaiveDate>,
     filter_end: Option<NaiveDate>,
     fx: &FxRateMap,
-) -> CapitalGainsResponse {
+) -> Result<CapitalGainsResponse, AppError> {
     // 1. Filter out sheltered/excluded accounts and respect `as_at`
     let filtered_events: Vec<InvestmentEvent> = raw_events
         .into_iter()
@@ -551,6 +564,17 @@ fn run_cgt_engine(
         // Sort chronologically
         events.sort_by_key(|e| e.date);
 
+        // Pool figures stay in the symbol's native currency, so record which one that is while
+        // every event is still to hand. A symbol group is only created by pushing an event, so
+        // `first()` is always populated; the fallback exists to keep this total rather than
+        // introduce an unwrap. Events for one symbol are expected to share a currency — if that
+        // ever stops holding, this reports the earliest and the mismatch belongs in the warnings
+        // channel (plan 23 §7.8) rather than in a nullable field.
+        let pool_currency = events
+            .first()
+            .map(|e| e.currency.clone())
+            .unwrap_or_else(|| fx.preferred().to_string());
+
         // -- Same-Day Rule matching --
         // Find Same-Day pairs: disposals matched against acquisitions on the same calendar date.
         // We group events of the day and match them FIFO.
@@ -568,8 +592,17 @@ fn run_cgt_engine(
 
             match e.event_type {
                 InvestmentEventType::Buy | InvestmentEventType::Vest => group.incoming.push(idx),
-                // Sell and Withhold are both treated as disposals. Withhold (sell-to-cover or net settlement)
-                // represents shares immediately sold at vest to cover taxes, which is a disposal under UK CGT.
+                // Sell and Withhold are both treated as disposals. Withhold (sell-to-cover or net
+                // settlement) represents shares sold at vest to cover income tax, which is a
+                // disposal under UK CGT.
+                //
+                // DELIBERATE DIVERGENCE: some practitioners leave sell-to-cover out of the disposal
+                // schedule entirely, reasoning that same-day matching nets the gain to ~zero so the
+                // tax due is unchanged either way. We include them: they are disposals in law, and
+                // omitting them understates both the disposal count and total proceeds. Reports
+                // generated here will therefore not tie to a return prepared the other way — that
+                // difference is intentional and is not a bug to be "fixed".
+                // See docs/design/08_cgt_engine.md § Deliberate Divergences from Common Practice.
                 InvestmentEventType::Sell | InvestmentEventType::Withhold => {
                     group.outgoing.push(idx)
                 }
@@ -725,18 +758,45 @@ fn run_cgt_engine(
                     }
                 }
                 InvestmentEventType::Split => {
-                    // `quantity` is the shares ADDED by the split, not a ratio: a
-                    // 10-for-1 on 1.72827619 shares is stored as 15.55448571.
-                    // Multiplying by it would inflate the pool (here: 25.17 shares
-                    // instead of 17.28), understating average cost and overstating
-                    // every later gain.
+                    // `quantity` is the CHANGE in share count, not a ratio: a 10-for-1
+                    // forward split on 1.72827619 shares is stored as +15.55448571, the
+                    // shares added. Multiplying by it would inflate the pool (here:
+                    // 25.17 shares instead of 17.28), understating average cost and
+                    // overstating every later gain.
                     //
-                    // A split is a reorganisation (TCGA 1992 s.126-131): the new
-                    // holding is the same asset acquired at the same time and cost,
-                    // so pool_cost is untouched and only the share count rises.
-                    if e.quantity > Decimal::ZERO {
-                        pool_shares += e.quantity;
+                    // A split or consolidation is a reorganisation (TCGA 1992 s.126-131):
+                    // the new holding is the same asset, acquired at the same time and for
+                    // the same cost. pool_cost is therefore never touched — only the share
+                    // count moves, and average cost per share falls (split) or rises
+                    // (consolidation) as a consequence.
+                    //
+                    // A consolidation removes shares, so `quantity` is negative: a 1-for-5
+                    // on 100 shares is stored as -80. This branch used to require
+                    // `quantity > 0`, so consolidations were silently dropped and the pool
+                    // kept too many shares.
+                    //
+                    // Removing more shares than the pool holds is impossible, so it means
+                    // the ledger is wrong — a mistyped quantity, a missing acquisition, or
+                    // an event filed against the wrong symbol. Refuse rather than absorb
+                    // it: clamping at zero would leave a pool of no shares but non-zero
+                    // cost, making average cost zero and reporting 100% of the proceeds of
+                    // every later disposal as gain. That overstates tax while looking
+                    // perfectly ordinary.
+                    let after = pool_shares + e.quantity;
+                    if after < Decimal::ZERO {
+                        return Err(AppError::bad_request(
+                            format!(
+                                "{symbol}: a share consolidation on {} removes {} shares but \
+                                 the pool holds only {pool_shares}. Check the event quantity \
+                                 (it is the change in share count, negative for a \
+                                 consolidation) and that every acquisition has been imported.",
+                                e.date.date(),
+                                e.quantity.abs(),
+                            ),
+                            "consolidation_exceeds_pool",
+                        ));
                     }
+                    pool_shares = after;
                 }
                 InvestmentEventType::Transfer => {
                     // Internal transfers are neutral within a single S104 pool scope
@@ -752,6 +812,7 @@ fn run_cgt_engine(
         };
         all_pools.push(S104PoolState {
             symbol: symbol.clone(),
+            original_currency: pool_currency,
             current_shares: pool_shares,
             total_allowable_expenditure: pool_cost,
             average_cost_per_share: final_avg,
@@ -892,7 +953,7 @@ fn run_cgt_engine(
     // Sort realized events chronologically
     all_realized.sort_by(|a, b| a.disposal_date.cmp(&b.disposal_date));
 
-    CapitalGainsResponse {
+    Ok(CapitalGainsResponse {
         summary: CgtSummary {
             total_proceeds: Decimal::ZERO,
             total_allowable_costs: Decimal::ZERO,
@@ -904,5 +965,5 @@ fn run_cgt_engine(
         symbol_summaries: Vec::new(),
         realized_events: all_realized,
         pools: all_pools,
-    }
+    })
 }

@@ -1449,3 +1449,176 @@ async fn test_cgt_split_quantity_is_shares_added_not_a_ratio() {
         .unwrap();
     assert!((avg - 100.0).abs() < 1e-9, "average cost per share: {avg}");
 }
+
+/// A 1-for-5 consolidation (reverse split) on 100 shares leaves 20, so `quantity`
+/// is the -80 shares REMOVED. The engine used to require `quantity > 0` here, which
+/// dropped consolidations silently: the pool kept all 100 shares, understating
+/// average cost per share and overstating the gain on every later disposal.
+#[tokio::test]
+async fn test_cgt_consolidation_removes_shares_and_preserves_cost() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Buy 100 @ 10 (cost 1000).
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "TSCO",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        // 1-for-5 consolidation: 100 shares become 20, so 80 are removed.
+        insert_event(
+            &db_lock,
+            "gia",
+            "split",
+            "TSCO",
+            "2026-06-10T10:00:00",
+            "-80",
+            "0.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let pool = res["pools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["symbol"] == "TSCO")
+        .expect("TSCO pool");
+
+    // Shares removed, not divided: 100 - 80 = 20.
+    assert_eq!(pool["current_shares"], "20");
+    // A consolidation is a reorganisation too: total cost is untouched, so the
+    // per-share average RISES by exactly the 1-for-5 ratio (10 -> 50).
+    assert_eq!(pool["total_allowable_expenditure"], "1000.00");
+    let avg: f64 = pool["average_cost_per_share"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((avg - 50.0).abs() < 1e-9, "average cost per share: {avg}");
+    // Pool figures are in the symbol's native currency, so the pool must say which.
+    assert_eq!(pool["original_currency"], "GBP");
+}
+
+/// A consolidation that removes more shares than the pool holds is impossible data,
+/// so the engine refuses instead of absorbing it. Clamping at zero would leave a pool
+/// with no shares but non-zero cost, making average cost zero and reporting 100% of
+/// every later disposal's proceeds as gain — overstating tax while looking ordinary.
+#[tokio::test]
+async fn test_cgt_consolidation_exceeding_pool_is_refused() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Pool holds 50 shares...
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "TSCO",
+            "2026-05-01T10:00:00",
+            "50",
+            "10.00",
+            None,
+        );
+        // ...but the consolidation claims to remove 80.
+        insert_event(
+            &db_lock,
+            "gia",
+            "split",
+            "TSCO",
+            "2026-06-10T10:00:00",
+            "-80",
+            "0.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "consolidation_exceeds_pool");
+    // The message must name the symbol so the bad row can actually be found.
+    let msg = res["error"].as_str().unwrap_or_default();
+    assert!(msg.contains("TSCO"), "message should name the symbol: {msg}");
+}
+
+/// A pool holding a non-GBP symbol reports that symbol's own currency, not the
+/// preferred one. Without this the frontend falls back to the base currency and
+/// mislabels the pool workings for any symbol with no disposals in the window.
+#[tokio::test]
+async fn test_cgt_pool_reports_original_currency_for_foreign_symbol() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "PLTR",
+            "2026-05-01T10:00:00",
+            "10",
+            "100.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "2" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request(Method::GET, "/api/investments/pools"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let pool = res
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["symbol"] == "PLTR")
+        .expect("PLTR pool");
+    assert_eq!(pool["original_currency"], "USD");
+}

@@ -1430,12 +1430,14 @@ const MOCK_REALIZED_EVENTS: CgtRealizedEvent[] = [
 const MOCK_POOLS: S104PoolState[] = [
   {
     symbol: "VUSA",
+    original_currency: "GBP",
     current_shares: "120",
     total_allowable_expenditure: "8640.00",
     average_cost_per_share: "72.00",
   },
   {
     symbol: "AAPL",
+    original_currency: "USD",
     current_shares: "45",
     total_allowable_expenditure: "5688.00",
     average_cost_per_share: "126.40",
