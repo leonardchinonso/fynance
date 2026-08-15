@@ -1568,7 +1568,10 @@ async fn test_cgt_consolidation_exceeding_pool_is_refused() {
     assert_eq!(res["code"], "consolidation_exceeds_pool");
     // The message must name the symbol so the bad row can actually be found.
     let msg = res["error"].as_str().unwrap_or_default();
-    assert!(msg.contains("TSCO"), "message should name the symbol: {msg}");
+    assert!(
+        msg.contains("TSCO"),
+        "message should name the symbol: {msg}"
+    );
 }
 
 /// A pool holding a non-GBP symbol reports that symbol's own currency, not the

@@ -44,10 +44,26 @@ pub struct SubUnit {
 /// - `ZAC` — South African cents. Johannesburg Stock Exchange.
 /// - `ILA` — Israeli agorot. Tel Aviv Stock Exchange.
 pub const SUB_UNITS: &[SubUnit] = &[
-    SubUnit { code: "GBX", parent: "GBP", per_unit: 100 },
-    SubUnit { code: "USX", parent: "USD", per_unit: 100 },
-    SubUnit { code: "ZAC", parent: "ZAR", per_unit: 100 },
-    SubUnit { code: "ILA", parent: "ILS", per_unit: 100 },
+    SubUnit {
+        code: "GBX",
+        parent: "GBP",
+        per_unit: 100,
+    },
+    SubUnit {
+        code: "USX",
+        parent: "USD",
+        per_unit: 100,
+    },
+    SubUnit {
+        code: "ZAC",
+        parent: "ZAR",
+        per_unit: 100,
+    },
+    SubUnit {
+        code: "ILA",
+        parent: "ILS",
+        per_unit: 100,
+    },
 ];
 
 /// Look up a sub-unit by its code. Returns `None` for ordinary ISO currencies.
