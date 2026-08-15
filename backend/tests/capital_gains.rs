@@ -780,14 +780,132 @@ async fn test_cgt_transaction_fees() {
 }
 
 #[tokio::test]
+/// A disposal with no matching acquisition is REFUSED, not reported.
+///
+/// This test previously asserted the opposite — a row with `cost_basis = 0`,
+/// `rule_applied = "Unmatched"` and the full proceeds as gain. That behaviour
+/// overstates the tax due and looks like an ordinary line on the report, so it
+/// was deliberately changed to a refusal (plan 23 §0.2).
 async fn test_cgt_short_sales_unmatched() {
     let (app, db) = test_router();
     {
         let db_lock = db.lock().unwrap();
         setup_account(&db_lock, "gia", AccountType::Investment);
 
-        // Sell 100 AAPL @ 15.00 with no acquisitions -> Short Sale / Unmatched remainder
-        // Proceeds = 1500, Cost basis = 0, Gain = 1500
+        // Sell 100 AAPL @ 15.00 with no acquisitions anywhere in the ledger.
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "15.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(res["code"], "unmatched_disposal");
+    let msg = res["error"].as_str().unwrap();
+    // The message must let the user find the missing acquisition: symbol, date, quantity.
+    assert!(msg.contains("AAPL"), "message must name the symbol: {msg}");
+    assert!(
+        msg.contains("2026-05-10"),
+        "message must name the date: {msg}"
+    );
+    assert!(msg.contains("100"), "message must name the quantity: {msg}");
+    // And it must say what to do about it, not merely that something is wrong.
+    assert!(
+        msg.contains("Import or add the missing acquisition"),
+        "message must say what to do next: {msg}"
+    );
+}
+
+/// A disposal only PARTLY covered by the pool is refused too — the uncovered
+/// remainder is the same zero-cost problem, just harder to spot next to a
+/// legitimate matched row.
+#[tokio::test]
+async fn test_cgt_partially_unmatched_disposal_is_refused() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Buy 40, then sell 100 — 60 shares have no acquisition behind them.
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "40",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "15.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "unmatched_disposal");
+    // 60 unmatched, not the full 100 — the pool covered 40.
+    assert!(
+        res["error"].as_str().unwrap().contains("60"),
+        "message should name the unmatched quantity: {}",
+        res["error"]
+    );
+}
+
+/// The counterpart that matters more: a fully-matched disposal is NOT refused.
+/// An over-eager unmatched guard would block every legitimate report.
+#[tokio::test]
+async fn test_cgt_fully_matched_disposal_is_not_refused() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
         insert_event(
             &db_lock,
             "gia",
@@ -809,19 +927,13 @@ async fn test_cgt_short_sales_unmatched() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
-
     let realized = res["realized_events"].as_array().unwrap();
     assert_eq!(realized.len(), 1);
-
-    let event = &realized[0];
-    assert_eq!(event["quantity"], "100");
-    assert_eq!(event["proceeds"], "1500.00");
-    assert_eq!(event["cost_basis"], "0");
-    assert_eq!(event["gain_loss"], "1500.00");
-    assert_eq!(event["rule_applied"], "Unmatched");
+    assert_eq!(realized[0]["rule_applied"], "S104 Pool");
+    assert_eq!(realized[0]["cost_basis"], "1000.00");
+    assert_eq!(realized[0]["gain_loss"], "500.00");
 }
 
 #[tokio::test]
@@ -1738,19 +1850,20 @@ async fn test_cgt_pool_reports_original_currency_for_foreign_symbol() {
 }
 
 /// Pins a deliberate but previously-unverified choice: when a symbol's events don't
-/// all share a currency (an anomaly per the comment above `pool_currency` in
-/// capital_gains.rs), `original_currency` reports the EARLIEST event's currency
-/// (`events.first()`), not the latest. This is only a documentation label now that
-/// MEDIUM-1 corrected its meaning to source metadata (it no longer selects which
-/// currency the pool's cost figures are formatted in), but the choice is still
-/// observable in the API response, so it should not silently flip on a refactor.
+/// all share a currency, the `/pools` endpoint refuses via
+/// `check_single_currency_per_symbol` rather than letting a mixed-currency symbol
+/// reach the engine — see `test_cgt_refuses_symbol_with_mixed_currencies` for the
+/// `/capital-gains` equivalent. The `pool_currency` fallback in `run_cgt_engine`
+/// that would pick the earliest event's currency for such a symbol is therefore
+/// unreachable through the API today; this test only pins that the `/pools`
+/// endpoint's own refusal fires for the same mixed-currency shape, not the
+/// fallback's tie-break rule.
 #[tokio::test]
-async fn test_cgt_pool_original_currency_reports_earliest_event_on_mixed_currency_symbol() {
+async fn test_s104_pools_refuses_mixed_currency_symbol() {
     let (app, db) = test_router();
     {
         let db_lock = db.lock().unwrap();
         setup_account(&db_lock, "gia", AccountType::Investment);
-        // Earliest event in USD...
         insert_event_ccy(
             &db_lock,
             "gia",
@@ -1763,9 +1876,8 @@ async fn test_cgt_pool_original_currency_reports_earliest_event_on_mixed_currenc
             "USD",
             None,
         );
-        // ...a later event for the same symbol in EUR (an anomaly the comment above
-        // `pool_currency` calls out — same-symbol events are expected to share a
-        // currency, but the code doesn't enforce it).
+        // Same symbol, different currency — the case check_single_currency_per_symbol
+        // exists to catch.
         insert_event_ccy(
             &db_lock,
             "gia",
@@ -1797,17 +1909,862 @@ async fn test_cgt_pool_original_currency_reports_earliest_event_on_mixed_currenc
         .oneshot(request(Method::GET, "/api/investments/pools"))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "mixed_symbol_currency");
+    let msg = res["error"].as_str().unwrap();
+    assert!(msg.contains("PLTR"), "message must name the symbol: {msg}");
+}
 
-    let pool = res
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|p| p["symbol"] == "PLTR")
-        .expect("PLTR pool");
-    // Earliest event (2026-05-01) was USD; a `.last()` reading would report EUR instead.
-    assert_eq!(pool["original_currency"], "USD");
+// ── Refusal: multi-owner accounts ────────────────────────────────────────────
+
+/// Create an investment account owned by more than one profile.
+fn setup_joint_account(db: &Db, id: &str, account_type: AccountType, owners: &[&str]) {
+    let account = Account {
+        id: id.to_string(),
+        name: format!("Joint {id}"),
+        institution: "Trading 212".to_string(),
+        account_type,
+        currency: "GBP".to_string(),
+        balance: None,
+        balance_date: None,
+        is_active: true,
+        notes: None,
+        profile_ids: owners.iter().map(|s| s.to_string()).collect(),
+        is_stale: None,
+        is_available: true,
+    };
+    db.create_account(&account).unwrap();
+}
+
+/// The S104 pool cannot split a gain between owners, so a joint investment
+/// account would report 100% of the gain to each — the same gain declared on
+/// two tax returns. Both CGT endpoints refuse.
+#[tokio::test]
+async fn test_cgt_refuses_multi_owner_investment_account() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_joint_account(&db_lock, "joint_gia", AccountType::Investment, &["a", "b"]);
+        insert_event(
+            &db_lock,
+            "joint_gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "joint_gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "15.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "multi_owner_account");
+    let msg = res["error"].as_str().unwrap();
+    assert!(
+        msg.contains("multiple owners"),
+        "message should say what is wrong: {msg}"
+    );
+    assert!(
+        msg.contains("Joint joint_gia"),
+        "message should name the account: {msg}"
+    );
+    assert!(
+        msg.contains("split the joint account"),
+        "message should say what to do next: {msg}"
+    );
+}
+
+/// The pools endpoint refuses on the same grounds — the pool IS the ambiguous
+/// artifact, so it must not be served either.
+#[tokio::test]
+async fn test_s104_pools_refuses_multi_owner_investment_account() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_joint_account(&db_lock, "joint_gia", AccountType::Investment, &["a", "b"]);
+        insert_event(
+            &db_lock,
+            "joint_gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(Method::GET, "/api/investments/pools"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "multi_owner_account");
+}
+
+/// Single-owner accounts are the normal case and must keep working.
+#[tokio::test]
+async fn test_cgt_single_owner_account_is_not_refused() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "15.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// A joint account that contributes NOTHING to the computation is not grounds
+/// to refuse. A joint current account is lawful, common, and irrelevant to CGT
+/// — blocking on it would be an over-eager guard that breaks valid reports.
+#[tokio::test]
+async fn test_cgt_ignores_multi_owner_account_with_no_investment_events() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // Joint current account, no investment events against it.
+        setup_joint_account(
+            &db_lock,
+            "joint_current",
+            AccountType::Checking,
+            &["a", "b"],
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "15.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// A joint ISA is excluded from CGT anyway (gains are tax-free), so it must not
+/// block a report it contributes nothing to.
+#[tokio::test]
+async fn test_cgt_ignores_multi_owner_isa_account() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        setup_joint_account(
+            &db_lock,
+            "joint_isa",
+            AccountType::InvestmentIsa,
+            &["a", "b"],
+        );
+        // Events in the joint ISA — excluded by account_type before the owner check.
+        insert_event(
+            &db_lock,
+            "joint_isa",
+            "buy",
+            "VUSA",
+            "2026-04-10T10:00:00",
+            "50",
+            "80.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "15.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+// ── Refusal: one symbol, two currencies ──────────────────────────────────────
+
+/// Report-time precheck. Covers rows written BEFORE the write-time guard
+/// existed, which is why the events are inserted straight through the Db rather
+/// than through the API.
+#[tokio::test]
+async fn test_cgt_refuses_symbol_with_mixed_currencies() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // The classic cause: one broker reports the LSE holding in pence, another
+        // in pounds. Both land under the same symbol.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "VOD",
+            "2026-04-10T10:00:00",
+            "100",
+            "7500",
+            None,
+            "GBX",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "VOD",
+            "2026-04-20T10:00:00",
+            "100",
+            "75.00",
+            None,
+            "GBP",
+            None,
+        );
+    }
+
+    // Configure GBX so this fails on the mixed-currency rule, not missing_currencies.
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "mixed_symbol_currency");
+    let msg = res["error"].as_str().unwrap();
+    assert!(msg.contains("VOD"), "message must name the symbol: {msg}");
+    assert!(
+        msg.contains("GBP") && msg.contains("GBX"),
+        "message must name both currencies: {msg}"
+    );
+    assert!(
+        msg.contains("so each symbol uses one currency"),
+        "message must say what to do next: {msg}"
+    );
+}
+
+/// A fee in a different currency from the trade is legitimate and already
+/// handled by the engine — it must NOT trip the mixed-currency guard, which
+/// looks only at the trade currency.
+#[tokio::test]
+async fn test_cgt_allows_fee_currency_differing_from_trade_currency() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            Some("30.00"),
+            "USD",
+            Some("GBP"),
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "15.00",
+            Some("5.00"),
+            "USD",
+            Some("GBP"),
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "2" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Two DIFFERENT symbols in two different currencies is normal for any
+/// international portfolio and must not be refused.
+#[tokio::test]
+async fn test_cgt_allows_different_symbols_in_different_currencies() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-05-10T10:00:00",
+            "100",
+            "15.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "VOD",
+            "2026-04-10T10:00:00",
+            "100",
+            "75.00",
+            None,
+            "GBP",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "2" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+// ── Refusal: write-time symbol/currency guard ────────────────────────────────
+
+/// POST rejects an event whose symbol already exists under another currency.
+#[tokio::test]
+async fn test_create_investment_rejects_conflicting_symbol_currency() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "VOD",
+            "2026-04-10T10:00:00",
+            "100",
+            "7500",
+            None,
+            "GBX",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request_json(
+            Method::POST,
+            "/api/investments",
+            serde_json::json!({
+                "account_id": "gia",
+                "event_type": "buy",
+                "symbol": "VOD",
+                "date": "2026-04-20T10:00:00",
+                "quantity": "100",
+                "price_per_share": "75.00",
+                "currency": "GBP",
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "symbol_currency_conflict");
+    let msg = res["error"].as_str().unwrap();
+    assert!(msg.contains("VOD"), "message must name the symbol: {msg}");
+    assert!(
+        msg.contains("Correct this event"),
+        "message must say what to do next: {msg}"
+    );
+}
+
+/// The same symbol in the SAME currency is the normal case — adding a second
+/// buy must still work.
+#[tokio::test]
+async fn test_create_investment_allows_matching_symbol_currency() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request_json(
+            Method::POST,
+            "/api/investments",
+            serde_json::json!({
+                "account_id": "gia",
+                "event_type": "buy",
+                "symbol": "AAPL",
+                "date": "2026-04-20T10:00:00",
+                "quantity": "50",
+                "price_per_share": "12.00",
+                "currency": "GBP",
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// A brand-new symbol in any currency is unconstrained.
+#[tokio::test]
+async fn test_create_investment_allows_new_symbol_in_other_currency() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "2" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request_json(
+            Method::POST,
+            "/api/investments",
+            serde_json::json!({
+                "account_id": "gia",
+                "event_type": "buy",
+                "symbol": "MSFT",
+                "date": "2026-04-20T10:00:00",
+                "quantity": "10",
+                "price_per_share": "300.00",
+                "currency": "USD",
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// PATCHing an event to a currency that conflicts with its symbol is rejected.
+#[tokio::test]
+async fn test_patch_investment_rejects_conflicting_symbol_currency() {
+    let (app, db) = test_router();
+    let event_id = {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "VOD",
+            "2026-04-10T10:00:00",
+            "100",
+            "75.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "VOD",
+            "2026-04-20T10:00:00",
+            "100",
+            "76.00",
+            None,
+        );
+        let events = db_lock
+            .list_investment_events(None, Some("VOD"), None, None)
+            .unwrap();
+        events[0].id.clone()
+    };
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    // Moving ONE of the two VOD events to GBX would split the symbol.
+    let response = app
+        .oneshot(request_json(
+            Method::PATCH,
+            &format!("/api/investments/{event_id}"),
+            serde_json::json!({ "currency": "GBX" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "symbol_currency_conflict");
+}
+
+/// Re-denominating the ONLY event of a symbol is legitimate — the guard must
+/// exclude the row being edited, or it would conflict with itself.
+#[tokio::test]
+async fn test_patch_investment_allows_recurrency_of_sole_event() {
+    let (app, db) = test_router();
+    let event_id = {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "VOD",
+            "2026-04-10T10:00:00",
+            "100",
+            "75.00",
+            None,
+        );
+        let events = db_lock
+            .list_investment_events(None, Some("VOD"), None, None)
+            .unwrap();
+        events[0].id.clone()
+    };
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request_json(
+            Method::PATCH,
+            &format!("/api/investments/{event_id}"),
+            serde_json::json!({ "currency": "GBX" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// An import batch that carries one symbol in two currencies is refused whole —
+/// nothing is written, so the user can correct and re-import.
+#[tokio::test]
+async fn test_import_investments_rejects_mixed_currency_within_batch() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/investments/import",
+            serde_json::json!({
+                "account_id": "gia",
+                "events": [
+                    {
+                        "account_id": "gia",
+                        "event_type": "buy",
+                        "symbol": "VOD",
+                        "date": "2026-04-10T10:00:00",
+                        "quantity": "100",
+                        "price_per_share": "7500",
+                        "fee": null,
+                        "currency": "GBX",
+                        "notes": null,
+                        "source_document_ids": [],
+                    },
+                    {
+                        "account_id": "gia",
+                        "event_type": "buy",
+                        "symbol": "VOD",
+                        "date": "2026-04-20T10:00:00",
+                        "quantity": "100",
+                        "price_per_share": "75.00",
+                        "fee": null,
+                        "currency": "GBP",
+                        "notes": null,
+                        "source_document_ids": [],
+                    },
+                ],
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "symbol_currency_conflict");
+
+    // Nothing was written — the batch is refused before any insert.
+    let db_lock = db.lock().unwrap();
+    let events = db_lock
+        .list_investment_events(None, None, None, None)
+        .unwrap();
+    assert!(
+        events.is_empty(),
+        "a refused batch must write nothing, found {} events",
+        events.len()
+    );
+}
+
+/// A consistent import batch still imports.
+#[tokio::test]
+async fn test_import_investments_allows_consistent_currencies() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "2" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request_json(
+            Method::POST,
+            "/api/investments/import",
+            serde_json::json!({
+                "account_id": "gia",
+                "events": [
+                    {
+                        "account_id": "gia",
+                        "event_type": "buy",
+                        "symbol": "VOD",
+                        "date": "2026-04-10T10:00:00",
+                        "quantity": "100",
+                        "price_per_share": "75.00",
+                        "fee": null,
+                        "currency": "GBP",
+                        "notes": null,
+                        "source_document_ids": [],
+                    },
+                    {
+                        "account_id": "gia",
+                        "event_type": "buy",
+                        "symbol": "AAPL",
+                        "date": "2026-04-20T10:00:00",
+                        "quantity": "10",
+                        "price_per_share": "200.00",
+                        "fee": null,
+                        "currency": "USD",
+                        "notes": null,
+                        "source_document_ids": [],
+                    },
+                ],
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["inserted"], 2);
 }
