@@ -45,6 +45,49 @@ fn validate_event_currencies(
     Ok(())
 }
 
+/// Reject an event whose symbol is already recorded under a different trade
+/// currency.
+///
+/// The S104 pool for a symbol is a single running total of shares and cost. If
+/// one symbol's events carry two currencies, that total is a sum of (say) pence
+/// and pounds — a meaningless number that still prints as a confident cost
+/// basis. The realistic cause is the same LSE holding reported as `GBX` by one
+/// broker and `GBP` by another, but ticker collisions and plain data entry
+/// produce it too.
+///
+/// Only the trade currency is checked. A fee charged in a different currency is
+/// legitimate and already handled — the engine converts price and fee at their
+/// own rates before summing into the pool.
+///
+/// `exclude_id` is the event being edited, so a PATCH does not conflict with the
+/// row it is itself rewriting.
+fn validate_symbol_currency(
+    db: &Db,
+    symbol: &str,
+    currency: &str,
+    exclude_id: Option<&str>,
+) -> Result<(), AppError> {
+    let existing = db.investment_currencies_for_symbol(symbol, exclude_id)?;
+    let conflicting: Vec<&str> = existing
+        .iter()
+        .map(|c| c.as_str())
+        .filter(|c| *c != currency)
+        .collect();
+    if conflicting.is_empty() {
+        return Ok(());
+    }
+    let list = conflicting.join(", ");
+    Err(AppError::bad_request(
+        format!(
+            "Symbol '{symbol}' is already recorded in {list}, but this event is in {currency}. \
+             One symbol must use one currency, or its capital-gains pool becomes a sum of two \
+             different units. Correct this event's currency, or if the existing rows are the \
+             wrong ones, edit them to {currency} first."
+        ),
+        "symbol_currency_conflict",
+    ))
+}
+
 // ── POST /api/investments ────────────────────────────────────────────────────
 
 pub async fn create_investment(
@@ -73,6 +116,7 @@ pub async fn create_investment(
     let event = {
         let db = state.db();
         validate_event_currencies(&db, &body.currency, body.fee_currency.as_deref())?;
+        validate_symbol_currency(&db, &body.symbol, &body.currency, None)?;
         let (event, _outcome) = db
             .create_investment_event(&body)
             .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?;
@@ -186,6 +230,18 @@ pub async fn update_investment(
         if let Some(fc) = body.fee_currency.as_deref().filter(|s| !s.is_empty()) {
             validate_currency(&db, fc)?;
         }
+        // A patch can move the event to another symbol, another currency, or both, so
+        // the one-symbol-one-currency rule is checked against the pair the event will
+        // END UP with — omitted fields keep their stored value. The event itself is
+        // excluded from the comparison, or re-saving the only event of a symbol in a
+        // new currency would conflict with the row it is replacing.
+        if body.symbol.is_some() || body.currency.is_some() {
+            if let Some((cur_symbol, cur_currency)) = db.investment_event_symbol_currency(&id)? {
+                let next_symbol = body.symbol.as_deref().unwrap_or(&cur_symbol);
+                let next_currency = body.currency.as_deref().unwrap_or(&cur_currency);
+                validate_symbol_currency(&db, next_symbol, next_currency, Some(&id))?;
+            }
+        }
         db.update_investment_event(&id, &body)
             .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?
     };
@@ -257,6 +313,33 @@ pub async fn import_investments(
         // Validate currencies for the whole batch before writing anything.
         for event in &payload.events {
             validate_event_currencies(&db, &event.currency, event.fee_currency.as_deref())?;
+        }
+
+        // One symbol, one currency — checked against stored rows AND across the batch
+        // itself, since an import is the most likely way two brokers' spellings of the
+        // same holding (GBX vs GBP) arrive together. Checked up-front so a bad batch
+        // writes nothing rather than half its rows.
+        let mut batch_currency: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        for event in &payload.events {
+            validate_symbol_currency(&db, &event.symbol, &event.currency, None)?;
+            match batch_currency.get(event.symbol.as_str()) {
+                Some(seen) if *seen != event.currency.as_str() => {
+                    return Err(AppError::bad_request(
+                        format!(
+                            "This import has symbol '{}' in both {seen} and {}. One symbol must \
+                             use one currency, or its capital-gains pool becomes a sum of two \
+                             different units. Correct the rows that use the wrong currency and \
+                             re-import — nothing has been saved.",
+                            event.symbol, event.currency
+                        ),
+                        "symbol_currency_conflict",
+                    ));
+                }
+                _ => {
+                    batch_currency.insert(event.symbol.as_str(), event.currency.as_str());
+                }
+            }
         }
 
         for (index, event) in payload.events.iter().enumerate() {
