@@ -888,6 +888,26 @@ impl HoldingWrite {
             );
         };
 
+        // Sub-unit conversion (GBX/USX/ZAC/ILA -> parent currency) happens here,
+        // the single flatten point every holdings write path (POST /import,
+        // POST /:account_id, and their shared dry-run preview) goes through.
+        // After this point no sub-unit code is ever persisted. `value` and
+        // `price_per_unit` are both monetary amounts in the sub-unit currency
+        // and scale identically under division; `quantity` (a share count) is
+        // never touched.
+        let (value, price_per_unit, currency) =
+            match crate::util::subunits::to_parent(value, &self.currency) {
+                Some((converted_value, parent)) => {
+                    let converted_price = price_per_unit.map(|p| {
+                        crate::util::subunits::to_parent(p, &self.currency)
+                            .map(|(v, _)| v)
+                            .unwrap_or(p)
+                    });
+                    (converted_value, converted_price, parent.to_string())
+                }
+                None => (value, price_per_unit, self.currency),
+            };
+
         Ok(Holding {
             account_id: account_id.to_string(),
             symbol: self.symbol,
@@ -896,7 +916,7 @@ impl HoldingWrite {
             quantity,
             price_per_unit,
             value,
-            currency: self.currency,
+            currency,
             as_of: self.as_of,
             short_name: None,
             sub_account: self.sub_account,

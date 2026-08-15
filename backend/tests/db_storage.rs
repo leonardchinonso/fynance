@@ -835,3 +835,159 @@ fn created_at_is_read_from_the_row_not_regenerated() {
         "created_at changed between reads, so it is being regenerated rather than read from the row"
     );
 }
+
+// ── 4. migrate_subunit_currencies: dry-run, apply, idempotency, atomicity ────
+//
+// Legacy pre-conversion data is seeded via a raw connection (bypassing the
+// typed write path, which now converts sub-units on the way in and so can no
+// longer express a stored GBX row), mirroring migration_14's pattern above.
+
+fn insert_legacy_investment(
+    conn: &Connection,
+    id: &str,
+    account_id: &str,
+    symbol: &str,
+    price_per_share: &str,
+    currency: &str,
+) -> String {
+    let fingerprint = format!("legacy-fp-{id}");
+    conn.execute(
+        r"INSERT INTO investments
+          (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, source_document_ids)
+          VALUES (?1, ?2, 'buy', ?3, '2026-01-10T00:00:00', '10', ?4, NULL, ?5, NULL, ?6, '[]')",
+        params![id, account_id, symbol, price_per_share, currency, fingerprint],
+    )
+    .unwrap();
+    fingerprint
+}
+
+fn insert_legacy_holding_with_currency(
+    conn: &Connection,
+    account_id: &str,
+    symbol: &str,
+    value: &str,
+    currency: &str,
+) {
+    conn.execute(
+        r"INSERT INTO holdings (account_id, symbol, name, holding_type, quantity, value, currency, as_of)
+          VALUES (?1, ?2, ?2, 'stock', '1', ?3, ?4, '2026-01-31T00:00:00')",
+        params![account_id, symbol, value, currency],
+    )
+    .unwrap();
+}
+
+fn investment_row(conn: &Connection, id: &str) -> (String, String, String) {
+    conn.query_row(
+        "SELECT currency, price_per_share, fingerprint FROM investments WHERE id = ?1",
+        params![id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .unwrap()
+}
+
+fn holding_row(conn: &Connection, symbol: &str) -> (String, String) {
+    conn.query_row(
+        "SELECT currency, value FROM holdings WHERE symbol = ?1",
+        params![symbol],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .unwrap()
+}
+
+#[test]
+fn subunit_migration_dry_run_apply_and_rerun_no_op() {
+    let path = temp_db_path("subunit_migration.db");
+    drop(Db::open(&path).unwrap());
+
+    let old_fingerprint = {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            r#"INSERT INTO accounts (id, name, institution, type, currency, is_active, notes, profile_ids)
+               VALUES ('gia', 'gia', 'TestBank', 'investment', 'GBP', 1, NULL, '["default"]')"#,
+            [],
+        )
+        .unwrap();
+
+        // One sub-unit investment (1234 GBX = 12.34 GBP).
+        let fp = insert_legacy_investment(&conn, "inv-1", "gia", "VUSA", "1234", "GBX");
+        // One already-parent-currency investment: must be left untouched.
+        insert_legacy_investment(&conn, "inv-2", "gia", "AAPL", "150.00", "USD");
+
+        // One sub-unit holding (3816.00 GBX = 38.16 GBP).
+        insert_legacy_holding_with_currency(&conn, "gia", "VUSA-H", "3816.00", "GBX");
+        // One already-parent-currency holding: must be left untouched.
+        insert_legacy_holding_with_currency(&conn, "gia", "AAPL-H", "500.00", "GBP");
+
+        fp
+    };
+
+    // ── Dry run: report matches, nothing written ──
+    let db = Db::open(&path).unwrap();
+    let dry = db.migrate_subunit_currencies(true).unwrap();
+    assert_eq!(dry.investments_migrated(), 1, "only the GBX row qualifies");
+    assert_eq!(dry.holdings_migrated(), 1, "only the GBX row qualifies");
+    assert!(dry.currencies_removed.is_empty(), "dry-run writes nothing");
+    drop(db);
+
+    {
+        let conn = Connection::open(&path).unwrap();
+        let (currency, price, fingerprint) = investment_row(&conn, "inv-1");
+        assert_eq!(currency, "GBX", "dry-run must not touch storage");
+        assert_eq!(price, "1234");
+        assert_eq!(fingerprint, old_fingerprint);
+
+        let (usd_currency, usd_price, _) = investment_row(&conn, "inv-2");
+        assert_eq!(usd_currency, "USD", "non-sub-unit row must be unaffected");
+        assert_eq!(usd_price, "150.00");
+    }
+
+    // ── Apply: sub-unit rows convert, parent-currency rows are untouched ──
+    let db = Db::open(&path).unwrap();
+    let applied = db.migrate_subunit_currencies(false).unwrap();
+    assert_eq!(applied.investments_migrated(), 1);
+    assert_eq!(applied.holdings_migrated(), 1);
+    drop(db);
+
+    {
+        let conn = Connection::open(&path).unwrap();
+
+        let (currency, price, new_fingerprint) = investment_row(&conn, "inv-1");
+        assert_eq!(currency, "GBP");
+        assert_eq!(dec(&price), dec("12.34"));
+        assert_ne!(
+            new_fingerprint, old_fingerprint,
+            "price changed, so the fingerprint must be recomputed"
+        );
+
+        let (usd_currency, usd_price, _) = investment_row(&conn, "inv-2");
+        assert_eq!(usd_currency, "USD", "byte-for-byte untouched");
+        assert_eq!(usd_price, "150.00", "byte-for-byte untouched");
+
+        let (h_currency, h_value) = holding_row(&conn, "VUSA-H");
+        assert_eq!(h_currency, "GBP");
+        assert_eq!(dec(&h_value), dec("38.16"));
+
+        let (gbp_currency, gbp_value) = holding_row(&conn, "AAPL-H");
+        assert_eq!(gbp_currency, "GBP", "byte-for-byte untouched");
+        assert_eq!(gbp_value, "500.00", "byte-for-byte untouched");
+    }
+
+    // ── Idempotency: re-running must not divide by 100 a second time ──
+    let db = Db::open(&path).unwrap();
+    let second = db.migrate_subunit_currencies(false).unwrap();
+    assert_eq!(second.investments_migrated(), 0);
+    assert_eq!(second.holdings_migrated(), 0);
+    assert!(second.rows.is_empty());
+    drop(db);
+
+    {
+        let conn = Connection::open(&path).unwrap();
+        let (currency, price, _) = investment_row(&conn, "inv-1");
+        assert_eq!(currency, "GBP");
+        assert_eq!(
+            dec(&price),
+            dec("12.34"),
+            "re-running the migration must not divide the price again"
+        );
+    }
+}

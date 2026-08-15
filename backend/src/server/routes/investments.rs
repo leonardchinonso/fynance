@@ -20,14 +20,27 @@ use crate::util::fx::FxRateMap;
 
 /// Reject unconfigured trade / fee currencies before anything is written,
 /// matching the transaction and holdings import paths.
+///
+/// A broker sub-unit code (GBX, USX, ZAC, ILA) is accepted here even though it
+/// is never itself a "configured" currency: `create_investment_event` converts
+/// it to its parent before the row is stored, so what actually needs to be
+/// configured is the *parent* currency, not the sub-unit. This keeps sub-unit
+/// codes usable as input without requiring them in the `currencies` table.
+fn validate_event_currency(db: &Db, currency: &str) -> Result<(), AppError> {
+    if let Some(unit) = crate::util::subunits::lookup(currency) {
+        return validate_currency(db, unit.parent);
+    }
+    validate_currency(db, currency)
+}
+
 fn validate_event_currencies(
     db: &Db,
     currency: &str,
     fee_currency: Option<&str>,
 ) -> Result<(), AppError> {
-    validate_currency(db, currency)?;
+    validate_event_currency(db, currency)?;
     if let Some(fc) = fee_currency.filter(|s| !s.is_empty()) {
-        validate_currency(db, fc)?;
+        validate_event_currency(db, fc)?;
     }
     Ok(())
 }
@@ -361,4 +374,41 @@ pub async fn import_investments(
         duplicates,
         errors,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    #[test]
+    fn sub_unit_currency_is_valid_input_when_its_parent_is_configured() {
+        let (db, _file) = test_db();
+        // GBP is seeded as the default preferred currency; GBX is never itself
+        // configured, but should still be accepted as input because
+        // create_investment_event converts it to GBP before writing.
+        assert!(validate_event_currency(&db, "GBX").is_ok());
+    }
+
+    #[test]
+    fn sub_unit_currency_is_rejected_when_its_parent_is_not_configured() {
+        let (db, _file) = test_db();
+        // ZAR (ZAC's parent) was never configured, so the sub-unit must be
+        // rejected too — otherwise create_investment_event would silently
+        // write an unconfigured currency once converted.
+        assert!(validate_event_currency(&db, "ZAC").is_err());
+    }
+
+    #[test]
+    fn ordinary_currency_validation_is_unaffected() {
+        let (db, _file) = test_db();
+        assert!(validate_event_currency(&db, "GBP").is_ok());
+        assert!(validate_event_currency(&db, "XXX").is_err());
+    }
 }

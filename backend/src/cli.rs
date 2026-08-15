@@ -70,6 +70,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: TransactionCommand,
     },
+    /// One-time data migration: convert rows stored in a broker sub-unit
+    /// currency (GBX, USX, ZAC, ILA) to their parent currency. Defaults to a
+    /// dry run that prints what would change without writing anything.
+    MigrateSubunits {
+        /// Actually write the changes. Without this flag, prints a report
+        /// and writes nothing.
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

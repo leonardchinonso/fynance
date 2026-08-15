@@ -82,7 +82,17 @@ impl Transaction {
     /// different channels (CSV vs agent) deduplicates correctly.
     pub fn from_unified(row: UnifiedStatementRow, account_id: &str) -> Self {
         let date_iso = row.date.format("%Y-%m-%dT%H:%M:%S").to_string();
-        let amount_str = row.amount.to_string();
+
+        // Sub-unit conversion (GBX/USX/ZAC/ILA -> parent currency) happens here,
+        // the single conversion point every CSV-imported transaction row goes
+        // through. After this point no sub-unit code is ever persisted. The
+        // fingerprint is computed from the (already-converted) amount below, so
+        // a sub-unit row and the equivalent parent-currency row hash the same.
+        let (amount, currency) = match crate::util::subunits::to_parent(row.amount, &row.currency) {
+            Some((converted, parent)) => (converted, parent.to_string()),
+            None => (row.amount, row.currency),
+        };
+        let amount_str = amount.to_string();
 
         // Prefer the explicit merchant field when present (it is more stable
         // than a generic description that may include payment-method noise).
@@ -102,8 +112,8 @@ impl Transaction {
             date: row.date,
             description,
             normalized,
-            amount: row.amount,
-            currency: row.currency,
+            amount,
+            currency,
             account_id: account_id.to_string(),
             category_id,
             category_source,

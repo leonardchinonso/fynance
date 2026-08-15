@@ -2262,17 +2262,21 @@ async fn test_cgt_ignores_multi_owner_isa_account() {
 
 // ── Refusal: one symbol, two currencies ──────────────────────────────────────
 
-/// Report-time precheck. Covers rows written BEFORE the write-time guard
-/// existed, which is why the events are inserted straight through the Db rather
-/// than through the API.
+/// Report-time precheck. Uses two ordinary ISO currencies (GBP/USD) rather than
+/// a sub-unit pair: since sub-unit conversion (plan 23 §0.2 (7.1)) now happens
+/// inside `create_investment_event` itself — the same write path this helper
+/// calls — a GBX-labelled insert here would be converted to GBP before it ever
+/// reached storage, and the two rows would no longer be mixed-currency at all.
+/// Events are still inserted straight through the Db rather than through the
+/// API, so this also covers rows written before the write-time guard existed.
 #[tokio::test]
 async fn test_cgt_refuses_symbol_with_mixed_currencies() {
     let (app, db) = test_router();
     {
         let db_lock = db.lock().unwrap();
         setup_account(&db_lock, "gia", AccountType::Investment);
-        // The classic cause: one broker reports the LSE holding in pence, another
-        // in pounds. Both land under the same symbol.
+        // Same ticker collision, two currencies — the realistic cause is a
+        // dual-listed security reported in each market's own currency.
         insert_event_ccy(
             &db_lock,
             "gia",
@@ -2280,9 +2284,9 @@ async fn test_cgt_refuses_symbol_with_mixed_currencies() {
             "VOD",
             "2026-04-10T10:00:00",
             "100",
-            "7500",
+            "50.00",
             None,
-            "GBX",
+            "USD",
             None,
         );
         insert_event_ccy(
@@ -2299,13 +2303,13 @@ async fn test_cgt_refuses_symbol_with_mixed_currencies() {
         );
     }
 
-    // Configure GBX so this fails on the mixed-currency rule, not missing_currencies.
+    // Configure USD so this fails on the mixed-currency rule, not missing_currencies.
     let create = app
         .clone()
         .oneshot(request_json(
             Method::POST,
             "/api/currencies",
-            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+            serde_json::json!({ "code": "USD", "fx_rate": "0.8" }),
         ))
         .await
         .unwrap();
@@ -2326,7 +2330,7 @@ async fn test_cgt_refuses_symbol_with_mixed_currencies() {
     let msg = res["error"].as_str().unwrap();
     assert!(msg.contains("VOD"), "message must name the symbol: {msg}");
     assert!(
-        msg.contains("GBP") && msg.contains("GBX"),
+        msg.contains("GBP") && msg.contains("USD"),
         "message must name both currencies: {msg}"
     );
     assert!(
@@ -2467,6 +2471,11 @@ async fn test_cgt_allows_different_symbols_in_different_currencies() {
 // ── Refusal: write-time symbol/currency guard ────────────────────────────────
 
 /// POST rejects an event whose symbol already exists under another currency.
+///
+/// Uses USD for the seed event rather than a sub-unit code: sub-unit conversion
+/// (plan 23 §0.2 (7.1)) now happens inside `create_investment_event`, the same
+/// write path `insert_event_ccy` calls, so a GBX seed would already be stored
+/// as GBP and could never conflict with a second GBP event.
 #[tokio::test]
 async fn test_create_investment_rejects_conflicting_symbol_currency() {
     let (app, db) = test_router();
@@ -2480,9 +2489,9 @@ async fn test_create_investment_rejects_conflicting_symbol_currency() {
             "VOD",
             "2026-04-10T10:00:00",
             "100",
-            "7500",
+            "50.00",
             None,
-            "GBX",
+            "USD",
             None,
         );
     }
@@ -2492,7 +2501,7 @@ async fn test_create_investment_rejects_conflicting_symbol_currency() {
         .oneshot(request_json(
             Method::POST,
             "/api/currencies",
-            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+            serde_json::json!({ "code": "USD", "fx_rate": "0.8" }),
         ))
         .await
         .unwrap();
@@ -2618,6 +2627,14 @@ async fn test_create_investment_allows_new_symbol_in_other_currency() {
 }
 
 /// PATCHing an event to a currency that conflicts with its symbol is rejected.
+///
+/// Uses USD rather than a sub-unit code: `update_investment_event` (the PATCH
+/// write path) writes `currency` raw and is not in the list of write paths
+/// plan 23 §0.2 (7.1) made sub-unit-aware (that's `create_investment_event`,
+/// `HoldingWrite::into_holding`, `Transaction::from_unified`,
+/// `insert_transactions_bulk`) — PATCHing to a sub-unit code was never
+/// intended to be supported, and now correctly fails `validate_currency`
+/// before reaching the conflict check this test targets.
 #[tokio::test]
 async fn test_patch_investment_rejects_conflicting_symbol_currency() {
     let (app, db) = test_router();
@@ -2655,18 +2672,18 @@ async fn test_patch_investment_rejects_conflicting_symbol_currency() {
         .oneshot(request_json(
             Method::POST,
             "/api/currencies",
-            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+            serde_json::json!({ "code": "USD", "fx_rate": "0.8" }),
         ))
         .await
         .unwrap();
     assert_eq!(create.status(), StatusCode::CREATED);
 
-    // Moving ONE of the two VOD events to GBX would split the symbol.
+    // Moving ONE of the two VOD events to USD would split the symbol.
     let response = app
         .oneshot(request_json(
             Method::PATCH,
             &format!("/api/investments/{event_id}"),
-            serde_json::json!({ "currency": "GBX" }),
+            serde_json::json!({ "currency": "USD" }),
         ))
         .await
         .unwrap();
@@ -2679,6 +2696,9 @@ async fn test_patch_investment_rejects_conflicting_symbol_currency() {
 
 /// Re-denominating the ONLY event of a symbol is legitimate — the guard must
 /// exclude the row being edited, or it would conflict with itself.
+///
+/// Uses USD rather than a sub-unit code — see
+/// `test_patch_investment_rejects_conflicting_symbol_currency` above for why.
 #[tokio::test]
 async fn test_patch_investment_allows_recurrency_of_sole_event() {
     let (app, db) = test_router();
@@ -2706,7 +2726,7 @@ async fn test_patch_investment_allows_recurrency_of_sole_event() {
         .oneshot(request_json(
             Method::POST,
             "/api/currencies",
-            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
+            serde_json::json!({ "code": "USD", "fx_rate": "0.8" }),
         ))
         .await
         .unwrap();
@@ -2716,7 +2736,7 @@ async fn test_patch_investment_allows_recurrency_of_sole_event() {
         .oneshot(request_json(
             Method::PATCH,
             &format!("/api/investments/{event_id}"),
-            serde_json::json!({ "currency": "GBX" }),
+            serde_json::json!({ "currency": "USD" }),
         ))
         .await
         .unwrap();
@@ -2726,6 +2746,13 @@ async fn test_patch_investment_allows_recurrency_of_sole_event() {
 
 /// An import batch that carries one symbol in two currencies is refused whole —
 /// nothing is written, so the user can correct and re-import.
+///
+/// No longer registers GBX via POST /api/currencies: the within-batch conflict
+/// check (`validate_symbol_currency` in `import_investments`) compares each
+/// event's raw, pre-conversion currency string, so GBX vs GBP still conflicts
+/// correctly without GBX itself being a "configured" currency — and per plan
+/// 23 §0.2 (7.1), GBX can no longer be registered as one at all (only its
+/// parent GBP, already the default, needs to be configured).
 #[tokio::test]
 async fn test_import_investments_rejects_mixed_currency_within_batch() {
     let (app, db) = test_router();
@@ -2733,17 +2760,6 @@ async fn test_import_investments_rejects_mixed_currency_within_batch() {
         let db_lock = db.lock().unwrap();
         setup_account(&db_lock, "gia", AccountType::Investment);
     }
-
-    let create = app
-        .clone()
-        .oneshot(request_json(
-            Method::POST,
-            "/api/currencies",
-            serde_json::json!({ "code": "GBX", "fx_rate": "0.01" }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(create.status(), StatusCode::CREATED);
 
     let response = app
         .clone()

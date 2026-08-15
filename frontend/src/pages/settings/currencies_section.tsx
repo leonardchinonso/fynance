@@ -15,9 +15,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Star, Plus, Trash2, Check, ChevronsUpDown } from "lucide-react"
 import { cn, daysSince } from "@/lib/utils"
 
+// Broker sub-unit codes (GBX, USX, ZAC, ILA — e.g. British pence) are
+// deliberately NOT offered here. Every import/write path now converts a
+// sub-unit price to its parent currency automatically, so a sub-unit is
+// never itself a configured currency; POST /api/currencies rejects them.
 const ISO_CURRENCY_NAMES: Record<string, string> = {
   GBP: "British Pound",
-  GBX: "British Pence",
   USD: "US Dollar",
   EUR: "Euro",
   NGN: "Nigerian Naira",
@@ -30,19 +33,16 @@ const ISO_CURRENCY_NAMES: Record<string, string> = {
   BRL: "Brazilian Real",
   MXN: "Mexican Peso",
   ZAR: "South African Rand",
-  ZAC: "South African Cent",
   KES: "Kenyan Shilling",
   GHS: "Ghanaian Cedi",
   EGP: "Egyptian Pound",
   MAD: "Moroccan Dirham",
 }
 
-/** Long-form hints rendered as muted text alongside the title. Used for
- * non-ISO sub-unit codes where the rate-to-parent isn't obvious. */
-const CURRENCY_NOTES: Record<string, string> = {
-  GBX: "LSE sub-unit, 1 GBX = 0.01 GBP",
-  ZAC: "Sub-unit, 1 ZAC = 0.01 ZAR",
-}
+/** Long-form hints rendered as muted text alongside the title. Currently
+ * unused now that sub-unit codes are no longer offered; kept as a mechanism
+ * for future currency-specific notes. */
+const CURRENCY_NOTES: Record<string, string> = {}
 
 const COMMON_CURRENCY_CODES = Object.keys(ISO_CURRENCY_NAMES)
 
