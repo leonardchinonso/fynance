@@ -93,14 +93,17 @@ function ProfilesList({ profiles, onRefresh }: { profiles: Profile[]; onRefresh:
             />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium">{p.name}</p>
-              <p className="text-xs text-muted-foreground">{p.id}</p>
+              <p className="text-xs text-muted-foreground">
+                {p.id}
+                {p.utr && <> · UTR {p.utr}</>}
+              </p>
             </div>
             <Button
               variant="ghost"
               size="icon"
               className="h-8 w-8 opacity-0 group-hover:opacity-100"
               onClick={() => setEditing(p)}
-              title="Rename profile"
+              title="Edit profile"
             >
               <Pencil className="h-3.5 w-3.5" />
             </Button>
@@ -141,18 +144,30 @@ function ProfilesList({ profiles, onRefresh }: { profiles: Profile[]; onRefresh:
 
 function EditProfileDialog({ profile, onClose, onSaved }: { profile: Profile; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(profile.name)
+  const [utr, setUtr] = useState(profile.utr ?? "")
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
+  const trimmedUtr = utr.replace(/\s/g, "")
+  const utrValid = trimmedUtr === "" || /^\d{10}$/.test(trimmedUtr)
+  const nameChanged = name.trim() !== "" && name.trim() !== profile.name
+  const utrChanged = trimmedUtr !== (profile.utr ?? "")
+
   async function handleSave() {
-    if (!name.trim() || name.trim() === profile.name) {
+    if (!utrValid) return
+    if (!nameChanged && !utrChanged) {
       onClose()
       return
     }
     setSaving(true)
     setSaveError(null)
     try {
-      await api.updateProfile(profile.id, { name: name.trim() })
+      await api.updateProfile(profile.id, {
+        ...(nameChanged ? { name: name.trim() } : {}),
+        // An empty field means "clear it", which is an explicit null rather
+        // than an omitted key — the two are different requests.
+        ...(utrChanged ? { utr: trimmedUtr === "" ? null : trimmedUtr } : {}),
+      })
       onSaved()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err))
@@ -164,7 +179,7 @@ function EditProfileDialog({ profile, onClose, onSaved }: { profile: Profile; on
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
       <DialogContent className="sm:max-w-sm">
-        <DialogHeader><DialogTitle>Rename profile</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Edit profile</DialogTitle></DialogHeader>
         <div className="space-y-3 pt-2">
           <div>
             <label className="text-sm font-medium">Name</label>
@@ -175,6 +190,25 @@ function EditProfileDialog({ profile, onClose, onSaved }: { profile: Profile; on
               onKeyDown={(e) => { if (e.key === "Enter") handleSave() }}
             />
           </div>
+          <div>
+            <label className="text-sm font-medium">UTR</label>
+            <Input
+              value={utr}
+              onChange={(e) => setUtr(e.target.value)}
+              placeholder="10 digits"
+              inputMode="numeric"
+              onKeyDown={(e) => { if (e.key === "Enter") handleSave() }}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              HMRC Unique Taxpayer Reference, printed on generated tax reports.
+              Optional — leave blank to omit it.
+            </p>
+            {!utrValid && (
+              <p className="text-xs text-destructive mt-1">
+                A UTR is exactly 10 digits.
+              </p>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground">
             ID stays as <span className="font-mono">{profile.id}</span> (immutable).
           </p>
@@ -184,7 +218,7 @@ function EditProfileDialog({ profile, onClose, onSaved }: { profile: Profile; on
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={handleSave} disabled={!name.trim() || saving}>
+          <Button size="sm" onClick={handleSave} disabled={!name.trim() || !utrValid || saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>

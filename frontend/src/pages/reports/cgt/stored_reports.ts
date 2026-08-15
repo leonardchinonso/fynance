@@ -17,6 +17,15 @@ export interface StoredCgtReport {
    * existed — treat `undefined` as `true`.
    */
   higherRate?: boolean
+  /**
+   * The profile's HMRC UTR as it stood when this report was generated, confirmed
+   * by the user on the pre-flight screen. Snapshotted rather than read live from
+   * the profile so that reprinting an old report reproduces the document that was
+   * filed — editing the profile later must not silently restamp past reports.
+   * `undefined` for reports stored before this field existed, and `null` when the
+   * user generated without one; both render the footer with no UTR line.
+   */
+  utr?: string | null
   response: CapitalGainsResponse
 }
 

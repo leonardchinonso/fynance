@@ -949,6 +949,39 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "responses": { "200": { "description": "Currency deleted" } }
                 }
             },
+            "/api/exchange-rates": {
+                "get": {
+                    "summary": "List date-keyed exchange rates",
+                    "description": "User-owned historical FX rates. `rate` is quote units per ONE base unit, so amount_in_quote = amount_in_base * rate.",
+                    "parameters": [
+                        { "name": "base", "in": "query", "schema": { "type": "string", "example": "USD" } },
+                        { "name": "quote", "in": "query", "schema": { "type": "string", "example": "GBP" } },
+                        { "name": "start_date", "in": "query", "schema": { "type": "string", "example": "2024-04-06" },
+                          "description": "Inclusive lower bound, YYYY-MM-DD." },
+                        { "name": "end_date", "in": "query", "schema": { "type": "string", "example": "2025-04-05" },
+                          "description": "Inclusive upper bound, YYYY-MM-DD." }
+                    ],
+                    "responses": { "200": { "description": "Array of exchange rates" } }
+                },
+                "post": {
+                    "summary": "Bulk create or update exchange rates",
+                    "description": "A CGT report for one tax year can need ~49 rates, so a batch is the normal case. Existing (base, quote, date) rows are overwritten. The whole batch is validated before anything is written.",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "201": { "description": "The stored rates" } }
+                }
+            },
+            "/api/exchange-rates/{base}/{quote}/{date}": {
+                "delete": {
+                    "summary": "Delete one stored exchange rate",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "base", "in": "path", "required": true, "schema": { "type": "string", "example": "USD" } },
+                        { "name": "quote", "in": "path", "required": true, "schema": { "type": "string", "example": "GBP" } },
+                        { "name": "date", "in": "path", "required": true, "schema": { "type": "string", "example": "2024-06-03" } }
+                    ],
+                    "responses": { "204": { "description": "Exchange rate deleted" } }
+                }
+            },
             "/api/investments": {
                 "get": {
                     "summary": "List investment events",
