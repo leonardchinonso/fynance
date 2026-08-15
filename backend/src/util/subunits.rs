@@ -18,11 +18,18 @@
 //!
 //! # Lifecycle
 //!
-//! Plan 23 §0.2 (7.1) converts sub-units to their parent at import time, after which no sub-unit
-//! code is ever written to storage and these codes are dropped from the accepted-currency list.
-//! Until that lands, the codes must stay accepted at write time or statements denominated in them
-//! cannot be imported at all. This module is the single source of truth for both phases and can be
-//! deleted wholesale once conversion-at-import is complete and existing rows are migrated.
+//! Plan 23 §0.2 (7.1): conversion-at-write-time has landed. Every write path that can receive a
+//! sub-unit price — `create_investment_event`, `HoldingWrite::into_holding`,
+//! `Transaction::from_unified`, `insert_transactions_bulk` — calls [`to_parent`] before the row
+//! reaches storage, so no sub-unit code is ever written any more. A one-time migration
+//! (`Db::migrate_subunit_currencies`) converted rows written before that change. Sub-unit codes
+//! are no longer in the accepted-currency list (`server::routes::currencies::VALID_ISO_CODES`);
+//! they remain valid *input* only where the caller is known to convert (investment events, via
+//! `validate_event_currency`), keyed on the sub-unit's *parent* being configured.
+//!
+//! This module is not dead code: importers, the migration, and `validate_event_currency` all still
+//! call into it at parse/write time, so it stays as the single source of truth for the mapping —
+//! narrow it further only if one of those call sites is removed.
 
 use rust_decimal::Decimal;
 

@@ -1,6 +1,7 @@
 pub mod account;
 pub mod budget;
 pub mod import;
+pub mod migrate_subunits;
 pub mod profile;
 pub mod serve;
 pub mod stats;

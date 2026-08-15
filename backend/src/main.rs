@@ -7,7 +7,9 @@ use tracing_subscriber::EnvFilter;
 use fynance::cli::{
     AccountCommand, BudgetCommand, Cli, Commands, ProfileCommand, TokenCommand, TransactionCommand,
 };
-use fynance::commands::{account, budget, import, profile, serve, stats, token, transaction};
+use fynance::commands::{
+    account, budget, import, migrate_subunits, profile, serve, stats, token, transaction,
+};
 use fynance::storage::Db;
 use fynance::storage::db::default_db_path;
 
@@ -82,6 +84,7 @@ fn main() -> Result<()> {
                 transaction::delete(&db, &ids, account.as_deref())
             }
         },
+        Commands::MigrateSubunits { apply } => migrate_subunits::run(&db, apply),
     }
 }
 

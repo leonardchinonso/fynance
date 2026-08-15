@@ -30,12 +30,18 @@ Rules:
    cash amounts without a symbol (e.g. "GBP").
 4. date: ISO 8601 datetime string "YYYY-MM-DDTHH:MM:SS". Use "T00:00:00" if no time given.
 5. quantity: number of units as a decimal string. Must be positive.
-6. price_per_share: price per unit as a decimal string in the native currency.
+6. price_per_share: price per unit as a decimal string, exactly as shown in the source data —
+   do NOT convert or rescale it yourself.
    Use "0" for splits and transfers where no price applies.
 7. total_value: total transaction value as a decimal string. Provide ONLY if EXPLICITLY
    present in the source data. Do NOT compute it from quantity * price_per_share. Null if absent.
 8. fee: transaction fee as a decimal string. "0" if no fee shown.
-9. currency: ISO 4217 currency code of the price (e.g. "GBP", "USD").
+9. currency: the currency/unit code exactly as the source data labels the price. UK/LSE
+   instruments are frequently quoted in pence rather than pounds, shown as "GBX", "GBp", or "p" —
+   if the source labels the price this way, set currency to "GBX" (NOT "GBP") and leave
+   price_per_share as the pence figure unchanged; the system converts pence to pounds
+   automatically downstream. Relabeling a pence price as "GBP" without converting it overstates
+   the trade value ~100x. For an ordinary currency, use its ISO 4217 code (e.g. "GBP", "USD").
 9a. fee_currency: ISO 4217 currency code of the fee, ONLY when the statement charges the
     fee in a different currency from the price (e.g. a USD-priced share with a GBP commission,
     FX charge, or stamp duty). Leave it null when the fee is in the same currency as the price.

@@ -13,11 +13,15 @@ use crate::model::{CreateCurrencyPayload, Currency, PatchCurrencyPayload};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
 
-/// Subset of ISO 4217 codes accepted by POST /api/currencies. Also includes a
-/// short list of non-ISO sub-unit codes that brokers use as line-item currencies
-/// (e.g. GBX = British pence on the LSE, ZAC = South African cent). Investment
-/// statements regularly arrive denominated in these, so rejecting them at write
-/// time means the CGT engine later sees events it can't convert.
+/// Subset of ISO 4217 codes accepted by POST /api/currencies.
+///
+/// Broker sub-unit codes (GBX, USX, ZAC, ILA) are deliberately NOT in this
+/// list: every write path now converts a sub-unit price/amount to its parent
+/// currency at import/write time (`create_investment_event`,
+/// `HoldingWrite::into_holding`, `insert_transactions_bulk`,
+/// `Transaction::from_unified`), so a sub-unit code is never itself persisted
+/// and never needs to be a "configured" currency. See `util::subunits` for
+/// the conversion table.
 const VALID_ISO_CODES: &[&str] = &[
     "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT",
     "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD",
@@ -34,10 +38,7 @@ const VALID_ISO_CODES: &[&str] = &[
 ];
 
 fn is_valid_iso_code(code: &str) -> bool {
-    // Broker sub-units (GBX, USX, ZAC, ILA) are accepted alongside real ISO codes, sourced from
-    // the one table that also drives conversion, so the two can never disagree about which codes
-    // exist. They stop being accepted once plan 23 §0.2 (7.1) converts them at import.
-    VALID_ISO_CODES.contains(&code) || crate::util::subunits::is_sub_unit(code)
+    VALID_ISO_CODES.contains(&code)
 }
 
 // ── GET /api/currencies ─────────────────────────────────────────────────────
@@ -166,4 +167,31 @@ pub async fn delete_currency(
         }
     })?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_iso_codes_are_valid() {
+        assert!(is_valid_iso_code("GBP"));
+        assert!(is_valid_iso_code("USD"));
+    }
+
+    /// Regression test for the sub-unit migration: broker sub-unit codes must
+    /// no longer be creatable as their own configured currency now that every
+    /// write path converts them to their parent at import time.
+    #[test]
+    fn broker_sub_unit_codes_are_no_longer_valid() {
+        assert!(!is_valid_iso_code("GBX"));
+        assert!(!is_valid_iso_code("USX"));
+        assert!(!is_valid_iso_code("ZAC"));
+        assert!(!is_valid_iso_code("ILA"));
+    }
+
+    #[test]
+    fn unknown_code_is_invalid() {
+        assert!(!is_valid_iso_code("XXX"));
+    }
 }

@@ -10,13 +10,18 @@ Rules:
 3. name: full display name of the holding.
 4. holding_type: one of "stock", "etf", "fund", "bond", "crypto", "cash", "property", "loan", "credit".
 5. quantity: number of units/shares as a decimal string. For cash balances, this equals the value.
-6. price_per_unit: price per share/unit as a decimal string. Null if not available.
-   For cash, this is "1.0000".
+6. price_per_unit: price per share/unit as a decimal string, exactly as shown in the source
+   data — do NOT convert or rescale it yourself. Null if not available. For cash, this is "1.0000".
 7. value: total market value as a decimal string. Only provide this if it is EXPLICITLY present
    in the source data. Do NOT compute it yourself. If the document shows quantity and price but
    no total value column, omit value (null). If only value is available (no quantity/price),
    set quantity = value and price_per_unit = "1.0000".
-8. currency: ISO 4217 code for the value column.
+8. currency: the currency/unit code exactly as the source data labels the price/value. UK/LSE
+   instruments are frequently quoted in pence rather than pounds, shown as "GBX", "GBp", or "p" —
+   if the source labels the price this way, set currency to "GBX" (NOT "GBP") and leave the
+   figure in pence unchanged; the system converts pence to pounds automatically downstream.
+   Relabeling a pence price as "GBP" without converting it overstates the holding ~100x. For an
+   ordinary currency, use its ISO 4217 code (e.g. "GBP", "USD").
 9. All amounts must be plain decimal strings with no currency symbols or thousands separators.
 10. Do not invent holdings. Only emit rows explicitly present in the data.
 11. Skip header rows, summary/total rows, and empty rows.
