@@ -30,11 +30,14 @@ export function CgtPoolWorkings({ pools }: CgtPoolWorkingsProps) {
       {open && (
         <CardContent className="grid gap-3 sm:grid-cols-2">
           {nonEmpty.map((p) => {
-            // Pool figures are held in the symbol's own currency, which the pool now
-            // states outright. This used to be looked up from the disposals in the
-            // window and fell back to the base currency when a symbol had none — so a
-            // pool with no disposals this period was labelled in the wrong currency.
-            const cur = p.original_currency
+            // total_allowable_expenditure and average_cost_per_share are always in the
+            // preferred base currency (GBP) — they are accumulated via fx.convert_as_of
+            // on the backend regardless of the symbol's trade currency.
+            // `original_currency` is source metadata only (what currency the symbol's
+            // own trades were denominated in); it does NOT describe the currency these
+            // two values are held in, so it must not be passed to formatCurrency here.
+            // Passing it previously produced amounts labelled with the wrong currency
+            // symbol (e.g. a GBP amount rendered with a "$" prefix for a USD symbol).
             return (
               <div key={p.symbol} className="rounded-md border bg-card p-4">
                 <h3 className="text-sm font-semibold">{p.symbol}</h3>
@@ -42,11 +45,11 @@ export function CgtPoolWorkings({ pools }: CgtPoolWorkingsProps) {
                   <Pair label="Current shares" value={fmtShares(p.current_shares)} />
                   <Pair
                     label="Total allowable expenditure"
-                    value={formatCurrency(p.total_allowable_expenditure, cur)}
+                    value={formatCurrency(p.total_allowable_expenditure)}
                   />
                   <Pair
                     label="Average cost per share"
-                    value={formatCurrency(p.average_cost_per_share, cur)}
+                    value={formatCurrency(p.average_cost_per_share)}
                   />
                 </dl>
               </div>
