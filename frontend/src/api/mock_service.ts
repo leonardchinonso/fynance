@@ -1520,12 +1520,16 @@ const MOCK_POOLS: S104PoolState[] = [
 function groupDisposals(events: CgtRealizedEvent[]): CgtDisposalGroup[] {
   const groups = new Map<string, CgtDisposalGroup>()
   for (const ev of events) {
-    const key = `${ev.symbol} ${ev.disposal_date}`
+    // Key on the calendar DAY, not the timestamp — matching the backend. UK capital
+    // gains are reckoned by day, so two sells of one holding on one date are a single
+    // disposal; keying on the full datetime would overstate the SA108 disposal count.
+    const day = ev.disposal_date.slice(0, 10)
+    const key = `${ev.symbol} ${day}`
     let group = groups.get(key)
     if (!group) {
       group = {
         symbol: ev.symbol,
-        disposal_date: ev.disposal_date,
+        disposal_date: day,
         quantity: "0",
         proceeds: "0",
         cost_basis: "0",

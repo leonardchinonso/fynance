@@ -221,7 +221,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             "type": "string",
                             "enum": ["Same-Day", "30-Day Rule", "S104 Pool", "Unmatched"]
                         },
-                        "original_currency": { "type": "string" },
+                        "original_currency": { "type": "string", "description": "Source metadata: the currency the trade was denominated in. NOT a formatting label — proceeds, cost_basis and gain_loss are all in the user's preferred (base) currency. Only disposal_price is native." },
                         "matches": {
                             "type": "array",
                             "items": { "$ref": "#/components/schemas/CgtMatchDetail" }
@@ -242,12 +242,12 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                     "required": ["symbol", "disposal_date", "quantity", "proceeds", "cost_basis", "gain_loss", "original_currency", "events"],
                     "properties": {
                         "symbol": { "type": "string" },
-                        "disposal_date": { "type": "string", "format": "date-time" },
+                        "disposal_date": { "type": "string", "format": "date", "description": "The calendar day of the sale (YYYY-MM-DD). Date-only on purpose: UK capital gains are reckoned by day, so every sale of one holding on one date is a single disposal. The per-event disposal_date on CgtRealizedEvent keeps its full timestamp." },
                         "quantity": { "type": "string", "description": "Summed across every matched bucket for this disposal." },
                         "proceeds": { "type": "string", "description": "Summed proceeds, in the user's preferred (base) currency." },
                         "cost_basis": { "type": "string", "description": "Summed cost basis, in the user's preferred (base) currency." },
                         "gain_loss": { "type": "string", "description": "proceeds - cost_basis, in the user's preferred (base) currency." },
-                        "original_currency": { "type": "string" },
+                        "original_currency": { "type": "string", "description": "Source metadata: the currency the constituent trades were denominated in. NOT a formatting label — every money field on this group is in the user's preferred (base) currency." },
                         "events": {
                             "type": "array",
                             "description": "The constituent realized_events rows this group rolls up.",

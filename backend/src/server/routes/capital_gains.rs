@@ -244,16 +244,31 @@ pub struct MissingExchangeRates {
 ///
 /// Scope is the accounts that actually contribute events to this computation —
 /// derived from the events themselves, after profile filtering and after the
-/// ISA/pension exclusion. Ope's joint *current* account, and a joint ISA whose
+/// ISA/pension exclusion. A joint *current* account, and a joint ISA whose
 /// gains are tax-free anyway, are therefore not grounds to refuse a report they
 /// contribute nothing to.
+///
+/// `as_at` must mirror the ledger truncation the engine will apply (see
+/// [`run_cgt_engine`]): `/pools` replays events only up to and including that
+/// date, so an account whose events all fall after it contributes nothing and
+/// must not block the request. Pass `None` where the engine does — `/capital-gains`
+/// never truncates the ledger, because the S104 pool is built from all history.
+///
+/// Note this is deliberately NOT narrowed by `filter_start`/`filter_end`: those
+/// govern only which disposals are *emitted*, while every event still enters the
+/// pool and can therefore make a returned figure ambiguous.
 fn check_single_owner_accounts(
     accounts: &[Account],
     events: &[InvestmentEvent],
     excluded_accounts: &HashSet<String>,
+    as_at: Option<NaiveDate>,
 ) -> Result<(), AppError> {
     let contributing: HashSet<&str> = events
         .iter()
+        .filter(|e| match as_at {
+            Some(limit_date) => e.date.date() <= limit_date,
+            None => true,
+        })
         .map(|e| e.account_id.as_str())
         .filter(|id| !excluded_accounts.contains(*id))
         .collect();
@@ -361,6 +376,14 @@ pub struct CgtDisposalGroup {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub gain_loss: Decimal, // proceeds - cost_basis
+    /// Source metadata only — the currency the constituent trades were denominated
+    /// in. **Not a formatting label**: `proceeds`, `cost_basis` and `gain_loss` above
+    /// are all in the preferred base currency (GBP). See
+    /// [`CgtRealizedEvent::original_currency`].
+    ///
+    /// Every event in a group provably shares one currency:
+    /// `check_single_currency_per_symbol` rejects a symbol carrying more than one
+    /// before the engine runs, and a group never spans symbols.
     pub original_currency: String,
     /// The individual matched-bucket rows this group rolls up. Same objects as in
     /// `realized_events` (by `disposal_id` + `rule_applied`), repeated here so a
@@ -387,6 +410,9 @@ pub struct SymbolSummary {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub net_gain_loss: Decimal,
+    /// Source metadata only — **not a formatting label**. Every total on this struct
+    /// is in the preferred base currency (GBP). See
+    /// [`CgtRealizedEvent::original_currency`].
     pub original_currency: String,
 }
 
@@ -420,6 +446,9 @@ pub struct CgtRealizedEvent {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub quantity: Decimal,
+    /// The traded price per share, in [`Self::original_currency`]. This is the one
+    /// money field on this struct that is genuinely native — it is `price_per_share`
+    /// straight off the event, never converted.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub disposal_price: Decimal,
@@ -429,10 +458,22 @@ pub struct CgtRealizedEvent {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub cost_basis: Decimal, // in base currency (GBP)
+    /// `proceeds - cost_basis`, and therefore in base currency (GBP) like both.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub gain_loss: Decimal,
     pub rule_applied: String, // "Same-Day" | "30-Day Rule" | "S104 Pool" | "Unmatched"
+    /// Source metadata only: the currency the underlying trade was denominated in.
+    ///
+    /// **It is NOT a formatting label for the money on this struct.** `proceeds`,
+    /// `cost_basis` and `gain_loss` are all converted to the preferred base currency
+    /// (GBP) before serialisation, so formatting them with this field renders a GBP
+    /// amount behind a "$". That exact bug has now been found three separate times —
+    /// here, on [`S104PoolState`], and latently on [`CgtDisposalGroup`] — because the
+    /// name reads like a display currency. Only [`Self::disposal_price`] is native.
+    ///
+    /// Use it the way `cgt_per_symbol_table.tsx` does: as a non-formatting badge shown
+    /// when it differs from base.
     pub original_currency: String,
     pub matches: Vec<CgtMatchDetail>,
 }
@@ -610,7 +651,9 @@ pub async fn get_s104_pools(
     let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
     let fx = fx.with_historical(historical);
     check_required_currencies(&events, &fx)?;
-    check_single_owner_accounts(&accounts, &events, &excluded_accounts)?;
+    // Same `as_at` the engine truncates the ledger with, so the guard's scope is
+    // exactly the events that will actually build the pools it is protecting.
+    check_single_owner_accounts(&accounts, &events, &excluded_accounts, as_at)?;
     check_single_currency_per_symbol(&events)?;
     let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None, &fx)?;
 
@@ -684,7 +727,9 @@ pub async fn get_capital_gains(
     let fx = fx.with_historical(historical);
 
     check_required_currencies(&events, &fx)?;
-    check_single_owner_accounts(&accounts, &events, &excluded_accounts)?;
+    // `None`, mirroring the engine call below: this endpoint never truncates the
+    // ledger, so every event contributes to the pool and can make a figure ambiguous.
+    check_single_owner_accounts(&accounts, &events, &excluded_accounts, None)?;
     check_single_currency_per_symbol(&events)?;
 
     let mut response = run_cgt_engine(
@@ -1284,6 +1329,24 @@ fn run_cgt_engine(
     })
 }
 
+/// The calendar day of a `CgtRealizedEvent.disposal_date`, which is a
+/// `NaiveDateTime` rendered by `to_string()` — i.e. `"YYYY-MM-DD HH:MM:SS"`.
+///
+/// Grouping is by *day*, never by instant: see [`group_disposals`]. Parsing the
+/// date rather than slicing `[..10]` means a value that is not in the expected
+/// shape cannot be silently truncated into a plausible-looking wrong day; a
+/// malformed input falls back to the whole string, which cannot merge two
+/// genuinely distinct days and is visible in the output rather than hidden.
+fn disposal_day_of(disposal_date: &str) -> String {
+    match NaiveDate::parse_from_str(
+        &disposal_date.chars().take(10).collect::<String>(),
+        "%Y-%m-%d",
+    ) {
+        Ok(d) => d.to_string(),
+        Err(_) => disposal_date.to_string(),
+    }
+}
+
 /// Rolls `realized_events` up by `(symbol, disposal_date)` into one row per actual sale.
 ///
 /// `disposal_id` is deliberately NOT part of the grouping key: it identifies the underlying
@@ -1294,15 +1357,25 @@ fn run_cgt_engine(
 /// disposal for reporting purposes (see the same-day FIFO matching above, which already
 /// treats them jointly). Two disposals of the same symbol on *different* dates stay separate
 /// groups — the date is part of the key precisely so they don't collapse into each other.
+///
+/// **The key is the calendar DAY, not the timestamp.** `CgtRealizedEvent.disposal_date`
+/// carries a full `YYYY-MM-DD HH:MM:SS`, and `parse_iso_date` accepts `%Y-%m-%dT%H:%M:%S`,
+/// so imported events can legitimately carry non-midnight times. Keying on the raw datetime
+/// would split a morning and an afternoon sale of one holding into two groups and overstate
+/// the SA108 disposal count — while the same-day matcher above, which keys on `e.date.date()`,
+/// had already treated them as one. [`disposal_day_of`] normalises to the day so the grouper
+/// and the matcher agree. `disposal_date` on the *group* is therefore date-only; the
+/// per-event `CgtRealizedEvent.disposal_date` keeps its full timestamp.
 fn group_disposals(realized_events: &[CgtRealizedEvent]) -> Vec<CgtDisposalGroup> {
     // BTreeMap keeps groups in (symbol, disposal_date) order without a separate sort pass.
     let mut groups: BTreeMap<(String, String), CgtDisposalGroup> = BTreeMap::new();
 
     for event in realized_events {
-        let key = (event.symbol.clone(), event.disposal_date.clone());
+        let disposal_day = disposal_day_of(&event.disposal_date);
+        let key = (event.symbol.clone(), disposal_day.clone());
         let group = groups.entry(key).or_insert_with(|| CgtDisposalGroup {
             symbol: event.symbol.clone(),
-            disposal_date: event.disposal_date.clone(),
+            disposal_date: disposal_day,
             quantity: Decimal::ZERO,
             proceeds: Decimal::ZERO,
             cost_basis: Decimal::ZERO,

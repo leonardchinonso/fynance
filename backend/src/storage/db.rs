@@ -1428,12 +1428,6 @@ impl Db {
         Ok((event, outcome))
     }
 
-    /// The distinct trade currencies already recorded against a symbol, sorted.
-    ///
-    /// A symbol is a plain TEXT column on `investments` — there is no symbols
-    /// table — so there is nowhere to hang a DB-level constraint saying "one
-    /// symbol, one currency". This is the lookup the write-time guard uses
-    /// instead. Normally returns zero rows (a new symbol) or exactly one.
     /// The `(symbol, currency)` pair of a single event, or `None` if it does not
     /// exist. Used by the PATCH path to resolve the fields a partial body omits.
     pub fn investment_event_symbol_currency(&self, id: &str) -> Result<Option<(String, String)>> {
@@ -1448,6 +1442,13 @@ impl Db {
         Ok(row)
     }
 
+    /// The distinct trade currencies already recorded against a symbol, sorted.
+    ///
+    /// A symbol is a plain TEXT column on `investments` — there is no symbols
+    /// table — so there is nowhere to hang a DB-level constraint saying "one
+    /// symbol, one currency". This is the lookup the write-time guard uses
+    /// instead. Normally returns zero rows (a new symbol) or exactly one.
+    ///
     /// `exclude_id` omits one event from the answer, so a PATCH can ask "what
     /// currencies would this symbol have if my row were not counted?" — without
     /// it, editing the sole event of a symbol would always conflict with itself.
