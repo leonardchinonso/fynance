@@ -1284,6 +1284,24 @@ fn run_cgt_engine(
     })
 }
 
+/// The calendar day of a `CgtRealizedEvent.disposal_date`, which is a
+/// `NaiveDateTime` rendered by `to_string()` — i.e. `"YYYY-MM-DD HH:MM:SS"`.
+///
+/// Grouping is by *day*, never by instant: see [`group_disposals`]. Parsing the
+/// date rather than slicing `[..10]` means a value that is not in the expected
+/// shape cannot be silently truncated into a plausible-looking wrong day; a
+/// malformed input falls back to the whole string, which cannot merge two
+/// genuinely distinct days and is visible in the output rather than hidden.
+fn disposal_day_of(disposal_date: &str) -> String {
+    match NaiveDate::parse_from_str(
+        &disposal_date.chars().take(10).collect::<String>(),
+        "%Y-%m-%d",
+    ) {
+        Ok(d) => d.to_string(),
+        Err(_) => disposal_date.to_string(),
+    }
+}
+
 /// Rolls `realized_events` up by `(symbol, disposal_date)` into one row per actual sale.
 ///
 /// `disposal_id` is deliberately NOT part of the grouping key: it identifies the underlying
@@ -1294,15 +1312,25 @@ fn run_cgt_engine(
 /// disposal for reporting purposes (see the same-day FIFO matching above, which already
 /// treats them jointly). Two disposals of the same symbol on *different* dates stay separate
 /// groups — the date is part of the key precisely so they don't collapse into each other.
+///
+/// **The key is the calendar DAY, not the timestamp.** `CgtRealizedEvent.disposal_date`
+/// carries a full `YYYY-MM-DD HH:MM:SS`, and `parse_iso_date` accepts `%Y-%m-%dT%H:%M:%S`,
+/// so imported events can legitimately carry non-midnight times. Keying on the raw datetime
+/// would split a morning and an afternoon sale of one holding into two groups and overstate
+/// the SA108 disposal count — while the same-day matcher above, which keys on `e.date.date()`,
+/// had already treated them as one. [`disposal_day_of`] normalises to the day so the grouper
+/// and the matcher agree. `disposal_date` on the *group* is therefore date-only; the
+/// per-event `CgtRealizedEvent.disposal_date` keeps its full timestamp.
 fn group_disposals(realized_events: &[CgtRealizedEvent]) -> Vec<CgtDisposalGroup> {
     // BTreeMap keeps groups in (symbol, disposal_date) order without a separate sort pass.
     let mut groups: BTreeMap<(String, String), CgtDisposalGroup> = BTreeMap::new();
 
     for event in realized_events {
-        let key = (event.symbol.clone(), event.disposal_date.clone());
+        let disposal_day = disposal_day_of(&event.disposal_date);
+        let key = (event.symbol.clone(), disposal_day.clone());
         let group = groups.entry(key).or_insert_with(|| CgtDisposalGroup {
             symbol: event.symbol.clone(),
-            disposal_date: event.disposal_date.clone(),
+            disposal_date: disposal_day,
             quantity: Decimal::ZERO,
             proceeds: Decimal::ZERO,
             cost_basis: Decimal::ZERO,

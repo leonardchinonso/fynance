@@ -2944,7 +2944,7 @@ async fn test_cgt_disposal_groups_same_symbol_different_dates_stay_separate() {
 
     let g_may10 = groups
         .iter()
-        .find(|g| g["disposal_date"] == "2026-05-10 10:00:00")
+        .find(|g| g["disposal_date"] == "2026-05-10")
         .unwrap();
     assert_eq!(g_may10["symbol"], "NVDA");
     assert_eq!(g_may10["quantity"], "50");
@@ -2954,7 +2954,7 @@ async fn test_cgt_disposal_groups_same_symbol_different_dates_stay_separate() {
 
     let g_may20 = groups
         .iter()
-        .find(|g| g["disposal_date"] == "2026-05-20 10:00:00")
+        .find(|g| g["disposal_date"] == "2026-05-20")
         .unwrap();
     assert_eq!(g_may20["symbol"], "NVDA");
     assert_eq!(g_may20["quantity"], "50");
@@ -3321,4 +3321,188 @@ async fn test_cgt_preferred_currency_needs_no_rates() {
     let realized = res["realized_events"].as_array().unwrap();
     assert_eq!(realized.len(), 1);
     assert_eq!(realized[0]["gain_loss"], "200.00");
+}
+
+/// `disposal_groups`: two sell events for the SAME symbol on the SAME date but at
+/// DIFFERENT times of day must roll up into exactly ONE disposal group.
+///
+/// This is the SA108 disposal count (box 23), and UK capital gains are reckoned by
+/// *day*: HMRC treats every sale of a holding on one date as a single disposal. The
+/// engine already agrees — the same-day FIFO matcher keys on `e.date.date()` — so a
+/// grouping key that retained the time component would report two disposals where
+/// the taxpayer made one, overstating the count on a filed return.
+///
+/// Guards the (symbol, date-only) grouping key. Reverting the key to the full
+/// datetime string splits this into two groups and fails the `groups.len()` assertion.
+#[tokio::test]
+async fn test_cgt_disposal_groups_same_symbol_same_date_different_times_merge() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Pool: 200 AAPL @ 10 (cost 2000, avg 10.00)
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "200",
+            "10.00",
+            None,
+        );
+        // Two sells on the SAME date at different times. Morning: 50 @ 30.
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-06-01T09:00:00",
+            "50",
+            "30.00",
+            None,
+        );
+        // Afternoon: 50 @ 40, same date.
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-06-01T15:30:00",
+            "50",
+            "40.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Two underlying sell events stay two realized_events — that record is per-event
+    // and is deliberately unchanged.
+    assert_eq!(res["realized_events"].as_array().unwrap().len(), 2);
+
+    // ...but they are ONE disposal for reporting. This is the assertion that fails
+    // when the grouping key carries the time component.
+    let groups = res["disposal_groups"].as_array().unwrap();
+    assert_eq!(
+        groups.len(),
+        1,
+        "two sells of one holding on one date are a single SA108 disposal"
+    );
+
+    let g = &groups[0];
+    assert_eq!(g["symbol"], "AAPL");
+    // The group's date is date-only: it identifies a day, not an instant.
+    assert_eq!(g["disposal_date"], "2026-06-01");
+    // Both sells' figures are summed into the one group.
+    assert_eq!(g["quantity"], "100");
+    // proceeds = 50*30 + 50*40 = 3500
+    assert_eq!(g["proceeds"], "3500.00");
+    // cost_basis = 100 @ avg 10.00 = 1000
+    assert_eq!(g["cost_basis"], "1000.00");
+    assert_eq!(g["gain_loss"], "2500.00");
+    // Both constituent events remain listed under the single group.
+    assert_eq!(g["events"].as_array().unwrap().len(), 2);
+    // The group carries the symbol's source currency. Unasserted before this test:
+    // a mutation hardcoding it to "ZZZ" previously survived the whole suite.
+    assert_eq!(g["original_currency"], "GBP");
+}
+
+/// A disposal group reports the symbol's SOURCE currency in `original_currency`,
+/// while its `proceeds`/`cost_basis`/`gain_loss` are in the BASE currency (GBP).
+///
+/// Those two facts together are the whole reason `original_currency` is a
+/// footgun: it reads like a formatting label but is source metadata, and a
+/// consumer that formats the base-currency money with it renders GBP behind a
+/// "$". This test pins the distinction on a USD holding, where the two currencies
+/// actually differ — a GBP-only fixture cannot tell the two apart, and a mutation
+/// hardcoding the field to "ZZZ" previously survived the entire suite unnoticed.
+#[tokio::test]
+async fn test_cgt_disposal_group_reports_source_currency_with_base_currency_money() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Buy 100 AAPL @ $10.00 USD.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        // Sell 50 AAPL @ $30.00 USD.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-06-01T10:00:00",
+            "50",
+            "30.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    // USD = 2 GBP. A whole-number rate keeps the decimal scale clean.
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "2" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    seed_rates(&app, "USD", &[("2026-05-01", "2"), ("2026-06-01", "2")]).await;
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let groups = res["disposal_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    let g = &groups[0];
+
+    // Source metadata: the currency the trade was struck in.
+    assert_eq!(
+        g["original_currency"], "USD",
+        "the group must report the symbol's source currency, not the base currency"
+    );
+
+    // ...but every money figure on the group is already converted to base (GBP).
+    // proceeds = 50 * $30 = $1500 -> £3000. If these were native USD they would
+    // read 1500.00, so this assertion also proves the values are NOT in
+    // `original_currency` — which is exactly what a "$"-prefixed render implies.
+    assert_eq!(g["proceeds"], "3000.00");
+    // cost_basis = 50 @ $10 = $500 -> £1000.
+    assert_eq!(g["cost_basis"], "1000.00");
+    assert_eq!(g["gain_loss"], "2000.00");
 }
