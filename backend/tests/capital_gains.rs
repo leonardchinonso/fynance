@@ -3617,3 +3617,219 @@ async fn test_s104_pools_multi_owner_account_inside_end_date_still_refuses() {
     let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(res["code"], "multi_owner_account");
 }
+
+/// A 30-day (bed-and-breakfast) match must convert the acquisition leg at the **acquisition
+/// date's** rate, not the disposal date's.
+///
+/// HMRC matches a disposal against an acquisition in the following 30 days, and that acquisition
+/// leg is converted at its own date — which, uniquely on the CGT path, is *later* than the
+/// disposal it is matched to. Every other conversion in the engine uses the event's own date, so
+/// the disposal date is sitting right there in scope and is the natural thing for a refactor to
+/// reach for.
+///
+/// The rates are deliberately different (0.60 on the disposal date, 0.90 on the acquisition
+/// date) and the two legs are priced so that **no single flat rate can produce this pair of
+/// numbers**: £1,440 / £1,200 implies 0.90 on one leg and 0.60 on the other. That is what makes
+/// this test discriminating rather than merely present — the rest of the suite seeds the same
+/// rate on both dates, so acquisition-date and disposal-date lookups are indistinguishable to it.
+///
+/// The sign is the point. Converted correctly this is a £240 **loss**; converting the
+/// acquisition leg at the disposal rate instead gives a cost basis of £960 and turns it into a
+/// £240 **gain** — a sign change on a number that goes on an SA108, with every test still green.
+#[tokio::test]
+async fn test_cgt_30_day_match_uses_acquisition_date_rate() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Sell 100 @ $20 on 1 Jun, then buy 100 @ $16 on 15 Jun — inside the 30-day window, so
+        // the disposal matches the *later* acquisition under the bed-and-breakfast rule.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-06-01T10:00:00",
+            "100",
+            "20.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-06-15T10:00:00",
+            "100",
+            "16.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            // Neither historical rate, so a fallback to the flat rate cannot produce the
+            // numbers asserted below.
+            serde_json::json!({ "code": "USD", "fx_rate": "0.5" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    seed_rates(
+        &app,
+        "USD",
+        &[("2026-06-01", "0.60"), ("2026-06-15", "0.90")],
+    )
+    .await;
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let realized = res["realized_events"].as_array().unwrap();
+    assert_eq!(realized.len(), 1);
+    let event = &realized[0];
+    assert_eq!(event["rule_applied"], "30-Day Rule");
+
+    // Cost basis: 100 * $16 = $1600 at the 15 Jun ACQUISITION rate 0.90 -> £1440.
+    // At the disposal rate 0.60 this would be £960, so this assertion is what pins the
+    // acquisition-date lookup.
+    assert_eq!(event["cost_basis"], "1440.0000");
+    // Proceeds: 100 * $20 = $2000 at the 1 Jun disposal rate 0.60 -> £1200.
+    assert_eq!(event["proceeds"], "1200.0000");
+    // £1200 - £1440 = a £240 LOSS. Using the disposal rate on both legs would report a
+    // £240 gain instead — the sign flip this test exists to catch.
+    assert_eq!(event["gain_loss"], "-240.0000");
+}
+
+/// A `Split` date must not be demanded by the missing-rates precheck.
+///
+/// A share reorganisation moves the share count only — the engine's `Split` branch never touches
+/// `pool_cost` and never converts, and a split is never a match leg. Collecting its date anyway
+/// refused the whole report with a 400 naming a date whose rate would never have been applied,
+/// sending the user off to source a rate with no economic meaning.
+///
+/// Rates are supplied for the buy and the sell but deliberately **not** for the split date, so
+/// the report can only succeed if the precheck skips it.
+#[tokio::test]
+async fn test_cgt_precheck_ignores_split_and_transfer_dates() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Buy 100 @ $10 on 1 May.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        // A 2-for-1 split on 1 Jul: +100 shares, no cost change, no conversion.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "split",
+            "AAPL",
+            "2026-07-01T10:00:00",
+            "100",
+            "0.00",
+            None,
+            "USD",
+            None,
+        );
+        // An internal transfer on 2 Jul: neutral within one pool scope.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "transfer",
+            "AAPL",
+            "2026-07-02T10:00:00",
+            "0",
+            "0.00",
+            None,
+            "USD",
+            None,
+        );
+        // Sell 200 @ $8 on 1 Aug (post-split share count).
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2026-08-01T10:00:00",
+            "200",
+            "8.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "0.5" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    // Only the two dates that actually convert. No rate for 2026-07-01 or 2026-07-02.
+    seed_rates(
+        &app,
+        "USD",
+        &[("2026-05-01", "0.80"), ("2026-08-01", "0.75")],
+    )
+    .await;
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?start_date=2026-04-06&end_date=2027-04-05",
+        ))
+        .await
+        .unwrap();
+
+    // Before the fix this was a 400 `missing_exchange_rates` naming 2026-07-01.
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let realized = res["realized_events"].as_array().unwrap();
+    assert_eq!(realized.len(), 1);
+    let event = &realized[0];
+
+    // The split preserved cost and doubled the share count, and neither the split nor the
+    // transfer contributed a conversion:
+    // cost basis 100 * $10 = $1000 at 0.80 -> £800; proceeds 200 * $8 = $1600 at 0.75 -> £1200.
+    assert_eq!(event["cost_basis"], "800.0000");
+    assert_eq!(event["proceeds"], "1200.0000");
+    assert_eq!(event["gain_loss"], "400.0000");
+}

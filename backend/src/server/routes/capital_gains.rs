@@ -119,8 +119,9 @@ fn check_required_currencies(events: &[InvestmentEvent], fx: &FxRateMap) -> Resu
 /// which only govern which disposals are *emitted*.
 ///
 /// Mirrors the conversion sites in the engine exactly:
-///   * every event's trade currency at its own date (acquisitions into the pool, disposal
-///     proceeds, and same-day cost)
+///   * every *converting* event's trade currency at its own date (acquisitions into the pool,
+///     disposal proceeds, and same-day cost). `Split` and `Transfer` are skipped: neither
+///     performs a conversion, so a rate for their dates would never be applied.
 ///   * a non-zero fee's currency at that same date, which may differ from the trade currency
 ///   * for a 30-day match, the *acquisition* date rather than the disposal date, because HMRC
 ///     matches that leg at its own acquisition-date rate
@@ -129,6 +130,24 @@ fn required_rate_pairs(events: &[CalEvent], fx: &FxRateMap) -> BTreeSet<(String,
     let mut pairs: BTreeSet<(String, NaiveDate)> = BTreeSet::new();
 
     for e in events {
+        // `Split` and `Transfer` never reach a conversion, so demanding a rate for their dates
+        // blocks a legitimate ledger on a date with no economic meaning. A reorganisation
+        // (TCGA 1992 s.126-131) only moves the share count — the engine's `Split` branch touches
+        // `pool_shares` and never `pool_cost` — and `Transfer` is a no-op within one pool scope.
+        // Neither is ever a match leg either: same-day grouping sorts only Buy/Vest into
+        // `incoming` and Sell/Withhold into `outgoing`, and the 30-day loop guards both sides,
+        // so `calculate_matched_finance` cannot be reached with one.
+        //
+        // Skipping them keeps this set a superset of the engine's real lookups — the property
+        // `unreachable_missing_rate` depends on — while dropping only pairs that provably cannot
+        // be looked up. Over-collecting was safe for the numbers but not for the user: it
+        // refused the report with a 400 naming a date whose rate would never have been applied.
+        if matches!(
+            e.event_type,
+            InvestmentEventType::Split | InvestmentEventType::Transfer
+        ) {
+            continue;
+        }
         let date = e.date.date();
         if e.currency != preferred {
             pairs.insert((e.currency.clone(), date));
