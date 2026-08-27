@@ -3506,3 +3506,114 @@ async fn test_cgt_disposal_group_reports_source_currency_with_base_currency_mone
     assert_eq!(g["cost_basis"], "1000.00");
     assert_eq!(g["gain_loss"], "2000.00");
 }
+
+/// `/pools` truncates the event ledger at `end_date`, so a joint account whose
+/// events all fall AFTER `end_date` contributes nothing to the pools being
+/// returned — and must therefore not refuse the request.
+///
+/// The multi-owner guard exists because an S104 pool cannot split a gain between
+/// owners. That ambiguity is real only for accounts that actually contribute
+/// events to the computation, which is exactly what the guard's own doc comment
+/// claims its scope is. Blocking on an account that contributes nothing is an
+/// over-eager refusal, and this project treats a false refusal as worse than the
+/// bug it prevents.
+///
+/// Note `/capital-gains` cannot exhibit this: it passes `None` for ledger
+/// truncation, so its event set is never narrowed by a date. `/pools` is the only
+/// affected endpoint — the `as_at` parameter this defect was originally reported
+/// against was renamed to `end_date` on this endpoint and removed entirely from
+/// the other.
+#[tokio::test]
+async fn test_s104_pools_multi_owner_account_outside_end_date_does_not_refuse() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        setup_joint_account(&db_lock, "joint_gia", AccountType::Investment, &["a", "b"]);
+
+        // Single-owner account, inside the window: this is what the caller wants.
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2026-04-10T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        // Joint account, entirely AFTER end_date — truncated away before the pool
+        // is built, so it cannot make any returned figure ambiguous.
+        insert_event(
+            &db_lock,
+            "joint_gia",
+            "buy",
+            "TSLA",
+            "2026-11-01T10:00:00",
+            "50",
+            "20.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/pools?end_date=2026-06-01",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a joint account contributing no events within end_date must not block the report"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let pools: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let pools = pools.as_array().unwrap();
+
+    // Only the in-window single-owner holding is reported.
+    assert_eq!(pools.len(), 1);
+    assert_eq!(pools[0]["symbol"], "AAPL");
+    assert_eq!(pools[0]["current_shares"], "100");
+}
+
+/// The converse of the test above, and the reason the guard exists: a joint
+/// account whose events fall WITHIN `end_date` genuinely does contribute to the
+/// returned pools, so it must still refuse.
+///
+/// Without this, narrowing the guard by `end_date` could be "fixed" by removing
+/// it altogether and the suite would still pass.
+#[tokio::test]
+async fn test_s104_pools_multi_owner_account_inside_end_date_still_refuses() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_joint_account(&db_lock, "joint_gia", AccountType::Investment, &["a", "b"]);
+        // Inside the window this time.
+        insert_event(
+            &db_lock,
+            "joint_gia",
+            "buy",
+            "TSLA",
+            "2026-04-10T10:00:00",
+            "50",
+            "20.00",
+            None,
+        );
+    }
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/pools?end_date=2026-06-01",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(res["code"], "multi_owner_account");
+}

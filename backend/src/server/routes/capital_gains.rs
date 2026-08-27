@@ -244,16 +244,31 @@ pub struct MissingExchangeRates {
 ///
 /// Scope is the accounts that actually contribute events to this computation —
 /// derived from the events themselves, after profile filtering and after the
-/// ISA/pension exclusion. Ope's joint *current* account, and a joint ISA whose
+/// ISA/pension exclusion. A joint *current* account, and a joint ISA whose
 /// gains are tax-free anyway, are therefore not grounds to refuse a report they
 /// contribute nothing to.
+///
+/// `as_at` must mirror the ledger truncation the engine will apply (see
+/// [`run_cgt_engine`]): `/pools` replays events only up to and including that
+/// date, so an account whose events all fall after it contributes nothing and
+/// must not block the request. Pass `None` where the engine does — `/capital-gains`
+/// never truncates the ledger, because the S104 pool is built from all history.
+///
+/// Note this is deliberately NOT narrowed by `filter_start`/`filter_end`: those
+/// govern only which disposals are *emitted*, while every event still enters the
+/// pool and can therefore make a returned figure ambiguous.
 fn check_single_owner_accounts(
     accounts: &[Account],
     events: &[InvestmentEvent],
     excluded_accounts: &HashSet<String>,
+    as_at: Option<NaiveDate>,
 ) -> Result<(), AppError> {
     let contributing: HashSet<&str> = events
         .iter()
+        .filter(|e| match as_at {
+            Some(limit_date) => e.date.date() <= limit_date,
+            None => true,
+        })
         .map(|e| e.account_id.as_str())
         .filter(|id| !excluded_accounts.contains(*id))
         .collect();
@@ -636,7 +651,9 @@ pub async fn get_s104_pools(
     let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
     let fx = fx.with_historical(historical);
     check_required_currencies(&events, &fx)?;
-    check_single_owner_accounts(&accounts, &events, &excluded_accounts)?;
+    // Same `as_at` the engine truncates the ledger with, so the guard's scope is
+    // exactly the events that will actually build the pools it is protecting.
+    check_single_owner_accounts(&accounts, &events, &excluded_accounts, as_at)?;
     check_single_currency_per_symbol(&events)?;
     let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None, &fx)?;
 
@@ -710,7 +727,9 @@ pub async fn get_capital_gains(
     let fx = fx.with_historical(historical);
 
     check_required_currencies(&events, &fx)?;
-    check_single_owner_accounts(&accounts, &events, &excluded_accounts)?;
+    // `None`, mirroring the engine call below: this endpoint never truncates the
+    // ledger, so every event contributes to the pool and can make a figure ambiguous.
+    check_single_owner_accounts(&accounts, &events, &excluded_accounts, None)?;
     check_single_currency_per_symbol(&events)?;
 
     let mut response = run_cgt_engine(
