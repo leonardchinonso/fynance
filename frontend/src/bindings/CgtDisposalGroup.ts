@@ -14,7 +14,18 @@ import type { CgtRealizedEvent } from "./CgtRealizedEvent";
  * it would just re-introduce the same artifact) and NOT by rate band (a tax-computation concern,
  * out of scope here — see plan 23 §7.7).
  */
-export type CgtDisposalGroup = { symbol: string, disposal_date: string, quantity: string, proceeds: string, cost_basis: string, gain_loss: string, original_currency: string, 
+export type CgtDisposalGroup = { symbol: string, disposal_date: string, quantity: string, proceeds: string, cost_basis: string, gain_loss: string, 
+/**
+ * Source metadata only — the currency the constituent trades were denominated
+ * in. **Not a formatting label**: `proceeds`, `cost_basis` and `gain_loss` above
+ * are all in the preferred base currency (GBP). See
+ * [`CgtRealizedEvent::original_currency`].
+ *
+ * Every event in a group provably shares one currency:
+ * `check_single_currency_per_symbol` rejects a symbol carrying more than one
+ * before the engine runs, and a group never spans symbols.
+ */
+original_currency: string, 
 /**
  * The individual matched-bucket rows this group rolls up. Same objects as in
  * `realized_events` (by `disposal_id` + `rule_applied`), repeated here so a

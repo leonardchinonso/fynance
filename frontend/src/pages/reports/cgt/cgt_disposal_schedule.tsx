@@ -11,6 +11,7 @@ import { formatCurrency } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
+import { currencyForField } from "./disposal_currency"
 
 const UNMATCHED_TITLE =
   "No matching acquisition was found in the same-day, 30-day, or S104 pool windows. The full proceeds are recorded as a gain and the cost basis is zero."
@@ -87,14 +88,18 @@ function DisposalRow({ event }: { event: CgtRealizedEvent }) {
       <TableCell className="tabular-nums">{event.disposal_date.slice(0, 10)}</TableCell>
       <TableCell className="tabular-nums">{acquisitionLabel}</TableCell>
       <TableCell className="text-right tabular-nums">{fmtShares(event.quantity)}</TableCell>
+      {/* See `currencyForField`: only `disposal_price` is native. */}
       <TableCell className="text-right tabular-nums">
-        {formatCurrency(event.disposal_price, event.original_currency)}
+        {formatCurrency(
+          event.disposal_price,
+          currencyForField("disposal_price", event.original_currency),
+        )}
       </TableCell>
       <TableCell className="text-right tabular-nums">
-        {formatCurrency(event.proceeds, event.original_currency)}
+        {formatCurrency(event.proceeds, currencyForField("proceeds", event.original_currency))}
       </TableCell>
       <TableCell className="text-right tabular-nums">
-        {formatCurrency(event.cost_basis, event.original_currency)}
+        {formatCurrency(event.cost_basis, currencyForField("cost_basis", event.original_currency))}
       </TableCell>
       <TableCell
         className={
@@ -104,7 +109,7 @@ function DisposalRow({ event }: { event: CgtRealizedEvent }) {
             : "text-red-600 dark:text-red-400")
         }
       >
-        {formatCurrency(event.gain_loss, event.original_currency)}
+        {formatCurrency(event.gain_loss, currencyForField("gain_loss", event.original_currency))}
       </TableCell>
       <TableCell>
         <RulePill rule={event.rule_applied} />

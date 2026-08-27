@@ -361,6 +361,14 @@ pub struct CgtDisposalGroup {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub gain_loss: Decimal, // proceeds - cost_basis
+    /// Source metadata only — the currency the constituent trades were denominated
+    /// in. **Not a formatting label**: `proceeds`, `cost_basis` and `gain_loss` above
+    /// are all in the preferred base currency (GBP). See
+    /// [`CgtRealizedEvent::original_currency`].
+    ///
+    /// Every event in a group provably shares one currency:
+    /// `check_single_currency_per_symbol` rejects a symbol carrying more than one
+    /// before the engine runs, and a group never spans symbols.
     pub original_currency: String,
     /// The individual matched-bucket rows this group rolls up. Same objects as in
     /// `realized_events` (by `disposal_id` + `rule_applied`), repeated here so a
@@ -387,6 +395,9 @@ pub struct SymbolSummary {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub net_gain_loss: Decimal,
+    /// Source metadata only — **not a formatting label**. Every total on this struct
+    /// is in the preferred base currency (GBP). See
+    /// [`CgtRealizedEvent::original_currency`].
     pub original_currency: String,
 }
 
@@ -420,6 +431,9 @@ pub struct CgtRealizedEvent {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub quantity: Decimal,
+    /// The traded price per share, in [`Self::original_currency`]. This is the one
+    /// money field on this struct that is genuinely native — it is `price_per_share`
+    /// straight off the event, never converted.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub disposal_price: Decimal,
@@ -429,10 +443,22 @@ pub struct CgtRealizedEvent {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub cost_basis: Decimal, // in base currency (GBP)
+    /// `proceeds - cost_basis`, and therefore in base currency (GBP) like both.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub gain_loss: Decimal,
     pub rule_applied: String, // "Same-Day" | "30-Day Rule" | "S104 Pool" | "Unmatched"
+    /// Source metadata only: the currency the underlying trade was denominated in.
+    ///
+    /// **It is NOT a formatting label for the money on this struct.** `proceeds`,
+    /// `cost_basis` and `gain_loss` are all converted to the preferred base currency
+    /// (GBP) before serialisation, so formatting them with this field renders a GBP
+    /// amount behind a "$". That exact bug has now been found three separate times —
+    /// here, on [`S104PoolState`], and latently on [`CgtDisposalGroup`] — because the
+    /// name reads like a display currency. Only [`Self::disposal_price`] is native.
+    ///
+    /// Use it the way `cgt_per_symbol_table.tsx` does: as a non-formatting badge shown
+    /// when it differs from base.
     pub original_currency: String,
     pub matches: Vec<CgtMatchDetail>,
 }
