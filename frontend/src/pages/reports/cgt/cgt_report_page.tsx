@@ -317,6 +317,7 @@ function SavedReportView({
       <CgtSummaryCard
         summary={response.summary}
         disposalCount={response.realized_events.length}
+        tax={response.tax}
       />
 
       <CgtPerSymbolTable
