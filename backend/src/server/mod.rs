@@ -230,6 +230,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/investments/capital-gains",
             get(routes::capital_gains::get_capital_gains),
         )
+        .route(
+            "/investments/brought-forward-losses",
+            get(routes::capital_gains::get_brought_forward_losses),
+        )
         .route("/tax-config", get(routes::tax::get_tax_config))
         .route("/tax-config", put(routes::tax::put_tax_config))
         .route(

@@ -48,6 +48,7 @@ import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
 import type { TaxComputation } from "@/bindings/TaxComputation"
 import type { TaxBandResult } from "@/bindings/TaxBandResult"
 import type { TaxInputs } from "@/bindings/TaxInputs"
+import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwardLosses"
 import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { SymbolSummary } from "@/bindings/SymbolSummary"
@@ -1239,6 +1240,24 @@ export class MockApiService implements ApiService {
   }
 
   // ── Tax ───────────────────────────────────────────────────────────
+
+  async getDerivedBroughtForwardLosses(
+    _profileId: string,
+    _taxYear: string,
+  ): Promise<DerivedBroughtForwardLosses> {
+    await delay(DELAY_MS)
+    // Always an upper bound, like the real thing — a mock that returned a
+    // settled-looking figure would let the "do not present this as fact" UI
+    // requirement pass review without ever being exercised.
+    return {
+      amount: "1250.00",
+      contributions: [
+        { tax_year: "2022-23", net_loss: "800.00" },
+        { tax_year: "2023-24", net_loss: "450.00" },
+      ],
+      is_upper_bound: true,
+    }
+  }
 
   async getTaxInputs(profileId: string, taxYear: string): Promise<TaxInputs> {
     await delay(DELAY_MS)

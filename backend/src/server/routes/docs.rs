@@ -1160,6 +1160,62 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 }
             }
         },
+        "/api/investments/brought-forward-losses": {
+            "get": {
+                "summary": "Suggested brought-forward losses, derived from prior years",
+                "description": concat!(
+                    "A PREFILL for a field the user confirms, never a value stored on their ",
+                    "behalf. The response carries the years it was built from and an ",
+                    "`is_upper_bound` flag that is always true, because the figure can only ",
+                    "overstate: a UK capital loss carries forward only if it was CLAIMED within ",
+                    "four years of the end of the tax year it arose in, and only the excess left ",
+                    "after setting it against that same year's gains carries at all — this app ",
+                    "records neither the claim nor any disposal made outside it. Losses are ",
+                    "netted within each year and only years that ended in a net loss contribute; ",
+                    "a year that netted to a gain contributes nothing rather than cancelling out ",
+                    "another year's loss. The default four-year lookback mirrors the claim window."
+                ),
+                "parameters": [
+                    {
+                        "name": "tax_year",
+                        "in": "query",
+                        "required": true,
+                        "schema": { "type": "string", "example": "2024-25" },
+                        "description": "The tax year the losses would be brought forward INTO. Only years strictly before it contribute."
+                    },
+                    {
+                        "name": "profile_ids",
+                        "in": "query",
+                        "schema": { "type": "string", "example": "personal,joint" },
+                        "description": "Comma-separated profile IDs; same semantics as on /api/investments/capital-gains."
+                    },
+                    {
+                        "name": "years",
+                        "in": "query",
+                        "schema": { "type": "integer", "default": 4 },
+                        "description": "How many prior tax years to look back over. Capped at 20."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The suggested figure, its per-year working, and the upper-bound flag.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DerivedBroughtForwardLosses" }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid tax year, or a prior-year disposal needs an exchange rate that has not been entered.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/Error" }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/tax-config": {
             "get": {
                 "summary": "Statutory tax configuration (annual exempt amounts and CGT rate bands)",

@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { AlertTriangle, Check, Info } from "lucide-react"
 import { api } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import type { MissingRatePair } from "@/bindings/MissingRatePair"
+import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwardLosses"
 import type { Profile } from "@/types"
 
 /**
@@ -43,6 +44,7 @@ export function CgtPreflight({
   missing,
   quote,
   profile,
+  taxYear,
   onReady,
   onCancel,
 }: {
@@ -51,6 +53,12 @@ export function CgtPreflight({
   quote: string
   /** The profile the report is being generated for; supplies the UTR to confirm. */
   profile: Profile | undefined
+  /**
+   * The tax year being reported, when the period is one. `null` for a custom
+   * range or an as-at date, which have no tax year to hold losses against — the
+   * losses section is hidden entirely in that case rather than shown inert.
+   */
+  taxYear: string | null
   /**
    * Called once every rate is saved. Receives the UTR the user confirmed, which the caller
    * snapshots onto the generated report.
@@ -62,6 +70,39 @@ export function CgtPreflight({
   const [utr, setUtr] = useState(profile?.utr ?? "")
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // The user's committed brought-forward loss figure, as raw text.
+  const [losses, setLosses] = useState<string>("")
+  // The backend's *suggestion*, kept separate from `losses` on purpose: the
+  // suggestion is never silently adopted, so the two must not share a slot.
+  const [derived, setDerived] = useState<DerivedBroughtForwardLosses | null>(null)
+  const [derivedError, setDerivedError] = useState<string | null>(null)
+
+  // Load the stored figure and the derived suggestion side by side.
+  useEffect(() => {
+    if (!profile || !taxYear) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const [stored, suggestion] = await Promise.all([
+          api.getTaxInputs(profile.id, taxYear),
+          api.getDerivedBroughtForwardLosses(profile.id, taxYear),
+        ])
+        if (cancelled) return
+        setLosses(stored.brought_forward_losses)
+        setDerived(suggestion)
+      } catch (err) {
+        if (cancelled) return
+        // A failed derivation must not block generation — it is a convenience,
+        // and the user can always type the figure themselves.
+        setDerivedError(err instanceof Error ? err.message : String(err))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [profile, taxYear])
+
+  const lossesValid = losses.trim() === "" || /^\d*\.?\d+$/.test(losses.trim())
 
   // Group by currency. A tax year commonly needs ~49 rates across only one or two currencies,
   // so grouping turns a wall of rows into a couple of short, scannable date lists.
@@ -126,6 +167,17 @@ export function CgtPreflight({
           source: "user",
         })),
       )
+      // The losses figure is the user's, committed here. Written only when a
+      // tax year is in play, and only that one field, so the AEA choice and
+      // income headroom set elsewhere are left alone.
+      if (profile && taxYear && losses.trim() !== "") {
+        await api.putTaxInputs(profile.id, taxYear, {
+          brought_forward_losses: losses.trim(),
+          allowable_income_remaining: null,
+          aea_claimed: null,
+        })
+      }
+
       onReady(trimmedUtr === "" ? null : trimmedUtr)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err))
@@ -240,17 +292,79 @@ export function CgtPreflight({
           {!utrValid && <p className="text-xs text-destructive">A UTR is exactly 10 digits.</p>}
         </section>
 
-        {/* ── Not yet implemented ────────────────────────────────────────── */}
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold text-muted-foreground">
-            Losses and allowances
-          </h3>
-          <p className="text-xs text-muted-foreground">
-            Brought-forward losses and the Annual Exempt Amount are not editable here yet. The
-            report currently applies the statutory allowance for the tax year and assumes no
-            brought-forward losses. If either applies to you, check the figures before filing.
-          </p>
-        </section>
+        {/* ── Brought-forward losses ─────────────────────────────────────── */}
+        {taxYear && (
+          <section className="space-y-2">
+            <h3 className="text-sm font-semibold text-muted-foreground">
+              Brought-forward losses
+            </h3>
+            <label className="block text-xs text-muted-foreground" htmlFor="bfl">
+              Unused losses carried in from earlier years
+            </label>
+            <Input
+              id="bfl"
+              value={losses}
+              onChange={(e) => setLosses(e.target.value)}
+              placeholder="0.00"
+              inputMode="decimal"
+              aria-invalid={!lossesValid}
+              className={`max-w-56 ${lossesValid ? "" : "border-destructive"}`}
+            />
+            {!lossesValid && (
+              <p className="text-xs text-destructive">Enter a number, or leave blank for none.</p>
+            )}
+
+            {derived && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-1">
+                <p className="text-xs font-medium">
+                  Estimated from your ledger: up to {derived.amount}
+                  {derived.contributions.length > 0 && (
+                    <>
+                      {" "}
+                      (
+                      {derived.contributions
+                        .map((c) => `${c.tax_year}: ${c.net_loss}`)
+                        .join(", ")}
+                      )
+                    </>
+                  )}
+                </p>
+                {/*
+                  This wording is the requirement, not decoration. The figure is
+                  an upper bound and must not read as a settled number: losses
+                  carry forward only if they were CLAIMED in time, and only the
+                  excess after the arising year's own gains carries at all —
+                  neither of which this app can see.
+                */}
+                {derived.is_upper_bound && (
+                  <p className="text-xs text-muted-foreground">
+                    This is an <strong>upper bound, not a confirmed figure</strong>. It counts
+                    every net loss in those years, but a loss only carries forward if you
+                    claimed it within four years of the end of the year it arose, and only the
+                    part left after that year&rsquo;s own gains carries at all. Disposals made
+                    outside this app are not included. Check it against your filed returns
+                    before using it.
+                  </p>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLosses(derived.amount)}
+                  disabled={saving}
+                >
+                  Use this figure
+                </Button>
+              </div>
+            )}
+
+            {derivedError && (
+              <p className="text-xs text-muted-foreground">
+                Could not estimate losses from your ledger ({derivedError}). Enter the figure
+                from your last return instead.
+              </p>
+            )}
+          </section>
+        )}
 
         {saveError && (
           <p className="text-sm text-destructive whitespace-pre-wrap">{saveError}</p>
@@ -263,7 +377,7 @@ export function CgtPreflight({
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={!allFilled || !utrValid || saving}
+            disabled={!allFilled || !utrValid || !lossesValid || saving}
           >
             {saving ? "Saving…" : "Save and generate"}
           </Button>

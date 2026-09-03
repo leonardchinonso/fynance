@@ -345,6 +345,8 @@ td code { font-size: 12px; }
     <a href="#get-api-investments-pools" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/pools</a>
     <a href="#get-api-investments-capital-gains" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/capital-gains</a>
 
+    <a href="#get-api-investments-brought-forward-losses" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/brought-forward-losses</a>
+
     <div class="nav-section">Tax</div>
     <a href="#get-api-tax-config" class="nav-endpoint"><span class="method-badge method-get">GET</span>/tax-config</a>
     <a href="#put-api-tax-config" class="nav-endpoint"><span class="method-badge method-put">PUT</span>/tax-config</a>
@@ -3625,6 +3627,43 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   </table>
 </section>
 
+<section class="endpoint" id="get-api-investments-brought-forward-losses" data-method="GET" data-path="/api/investments/brought-forward-losses">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/investments/brought-forward-losses</code>
+  </div>
+  <p class="endpoint-summary">A <em>suggested</em> brought-forward loss figure, derived from prior years&#39; disposals. This is a prefill for a field the user confirms, never a value stored on their behalf &mdash; the response carries the years it was built from and an <code>is_upper_bound</code> flag that is always true.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>Yes</td><td>The tax year the losses would be brought forward <em>into</em>, as <code>YYYY-YY</code>. Only years strictly before it contribute.</td></tr>
+      <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; same semantics as on <code>/investments/capital-gains</code>.</td></tr>
+      <tr><td><code>years</code></td><td>query</td><td>integer</td><td>No</td><td>How many prior tax years to look back over. Defaults to 4, capped at 20.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/brought-forward-losses?tax_year=2024-25&profile_ids=alex"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "amount": "1250.00",
+  "contributions": [
+    { "tax_year": "2022-23", "net_loss": "800.00" },
+    { "tax_year": "2023-24", "net_loss": "450.00" }
+  ],
+  "is_upper_bound": true
+}</code></pre>
+  <p><strong>The figure can only overstate, and consumers must present it that way.</strong> A UK capital loss carries forward only if it was <em>claimed</em> within four years of the end of the tax year it arose in, and only the excess left after setting it against that same year&#39;s gains carries at all. This app records neither the claim nor any disposal made outside it. Losses are netted within each year and only years that ended in a net loss contribute; a year that netted to a gain contributes nothing and is omitted rather than cancelling out another year&#39;s loss. The default four-year lookback mirrors the claim window &mdash; a loss older than that can no longer be claimed.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
+      <tr><td>400</td><td><code>missing_exchange_rates</code></td><td>A prior-year disposal needs an exchange rate that has not been entered</td></tr>
+    </tbody>
+  </table>
+</section>
+
 <!-- ==================================================================== -->
 <!-- TAX                                                                  -->
 <!-- ==================================================================== -->
@@ -3797,7 +3836,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tr><td>2026-05-30</td><td>Initial API reference: 45 endpoints across 13 groups, 39 models documented.</td></tr>
     <tr><td>2026-06-07</td><td>Added Capital Gains endpoints: <code>GET /api/investments/pools</code> (S104 pools) and <code>GET /api/investments/capital-gains</code> (UK CGT report).</td></tr>
     <tr><td>2026-08-15</td><td><strong>BREAKING:</strong> Capital Gains endpoints drop <code>tax_year</code> and <code>as_at</code> in favour of <code>start_date</code>/<code>end_date</code> alone (plan 23 §0.2 decision 7.3). Added <code>disposal_groups</code> to <code>CapitalGainsResponse</code>, rolling <code>realized_events</code> up by <code>(symbol, disposal_date)</code>.</td></tr>
-    <tr><td>2026-09-03</td><td>Added tax endpoints: <code>GET/PUT /api/tax-config</code> (statutory AEA and rate bands) and <code>GET/PUT /api/tax-inputs/:profile_id/:tax_year</code> (the taxpayer&#39;s own figures). <code>GET /api/investments/capital-gains</code> gains an optional <code>tax_year</code> param that adds a computed <code>tax</code> object to the response, including the pre/post-30-Oct-2024 rate split.</td></tr>
+    <tr><td>2026-09-03</td><td>Added tax endpoints: <code>GET/PUT /api/tax-config</code> (statutory AEA and rate bands) and <code>GET/PUT /api/tax-inputs/:profile_id/:tax_year</code> (the taxpayer&#39;s own figures). <code>GET /api/investments/capital-gains</code> gains an optional <code>tax_year</code> param that adds a computed <code>tax</code> object to the response, including the pre/post-30-Oct-2024 rate split. Added <code>GET /api/investments/brought-forward-losses</code>, which derives a <em>suggested</em> (upper-bound) carried-loss figure from prior years.</td></tr>
   </tbody>
 </table>
 

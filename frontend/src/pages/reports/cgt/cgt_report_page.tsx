@@ -224,6 +224,11 @@ export function CgtReportPage() {
           missing={preflight.missing}
           quote={preflight.quote}
           profile={profiles.find((p) => p.id === preflight.filters.profileId)}
+          taxYear={
+            preflight.filters.period.kind === "tax-year"
+              ? preflight.filters.period.taxYear
+              : null
+          }
           onCancel={() => setPreflight(null)}
           onReady={(confirmedUtr) =>
             handleGenerate(preflight.filters, preflight.band, confirmedUtr)

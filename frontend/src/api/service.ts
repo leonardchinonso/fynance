@@ -41,6 +41,7 @@ import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBo
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
 import type { TaxInputs } from "@/bindings/TaxInputs"
+import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwardLosses"
 import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
@@ -259,6 +260,15 @@ export interface ApiService {
    * `GET /api/tax-inputs/:profile_id/:tax_year`. A profile-year never
    * configured returns the documented defaults rather than 404.
    */
+  /**
+   * A *suggested* brought-forward loss figure derived from prior years. Maps to
+   * `GET /api/investments/brought-forward-losses`. Only ever a prefill: the
+   * result carries `is_upper_bound` because the derivation can only overstate.
+   */
+  getDerivedBroughtForwardLosses(
+    profileId: string,
+    taxYear: string
+  ): Promise<DerivedBroughtForwardLosses>
   getTaxInputs(profileId: string, taxYear: string): Promise<TaxInputs>
   /**
    * Set those figures. Maps to `PUT /api/tax-inputs/:profile_id/:tax_year`.
