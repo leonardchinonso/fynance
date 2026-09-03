@@ -45,6 +45,10 @@ import type { CgtDisposalGroup } from "@/bindings/CgtDisposalGroup"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
 import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
+import type { TaxComputation } from "@/bindings/TaxComputation"
+import type { TaxBandResult } from "@/bindings/TaxBandResult"
+import type { TaxInputs } from "@/bindings/TaxInputs"
+import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { SymbolSummary } from "@/bindings/SymbolSummary"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
@@ -131,6 +135,10 @@ export class MockApiService implements ApiService {
     mock_doc_monzo_may: 47,
     mock_doc_orphan: 0,
   }
+
+  // Per-(profile, tax year) tax inputs, keyed "profileId/taxYear". Mock mode
+  // keeps them in memory so the band selector round-trips like it does live.
+  private taxInputs = new Map<string, TaxInputs>()
 
   // In-memory investment-events ledger so the Investments page renders and
   // mutates in mock mode. Mirrors the CGT mock symbols (VUSA, AAPL).
@@ -1230,6 +1238,44 @@ export class MockApiService implements ApiService {
     return mockCapitalGains(filters)
   }
 
+  // ── Tax ───────────────────────────────────────────────────────────
+
+  async getTaxInputs(profileId: string, taxYear: string): Promise<TaxInputs> {
+    await delay(DELAY_MS)
+    return (
+      this.taxInputs.get(`${profileId}/${taxYear}`) ?? {
+        profile_id: profileId,
+        tax_year: taxYear,
+        brought_forward_losses: "0",
+        allowable_income_remaining: "0",
+        aea_claimed: true,
+        updated_at: null,
+      }
+    )
+  }
+
+  async putTaxInputs(
+    profileId: string,
+    taxYear: string,
+    body: PutTaxInputsPayload,
+  ): Promise<TaxInputs> {
+    await delay(DELAY_MS)
+    // Read-modify-write, mirroring the server: a null key leaves the stored
+    // value alone rather than resetting it.
+    const current = await this.getTaxInputs(profileId, taxYear)
+    const next: TaxInputs = {
+      ...current,
+      brought_forward_losses:
+        body.brought_forward_losses ?? current.brought_forward_losses,
+      allowable_income_remaining:
+        body.allowable_income_remaining ?? current.allowable_income_remaining,
+      aea_claimed: body.aea_claimed ?? current.aea_claimed,
+      updated_at: new Date().toISOString(),
+    }
+    this.taxInputs.set(`${profileId}/${taxYear}`, next)
+    return next
+  }
+
   // ── Investments ───────────────────────────────────────────────────
 
   async listInvestments(
@@ -1616,6 +1662,92 @@ function mockCapitalGains(filters: CgtFilters): CapitalGainsResponse {
     realized_events: events,
     disposal_groups: groupDisposals(events),
     pools: MOCK_POOLS,
+    // Mirrors the server: the computation is present only when a whole tax year
+    // was asked for. `null` here means "not asked for", never "no tax due".
+    tax:
+      filters.period.kind === "tax-year"
+        ? mockTax(filters.period.taxYear, events, filters.profileId)
+        : null,
+  }
+}
+
+/**
+ * A stand-in for the server's tax computation.
+ *
+ * Deliberately reproduces the two rules that matter, so the mock exercises the
+ * same shapes the real thing does: gains are bucketed by disposal date against
+ * the rate bands in force (2024-25 splitting on 30 October 2024), and the
+ * allowance comes off the highest-rate band first. It is not a second
+ * implementation of the tax code — there are no losses, no configurable rates
+ * and no income headroom here — it is fixture data with the right structure.
+ */
+function mockTax(
+  taxYear: string,
+  events: CgtRealizedEvent[],
+  profileId: string,
+): TaxComputation {
+  const MOCK_AEA = 3000
+  const bandsFor = (year: string): { from: string; to: string; rate: number }[] =>
+    year === "2024-25"
+      ? [
+          { from: "2024-04-06", to: "2024-10-29", rate: 0.2 },
+          { from: "2024-10-30", to: "2025-04-05", rate: 0.24 },
+        ]
+      : [{ from: `${year.slice(0, 4)}-04-06`, to: `${Number(year.slice(0, 4)) + 1}-04-05`, rate: 0.24 }]
+
+  const bands = bandsFor(taxYear)
+  const gains = bands.map((b) =>
+    events
+      .filter((e) => {
+        const d = e.disposal_date.slice(0, 10)
+        return d >= b.from && d <= b.to
+      })
+      .reduce((sum, e) => Math.max(0, Number.parseFloat(e.gain_loss)) + sum, 0),
+  )
+
+  // Highest rate first, matching the server.
+  let allowance = MOCK_AEA
+  const order = bands.map((_, i) => i).sort((a, b) => bands[b].rate - bands[a].rate)
+  const deductions = bands.map(() => 0)
+  for (const i of order) {
+    const take = Math.min(allowance, gains[i])
+    deductions[i] = take
+    allowance -= take
+  }
+
+  const results: TaxBandResult[] = bands.map((b, i) => {
+    const taxable = gains[i] - deductions[i]
+    return {
+      valid_from: b.from,
+      valid_to: b.to,
+      rate_kind: "higher",
+      rate: b.rate.toFixed(2),
+      gains: gains[i].toFixed(2),
+      deductions: deductions[i].toFixed(2),
+      taxable: taxable.toFixed(2),
+      tax: (taxable * b.rate).toFixed(2),
+    }
+  })
+
+  const totalGains = gains.reduce((a, b) => a + b, 0)
+  return {
+    tax_year: taxYear,
+    bands: results,
+    total_gains: totalGains.toFixed(2),
+    current_year_losses_applied: "0.00",
+    brought_forward_losses_applied: "0.00",
+    brought_forward_losses_remaining: "0.00",
+    aea_applied: (MOCK_AEA - allowance).toFixed(2),
+    taxable_gain: results.reduce((sum, b) => sum + Number.parseFloat(b.taxable), 0).toFixed(2),
+    tax_due: results.reduce((sum, b) => sum + Number.parseFloat(b.tax), 0).toFixed(2),
+    inputs: {
+      profile_id: profileId,
+      tax_year: taxYear,
+      brought_forward_losses: "0",
+      allowable_income_remaining: "0",
+      aea_claimed: true,
+      updated_at: null,
+    },
   }
 }
 

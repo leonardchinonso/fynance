@@ -4,6 +4,7 @@ import type { CgtRealizedEvent } from "./CgtRealizedEvent";
 import type { CgtSummary } from "./CgtSummary";
 import type { S104PoolState } from "./S104PoolState";
 import type { SymbolSummary } from "./SymbolSummary";
+import type { TaxComputation } from "./TaxComputation";
 
 export type CapitalGainsResponse = { summary: CgtSummary, symbol_summaries: Array<SymbolSummary>, realized_events: Array<CgtRealizedEvent>, 
 /**
@@ -11,4 +12,10 @@ export type CapitalGainsResponse = { summary: CgtSummary, symbol_summaries: Arra
  * disposal_date)`. See [`CgtDisposalGroup`] for why this exists
  * alongside, not instead of, the granular rows.
  */
-disposal_groups: Array<CgtDisposalGroup>, pools: Array<S104PoolState>, };
+disposal_groups: Array<CgtDisposalGroup>, pools: Array<S104PoolState>, 
+/**
+ * The tax computation, present only when the request named a `tax_year`.
+ * Absent means "not asked for", never "no tax due" — a nil tax bill is a
+ * present computation whose `tax_due` is zero.
+ */
+tax: TaxComputation | null, };

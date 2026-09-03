@@ -100,6 +100,8 @@ import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEvent
 import type { PatchInvestmentEventBody } from "@/bindings/PatchInvestmentEventBody"
 import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { CapitalGainsResponse } from "@/bindings/CapitalGainsResponse"
+import type { TaxInputs } from "@/bindings/TaxInputs"
+import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
@@ -172,6 +174,20 @@ async function postMultipart<T>(path: string, formData: FormData): Promise<T> {
     method: "POST",
     headers,
     body: formData,
+  })
+  if (res.status === 401) throw new AuthError(!!token)
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const token = getAuthToken()
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (token) headers["Authorization"] = `Bearer ${token}`
+  const res = await fetch(`${window.location.origin}${path}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(body),
   })
   if (res.status === 401) throw new AuthError(!!token)
   if (!res.ok) throw await parseError(res)
@@ -527,6 +543,20 @@ export class RealApiService implements ApiService {
   async getCapitalGains(filters: CgtFilters): Promise<CapitalGainsResponse> {
     const params = cgtFiltersToParams(filters)
     return get<CapitalGainsResponse>(`${BASE}/investments/capital-gains`, params)
+  }
+
+  // ── Tax ───────────────────────────────────────────────────────────
+
+  async getTaxInputs(profileId: string, taxYear: string): Promise<TaxInputs> {
+    return get<TaxInputs>(`${BASE}/tax-inputs/${profileId}/${taxYear}`)
+  }
+
+  async putTaxInputs(
+    profileId: string,
+    taxYear: string,
+    body: PutTaxInputsPayload,
+  ): Promise<TaxInputs> {
+    return put<TaxInputs>(`${BASE}/tax-inputs/${profileId}/${taxYear}`, body)
   }
 
   // ── Investments ───────────────────────────────────────────────────

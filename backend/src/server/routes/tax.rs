@@ -125,7 +125,9 @@ pub async fn put_tax_config(
         db.put_tax_config(&body.tax_year, &entries)?
     };
 
-    Ok(Json(json!({ "tax_year": body.tax_year, "written": written })))
+    Ok(Json(
+        json!({ "tax_year": body.tax_year, "written": written }),
+    ))
 }
 
 // ── GET /api/tax-inputs/:profile_id/:tax_year ─────────────────────────────────

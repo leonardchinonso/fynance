@@ -1,6 +1,7 @@
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer"
 import { periodLabel } from "@/api/cgt_filter_params"
 import type { StoredCgtReport } from "./stored_reports"
+import type { TaxBandResult } from "@/bindings/TaxBandResult"
 import type { CgtRealizedEvent } from "@/bindings/CgtRealizedEvent"
 
 const styles = StyleSheet.create({
@@ -61,7 +62,6 @@ interface CgtPdfDocumentProps {
 
 export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
   const { filters, response, generatedAt } = report
-  const higherRate = report.higherRate ?? true
   const cur = response.summary.base_currency
   // The UTR is the primary identity field on every SA108 page, so it goes in the
   // running footer. Omitted entirely when absent rather than printed empty — a
@@ -84,16 +84,18 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
     (sum, e) => sum + Number.parseFloat(e.proceeds),
     0,
   )
-  // Allowances and a tax estimate only make sense for a whole UK tax year.
-  const taxYear = filters.period.kind === "tax-year" ? filters.period.taxYear : null
-  const taxEstimate = taxYear
-    ? computeTaxEstimate(
-        taxYear,
-        Number.parseFloat(response.summary.net_gain_loss),
-        response.realized_events,
-        higherRate,
-      )
-    : null
+  // The tax computation is the server's. It is present only when the report was
+  // generated for a whole UK tax year, because tax is only defined for one.
+  const tax = response.tax ?? null
+  const taxYear = tax?.tax_year ?? null
+  // Only bands that actually bear tax are worth a row; a band fully covered by
+  // losses or the allowance would print as a £0.00 line that reads like an error.
+  const taxableBands = (tax?.bands ?? []).filter((b) => Number.parseFloat(b.taxable) > 0)
+  // Whether the year splits across more than one *period* (as 2024-25 does, at
+  // 30 October 2024). Decides whether band labels need to name their date range:
+  // with a single period, "Gains from 6 Apr 2024 @ 24%" is noise.
+  const multipleBandPeriods = new Set(taxableBands.map((b) => b.valid_from)).size > 1
+
   // Pool workings support THIS return's disposals, so only show pools for symbols
   // actually disposed in the period — not every holding still in the global pool.
   const disposedSymbols = new Set(response.realized_events.map((e) => e.symbol))
@@ -130,24 +132,36 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
             value={fmt(response.summary.net_gain_loss, cur)}
             bold
           />
-          {taxEstimate && (
+          {tax && (
             <>
+              {Number.parseFloat(tax.current_year_losses_applied) > 0 && (
+                <SummaryRow
+                  label="Losses in the year, set against gains"
+                  value={`-${fmt(tax.current_year_losses_applied, cur)}`}
+                />
+              )}
+              {Number.parseFloat(tax.brought_forward_losses_applied) > 0 && (
+                <SummaryRow
+                  label="Brought-forward losses used"
+                  value={`-${fmt(tax.brought_forward_losses_applied, cur)}`}
+                />
+              )}
               <SummaryRow
                 label={`Annual Exempt Amount (${taxYear})`}
-                value={`-${fmt(String(taxEstimate.aea), cur)}`}
+                value={`-${fmt(tax.aea_applied, cur)}`}
               />
               <SummaryRow
-                label="Taxable gain after allowance"
-                value={fmt(String(taxEstimate.taxableGain), cur)}
+                label="Taxable gain after losses and allowance"
+                value={fmt(tax.taxable_gain, cur)}
                 bold
               />
             </>
           )}
         </View>
         <Text style={styles.footnote}>
-          {taxEstimate
-            ? `Annual Exempt Amount applied for tax year ${taxYear}; brought-forward losses and any other disposals in the year are not included.`
-            : "Figures are pre-relief; choose a tax year to apply the Annual Exempt Amount and estimate tax."}{" "}
+          {tax
+            ? `Computed for tax year ${taxYear} from the stored tax configuration and your recorded figures. Disposals made outside this app are not included.`
+            : "Figures are pre-relief; choose a tax year to apply the Annual Exempt Amount and compute tax."}{" "}
           Foreign-currency disposals are converted to {cur} at the configured exchange rate.
         </Text>
 
@@ -163,30 +177,29 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
           </View>
         )}
 
-        {taxEstimate && taxEstimate.bands.length > 0 && (
+        {tax && taxableBands.length > 0 && (
           <View style={styles.block}>
-            <Text style={styles.h2}>Estimated Capital Gains Tax</Text>
-            {taxEstimate.bands.map((b) => (
-              <SummaryRow key={b.label} label={b.label} value={fmt(String(b.tax), cur)} />
+            <Text style={styles.h2}>Capital Gains Tax</Text>
+            {taxableBands.map((b) => (
+              <SummaryRow
+                key={`${b.valid_from}-${b.rate_kind}`}
+                label={bandLabel(b, multipleBandPeriods)}
+                value={fmt(b.tax, cur)}
+              />
             ))}
-            <SummaryRow
-              label="Estimated CGT due"
-              value={fmt(String(taxEstimate.totalTax), cur)}
-              bold
-            />
+            <SummaryRow label="Capital Gains Tax due" value={fmt(tax.tax_due, cur)} bold />
             <Text style={styles.footnote}>
-              Estimate only, not tax advice. Computed at the{" "}
-              {higherRate ? "higher/additional" : "basic"} rate for the whole
-              gain; a within-year basic/higher band split is not modelled. Assumes the full Annual
-              Exempt Amount is available. Confirm with your accountant before filing.
+              Estimate only, not tax advice. Gains are charged at the rate in force on the
+              date of each disposal, and losses and the Annual Exempt Amount are set against
+              the most heavily taxed gains first. Confirm with your accountant before filing.
             </Text>
           </View>
         )}
 
-        {taxEstimate && taxEstimate.netGain > 0 && taxEstimate.bands.length === 0 && (
+        {tax && Number.parseFloat(tax.total_gains) > 0 && taxableBands.length === 0 && (
           <Text style={styles.footnote}>
-            No Capital Gains Tax estimated for {taxYear}: the taxable gain falls within the Annual
-            Exempt Amount.
+            No Capital Gains Tax due for {taxYear}: the gains are covered by losses and the
+            Annual Exempt Amount.
           </Text>
         )}
 
@@ -314,132 +327,24 @@ function SummaryRow({ label, value, bold = false }: { label: string; value: stri
   )
 }
 
-// TEMPORARY hardcoded tax tables. These are UK statutory values that change with
-// each Budget, so they are not expected to live in the frontend long-term: plan
-// 23 §7.4/§7.5 moves the rates, Annual Exempt Amount, and band split into
-// server-side, user-definable tax config. Until then, update these by hand when
-// HMRC changes them.
-// UK CGT Annual Exempt Amount by tax year (frozen at £3,000 from 2024-25).
-const AEA_BY_TAX_YEAR: Record<string, number> = {
-  "2018-19": 11700,
-  "2019-20": 12000,
-  "2020-21": 12300,
-  "2021-22": 12300,
-  "2022-23": 12300,
-  "2023-24": 6000,
-  "2024-25": 3000,
-  "2025-26": 3000,
-  "2026-27": 3000,
-}
-
-interface TaxBand {
-  label: string
-  taxable: number
-  tax: number
-}
-
-interface TaxEstimate {
-  aea: number
-  netGain: number
-  taxableGain: number
-  bands: TaxBand[]
-  totalTax: number
-}
-
-
-interface RateBand {
-  start: string
-  end?: string
-  basic: number
-  higher: number
-}
-
-// TEMPORARY hardcoded tax table (same as AEA_BY_TAX_YEAR above). UK statutory
-// values that change with each Budget, so they are not expected to live in the
-// frontend long-term: plan 23 §7.4/§7.5 moves the rates, Annual Exempt Amount,
-// and band split into server-side, user-definable tax config. Until then, update
-// these by hand when HMRC changes them.
-// UK CGT rates on shares by disposal-date band. The Autumn Budget 2024 raised
-// them mid-year (30 Oct 2024). `start` is required (inclusive) and `end` optional
-// (exclusive; omitted = still current);
-const CGT_RATE_BANDS: RateBand[] = [
-  { start: "2016-04-06", end: "2024-10-30", basic: 0.1, higher: 0.2 },
-  { start: "2024-10-30", basic: 0.18, higher: 0.24 },
-]
-
-function rateBandFor(date: string): RateBand | undefined {
-  return CGT_RATE_BANDS.find((b) => date >= b.start && (b.end === undefined || date < b.end))
-}
-
 function fmtBandDate(iso: string): string {
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
   const [y, m, d] = iso.split("-")
   return `${Number(d)} ${months[Number(m) - 1]} ${y}`
 }
 
-function bandLabel(band: RateBand, rate: number, multiple: boolean): string {
-  const pct = `${(rate * 100).toFixed(0)}%`
-  if (!multiple) return `Taxable gains @ ${pct}`
-  if (band.end) return `Gains before ${fmtBandDate(band.end)} @ ${pct}`
-  return `Gains from ${fmtBandDate(band.start)} @ ${pct}`
-}
-
-// Estimated CGT on share gains. Each disposal is rated by its disposal-date band
-// (so the 30 Oct 2024 mid-year change is just a band boundary, not a special
-// case). `higherRate` picks basic vs higher within each band — we don't know the
-// taxpayer's income, so a single band can't be split across both (see plan 23
-// §7.4). The Annual Exempt Amount and any net-loss band relieve the highest-rate
-// gains first, which minimises the charge and matches standard practice.
-function computeTaxEstimate(
-  taxYear: string,
-  netGain: number,
-  realized: CgtRealizedEvent[],
-  higherRate: boolean,
-): TaxEstimate | null {
-  const aea = AEA_BY_TAX_YEAR[taxYear]
-  if (aea === undefined) return null
-  if (netGain <= 0) {
-    return { aea, netGain, taxableGain: 0, bands: [], totalTax: 0 }
-  }
-
-  // Net each disposal's gain into its disposal-date rate band.
-  const byBand = new Map<string, { band: RateBand; net: number }>()
-  for (const e of realized) {
-    const g = Number.parseFloat(e.gain_loss)
-    if (!Number.isFinite(g)) continue
-    const band = rateBandFor(e.disposal_date.slice(0, 10))
-    if (!band) continue
-    const entry = byBand.get(band.start) ?? { band, net: 0 }
-    entry.net += g
-    byBand.set(band.start, entry)
-  }
-
-  const rateOf = (b: RateBand) => (higherRate ? b.higher : b.basic)
-  const gainBands = [...byBand.values()].filter((b) => b.net > 0)
-  // A net-loss band plus the allowance come off the highest-rate gains first.
-  const lossPool = [...byBand.values()].filter((b) => b.net < 0).reduce((s, b) => s + b.net, 0)
-  let toDeduct = aea - lossPool
-  gainBands.sort((a, b) => rateOf(b.band) - rateOf(a.band))
-
-  const multiple = gainBands.length > 1
-  const rated = gainBands.flatMap((gb) => {
-    const rate = rateOf(gb.band)
-    const deduct = Math.min(toDeduct, gb.net)
-    toDeduct -= deduct
-    const taxable = gb.net - deduct
-    if (taxable <= 0) return []
-    return [{ start: gb.band.start, label: bandLabel(gb.band, rate, multiple), taxable, tax: taxable * rate }]
-  })
-  rated.sort((a, b) => a.start.localeCompare(b.start))
-
-  const bands: TaxBand[] = rated.map(({ label, taxable, tax }) => ({ label, taxable, tax }))
-  return {
-    aea,
-    netGain,
-    taxableGain: bands.reduce((s, b) => s + b.taxable, 0),
-    bands,
-    totalTax: bands.reduce((s, b) => s + b.tax, 0),
-  }
+/**
+ * Label for one rate band row.
+ *
+ * The rate comes from the server as a fraction, so it is rendered as a
+ * percentage here and nowhere else. `multiplePeriods` is why the date range is
+ * conditional: naming it is essential when a year splits (2024-25 does, on 30
+ * October 2024) and is noise when it does not.
+ */
+function bandLabel(band: TaxBandResult, multiplePeriods: boolean): string {
+  const pct = `${(Number.parseFloat(band.rate) * 100).toFixed(0)}%`
+  if (!multiplePeriods) return `Taxable gains @ ${pct}`
+  return `Gains from ${fmtBandDate(band.valid_from)} @ ${pct}`
 }
 
 const CURRENCY_SYMBOLS: Record<string, string> = {

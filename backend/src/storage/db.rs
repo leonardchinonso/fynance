@@ -17,14 +17,13 @@ use crate::model::{
     Account, AccountHoldingHistoryRow, AccountHoldingSeries, AccountHoldingValue, AccountSnapshot,
     AccountType, AssetClass, BalanceDelta, BudgetRow, Category, CategoryNode, CategorySource,
     CategoryTotal, CategoryType, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
-    CreateInvestmentEventBody, Currency, Document, DocumentReferences, DocumentSummary,
-    ExchangeRate, Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType,
-    HoldingsCashFlowMonth, HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError,
-    DerivedBroughtForwardLosses, DerivedLossYear, ImportTransaction, InsertOutcome,
-    InvestmentEvent, InvestmentEventType, InvestmentHistoryRow,
-    InvestmentMetrics, PatchCategoryPayload, PatchInvestmentEventBody, Profile, SpendingGridRow,
-    SpendingGroupBy, TaxConfigEntry, TaxInputs, Transaction, TransactionPreviewRow,
-    TransactionPreviewStatus,
+    CreateInvestmentEventBody, Currency, DerivedBroughtForwardLosses, DerivedLossYear, Document,
+    DocumentReferences, DocumentSummary, ExchangeRate, Granularity, Holding, HoldingPreview,
+    HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow, ImportLog,
+    ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentEvent,
+    InvestmentEventType, InvestmentHistoryRow, InvestmentMetrics, PatchCategoryPayload,
+    PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy, TaxConfigEntry, TaxInputs,
+    Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -5207,7 +5206,10 @@ impl Db {
     pub fn put_tax_config(&self, tax_year: &str, entries: &[TaxConfigEntry]) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        tx.execute("DELETE FROM tax_config WHERE tax_year = ?1", params![tax_year])?;
+        tx.execute(
+            "DELETE FROM tax_config WHERE tax_year = ?1",
+            params![tax_year],
+        )?;
         {
             let mut stmt = tx.prepare(
                 "INSERT INTO tax_config
@@ -5432,11 +5434,7 @@ fn row_to_tax_inputs(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaxInputs> {
     Ok(TaxInputs {
         profile_id: row.get(0)?,
         tax_year: row.get(1)?,
-        brought_forward_losses: parse_decimal_column(
-            2,
-            "tax_inputs.brought_forward_losses",
-            &bfl,
-        )?,
+        brought_forward_losses: parse_decimal_column(2, "tax_inputs.brought_forward_losses", &bfl)?,
         allowable_income_remaining: parse_decimal_column(
             3,
             "tax_inputs.allowable_income_remaining",

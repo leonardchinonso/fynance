@@ -18,17 +18,31 @@ interface CgtFilterBarProps {
   profiles: Profile[]
   initial: CgtFilters
   loading: boolean
-  onGenerate: (filters: CgtFilters, higherRate: boolean) => void
+  onGenerate: (filters: CgtFilters, bandSelection: CgtBandSelection) => void
 }
+
+/**
+ * Which CGT rate the user expects their gains to fall at.
+ *
+ * This is the request's band selector: it is converted into the taxpayer's
+ * `allowable_income_remaining` before the report runs. "higher" means no unused
+ * basic-rate income band, so every gain is charged at the higher rate; "basic"
+ * means enough headroom to cover the whole gain. Those are the two ends of a
+ * spectrum the user can set precisely on the tax-inputs screen — this control
+ * only offers the ends, because the filter bar is not where a taxpayer works out
+ * their unused income band to the pound.
+ */
+export type CgtBandSelection = "basic" | "higher"
 
 export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilterBarProps) {
   const [preset, setPreset] = useState<PresetValue>(initialPreset(initial.period))
   const [startDate, setStartDate] = useState(initialStart(initial.period))
   const [endDate, setEndDate] = useState(initialEnd(initial.period))
   const [profileId, setProfileId] = useState(initial.profileId)
-  // Frontend-only: the rate band drives the client-side tax estimate, not the
-  // backend query, so it is not part of CgtFilters / the service contract.
-  const [higherRate, setHigherRate] = useState(true)
+  // The band selector. Converted into `allowable_income_remaining` on the
+  // request rather than being a display flag: the server computes the tax, so
+  // this changes what is asked for, not how the answer is drawn.
+  const [band, setBand] = useState<CgtBandSelection>("higher")
 
   const period: CgtPeriod = buildPeriod(preset, startDate, endDate)
   const canGenerate = !loading && profileId !== ""
@@ -74,13 +88,10 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
         </SelectContent>
       </Select>
 
-      <Select
-        value={higherRate ? "higher" : "basic"}
-        onValueChange={(v) => setHigherRate(v === "higher")}
-      >
+      <Select value={band} onValueChange={(v) => v && setBand(v as CgtBandSelection)}>
         <SelectTrigger className="w-[190px]">
           <span className="truncate">
-            {higherRate ? "Higher/additional rate" : "Basic rate"}
+            {band === "higher" ? "Higher/additional rate" : "Basic rate"}
           </span>
         </SelectTrigger>
         <SelectContent>
@@ -91,7 +102,7 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
 
       <Button
         className="ml-auto"
-        onClick={() => onGenerate({ period, profileId }, higherRate)}
+        onClick={() => onGenerate({ period, profileId }, band)}
         disabled={!canGenerate}
       >
         {loading ? "Generating…" : "Generate"}

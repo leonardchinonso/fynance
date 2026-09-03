@@ -13,11 +13,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ts_rs::TS;
 
 use crate::model::{Account, AccountType, InvestmentEvent, InvestmentEventType, TaxComputation};
-use crate::tax::{DisposalForTax, compute_tax};
 use crate::server::error::AppError;
-use crate::server::state::AppState;
 use crate::server::routes::tax::validate_tax_year;
+use crate::server::state::AppState;
 use crate::server::validation::{parse_date, split_csv_param, validate_date_range};
+use crate::tax::{DisposalForTax, compute_tax};
 use crate::util::fx::{FxRateMap, MissingRate};
 
 // ── Query Parameters ─────────────────────────────────────────────────────────
@@ -887,9 +887,8 @@ pub async fn get_capital_gains(
             })
             .collect::<Result<_, _>>()?;
 
-        let computed = compute_tax(tax_year, &disposals, &entries, &inputs).map_err(|e| {
-            AppError::bad_request(e.to_string(), "tax_computation_failed")
-        })?;
+        let computed = compute_tax(tax_year, &disposals, &entries, &inputs)
+            .map_err(|e| AppError::bad_request(e.to_string(), "tax_computation_failed"))?;
         response.tax = Some(computed);
     }
 
