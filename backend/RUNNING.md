@@ -9,8 +9,13 @@ This document covers everything you need to build, configure, and run the fynanc
 | Rust toolchain           | 1.85 (MSRV)     | `curl https://sh.rustup.rs -sSf \| sh` |
 | `cargo`                  | ships with Rust | —                                      |
 | `cargo-watch` (optional) | any             | `cargo install cargo-watch`            |
+| Node.js + npm            | 24 (matches CI)  | [nodejs.org](https://nodejs.org/) — needed to build `frontend/dist`, which `cargo` embeds into the binary at compile time (see warning below) |
 
 No other system dependencies are required. The SQLite library is bundled via the `rusqlite` `bundled` feature and compiled into the binary automatically. The React frontend is compiled and embedded in the binary via `include_dir!`.
+
+> **⚠️ `frontend/dist` must exist before ANY `cargo` command in `backend/` (build, test, clippy, run, `cargo watch`, …).** `frontend/dist` is gitignored, so a fresh clone or a fresh worktree does not have it, and the embed in `static_files.rs` runs at *compile* time, not at runtime. Every bare `cargo build`/`cargo test`/`cargo clippy` will fail with the proc-macro panic below until you run `cd frontend && npm run build` once (or `make build` from the repo root). This is expected — it is not a broken repo. See [Troubleshooting](#troubleshooting) below for the exact error and fix.
+
+> **Note on `cargo` and PATH:** on some machines/shells `cargo` is not on `PATH` even though the toolchain is installed via rustup. If `cargo: command not found`, use the absolute path instead: `~/.cargo/bin/cargo build`, etc.
 
 ## Project layout
 
@@ -403,6 +408,33 @@ RUST_LOG=fynance=trace fynance serve
 Per the security conventions in `CLAUDE.md`, raw transaction descriptions are never logged at INFO level. The LLM request/response payload is logged at DEBUG only, and the response preview is truncated to 300 bytes.
 
 ## Troubleshooting
+
+### `error: proc macro panicked` at `static_files.rs:14`, `"...frontend/dist" is not a directory`
+
+This is the most common first-build failure on a fresh clone or worktree. The full error looks like:
+
+```
+error: proc macro panicked
+  --> src\server\static_files.rs:14:32
+   |
+14 | static FRONTEND_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../frontend/dist");
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: message: "<path>/backend/../frontend/dist" is not a directory
+
+error: could not compile `fynance` (lib) due to 1 previous error
+```
+
+**Cause:** `static_files.rs` embeds the compiled React app into the binary at *compile* time via `include_dir!`, so it needs `frontend/dist` to physically exist on disk before `cargo` runs. `frontend/dist` is a build output and is gitignored (see `.gitignore`), so it is absent from every fresh `git clone` or `git worktree add` until the frontend has been built at least once. This is not a broken repo or a missing dependency — it is a build-ordering prerequisite that CI always satisfies for you (it builds the frontend before every backend job) but a fresh local checkout has not yet.
+
+**Fix:** build the frontend once, then any `cargo` command works normally:
+
+```bash
+cd frontend && npm install && npm run build
+cd ../backend && cargo build   # or cargo test, cargo clippy, cargo watch, etc.
+```
+
+Or from the repo root: `make build` (builds frontend then a release backend build). You only need to repeat the frontend build when frontend source changes — `frontend/dist` persists on disk (it is gitignored, not deleted) across backend rebuilds until you run `make clean` or delete it yourself.
 
 ### `FYNANCE_ANTHROPIC_API_KEY is not set`
 

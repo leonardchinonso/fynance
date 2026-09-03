@@ -331,7 +331,7 @@ Browser (localhost:5173)
 
 ### Running the Backend Only
 
-Use this if you're only working on the Rust backend or want to test the embedded UI.
+Use this if you're only working on the Rust backend or want to test the embedded UI. Requires `frontend/dist` to already exist (see [Initial Setup](#initial-setup) above or the ⚠️ warning under [Build](#build) below) — the embed happens at compile time via `include_dir!`.
 
 ```bash
 cd backend
@@ -361,15 +361,17 @@ Open `http://localhost:5173`. The frontend proxies `/api/*` requests to `http://
 
 ```bash
 make build           # frontend + backend (production)
-cargo build          # backend only
+cargo build          # backend only -- requires frontend/dist to already exist, see warning below
 cd frontend && npm run build   # frontend only
 ```
 
 `make build` runs `npm run build` in the frontend folder then `cargo build --release` in the backend. The result is a single binary at `backend/target/release/fynance` with the compiled React app embedded.
 
+> **⚠️ Any bare `cargo` command (`build`, `test`, `clippy`, `run`, `cargo watch`, …) requires `frontend/dist` to exist first.** `frontend/dist` is gitignored, so a fresh clone or worktree does not have it, and `cargo build` on its own will fail with a proc-macro panic from `include_dir!` rather than a normal compile error. Run `cd frontend && npm run build` (or `make build`) once before any bare `cargo` command. See `backend/RUNNING.md` → Troubleshooting for the exact error text and fix.
+
 ### Testing and Validation
 
-PRs that fail CI will not be merged. Before pushing, run:
+PRs that fail CI will not be merged. Before pushing, run (after `cd frontend && npm run build` at least once — see warning above):
 
 ```bash
 cd backend && cargo test                          # all backend tests
