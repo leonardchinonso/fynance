@@ -1,7 +1,8 @@
 //! `fynance migrate-subunits [--apply]` — one-time data migration converting
 //! rows stored in a broker sub-unit currency (GBX, USX, ZAC, ILA) to their
 //! parent currency. See `Db::migrate_subunit_currencies` for the full
-//! atomicity/idempotency contract.
+//! contract: idempotent, and re-runnable after a partial failure (each table
+//! is migrated in its own transaction, so it is not atomic across tables).
 //!
 //! Defaults to a dry run: it prints exactly what would change and writes
 //! nothing. Pass `--apply` to actually write the changes.
@@ -27,10 +28,11 @@ pub fn run(db: &Db, apply: bool) -> Result<()> {
     let mode = if apply { "APPLYING" } else { "DRY RUN" };
     println!("{mode} — sub-unit currency migration");
     println!(
-        "  investments: {}  holdings: {}  transactions: {}",
+        "  investments: {}  holdings: {}  transactions: {}  accounts: {}",
         report.investments_migrated(),
         report.holdings_migrated(),
         report.transactions_migrated(),
+        report.accounts_migrated(),
     );
     println!();
 

@@ -265,7 +265,51 @@ fynance stats
 fynance token create --name <name>           # generate API token for programmatic access
 fynance token list
 fynance token revoke --name <name>
+fynance migrate-subunits [--apply]           # convert stored GBX/USX/ZAC/ILA rows to GBP/USD/ZAR/ILS
 ```
+
+### Runbook: migrating broker sub-unit currencies
+
+Some brokers quote in a **sub-unit** of a currency rather than the currency
+itself — most commonly **GBX** ("pence sterling", 1/100 of a GBP), and likewise
+USX, ZAC and ILA. Every write path now converts these to the parent currency at
+import time, so new data is never stored as GBX. `fynance migrate-subunits`
+exists to convert rows written *before* that behaviour landed, across
+`investments`, `holdings`, `transactions` and `accounts`, and to then drop the
+now-unreferenced sub-unit rows from the `currencies` table.
+
+Run it like this:
+
+```bash
+fynance migrate-subunits            # dry run: prints every change, writes nothing
+fynance migrate-subunits --apply    # writes the changes
+```
+
+**Two rules, in order:**
+
+1. **Always dry-run first, and read the output.** The dry run prints the exact
+   before/after for every row it would touch. `--apply` should only ever be run
+   after you have looked at that list and it says what you expect.
+
+2. **⚠️ Run `--apply` BEFORE deleting the sub-unit currency from Settings (or
+   via any manual `currencies` delete) — never after.** This is the one ordering
+   that can silently corrupt your figures. Conversion is driven by the fixed
+   sub-unit table in code, but *other* read paths resolve a currency through the
+   stored FX rate, and `FxRateMap::convert` is deliberately lenient: asked to
+   convert a currency it has no rate for, it logs a warning and **returns the
+   amount unchanged**. So if the `GBX` row is deleted while GBX-denominated rows
+   still exist, `381600` stops being converted and a balance of **£3,816.00
+   starts reading as £381,600** — a 100× overstatement, with nothing but a log
+   line to say so. Migrating the rows first means there is nothing left
+   referencing GBX, and the migration then removes that `currencies` row for you
+   as its final step.
+
+The migration is **idempotent** — it only ever matches rows whose currency is a
+sub-unit code, so a second run finds nothing and is a no-op. It is also safely
+**re-runnable after a failure**: each table is migrated in its own transaction,
+so an error partway through leaves already-converted tables converted and the
+rest untouched, and re-running finishes the job. It is *not* all-or-nothing
+across tables — see `Db::migrate_subunit_currencies` for the precise contract.
 
 ## Local Development Setup
 

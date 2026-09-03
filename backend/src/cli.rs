@@ -73,6 +73,11 @@ pub enum Commands {
     /// One-time data migration: convert rows stored in a broker sub-unit
     /// currency (GBX, USX, ZAC, ILA) to their parent currency. Defaults to a
     /// dry run that prints what would change without writing anything.
+    ///
+    /// Run this BEFORE deleting a sub-unit currency by hand: conversion of a
+    /// currency with no stored rate silently returns the amount unchanged.
+    /// Idempotent and re-runnable after a partial failure, but not atomic
+    /// across tables.
     MigrateSubunits {
         /// Actually write the changes. Without this flag, prints a report
         /// and writes nothing.
