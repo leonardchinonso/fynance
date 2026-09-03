@@ -300,3 +300,111 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_exchange_rates_date ON exchange_rates(date);
+
+-- ── tax_config ────────────────────────────────────────────────────────────
+-- UK statutory tax parameters: THE LAW. Identical for every user of this app
+-- and changed only by a Budget, never by a user's circumstances.
+--
+-- This is deliberately a SEPARATE table from `tax_inputs` (the user's own
+-- situation). The split is what makes a Budget change safe: reseeding
+-- statutory values must never touch a user's brought-forward losses, and
+-- editing those losses must never rewrite the law. A single merged table
+-- could do neither safely, because there would be no way to reseed one half
+-- without either clobbering the other or hand-picking columns.
+--
+-- Seeded with the verified HMRC values on every open (INSERT OR IGNORE, so a
+-- user edit is never overwritten by a later startup), and overridable through
+-- PUT /api/tax-config.
+--
+-- Two `kind`s share the table because both are per-tax-year statutory scalars
+-- read by the same computation:
+--   'aea'  — the Annual Exempt Amount. Exactly one row per tax year.
+--            `rate` is NULL; `amount` is the allowance in the base currency.
+--   'rate' — a capital gains rate band on SHARES, in force over a date range
+--            within the tax year. `amount` is NULL; `rate` is a decimal
+--            fraction (0.24, not 24).
+--
+-- A tax year normally has ONE 'rate' row. 2024-25 has TWO, because the Autumn
+-- Budget 2024 raised the rates mid-year on 30 Oct 2024. That is the entire
+-- mechanism for the mid-year split: it is two ordinary rows, not a special
+-- case in the engine. `valid_from`/`valid_to` are inclusive YYYY-MM-DD bounds
+-- and must tile the tax year without gaps or overlaps.
+--
+-- `rate_kind` distinguishes the basic-rate band from the higher/additional
+-- band for the same period, since which one applies depends on how much of
+-- the taxpayer's basic-rate income band is unused (`tax_inputs
+-- .allowable_income_remaining`), which is user data and so lives elsewhere.
+CREATE TABLE IF NOT EXISTS tax_config (
+    tax_year    TEXT NOT NULL,               -- 'YYYY-YY', e.g. '2024-25'
+    kind        TEXT NOT NULL,               -- 'aea' | 'rate'
+    rate_kind   TEXT NOT NULL DEFAULT '',    -- 'basic' | 'higher' for kind='rate'; '' for 'aea'
+    valid_from  TEXT NOT NULL,               -- inclusive YYYY-MM-DD
+    valid_to    TEXT NOT NULL,               -- inclusive YYYY-MM-DD
+    amount      TEXT,                        -- Decimal string; set for kind='aea'
+    rate        TEXT,                        -- Decimal fraction string; set for kind='rate'
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (tax_year, kind, rate_kind, valid_from)
+);
+
+-- ── tax_inputs ────────────────────────────────────────────────────────────
+-- THE USER'S SITUATION, per profile per tax year. Nothing here is statutory
+-- and nothing here can be derived from the law: it is what the taxpayer
+-- brings to the computation. Kept apart from `tax_config` for the reason
+-- spelled out there.
+--
+-- `brought_forward_losses` is entered by the user, NOT computed. The backend
+-- can *derive* a prefill from prior-year reports (see
+-- Db::derive_brought_forward_losses) but that derivation is only ever a
+-- suggestion shown on the pre-flight screen, because UK losses carry forward
+-- only if CLAIMED within four years of the end of the tax year they arose in,
+-- and only the excess remaining after that year's own gains carries at all.
+-- A naive sum of past losses therefore OVERSTATES, so the stored value is
+-- always the figure the user committed.
+--
+-- `allowable_income_remaining` is the unused headroom in the taxpayer's
+-- basic-rate INCOME tax band. Gains falling within it are charged at the
+-- basic CGT rate and the excess at the higher rate. It cannot be derived:
+-- this app does not know the user's PAYE income. 0 (the default) means no
+-- headroom, so every gain is charged at the higher rate.
+--
+-- `aea_claimed` exists so a user can model not claiming the allowance. The
+-- AEA is not compulsory and there are years where it is better not to use it.
+CREATE TABLE IF NOT EXISTS tax_inputs (
+    profile_id                 TEXT NOT NULL REFERENCES profiles(id),
+    tax_year                   TEXT NOT NULL,             -- 'YYYY-YY', e.g. '2024-25'
+    brought_forward_losses     TEXT NOT NULL DEFAULT '0', -- Decimal string, >= 0
+    allowable_income_remaining TEXT NOT NULL DEFAULT '0', -- Decimal string, >= 0
+    aea_claimed                INTEGER NOT NULL DEFAULT 1,-- 1 = claim the AEA, 0 = do not
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (profile_id, tax_year)
+);
+
+-- Statutory seed. Runs on every open (schema.sql is applied with execute_batch
+-- at Db::open), so a new database is usable immediately and an existing one
+-- picks up a newly-legislated year on the next start. INSERT OR IGNORE means a
+-- row the user has since edited through PUT /api/tax-config is never silently
+-- reverted to the statutory default by a later restart.
+--
+-- Values are HMRC-verified. Rates are for SHARES and are decimal fractions.
+-- 2024-25 carries two 'rate' pairs because the Autumn Budget 2024 raised CGT
+-- on shares from 10%/20% to 18%/24% for disposals made on or after
+-- 30 October 2024; the ranges are inclusive and tile the tax year exactly.
+INSERT OR IGNORE INTO tax_config (tax_year, kind, rate_kind, valid_from, valid_to, amount, rate) VALUES
+    ('2023-24', 'aea',  '',       '2023-04-06', '2024-04-05', '6000', NULL),
+    ('2024-25', 'aea',  '',       '2024-04-06', '2025-04-05', '3000', NULL),
+    ('2025-26', 'aea',  '',       '2025-04-06', '2026-04-05', '3000', NULL),
+    ('2026-27', 'aea',  '',       '2026-04-06', '2027-04-05', '3000', NULL),
+
+    ('2023-24', 'rate', 'basic',  '2023-04-06', '2024-04-05', NULL, '0.10'),
+    ('2023-24', 'rate', 'higher', '2023-04-06', '2024-04-05', NULL, '0.20'),
+
+    ('2024-25', 'rate', 'basic',  '2024-04-06', '2024-10-29', NULL, '0.10'),
+    ('2024-25', 'rate', 'higher', '2024-04-06', '2024-10-29', NULL, '0.20'),
+    ('2024-25', 'rate', 'basic',  '2024-10-30', '2025-04-05', NULL, '0.18'),
+    ('2024-25', 'rate', 'higher', '2024-10-30', '2025-04-05', NULL, '0.24'),
+
+    ('2025-26', 'rate', 'basic',  '2025-04-06', '2026-04-05', NULL, '0.18'),
+    ('2025-26', 'rate', 'higher', '2025-04-06', '2026-04-05', NULL, '0.24'),
+
+    ('2026-27', 'rate', 'basic',  '2026-04-06', '2027-04-05', NULL, '0.18'),
+    ('2026-27', 'rate', 'higher', '2026-04-06', '2027-04-05', NULL, '0.24');

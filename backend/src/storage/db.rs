@@ -5,7 +5,7 @@
 //! synchronous and single-threaded; the Axum server wraps this behind a
 //! shared `Arc<Mutex<Db>>` without changing the surface area here.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
@@ -20,9 +20,11 @@ use crate::model::{
     CreateInvestmentEventBody, Currency, Document, DocumentReferences, DocumentSummary,
     ExchangeRate, Granularity, Holding, HoldingPreview, HoldingSummaryRow, HoldingType,
     HoldingsCashFlowMonth, HoldingsHistoryRow, ImportLog, ImportResult, ImportRowError,
-    ImportTransaction, InsertOutcome, InvestmentEvent, InvestmentEventType, InvestmentHistoryRow,
+    DerivedBroughtForwardLosses, DerivedLossYear, ImportTransaction, InsertOutcome,
+    InvestmentEvent, InvestmentEventType, InvestmentHistoryRow,
     InvestmentMetrics, PatchCategoryPayload, PatchInvestmentEventBody, Profile, SpendingGridRow,
-    SpendingGroupBy, Transaction, TransactionPreviewRow, TransactionPreviewStatus,
+    SpendingGroupBy, TaxConfigEntry, TaxInputs, Transaction, TransactionPreviewRow,
+    TransactionPreviewStatus,
 };
 
 /// The full schema DDL. Embedded at compile time so a release binary can
@@ -5162,6 +5164,182 @@ impl Db {
             per_account,
         })
     }
+
+    // ── Tax configuration and inputs ─────────────────────────────────────────
+
+    /// Every statutory entry for a tax year, ordered so rate bands come back in
+    /// chronological order.
+    ///
+    /// Returns an empty vec for a year that has never been seeded rather than an
+    /// error: "no configuration for 2029-30" is a decision for the caller, which
+    /// can say so in a 4xx far more usefully than a storage-layer error can.
+    pub fn get_tax_config(&self, tax_year: &str) -> Result<Vec<TaxConfigEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tax_year, kind, rate_kind, valid_from, valid_to, amount, rate, updated_at
+             FROM tax_config WHERE tax_year = ?1
+             ORDER BY kind, valid_from, rate_kind",
+        )?;
+        let rows = stmt
+            .query_map(params![tax_year], row_to_tax_config_entry)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every statutory entry we hold, for the config screen.
+    pub fn get_all_tax_config(&self) -> Result<Vec<TaxConfigEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tax_year, kind, rate_kind, valid_from, valid_to, amount, rate, updated_at
+             FROM tax_config
+             ORDER BY tax_year, kind, valid_from, rate_kind",
+        )?;
+        let rows = stmt
+            .query_map([], row_to_tax_config_entry)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Replace the whole entry set for one tax year, in a transaction.
+    ///
+    /// Delete-then-insert rather than upsert because the entries for a year are
+    /// a set that must tile it. Upserting row-by-row could leave a stale band
+    /// behind after an edit that splits or merges periods, and a disposal
+    /// falling in the resulting gap would be taxed at no rate at all.
+    pub fn put_tax_config(&self, tax_year: &str, entries: &[TaxConfigEntry]) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        tx.execute("DELETE FROM tax_config WHERE tax_year = ?1", params![tax_year])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO tax_config
+                     (tax_year, kind, rate_kind, valid_from, valid_to, amount, rate, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?;
+            for e in entries {
+                stmt.execute(params![
+                    tax_year,
+                    e.kind,
+                    e.rate_kind,
+                    e.valid_from,
+                    e.valid_to,
+                    e.amount.map(|d| d.to_string()),
+                    e.rate.map(|d| d.to_string()),
+                    now,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(entries.len())
+    }
+
+    /// One profile's own figures for a tax year.
+    ///
+    /// A profile that has never been given inputs for a year gets the documented
+    /// defaults (no brought-forward losses, no basic-rate headroom, AEA claimed)
+    /// rather than `None`. Every one of those defaults is a real, defensible
+    /// position rather than a placeholder, and returning them means the
+    /// computation has no "unconfigured" branch to get wrong.
+    pub fn get_tax_inputs(&self, profile_id: &str, tax_year: &str) -> Result<TaxInputs> {
+        let stored = self
+            .conn
+            .query_row(
+                "SELECT profile_id, tax_year, brought_forward_losses,
+                        allowable_income_remaining, aea_claimed, updated_at
+                 FROM tax_inputs WHERE profile_id = ?1 AND tax_year = ?2",
+                params![profile_id, tax_year],
+                row_to_tax_inputs,
+            )
+            .optional()?;
+
+        Ok(stored.unwrap_or_else(|| TaxInputs {
+            profile_id: profile_id.to_string(),
+            tax_year: tax_year.to_string(),
+            brought_forward_losses: Decimal::ZERO,
+            allowable_income_remaining: Decimal::ZERO,
+            aea_claimed: true,
+            updated_at: None,
+        }))
+    }
+
+    /// Write one profile's figures for a tax year, creating the row if absent.
+    pub fn put_tax_inputs(&self, inputs: &TaxInputs) -> Result<()> {
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        self.conn.execute(
+            "INSERT INTO tax_inputs
+                 (profile_id, tax_year, brought_forward_losses,
+                  allowable_income_remaining, aea_claimed, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(profile_id, tax_year) DO UPDATE SET
+                 brought_forward_losses     = excluded.brought_forward_losses,
+                 allowable_income_remaining = excluded.allowable_income_remaining,
+                 aea_claimed                = excluded.aea_claimed,
+                 updated_at                 = excluded.updated_at",
+            params![
+                inputs.profile_id,
+                inputs.tax_year,
+                inputs.brought_forward_losses.to_string(),
+                inputs.allowable_income_remaining.to_string(),
+                i64::from(inputs.aea_claimed),
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// A *suggested* brought-forward loss figure for `tax_year`, derived from
+    /// disposals recorded in earlier years.
+    ///
+    /// This is a prefill for a field the user confirms, and the return type is
+    /// shaped to stop a consumer treating it as settled: it carries the years it
+    /// was built from and an `is_upper_bound` flag that is always true.
+    ///
+    /// It can only ever OVERSTATE, for two reasons this app cannot see past.
+    /// A UK capital loss carries forward only if it was CLAIMED within four
+    /// years of the end of the tax year it arose in, and nothing in the ledger
+    /// records whether a claim was made. And only the excess left after setting
+    /// the loss against that same year's gains carries at all — which this does
+    /// net off per year, but it cannot know about disposals made outside this
+    /// app, so a year that looks like a net loss here may not have been one.
+    ///
+    /// Losses are netted **within** each tax year and only the years that netted
+    /// to a loss contribute; a year that netted to a gain contributes nothing
+    /// and is omitted rather than being allowed to cancel out another year's
+    /// loss, because gains do not reduce losses carried forward from elsewhere.
+    ///
+    /// `year_boundaries` supplies the UK tax-year bounds to bucket by, so this
+    /// function stays a pure query and the caller owns the calendar.
+    pub fn derive_brought_forward_losses(
+        &self,
+        realized: &[(String, Decimal)],
+        year_boundaries: &[(String, NaiveDate, NaiveDate)],
+    ) -> Result<DerivedBroughtForwardLosses> {
+        let mut net_by_year: BTreeMap<&str, Decimal> = BTreeMap::new();
+
+        for (date_str, gain_loss) in realized {
+            let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+                .with_context(|| format!("invalid disposal date {date_str:?}"))?;
+            if let Some((year, _, _)) = year_boundaries
+                .iter()
+                .find(|(_, from, to)| date >= *from && date <= *to)
+            {
+                *net_by_year.entry(year.as_str()).or_default() += gain_loss;
+            }
+        }
+
+        let contributions: Vec<DerivedLossYear> = net_by_year
+            .into_iter()
+            .filter(|(_, net)| *net < Decimal::ZERO)
+            .map(|(year, net)| DerivedLossYear {
+                tax_year: year.to_string(),
+                net_loss: net.abs(),
+            })
+            .collect();
+
+        Ok(DerivedBroughtForwardLosses {
+            amount: contributions.iter().map(|c| c.net_loss).sum(),
+            contributions,
+            is_upper_bound: true,
+        })
+    }
 }
 
 // ── Public data structs ───────────────────────────────────────────────────────
@@ -5227,6 +5405,46 @@ fn column_error(idx: usize, msg: String) -> rusqlite::Error {
 fn parse_decimal_column(idx: usize, field: &str, s: &str) -> rusqlite::Result<Decimal> {
     s.parse()
         .map_err(|_| column_error(idx, format!("invalid {field}: {s:?}")))
+}
+
+fn row_to_tax_config_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaxConfigEntry> {
+    let amount: Option<String> = row.get(5)?;
+    let rate: Option<String> = row.get(6)?;
+    Ok(TaxConfigEntry {
+        tax_year: row.get(0)?,
+        kind: row.get(1)?,
+        rate_kind: row.get(2)?,
+        valid_from: row.get(3)?,
+        valid_to: row.get(4)?,
+        amount: amount
+            .map(|s| parse_decimal_column(5, "tax_config.amount", &s))
+            .transpose()?,
+        rate: rate
+            .map(|s| parse_decimal_column(6, "tax_config.rate", &s))
+            .transpose()?,
+        updated_at: row.get(7)?,
+    })
+}
+
+fn row_to_tax_inputs(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaxInputs> {
+    let bfl: String = row.get(2)?;
+    let air: String = row.get(3)?;
+    Ok(TaxInputs {
+        profile_id: row.get(0)?,
+        tax_year: row.get(1)?,
+        brought_forward_losses: parse_decimal_column(
+            2,
+            "tax_inputs.brought_forward_losses",
+            &bfl,
+        )?,
+        allowable_income_remaining: parse_decimal_column(
+            3,
+            "tax_inputs.allowable_income_remaining",
+            &air,
+        )?,
+        aea_claimed: row.get::<_, i64>(4)? != 0,
+        updated_at: row.get(5)?,
+    })
 }
 
 fn row_to_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {

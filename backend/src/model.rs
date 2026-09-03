@@ -579,6 +579,245 @@ pub struct CreateExchangeRatesPayload {
     pub rates: Vec<ExchangeRateInput>,
 }
 
+// ── Tax configuration and inputs ─────────────────────────────────────────────
+//
+// Two types, mirroring the two tables, and split for the same reason: `TaxConfig`
+// is the law (identical for every UK user, changes with the Budget) and
+// `TaxInputs` is one taxpayer's situation. See db/sql/schema.sql for the full
+// rationale.
+
+/// One statutory tax parameter for a tax year: either the Annual Exempt Amount
+/// or one capital gains rate band.
+///
+/// A tax year normally carries one band per `rate_kind`. 2024-25 carries two,
+/// because the Autumn Budget 2024 raised CGT on shares from 10%/20% to 18%/24%
+/// on 30 October 2024. That mid-year change is represented as two ordinary rows
+/// with adjacent `valid_from`/`valid_to` ranges, so the computation buckets
+/// disposals by date against whatever bands exist and needs no special case for
+/// that year and no code change for the next Budget.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxConfigEntry {
+    /// `YYYY-YY`, e.g. `2024-25`.
+    pub tax_year: String,
+    /// `aea` or `rate`.
+    pub kind: String,
+    /// `basic` or `higher` when `kind == "rate"`; empty string for `aea`.
+    pub rate_kind: String,
+    /// Inclusive `YYYY-MM-DD` lower bound of the period this entry applies to.
+    pub valid_from: String,
+    /// Inclusive `YYYY-MM-DD` upper bound.
+    pub valid_to: String,
+    /// The allowance, in the base currency. Present when `kind == "aea"`.
+    #[serde(with = "rust_decimal::serde::str_option")]
+    #[ts(type = "string | null")]
+    pub amount: Option<Decimal>,
+    /// A decimal fraction, so 24% is `0.24`. Present when `kind == "rate"`.
+    #[serde(with = "rust_decimal::serde::str_option")]
+    #[ts(type = "string | null")]
+    pub rate: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// Request body for PUT /api/tax-config: the complete set of entries for one
+/// tax year, replacing whatever is stored for it.
+///
+/// Replace rather than merge, because the entries for a year are a *set* that
+/// must tile it: a partial update could leave a gap between two rate bands, and
+/// a disposal falling in that gap would silently go untaxed.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PutTaxConfigPayload {
+    pub tax_year: String,
+    pub entries: Vec<TaxConfigEntryInput>,
+}
+
+/// One entry in a PUT /api/tax-config body. `tax_year` is taken from the
+/// enclosing payload rather than repeated per entry.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxConfigEntryInput {
+    pub kind: String,
+    #[serde(default)]
+    pub rate_kind: Option<String>,
+    pub valid_from: String,
+    pub valid_to: String,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(type = "string | null")]
+    pub amount: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(type = "string | null")]
+    pub rate: Option<Decimal>,
+}
+
+/// One taxpayer's own figures for a tax year. Nothing here is statutory and
+/// nothing here is derivable from the ledger alone.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxInputs {
+    pub profile_id: String,
+    /// `YYYY-YY`, e.g. `2024-25`.
+    pub tax_year: String,
+    /// Unused allowable losses carried in from earlier years. User-entered: a
+    /// derived figure is offered as a prefill but never stored automatically,
+    /// because losses carry forward only if claimed in time and only net of
+    /// the arising year's own gains.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub brought_forward_losses: Decimal,
+    /// Unused headroom in the taxpayer's basic-rate INCOME tax band. Gains up
+    /// to this amount are charged at the basic CGT rate, the rest at the
+    /// higher rate. Not derivable, since this app does not see PAYE income, so
+    /// it defaults to 0, meaning every gain is charged at the higher rate.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub allowable_income_remaining: Decimal,
+    /// Whether to apply the Annual Exempt Amount at all. Claiming it is
+    /// optional and occasionally not worth doing.
+    pub aea_claimed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// Request body for PUT /api/tax-inputs/:profile_id/:tax_year.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PutTaxInputsPayload {
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(type = "string | null")]
+    pub brought_forward_losses: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(type = "string | null")]
+    pub allowable_income_remaining: Option<Decimal>,
+    #[serde(default)]
+    pub aea_claimed: Option<bool>,
+}
+
+/// A *suggested* brought-forward loss figure, derived from prior-year losses
+/// already in the ledger.
+///
+/// Deliberately shaped so a consumer cannot render it as a settled number. It
+/// carries the years it was built from and an explicit caveat, because the
+/// derivation is knowably incomplete: UK capital losses carry forward only if
+/// they were CLAIMED within four years of the end of the tax year they arose
+/// in, and only the excess left after setting them against that same year's
+/// gains carries at all. This app cannot see whether a claim was made, so the
+/// figure can only ever OVERSTATE. It is a prefill for a field the user
+/// confirms, never a value to store on the user's behalf.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct DerivedBroughtForwardLosses {
+    /// Sum of `contributions`. Always >= 0.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    /// Per-year breakdown, earliest first, so the UI can show its working.
+    pub contributions: Vec<DerivedLossYear>,
+    /// Machine-readable statement that this is an upper bound, not a fact.
+    pub is_upper_bound: bool,
+}
+
+/// One prior tax year's contribution to a derived brought-forward loss figure.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct DerivedLossYear {
+    /// `YYYY-YY`.
+    pub tax_year: String,
+    /// Net loss remaining after that year's own gains. Always > 0: years that
+    /// netted to a gain contribute nothing and are omitted.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub net_loss: Decimal,
+}
+
+/// The computed Capital Gains Tax figure for one tax year, with its working shown.
+///
+/// Every intermediate step is a field rather than a comment, because this number
+/// ends up on a document a user may file. A single `tax_due` scalar would be
+/// impossible to check against HMRC's own worked example, and impossible to
+/// argue with when it disagrees.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxComputation {
+    /// `YYYY-YY`.
+    pub tax_year: String,
+    /// The rate bands the year was split into, earliest first, each carrying the
+    /// gains that fell in it and the tax charged on them.
+    pub bands: Vec<TaxBandResult>,
+    /// Total chargeable gains before any deduction — the sum of positive
+    /// disposals across all bands.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total_gains: Decimal,
+    /// Losses arising in this tax year, applied before the AEA.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub current_year_losses_applied: Decimal,
+    /// Brought-forward losses actually used. Can be less than the figure held in
+    /// `tax_inputs`: losses are only used down to the point where the remaining
+    /// gain is covered by the AEA, and the rest stays carried forward.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub brought_forward_losses_applied: Decimal,
+    /// Brought-forward losses left over to carry into the next year.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub brought_forward_losses_remaining: Decimal,
+    /// The Annual Exempt Amount actually applied. Zero when `aea_claimed` is
+    /// false, and otherwise capped at the gains remaining after losses.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub aea_applied: Decimal,
+    /// Gains left chargeable after losses and the AEA.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub taxable_gain: Decimal,
+    /// The bottom line: sum of `tax` across `bands`.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub tax_due: Decimal,
+    /// The inputs this computation was run with, echoed back so a stored report
+    /// records the assumptions it was generated under.
+    pub inputs: TaxInputs,
+}
+
+/// One rate band's contribution to the computation.
+///
+/// A band is a (period, rate_kind) pair: 2024-25 produces up to four, because
+/// the Autumn Budget 2024 changed the rates mid-year. Gains are assigned to a
+/// band by `disposal_date`, and deductions are taken from the HIGHEST-RATE band
+/// first, which is the taxpayer-favourable order HMRC's own computation uses.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxBandResult {
+    /// Inclusive `YYYY-MM-DD` bounds of the period this band covers.
+    pub valid_from: String,
+    pub valid_to: String,
+    /// `basic` or `higher`.
+    pub rate_kind: String,
+    /// The rate applied, as a decimal fraction (0.24, not 24).
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub rate: Decimal,
+    /// Gains falling in this band before any deduction.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub gains: Decimal,
+    /// Losses and AEA taken off this band.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub deductions: Decimal,
+    /// `gains - deductions`, never negative.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub taxable: Decimal,
+    /// `taxable * rate`, rounded to 2dp.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub tax: Decimal,
+}
+
 /// Request body for PATCH /api/profiles/:id — name and/or UTR.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PatchProfilePayload {
