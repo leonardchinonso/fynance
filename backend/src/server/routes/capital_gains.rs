@@ -12,9 +12,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ts_rs::TS;
 
-use crate::model::{Account, AccountType, InvestmentEvent, InvestmentEventType};
+use crate::model::{Account, AccountType, InvestmentEvent, InvestmentEventType, TaxComputation};
+use crate::tax::{DisposalForTax, compute_tax};
 use crate::server::error::AppError;
 use crate::server::state::AppState;
+use crate::server::routes::tax::validate_tax_year;
 use crate::server::validation::{parse_date, split_csv_param, validate_date_range};
 use crate::util::fx::{FxRateMap, MissingRate};
 
@@ -39,6 +41,15 @@ pub struct CapitalGainsQuery {
     pub start_date: Option<String>, // YYYY-MM-DD; absent = from time zero
     pub end_date: Option<String>,   // YYYY-MM-DD; absent = no upper bound
     pub profile_ids: Option<String>, // comma-separated; scope to accounts whose profile_ids JSON intersects this set
+    /// `YYYY-YY`. When set, the response carries a `tax` computation for that
+    /// year, using the statutory config and the profile's stored inputs.
+    ///
+    /// Separate from `start_date`/`end_date` on purpose: those bound which
+    /// disposals are *reported*, and a caller is free to report a window that
+    /// is not a tax year at all. Tax is only defined for a whole tax year, so
+    /// asking for it is a distinct request rather than something inferred from
+    /// a date range that happens to look like one.
+    pub tax_year: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -365,6 +376,11 @@ pub struct CapitalGainsResponse {
     /// alongside, not instead of, the granular rows.
     pub disposal_groups: Vec<CgtDisposalGroup>,
     pub pools: Vec<S104PoolState>,
+    /// The tax computation, present only when the request named a `tax_year`.
+    /// Absent means "not asked for", never "no tax due" — a nil tax bill is a
+    /// present computation whose `tax_due` is zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tax: Option<TaxComputation>,
 }
 
 /// A single real-world disposal, with HMRC's matching-rule buckets rolled back up.
@@ -823,6 +839,59 @@ pub async fn get_capital_gains(
     symbol_summaries.sort_by(|a, b| a.symbol.cmp(&b.symbol));
 
     response.symbol_summaries = symbol_summaries;
+
+    // Tax, only when the caller asked for a specific tax year.
+    //
+    // Computed from `realized_events` rather than from `summary`: the bands are
+    // keyed on disposal DATE, and the summary has already collapsed the dates
+    // away. The rate that applies to a gain depends on when it was realized —
+    // that is the whole point of the 30 October 2024 split — so a single netted
+    // total cannot be bucketed after the fact.
+    if let Some(tax_year) = q.tax_year.as_deref().filter(|s| !s.is_empty()) {
+        validate_tax_year(tax_year)?;
+
+        let (entries, inputs) = {
+            let db = state.db();
+            let entries = db.get_tax_config(tax_year)?;
+            // Tax inputs are per profile. A request scoped to exactly one
+            // profile uses that profile's stored figures; anything else (no
+            // scope, or several profiles at once) has no single taxpayer to
+            // read them from, so the documented defaults apply and the caller
+            // gets a computation with no losses and the AEA claimed. Silently
+            // borrowing one profile's losses for a multi-profile report would
+            // understate somebody's tax.
+            let profile_ids = q.profile_ids.as_deref().and_then(split_csv_param);
+            let inputs = match profile_ids.as_deref() {
+                Some([only]) => db.get_tax_inputs(only, tax_year)?,
+                _ => db.get_tax_inputs("", tax_year)?,
+            };
+            (entries, inputs)
+        };
+
+        let disposals: Vec<DisposalForTax> = response
+            .realized_events
+            .iter()
+            .map(|e| {
+                let day = disposal_day_of(&e.disposal_date);
+                NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+                    .map(|disposal_date| DisposalForTax {
+                        disposal_date,
+                        gain_loss: e.gain_loss,
+                    })
+                    .map_err(|_| {
+                        AppError::bad_request(
+                            format!("unparseable disposal date {:?}", e.disposal_date),
+                            "invalid_disposal_date",
+                        )
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+
+        let computed = compute_tax(tax_year, &disposals, &entries, &inputs).map_err(|e| {
+            AppError::bad_request(e.to_string(), "tax_computation_failed")
+        })?;
+        response.tax = Some(computed);
+    }
 
     Ok(Json(response))
 }
@@ -1345,6 +1414,7 @@ fn run_cgt_engine(
         realized_events: all_realized,
         disposal_groups,
         pools: all_pools,
+        tax: None,
     })
 }
 
