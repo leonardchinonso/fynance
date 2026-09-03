@@ -7,6 +7,7 @@ import { Calendar } from "@/components/ui/calendar"
 import type { Profile } from "@/types"
 import type { CgtFilters, CgtPeriod } from "@/api/service"
 import { ukTaxYearToDates } from "@/api/cgt_filter_params"
+import type { CgtBandSelection } from "./band_headroom"
 
 const TAX_YEAR_PRESETS = ["2025-26", "2024-25", "2023-24", "2022-23", "2021-22"] as const
 type PresetValue =
@@ -18,21 +19,15 @@ interface CgtFilterBarProps {
   profiles: Profile[]
   initial: CgtFilters
   loading: boolean
-  onGenerate: (filters: CgtFilters, bandSelection: CgtBandSelection) => void
+  /**
+   * `bandSelection` is `null` when the user never touched the band control, so
+   * the caller can leave the stored headroom figure alone rather than writing
+   * this screen's default over it.
+   */
+  onGenerate: (filters: CgtFilters, bandSelection: CgtBandSelection | null) => void
 }
 
-/**
- * Which CGT rate the user expects their gains to fall at.
- *
- * This is the request's band selector: it is converted into the taxpayer's
- * `allowable_income_remaining` before the report runs. "higher" means no unused
- * basic-rate income band, so every gain is charged at the higher rate; "basic"
- * means enough headroom to cover the whole gain. Those are the two ends of a
- * spectrum the user can set precisely on the tax-inputs screen — this control
- * only offers the ends, because the filter bar is not where a taxpayer works out
- * their unused income band to the pound.
- */
-export type CgtBandSelection = "basic" | "higher"
+export type { CgtBandSelection }
 
 export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilterBarProps) {
   const [preset, setPreset] = useState<PresetValue>(initialPreset(initial.period))
@@ -42,7 +37,13 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
   // The band selector. Converted into `allowable_income_remaining` on the
   // request rather than being a display flag: the server computes the tax, so
   // this changes what is asked for, not how the answer is drawn.
-  const [band, setBand] = useState<CgtBandSelection>("higher")
+  //
+  // `null` means the user has not touched it on this visit. The control still
+  // *shows* the higher-rate position, because one of the two has to be drawn,
+  // but showing a default is not the user asking for it — so an untouched
+  // selector sends nothing and the stored figure survives.
+  const [band, setBand] = useState<CgtBandSelection | null>(null)
+  const shownBand: CgtBandSelection = band ?? "higher"
 
   const period: CgtPeriod = buildPeriod(preset, startDate, endDate)
   const canGenerate = !loading && profileId !== ""
@@ -88,10 +89,10 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
         </SelectContent>
       </Select>
 
-      <Select value={band} onValueChange={(v) => v && setBand(v as CgtBandSelection)}>
+      <Select value={shownBand} onValueChange={(v) => v && setBand(v as CgtBandSelection)}>
         <SelectTrigger className="w-[190px]">
           <span className="truncate">
-            {band === "higher" ? "Higher/additional rate" : "Basic rate"}
+            {shownBand === "higher" ? "Higher/additional rate" : "Basic rate"}
           </span>
         </SelectTrigger>
         <SelectContent>

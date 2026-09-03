@@ -11,7 +11,8 @@ import type { CgtFilters } from "@/api/service"
 import { previousUkTaxYearForDate, periodSlug } from "@/api/cgt_filter_params"
 import { api } from "@/api/client"
 import { useCapitalGains } from "@/hooks/data/use_capital_gains"
-import { CgtFilterBar, type CgtBandSelection } from "./cgt_filter_bar"
+import { CgtFilterBar } from "./cgt_filter_bar"
+import { taxInputsPayloadForBand, type CgtBandSelection } from "./band_headroom"
 import { CgtSummaryCard } from "./cgt_summary_card"
 import { CgtPerSymbolTable } from "./cgt_per_symbol_table"
 import { CgtDisposalSchedule } from "./cgt_disposal_schedule"
@@ -59,19 +60,6 @@ function missingRatesFrom(
   return { missing, quote }
 }
 
-/**
- * Headroom written to `allowable_income_remaining` when the user picks "basic
- * rate" in the filter bar.
- *
- * Deliberately a large sentinel rather than the real basic-rate band: the
- * control expresses "all my gains fall at the basic rate", and this is the
- * arithmetic that produces that, since the server charges gains at the basic
- * rate up to this figure. The precise unused band is a number only the taxpayer
- * knows, and it can be entered exactly on the tax-inputs screen — this is the
- * shortcut for the common case, not a claim about anyone's income.
- */
-const BASIC_BAND_HEADROOM = "99999999"
-
 export function CgtReportPage() {
   const { reportId } = useParams<{ reportId?: string }>()
   const navigate = useNavigate()
@@ -86,7 +74,7 @@ export function CgtReportPage() {
     missing: MissingRatePair[]
     quote: string
     filters: CgtFilters
-    band: CgtBandSelection
+    band: CgtBandSelection | null
   } | null>(null)
 
   const defaultFilters = useMemo<CgtFilters>(() => {
@@ -119,7 +107,7 @@ export function CgtReportPage() {
    */
   async function handleGenerate(
     filters: CgtFilters,
-    band: CgtBandSelection,
+    band: CgtBandSelection | null,
     confirmedUtr?: string | null,
   ) {
     try {
@@ -129,15 +117,14 @@ export function CgtReportPage() {
       // income band to cover the whole gain, "higher" means none. Only the
       // headroom is written — brought-forward losses and the AEA choice are the
       // user's own settings and must not be disturbed by generating a report.
-      if (filters.period.kind === "tax-year" && filters.profileId) {
-        await api.putTaxInputs(filters.profileId, filters.period.taxYear, {
-          allowable_income_remaining: band === "basic" ? BASIC_BAND_HEADROOM : "0",
-          // Explicit nulls: the backend reads an absent/null key as "leave the
-          // stored value alone", which is exactly what generating a report
-          // should do to figures the user set on the tax-inputs screen.
-          brought_forward_losses: null,
-          aea_claimed: null,
-        })
+      //
+      // An untouched selector yields no payload at all, so generating a report
+      // leaves the stored headroom exactly as the user set it. That decision
+      // lives entirely in `taxInputsPayloadForBand`, which is what this branch
+      // tests — there is no second condition here to drift away from it.
+      const payload = taxInputsPayloadForBand(band)
+      if (payload && filters.period.kind === "tax-year" && filters.profileId) {
+        await api.putTaxInputs(filters.profileId, filters.period.taxYear, payload)
       }
       const response = await generate(filters)
       const id = newReportId()
