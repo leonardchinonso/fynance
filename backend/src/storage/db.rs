@@ -9263,3 +9263,323 @@ mod subunit_conversion_tests {
         assert!(!db.currency_exists("GBX").unwrap());
     }
 }
+
+#[cfg(test)]
+mod tax_storage_tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::str::FromStr;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn d(s: &str) -> Decimal {
+        Decimal::from_str(s).expect("decimal literal")
+    }
+
+    fn day(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date literal")
+    }
+
+    /// The statutory seed must be present on a fresh database, or the very first
+    /// report a new user runs computes no tax at all.
+    #[test]
+    fn seeds_the_statutory_values_on_open() {
+        let (db, _f) = test_db();
+
+        let entries = db.get_tax_config("2024-25").expect("read config");
+        let aea = entries
+            .iter()
+            .find(|e| e.kind == "aea")
+            .expect("2024-25 has an AEA");
+        assert_eq!(aea.amount, Some(d("3000")));
+
+        let rates: Vec<_> = entries.iter().filter(|e| e.kind == "rate").collect();
+        assert_eq!(
+            rates.len(),
+            4,
+            "2024-25 carries basic+higher on each side of the 30 Oct 2024 change"
+        );
+
+        // The pre/post-30-October split, which is the whole reason this year is
+        // modelled as two periods.
+        let pre_higher = rates
+            .iter()
+            .find(|e| e.rate_kind == "higher" && e.valid_from == "2024-04-06")
+            .expect("pre-30-Oct higher band");
+        assert_eq!(pre_higher.rate, Some(d("0.20")));
+        assert_eq!(pre_higher.valid_to, "2024-10-29");
+
+        let post_higher = rates
+            .iter()
+            .find(|e| e.rate_kind == "higher" && e.valid_from == "2024-10-30")
+            .expect("post-30-Oct higher band");
+        assert_eq!(post_higher.rate, Some(d("0.24")));
+        assert_eq!(post_higher.valid_to, "2025-04-05");
+
+        // 2023-24 predates the change and keeps the old rates.
+        let older = db.get_tax_config("2023-24").expect("read 2023-24");
+        let older_higher = older
+            .iter()
+            .find(|e| e.kind == "rate" && e.rate_kind == "higher")
+            .expect("2023-24 higher band");
+        assert_eq!(older_higher.rate, Some(d("0.20")));
+        let older_aea = older.iter().find(|e| e.kind == "aea").expect("2023-24 AEA");
+        assert_eq!(older_aea.amount, Some(d("6000")));
+    }
+
+    /// A user's edit to the statutory table must survive a restart. The seed runs
+    /// on every open, so this is the property that stops it clobbering their work.
+    #[test]
+    fn a_user_edit_survives_reopening() {
+        let file = NamedTempFile::new().expect("temp file");
+        {
+            let db = Db::open(file.path()).expect("first open");
+            let edited = vec![TaxConfigEntry {
+                tax_year: "2024-25".to_string(),
+                kind: "aea".to_string(),
+                rate_kind: String::new(),
+                valid_from: "2024-04-06".to_string(),
+                valid_to: "2025-04-05".to_string(),
+                amount: Some(d("1234")),
+                rate: None,
+                updated_at: None,
+            }];
+            db.put_tax_config("2024-25", &edited).expect("write");
+        }
+
+        let db = Db::open(file.path()).expect("reopen");
+        let entries = db.get_tax_config("2024-25").expect("read");
+        let aea = entries
+            .iter()
+            .find(|e| e.kind == "aea")
+            .expect("the edited AEA");
+        assert_eq!(
+            aea.amount,
+            Some(d("1234")),
+            "the startup seed must not overwrite a user's edit"
+        );
+    }
+
+    /// Writing a year's config replaces it rather than merging, so an edit that
+    /// removes a band cannot leave the old one behind.
+    #[test]
+    fn putting_config_replaces_the_year_rather_than_merging() {
+        let (db, _f) = test_db();
+        assert_eq!(db.get_tax_config("2024-25").expect("seeded").len(), 5);
+
+        let replacement = vec![TaxConfigEntry {
+            tax_year: "2024-25".to_string(),
+            kind: "rate".to_string(),
+            rate_kind: "higher".to_string(),
+            valid_from: "2024-04-06".to_string(),
+            valid_to: "2025-04-05".to_string(),
+            amount: None,
+            rate: Some(d("0.30")),
+            updated_at: None,
+        }];
+        db.put_tax_config("2024-25", &replacement).expect("write");
+
+        let entries = db.get_tax_config("2024-25").expect("read");
+        assert_eq!(entries.len(), 1, "the four seeded rows must be gone");
+        assert_eq!(entries[0].rate, Some(d("0.30")));
+
+        // A different year must be untouched by that write.
+        assert!(
+            !db.get_tax_config("2023-24").expect("read").is_empty(),
+            "replacing one year must not disturb another"
+        );
+    }
+
+    /// An unconfigured profile-year returns the documented defaults, so the
+    /// computation never has an "unconfigured" branch.
+    #[test]
+    fn unconfigured_inputs_return_documented_defaults() {
+        let (db, _f) = test_db();
+        let inputs = db.get_tax_inputs("nobody", "2024-25").expect("read");
+
+        assert_eq!(inputs.brought_forward_losses, Decimal::ZERO);
+        assert_eq!(inputs.allowable_income_remaining, Decimal::ZERO);
+        assert!(inputs.aea_claimed, "the AEA is claimed by default");
+        assert_eq!(inputs.profile_id, "nobody");
+        assert_eq!(inputs.tax_year, "2024-25");
+    }
+
+    /// Inputs round-trip, and are keyed per profile AND per year.
+    #[test]
+    fn inputs_round_trip_per_profile_and_year() {
+        let (db, _f) = test_db();
+        db.create_profile("alex", "Alex").expect("profile");
+        db.create_profile("sam", "Sam").expect("profile");
+
+        db.put_tax_inputs(&TaxInputs {
+            profile_id: "alex".to_string(),
+            tax_year: "2024-25".to_string(),
+            brought_forward_losses: d("1500.50"),
+            allowable_income_remaining: d("4000"),
+            aea_claimed: false,
+            updated_at: None,
+        })
+        .expect("write");
+
+        let read = db.get_tax_inputs("alex", "2024-25").expect("read");
+        assert_eq!(read.brought_forward_losses, d("1500.50"));
+        assert_eq!(read.allowable_income_remaining, d("4000"));
+        assert!(!read.aea_claimed);
+
+        // Another profile in the same year is unaffected.
+        let other = db.get_tax_inputs("sam", "2024-25").expect("read");
+        assert_eq!(other.brought_forward_losses, Decimal::ZERO);
+        assert!(other.aea_claimed);
+
+        // The same profile in another year is unaffected.
+        let other_year = db.get_tax_inputs("alex", "2025-26").expect("read");
+        assert_eq!(other_year.brought_forward_losses, Decimal::ZERO);
+    }
+
+    /// Writing twice updates in place rather than failing or duplicating.
+    #[test]
+    fn inputs_upsert_on_second_write() {
+        let (db, _f) = test_db();
+        db.create_profile("alex", "Alex").expect("profile");
+
+        let mut inputs = TaxInputs {
+            profile_id: "alex".to_string(),
+            tax_year: "2024-25".to_string(),
+            brought_forward_losses: d("100"),
+            allowable_income_remaining: Decimal::ZERO,
+            aea_claimed: true,
+            updated_at: None,
+        };
+        db.put_tax_inputs(&inputs).expect("first write");
+
+        inputs.brought_forward_losses = d("250");
+        db.put_tax_inputs(&inputs).expect("second write");
+
+        let read = db.get_tax_inputs("alex", "2024-25").expect("read");
+        assert_eq!(read.brought_forward_losses, d("250"));
+    }
+
+    /// The derivation nets within each year and only carries the years that
+    /// ended in a loss.
+    #[test]
+    fn derives_losses_netting_within_each_year() {
+        let (db, _f) = test_db();
+        let years = vec![
+            ("2022-23".to_string(), day("2022-04-06"), day("2023-04-05")),
+            ("2023-24".to_string(), day("2023-04-06"), day("2024-04-05")),
+        ];
+        let realized = vec![
+            // 2022-23 nets to a 400 loss (-1000 + 600).
+            ("2022-06-01".to_string(), d("-1000")),
+            ("2022-09-01".to_string(), d("600")),
+            // 2023-24 nets to a gain, so it contributes nothing.
+            ("2023-06-01".to_string(), d("900")),
+            ("2023-09-01".to_string(), d("-100")),
+        ];
+
+        let derived = db
+            .derive_brought_forward_losses(&realized, &years)
+            .expect("derive");
+
+        assert_eq!(
+            derived.contributions.len(),
+            1,
+            "a year that netted to a gain must not contribute"
+        );
+        assert_eq!(derived.contributions[0].tax_year, "2022-23");
+        assert_eq!(derived.contributions[0].net_loss, d("400"));
+        assert_eq!(derived.amount, d("400"));
+    }
+
+    /// A gain year must not cancel out another year's loss: losses carried
+    /// forward are not reduced by a later year's gains at derivation time.
+    #[test]
+    fn a_gain_year_does_not_offset_another_years_loss() {
+        let (db, _f) = test_db();
+        let years = vec![
+            ("2022-23".to_string(), day("2022-04-06"), day("2023-04-05")),
+            ("2023-24".to_string(), day("2023-04-06"), day("2024-04-05")),
+        ];
+        let realized = vec![
+            ("2022-06-01".to_string(), d("-1000")), // loss year
+            ("2023-06-01".to_string(), d("5000")),  // big gain year
+        ];
+
+        let derived = db
+            .derive_brought_forward_losses(&realized, &years)
+            .expect("derive");
+
+        assert_eq!(
+            derived.amount,
+            d("1000"),
+            "the 5000 gain must not net away the 1000 loss"
+        );
+    }
+
+    /// The derived figure is always flagged as an upper bound. This is the flag
+    /// the UI relies on to avoid presenting it as authoritative.
+    #[test]
+    fn derived_losses_are_always_flagged_as_an_upper_bound() {
+        let (db, _f) = test_db();
+        let years = vec![("2022-23".to_string(), day("2022-04-06"), day("2023-04-05"))];
+
+        let with_losses = db
+            .derive_brought_forward_losses(&[("2022-06-01".to_string(), d("-500"))], &years)
+            .expect("derive");
+        assert!(with_losses.is_upper_bound);
+
+        // Also true when there is nothing to report, so a consumer cannot infer
+        // "empty means certain".
+        let empty = db
+            .derive_brought_forward_losses(&[], &years)
+            .expect("derive");
+        assert!(empty.is_upper_bound);
+        assert_eq!(empty.amount, Decimal::ZERO);
+        assert!(empty.contributions.is_empty());
+    }
+
+    /// Disposals outside the supplied year bounds are ignored rather than
+    /// silently bucketed into the nearest year.
+    #[test]
+    fn ignores_disposals_outside_the_supplied_years() {
+        let (db, _f) = test_db();
+        let years = vec![("2022-23".to_string(), day("2022-04-06"), day("2023-04-05"))];
+        let realized = vec![
+            ("2022-06-01".to_string(), d("-300")), // inside
+            ("2021-06-01".to_string(), d("-900")), // before the window
+            ("2024-06-01".to_string(), d("-700")), // after the window
+        ];
+
+        let derived = db
+            .derive_brought_forward_losses(&realized, &years)
+            .expect("derive");
+
+        assert_eq!(derived.amount, d("300"));
+        assert_eq!(derived.contributions.len(), 1);
+    }
+
+    /// A corrupt stored decimal surfaces as an error rather than coercing to a
+    /// default that would understate the tax.
+    #[test]
+    fn a_corrupt_stored_decimal_is_an_error() {
+        let (db, _f) = test_db();
+        db.create_profile("alex", "Alex").expect("profile");
+        db.conn
+            .execute(
+                "INSERT INTO tax_inputs (profile_id, tax_year, brought_forward_losses)
+                 VALUES ('alex', '2024-25', 'not-a-number')",
+                [],
+            )
+            .expect("insert corrupt row");
+
+        assert!(
+            db.get_tax_inputs("alex", "2024-25").is_err(),
+            "an unparseable stored decimal must not silently become zero"
+        );
+    }
+}

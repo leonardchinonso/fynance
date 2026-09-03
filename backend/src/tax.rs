@@ -315,3 +315,406 @@ pub fn compute_tax(
         inputs: inputs.clone(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::TaxConfigEntry;
+    use pretty_assertions::assert_eq;
+    use std::str::FromStr;
+
+    fn d(s: &str) -> Decimal {
+        Decimal::from_str(s).expect("decimal literal")
+    }
+
+    fn date(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date literal")
+    }
+
+    fn aea_entry(tax_year: &str, from: &str, to: &str, amount: &str) -> TaxConfigEntry {
+        TaxConfigEntry {
+            tax_year: tax_year.to_string(),
+            kind: "aea".to_string(),
+            rate_kind: String::new(),
+            valid_from: from.to_string(),
+            valid_to: to.to_string(),
+            amount: Some(d(amount)),
+            rate: None,
+            updated_at: None,
+        }
+    }
+
+    fn rate_entry(
+        tax_year: &str,
+        rate_kind: &str,
+        from: &str,
+        to: &str,
+        rate: &str,
+    ) -> TaxConfigEntry {
+        TaxConfigEntry {
+            tax_year: tax_year.to_string(),
+            kind: "rate".to_string(),
+            rate_kind: rate_kind.to_string(),
+            valid_from: from.to_string(),
+            valid_to: to.to_string(),
+            amount: None,
+            rate: Some(d(rate)),
+            updated_at: None,
+        }
+    }
+
+    /// 2024-25 as it actually is: the Autumn Budget 2024 split, plus an AEA.
+    /// The statutory figures are real; every disposal in these tests is invented.
+    fn config_2024_25() -> Vec<TaxConfigEntry> {
+        vec![
+            aea_entry("2024-25", "2024-04-06", "2025-04-05", "3000"),
+            rate_entry("2024-25", "basic", "2024-04-06", "2024-10-29", "0.10"),
+            rate_entry("2024-25", "higher", "2024-04-06", "2024-10-29", "0.20"),
+            rate_entry("2024-25", "basic", "2024-10-30", "2025-04-05", "0.18"),
+            rate_entry("2024-25", "higher", "2024-10-30", "2025-04-05", "0.24"),
+        ]
+    }
+
+    fn inputs(brought_forward: &str, headroom: &str, aea_claimed: bool) -> TaxInputs {
+        TaxInputs {
+            profile_id: "test".to_string(),
+            tax_year: "2024-25".to_string(),
+            brought_forward_losses: d(brought_forward),
+            allowable_income_remaining: d(headroom),
+            aea_claimed,
+            updated_at: None,
+        }
+    }
+
+    fn disposal(on: &str, gain_loss: &str) -> DisposalForTax {
+        DisposalForTax {
+            disposal_date: date(on),
+            gain_loss: d(gain_loss),
+        }
+    }
+
+    /// The rate split is the point of the 2024-25 modelling: two identical
+    /// disposals either side of 30 October 2024 are charged at 20% and 24%.
+    #[test]
+    fn splits_gains_across_the_30_october_2024_rate_change() {
+        let disposals = vec![
+            disposal("2024-06-01", "10000"),
+            disposal("2024-12-01", "10000"),
+        ];
+        // No AEA and no losses, so each band's tax is purely its own rate.
+        let result = compute_tax(
+            "2024-25",
+            &disposals,
+            &config_2024_25(),
+            &inputs("0", "0", false),
+        )
+        .expect("computes");
+
+        assert_eq!(result.bands.len(), 2, "one band per side of the split");
+
+        let pre = &result.bands[0];
+        assert_eq!(pre.valid_from, "2024-04-06");
+        assert_eq!(pre.rate, d("0.20"));
+        assert_eq!(pre.gains, d("10000"));
+        assert_eq!(pre.tax, d("2000.00"));
+
+        let post = &result.bands[1];
+        assert_eq!(post.valid_from, "2024-10-30");
+        assert_eq!(post.rate, d("0.24"));
+        assert_eq!(post.gains, d("10000"));
+        assert_eq!(post.tax, d("2400.00"));
+
+        assert_eq!(result.tax_due, d("4400.00"));
+    }
+
+    /// The boundary is inclusive of the new rate: a disposal made *on* 30
+    /// October is charged at 24%. An off-by-one here is a real filing error.
+    #[test]
+    fn the_30_october_boundary_is_inclusive_of_the_new_rate() {
+        let on_the_day = compute_tax(
+            "2024-25",
+            &[disposal("2024-10-30", "1000")],
+            &config_2024_25(),
+            &inputs("0", "0", false),
+        )
+        .expect("computes");
+        assert_eq!(on_the_day.bands[0].rate, d("0.24"));
+        assert_eq!(on_the_day.tax_due, d("240.00"));
+
+        let day_before = compute_tax(
+            "2024-25",
+            &[disposal("2024-10-29", "1000")],
+            &config_2024_25(),
+            &inputs("0", "0", false),
+        )
+        .expect("computes");
+        assert_eq!(day_before.bands[0].rate, d("0.20"));
+        assert_eq!(day_before.tax_due, d("200.00"));
+    }
+
+    /// The ordering rule: losses and the AEA come off the HIGHEST-rate band
+    /// first, leaving the lower-rate band untouched while the higher can absorb.
+    #[test]
+    fn deducts_losses_and_aea_from_the_highest_rate_band_first() {
+        let disposals = vec![
+            disposal("2024-06-01", "20000"), // 20% band
+            disposal("2024-12-01", "12000"), // 24% band
+        ];
+        // 1,000 brought-forward losses + the 3,000 AEA = 4,000 of deductions,
+        // all of which must land on the 24% band.
+        let result = compute_tax(
+            "2024-25",
+            &disposals,
+            &config_2024_25(),
+            &inputs("1000", "0", true),
+        )
+        .expect("computes");
+
+        let pre = &result.bands[0];
+        assert_eq!(pre.rate, d("0.20"));
+        assert_eq!(
+            pre.deductions,
+            Decimal::ZERO,
+            "the lower-rate band must be untouched while the higher one can absorb"
+        );
+        assert_eq!(pre.taxable, d("20000"));
+        assert_eq!(pre.tax, d("4000.00"));
+
+        let post = &result.bands[1];
+        assert_eq!(post.rate, d("0.24"));
+        assert_eq!(post.deductions, d("4000"), "1000 losses + 3000 AEA");
+        assert_eq!(post.taxable, d("8000"));
+        assert_eq!(post.tax, d("1920.00"));
+
+        assert_eq!(result.brought_forward_losses_applied, d("1000"));
+        assert_eq!(result.aea_applied, d("3000"));
+        assert_eq!(result.tax_due, d("5920.00"));
+    }
+
+    /// Current-year losses net against gains before anything else, and they too
+    /// come off the highest-rate band.
+    #[test]
+    fn current_year_losses_reduce_the_highest_band() {
+        let disposals = vec![
+            disposal("2024-06-01", "10000"), // 20% band gain
+            disposal("2024-12-01", "10000"), // 24% band gain
+            disposal("2024-12-15", "-4000"), // a loss in the year
+        ];
+        let result = compute_tax(
+            "2024-25",
+            &disposals,
+            &config_2024_25(),
+            &inputs("0", "0", false),
+        )
+        .expect("computes");
+
+        assert_eq!(result.current_year_losses_applied, d("4000"));
+        assert_eq!(result.bands[0].taxable, d("10000"), "20% band untouched");
+        assert_eq!(
+            result.bands[1].taxable,
+            d("6000"),
+            "24% band absorbs the loss"
+        );
+        assert_eq!(result.tax_due, d("3440.00")); // 2000 + 1440
+    }
+
+    /// Brought-forward losses are spent only down to the AEA: the allowance
+    /// covers the rest for free and the unused losses stay carried forward.
+    #[test]
+    fn brought_forward_losses_are_preserved_behind_the_aea() {
+        // One 5,000 gain with 10,000 of losses available. Only 2,000 should be
+        // used (5,000 - 3,000 AEA), leaving 8,000 to carry.
+        let result = compute_tax(
+            "2024-25",
+            &[disposal("2024-12-01", "5000")],
+            &config_2024_25(),
+            &inputs("10000", "0", true),
+        )
+        .expect("computes");
+
+        assert_eq!(result.brought_forward_losses_applied, d("2000"));
+        assert_eq!(result.brought_forward_losses_remaining, d("8000"));
+        assert_eq!(result.aea_applied, d("3000"));
+        assert_eq!(result.taxable_gain, Decimal::ZERO);
+        assert_eq!(result.tax_due, Decimal::ZERO);
+    }
+
+    /// `allowable_income_remaining` moves gain into the basic band rather than
+    /// removing it.
+    #[test]
+    fn income_headroom_moves_gain_into_the_basic_band() {
+        // 10,000 of post-30-Oct gain with 4,000 of unused basic-rate income
+        // band: 4,000 at 18% and 6,000 at 24%.
+        let result = compute_tax(
+            "2024-25",
+            &[disposal("2024-12-01", "10000")],
+            &config_2024_25(),
+            &inputs("0", "4000", false),
+        )
+        .expect("computes");
+
+        assert_eq!(result.bands.len(), 2);
+
+        let basic = result
+            .bands
+            .iter()
+            .find(|b| b.rate_kind == "basic")
+            .expect("a basic band");
+        assert_eq!(basic.rate, d("0.18"));
+        assert_eq!(basic.gains, d("4000"));
+
+        let higher = result
+            .bands
+            .iter()
+            .find(|b| b.rate_kind == "higher")
+            .expect("a higher band");
+        assert_eq!(higher.rate, d("0.24"));
+        assert_eq!(higher.gains, d("6000"));
+
+        // 4000*0.18 = 720, 6000*0.24 = 1440.
+        assert_eq!(result.tax_due, d("2160.00"));
+    }
+
+    /// With no headroom (the default), everything is charged at the higher rate.
+    #[test]
+    fn no_headroom_charges_everything_at_the_higher_rate() {
+        let result = compute_tax(
+            "2024-25",
+            &[disposal("2024-12-01", "10000")],
+            &config_2024_25(),
+            &inputs("0", "0", false),
+        )
+        .expect("computes");
+
+        assert_eq!(result.bands.len(), 1);
+        assert_eq!(result.bands[0].rate_kind, "higher");
+        assert_eq!(result.bands[0].rate, d("0.24"));
+        assert_eq!(result.tax_due, d("2400.00"));
+    }
+
+    /// Declining the AEA must actually change the answer.
+    #[test]
+    fn declining_the_aea_leaves_the_gain_chargeable() {
+        let claimed = compute_tax(
+            "2024-25",
+            &[disposal("2024-12-01", "10000")],
+            &config_2024_25(),
+            &inputs("0", "0", true),
+        )
+        .expect("computes");
+        assert_eq!(claimed.aea_applied, d("3000"));
+        assert_eq!(claimed.taxable_gain, d("7000"));
+
+        let declined = compute_tax(
+            "2024-25",
+            &[disposal("2024-12-01", "10000")],
+            &config_2024_25(),
+            &inputs("0", "0", false),
+        )
+        .expect("computes");
+        assert_eq!(declined.aea_applied, Decimal::ZERO);
+        assert_eq!(declined.taxable_gain, d("10000"));
+    }
+
+    /// The AEA is capped at the gains available: a small gain must not produce a
+    /// negative taxable figure.
+    #[test]
+    fn aea_is_capped_at_the_gains_available() {
+        let result = compute_tax(
+            "2024-25",
+            &[disposal("2024-12-01", "500")],
+            &config_2024_25(),
+            &inputs("0", "0", true),
+        )
+        .expect("computes");
+
+        assert_eq!(result.aea_applied, d("500"), "capped, not the full 3000");
+        assert_eq!(result.taxable_gain, Decimal::ZERO);
+        assert_eq!(result.tax_due, Decimal::ZERO);
+    }
+
+    /// A disposal outside every configured band is refused rather than charged
+    /// at no rate. A gap in the config must never silently untax a disposal.
+    #[test]
+    fn refuses_a_disposal_outside_every_band() {
+        let err = compute_tax(
+            "2024-25",
+            &[disposal("2025-06-01", "10000")], // the next tax year
+            &config_2024_25(),
+            &inputs("0", "0", false),
+        )
+        .expect_err("must refuse");
+
+        assert_eq!(
+            err,
+            TaxComputationError::UncoveredDisposal {
+                date: "2025-06-01".to_string(),
+                tax_year: "2024-25".to_string(),
+            }
+        );
+    }
+
+    /// A year with no rate bands is refused rather than returning a confident
+    /// zero.
+    #[test]
+    fn refuses_a_year_with_no_rate_bands() {
+        let only_an_aea = vec![aea_entry("2029-30", "2029-04-06", "2030-04-05", "3000")];
+        let err = compute_tax(
+            "2029-30",
+            &[disposal("2029-06-01", "10000")],
+            &only_an_aea,
+            &inputs("0", "0", true),
+        )
+        .expect_err("must refuse");
+
+        assert_eq!(
+            err,
+            TaxComputationError::NoRateBands {
+                tax_year: "2029-30".to_string(),
+            }
+        );
+    }
+
+    /// A year that nets to a loss owes nothing and reports no negative figures.
+    #[test]
+    fn a_losing_year_owes_nothing() {
+        let disposals = vec![
+            disposal("2024-06-01", "1000"),
+            disposal("2024-12-01", "-5000"),
+        ];
+        let result = compute_tax(
+            "2024-25",
+            &disposals,
+            &config_2024_25(),
+            &inputs("0", "0", true),
+        )
+        .expect("computes");
+
+        assert_eq!(result.tax_due, Decimal::ZERO);
+        assert_eq!(result.taxable_gain, Decimal::ZERO);
+        assert!(
+            result.bands.iter().all(|b| b.taxable >= Decimal::ZERO),
+            "no band may report a negative taxable amount"
+        );
+    }
+
+    /// A year without a mid-year change produces one band.
+    #[test]
+    fn a_year_without_a_mid_year_change_has_one_band() {
+        let config = vec![
+            aea_entry("2025-26", "2025-04-06", "2026-04-05", "3000"),
+            rate_entry("2025-26", "basic", "2025-04-06", "2026-04-05", "0.18"),
+            rate_entry("2025-26", "higher", "2025-04-06", "2026-04-05", "0.24"),
+        ];
+        let mut ins = inputs("0", "0", true);
+        ins.tax_year = "2025-26".to_string();
+
+        let result = compute_tax("2025-26", &[disposal("2025-09-01", "13000")], &config, &ins)
+            .expect("computes");
+
+        assert_eq!(result.bands.len(), 1);
+        assert_eq!(result.bands[0].rate, d("0.24"));
+        assert_eq!(result.taxable_gain, d("10000")); // 13000 - 3000 AEA
+        assert_eq!(result.tax_due, d("2400.00"));
+    }
+}
