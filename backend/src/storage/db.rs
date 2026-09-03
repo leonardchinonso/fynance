@@ -177,6 +177,9 @@ impl SubunitMigrationReport {
             .filter(|r| r.table == "transactions")
             .count()
     }
+    pub fn accounts_migrated(&self) -> usize {
+        self.rows.iter().filter(|r| r.table == "accounts").count()
+    }
 }
 
 pub struct Db {
@@ -420,9 +423,14 @@ impl Db {
 
     /// Convert every stored row denominated in a broker sub-unit code to its
     /// parent currency. `dry_run = true` computes and returns the full report
-    /// without writing anything. `dry_run = false` applies it atomically (one
-    /// transaction per table) and also removes any now-unreferenced sub-unit
-    /// rows from the `currencies` table.
+    /// without writing anything. `dry_run = false` writes the changes and then
+    /// removes any now-unreferenced sub-unit rows from the `currencies` table.
+    ///
+    /// **Not atomic across tables.** Each table is migrated in its own
+    /// transaction, so a table is converted either fully or not at all, but a
+    /// failure partway through leaves earlier tables converted and later ones
+    /// untouched. That half-migrated state is consistent rather than corrupt —
+    /// the operation is idempotent, so re-running it finishes the job.
     pub fn migrate_subunit_currencies(&self, dry_run: bool) -> Result<SubunitMigrationReport> {
         // Raw row shape for the investments scan: (id, account_id, symbol,
         // date, quantity, price_per_share, currency, fee, fee_currency, event_type).
@@ -539,12 +547,20 @@ impl Db {
             report.rows.push(SubunitMigrationRow {
                 table: "investments",
                 id: id.clone(),
+                // Report the pair that actually converted. On a fee-only row
+                // the price currency never changed, so pairing the fee's
+                // sub-unit code with the (unconverted) price currency would
+                // print a nonsense line like `GBX -> USD`.
                 sub_unit_code: if price_is_sub_unit {
                     currency.clone()
                 } else {
                     fee_currency.clone().unwrap_or_default()
                 },
-                parent_code: new_currency.clone(),
+                parent_code: if price_is_sub_unit {
+                    new_currency.clone()
+                } else {
+                    new_fee_currency.clone().unwrap_or_default()
+                },
                 before: format!("price={price} currency={currency} fee={fee_str:?} fee_currency={fee_currency:?}"),
                 after: format!(
                     "price={new_price} currency={new_currency} fee={new_fee:?} fee_currency={new_fee_currency:?}"
@@ -696,6 +712,52 @@ impl Db {
             }
         }
         if let Some(tx) = txn_tx {
+            tx.commit()?;
+        }
+
+        // ── accounts ── the account's `currency` is a denomination label, not
+        // an amount: there is nothing to scale, so the code is simply rewritten
+        // to the parent. It still has to happen, for two reasons. First, the
+        // in-use check below counts `accounts`, so a stranded GBX account would
+        // pin the GBX `currencies` row open and make the cleanup silently
+        // no-op. Second, `set_account_balance` copies `accounts.currency`
+        // straight into the `_CASH` holding it writes with no conversion of its
+        // own, so a stranded GBX account would keep minting fresh GBX holdings
+        // long after this migration ran.
+        let account_rows: Vec<(String, String)> = {
+            let mut stmt = self.conn.prepare("SELECT id, currency FROM accounts")?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let acct_tx = if dry_run {
+            None
+        } else {
+            Some(self.conn.unchecked_transaction()?)
+        };
+
+        for (id, currency) in &account_rows {
+            let Some(parent) = crate::util::subunits::lookup(currency).map(|u| u.parent) else {
+                continue;
+            };
+
+            report.rows.push(SubunitMigrationRow {
+                table: "accounts",
+                id: id.clone(),
+                sub_unit_code: currency.clone(),
+                parent_code: parent.to_string(),
+                before: format!("currency={currency}"),
+                after: format!("currency={parent}"),
+            });
+
+            if let Some(tx) = &acct_tx {
+                tx.execute(
+                    "UPDATE accounts SET currency = ?1 WHERE id = ?2",
+                    params![parent, id],
+                )?;
+            }
+        }
+        if let Some(tx) = acct_tx {
             tx.commit()?;
         }
 
@@ -8864,6 +8926,162 @@ mod subunit_conversion_tests {
         db.conn.last_insert_rowid()
     }
 
+    /// Seed a transaction row denominated in a sub-unit, bypassing
+    /// `Transaction::from_unified` (which now converts on the way in, so it can
+    /// no longer express a stored GBX row). The fingerprint is deliberately
+    /// keyed on the *pre-conversion* amount, exactly as a row written before
+    /// conversion-at-write-time landed would have been.
+    fn seed_gbx_transaction(db: &Db, account_id: &str, amount_gbx: &str) -> (String, String) {
+        let id = uuid::Uuid::new_v4().to_string();
+        let date = "2026-02-05T00:00:00";
+        let legacy_fingerprint = crate::util::fingerprint(date, amount_gbx, account_id);
+        db.conn
+            .execute(
+                "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
+                 account_id, fingerprint, source_document_ids) \
+                 VALUES (?1, ?2, 'Sharesave deduction', 'sharesave deduction', ?3, 'GBX', ?4, ?5, '[]')",
+                params![id, date, amount_gbx, account_id, legacy_fingerprint],
+            )
+            .unwrap();
+        (id, legacy_fingerprint)
+    }
+
+    fn transaction_row(db: &Db, id: &str) -> (String, String, String) {
+        db.conn
+            .query_row(
+                "SELECT currency, amount, fingerprint FROM transactions WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn apply_converts_sub_unit_transaction_and_leaves_parent_row_untouched() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-1", "GBP")).unwrap();
+        let (gbx_id, _) = seed_gbx_transaction(&db, "acct-1", "5000");
+
+        // A transaction already in the parent currency: must be byte-for-byte
+        // untouched, including its fingerprint.
+        let gbp_id = uuid::Uuid::new_v4().to_string();
+        let gbp_fingerprint = crate::util::fingerprint("2026-02-06T00:00:00", "42.50", "acct-1");
+        db.conn
+            .execute(
+                "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
+                 account_id, fingerprint, source_document_ids) \
+                 VALUES (?1, '2026-02-06T00:00:00', 'Coffee', 'coffee', '42.50', 'GBP', 'acct-1', ?2, '[]')",
+                params![gbp_id, gbp_fingerprint],
+            )
+            .unwrap();
+
+        let report = db.migrate_subunit_currencies(false).unwrap();
+
+        assert_eq!(
+            report.transactions_migrated(),
+            1,
+            "the GBX transaction must be reported as migrated; only the GBP row is skipped"
+        );
+
+        let (currency, amount, _) = transaction_row(&db, &gbx_id);
+        assert_eq!(currency, "GBP");
+        assert_eq!(
+            Decimal::from_str(&amount).unwrap(),
+            Decimal::from_str("50").unwrap(),
+            "5000 GBX is 50.00 GBP"
+        );
+
+        let (gbp_currency, gbp_amount, gbp_fp_after) = transaction_row(&db, &gbp_id);
+        assert_eq!(gbp_currency, "GBP", "byte-for-byte untouched");
+        assert_eq!(gbp_amount, "42.50", "byte-for-byte untouched");
+        assert_eq!(gbp_fp_after, gbp_fingerprint, "byte-for-byte untouched");
+    }
+
+    #[test]
+    fn apply_recomputes_transaction_fingerprint_from_the_converted_amount() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-1", "GBP")).unwrap();
+        let (id, legacy_fingerprint) = seed_gbx_transaction(&db, "acct-1", "5000");
+
+        db.migrate_subunit_currencies(false).unwrap();
+
+        let (_, _, migrated_fingerprint) = transaction_row(&db, &id);
+
+        // The fingerprint must be keyed on the POST-conversion amount. If it
+        // were left keyed on "5000", the next statement import of this same
+        // transaction — now correctly parsed as 50 GBP — would find no
+        // matching fingerprint and silently create a duplicate.
+        let expected = crate::util::fingerprint("2026-02-05T00:00:00", "50", "acct-1");
+        assert_eq!(
+            migrated_fingerprint, expected,
+            "migrated fingerprint must be recomputed from the converted amount"
+        );
+        assert_ne!(
+            migrated_fingerprint, legacy_fingerprint,
+            "the amount changed, so the fingerprint must have changed with it"
+        );
+    }
+
+    #[test]
+    fn migrated_transaction_dedups_against_a_fresh_parent_currency_import() {
+        use crate::importers::unified::UnifiedStatementRow;
+
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-1", "GBP")).unwrap();
+        let (id, _) = seed_gbx_transaction(&db, "acct-1", "5000");
+
+        db.migrate_subunit_currencies(false).unwrap();
+        let (_, _, migrated_fingerprint) = transaction_row(&db, &id);
+
+        // The real dedup path: re-importing the same transaction from a
+        // statement must hash to the fingerprint the migration wrote, or the
+        // import creates a duplicate instead of recognising it.
+        let reimported = crate::model::Transaction::from_unified(
+            UnifiedStatementRow {
+                date: naive_dt(2026, 2, 5),
+                description: "Sharesave deduction".to_string(),
+                amount: Decimal::from_str("50").unwrap(),
+                currency: "GBP".to_string(),
+                fitid: None,
+                category: None,
+                merchant: None,
+                counterparty: None,
+                transaction_type: None,
+                balance_after: None,
+                notes: None,
+                reference: None,
+                row_confidence: 0.95,
+                category_id: None,
+                category_confidence: None,
+                source_file: None,
+            },
+            "acct-1",
+        );
+        assert_eq!(
+            reimported.fingerprint, migrated_fingerprint,
+            "a fresh import of the same transaction must dedupe against the migrated row"
+        );
+    }
+
+    #[test]
+    fn dry_run_reports_sub_unit_transactions_without_writing() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-1", "GBP")).unwrap();
+        let (id, legacy_fingerprint) = seed_gbx_transaction(&db, "acct-1", "5000");
+
+        let report = db.migrate_subunit_currencies(true).unwrap();
+
+        assert_eq!(report.transactions_migrated(), 1);
+
+        let (currency, amount, fingerprint) = transaction_row(&db, &id);
+        assert_eq!(currency, "GBX", "dry-run must not touch storage");
+        assert_eq!(amount, "5000", "dry-run must not touch storage");
+        assert_eq!(
+            fingerprint, legacy_fingerprint,
+            "dry-run must not rewrite the fingerprint"
+        );
+    }
+
     #[test]
     fn dry_run_reports_changes_without_writing() {
         let (db, _file) = test_db();
@@ -9045,5 +9263,127 @@ mod subunit_conversion_tests {
         // confirming migration order (rows first, then currency cleanup).
         assert!(report.currencies_removed.contains(&"GBX".to_string()));
         assert!(!db.currency_exists("GBX").unwrap());
+    }
+
+    #[test]
+    fn fee_only_sub_unit_row_reports_the_pair_that_actually_converted() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-1", "USD")).unwrap();
+
+        // A USD-priced trade whose *fee* alone is denominated in GBX, written
+        // directly to bypass write-time conversion. Only the fee converts.
+        let id = uuid::Uuid::new_v4().to_string();
+        db.conn
+            .execute(
+                "INSERT INTO investments                  (id, account_id, event_type, symbol, date, quantity, price_per_share, fee, currency, notes, fingerprint, created_at, source_document_ids, fee_currency)                  VALUES (?1, 'acct-1', 'buy', 'AAPL', '2026-03-15T00:00:00', '10', '150', '500', 'USD', NULL, 'seed-fp', '2026-03-15T00:00:00Z', '[]', 'GBX')",
+                params![id],
+            )
+            .unwrap();
+
+        let report = db.migrate_subunit_currencies(true).unwrap();
+
+        let row = report
+            .rows
+            .iter()
+            .find(|r| r.table == "investments")
+            .expect("the fee-only row must still be reported");
+        assert_eq!(row.sub_unit_code, "GBX");
+        assert_eq!(
+            row.parent_code, "GBP",
+            "GBX converts to GBP; pairing it with the untouched USD price              currency would print a nonsense `GBX -> USD` line"
+        );
+    }
+
+    // ── Migration: accounts.currency ────────────────────────────────────────
+
+    fn account_currency(db: &Db, id: &str) -> String {
+        db.conn
+            .query_row(
+                "SELECT currency FROM accounts WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn apply_converts_sub_unit_account_and_leaves_parent_currency_account_alone() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-gbx", "GBX")).unwrap();
+        db.create_account(&make_account("acct-gbp", "GBP")).unwrap();
+
+        let report = db.migrate_subunit_currencies(false).unwrap();
+
+        assert_eq!(
+            report.accounts_migrated(),
+            1,
+            "only the GBX account is migrated; the GBP one is skipped"
+        );
+        assert_eq!(account_currency(&db, "acct-gbx"), "GBP");
+        assert_eq!(account_currency(&db, "acct-gbp"), "GBP", "untouched");
+    }
+
+    #[test]
+    fn dry_run_reports_sub_unit_accounts_without_writing() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-gbx", "GBX")).unwrap();
+
+        let report = db.migrate_subunit_currencies(true).unwrap();
+
+        assert_eq!(report.accounts_migrated(), 1);
+        assert_eq!(
+            account_currency(&db, "acct-gbx"),
+            "GBX",
+            "dry-run must not touch storage"
+        );
+    }
+
+    #[test]
+    fn sub_unit_account_no_longer_pins_the_currency_row_open() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-gbx", "GBX")).unwrap();
+        db.create_currency("GBX", Decimal::from_str("0.01").unwrap())
+            .unwrap();
+
+        let report = db.migrate_subunit_currencies(false).unwrap();
+
+        // The in-use check counts `accounts`. Before the accounts pass existed
+        // the account stayed GBX, so the count was never zero, the GBX row was
+        // retained and `currencies_removed` came back empty — the cleanup
+        // silently no-opped.
+        assert!(
+            report.currencies_removed.contains(&"GBX".to_string()),
+            "the GBX currency row must be removed once no account references it"
+        );
+        assert!(!db.currency_exists("GBX").unwrap());
+    }
+
+    #[test]
+    fn set_account_balance_after_migration_writes_a_parent_currency_cash_holding() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("acct-gbx", "GBX")).unwrap();
+
+        db.migrate_subunit_currencies(false).unwrap();
+
+        // `set_account_balance` copies `accounts.currency` verbatim into the
+        // `_CASH` holding with no conversion of its own. Migrating the account
+        // is what stops it minting fresh sub-unit holdings after the migration.
+        db.set_account_balance("acct-gbx", Decimal::from(10000), naive_dt(2026, 3, 1))
+            .unwrap();
+
+        let (currency, value): (String, String) = db
+            .conn
+            .query_row(
+                "SELECT currency, value FROM holdings WHERE account_id = 'acct-gbx' AND symbol = '_CASH'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(
+            currency, "GBP",
+            "the cash holding must inherit the migrated parent currency, not GBX"
+        );
+        assert_eq!(value, "10000");
     }
 }
