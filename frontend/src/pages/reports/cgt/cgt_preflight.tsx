@@ -4,6 +4,7 @@ import { api } from "@/api/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { formatCurrency } from "@/lib/utils"
 import type { MissingRatePair } from "@/bindings/MissingRatePair"
 import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwardLosses"
 import type { Profile } from "@/types"
@@ -77,19 +78,33 @@ export function CgtPreflight({
   const [derived, setDerived] = useState<DerivedBroughtForwardLosses | null>(null)
   const [derivedError, setDerivedError] = useState<string | null>(null)
 
-  // Load the stored figure and the derived suggestion side by side.
+  // Load the stored figure and the derived suggestion INDEPENDENTLY.
+  //
+  // They were a single `Promise.all`, which made the suggestion unreachable in
+  // practice. This screen only opens because generation failed with
+  // `missing_exchange_rates`, and the derive endpoint runs the same
+  // `check_required_currencies` check — so it failed too, every time, taking
+  // the stored figure down with it and leaving `derived` null. The upper-bound
+  // caveat below could therefore never render, however the derivation actually
+  // went. Settling them separately means a failed derivation costs only the
+  // suggestion, and the stored value still loads.
   useEffect(() => {
     if (!profile || !taxYear) return
     let cancelled = false
+
     void (async () => {
       try {
-        const [stored, suggestion] = await Promise.all([
-          api.getTaxInputs(profile.id, taxYear),
-          api.getDerivedBroughtForwardLosses(profile.id, taxYear),
-        ])
-        if (cancelled) return
-        setLosses(stored.brought_forward_losses)
-        setDerived(suggestion)
+        const stored = await api.getTaxInputs(profile.id, taxYear)
+        if (!cancelled) setLosses(stored.brought_forward_losses)
+      } catch {
+        // The stored figure is a prefill too; the field stays empty and typeable.
+      }
+    })()
+
+    void (async () => {
+      try {
+        const suggestion = await api.getDerivedBroughtForwardLosses(profile.id, taxYear)
+        if (!cancelled) setDerived(suggestion)
       } catch (err) {
         if (cancelled) return
         // A failed derivation must not block generation — it is a convenience,
@@ -97,6 +112,7 @@ export function CgtPreflight({
         setDerivedError(err instanceof Error ? err.message : String(err))
       }
     })()
+
     return () => {
       cancelled = true
     }
@@ -316,14 +332,20 @@ export function CgtPreflight({
 
             {derived && (
               <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-1">
+                {/*
+                  Formatted, not interpolated raw. These are money figures on a
+                  tax screen, and "up to 1500.00" beside a "£" -prefixed field
+                  reads as a different unit. UK CGT is computed in sterling, so
+                  the report's base currency is the right one here.
+                */}
                 <p className="text-xs font-medium">
-                  Estimated from your ledger: up to {derived.amount}
+                  Estimated from your ledger: up to {formatCurrency(derived.amount)}
                   {derived.contributions.length > 0 && (
                     <>
                       {" "}
                       (
                       {derived.contributions
-                        .map((c) => `${c.tax_year}: ${c.net_loss}`)
+                        .map((c) => `${c.tax_year}: ${formatCurrency(c.net_loss)}`)
                         .join(", ")}
                       )
                     </>
@@ -357,10 +379,17 @@ export function CgtPreflight({
               </div>
             )}
 
+            {/*
+              The raw backend message is deliberately NOT interpolated here.
+              The estimate is a convenience, the user cannot act on the internal
+              reason, and the most likely reason on this screen is the missing
+              rates being collected just above — so quoting it reads as a fault
+              beside the form that fixes it. The advice is the actionable part.
+            */}
             {derivedError && (
               <p className="text-xs text-muted-foreground">
-                Could not estimate losses from your ledger ({derivedError}). Enter the figure
-                from your last return instead.
+                Could not estimate losses from your ledger. Enter the figure from your last
+                return instead.
               </p>
             )}
           </section>

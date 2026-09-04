@@ -53,10 +53,28 @@ export function CgtSummaryCard({ summary, disposalCount, tax }: CgtSummaryCardPr
               />
             )}
             {Number.parseFloat(tax.brought_forward_losses_applied) > 0 && (
-              <Row
-                label="Brought-forward losses used"
-                value={`-${formatCurrency(tax.brought_forward_losses_applied, cur)}`}
-              />
+              <>
+                <Row
+                  label="Brought-forward losses used"
+                  value={`-${formatCurrency(tax.brought_forward_losses_applied, cur)}`}
+                />
+                {/*
+                  This caveat has to live where the figure is actually SHOWN.
+                  It previously appeared only inside the pre-flight screen,
+                  which opens solely on `missing_exchange_rates` — the same
+                  condition that makes the derive endpoint refuse — so it could
+                  never be read. A brought-forward figure that carries no
+                  qualification overstates relief: losses carry forward only if
+                  claimed within four years of the end of the year they arose,
+                  and only the part left after that year's own gains carries at
+                  all. Neither is something this app can verify.
+                */}
+                <p className="text-xs text-muted-foreground">
+                  Losses carry forward only if you claimed them within four years of the end
+                  of the year they arose, and only the part left after that year&rsquo;s own
+                  gains carries at all. Check this against your filed returns before using it.
+                </p>
+              </>
             )}
             <Row
               label={`Annual Exempt Amount (${tax.tax_year})`}

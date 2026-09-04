@@ -141,10 +141,21 @@ export function CgtPdfDocument({ report }: CgtPdfDocumentProps) {
                 />
               )}
               {Number.parseFloat(tax.brought_forward_losses_applied) > 0 && (
-                <SummaryRow
-                  label="Brought-forward losses used"
-                  value={`-${fmt(tax.brought_forward_losses_applied, cur)}`}
-                />
+                <>
+                  <SummaryRow
+                    label="Brought-forward losses used"
+                    value={`-${fmt(tax.brought_forward_losses_applied, cur)}`}
+                  />
+                  {/*
+                    On the filed document as well as on screen: an unqualified
+                    brought-forward figure overstates the relief available.
+                  */}
+                  <Text style={styles.footnote}>
+                    Losses carry forward only if claimed within four years of the end of the
+                    year they arose, and only the part left after that year&rsquo;s own gains
+                    carries at all. Check against your filed returns.
+                  </Text>
+                </>
               )}
               <SummaryRow
                 label={`Annual Exempt Amount (${taxYear})`}
@@ -340,11 +351,19 @@ function fmtBandDate(iso: string): string {
  * percentage here and nowhere else. `multiplePeriods` is why the date range is
  * conditional: naming it is essential when a year splits (2024-25 does, on 30
  * October 2024) and is noise when it does not.
+ *
+ * The band kind is named too. A period contributes up to two rows — the slice
+ * of its gains covered by basic-rate income headroom, and the rest at the
+ * higher rate — and both carry the same `valid_from`. Labelled by date alone
+ * they read as two rows for the same period with no stated reason to differ,
+ * which on a document someone files looks like a duplicate or a date error
+ * rather than the basic/higher split it actually is.
  */
 function bandLabel(band: TaxBandResult, multiplePeriods: boolean): string {
   const pct = `${(Number.parseFloat(band.rate) * 100).toFixed(0)}%`
-  if (!multiplePeriods) return `Taxable gains @ ${pct}`
-  return `Gains from ${fmtBandDate(band.valid_from)} @ ${pct}`
+  const kind = band.rate_kind === "basic" ? "basic rate" : "higher rate"
+  if (!multiplePeriods) return `Taxable gains, ${kind} @ ${pct}`
+  return `Gains from ${fmtBandDate(band.valid_from)}, ${kind} @ ${pct}`
 }
 
 const CURRENCY_SYMBOLS: Record<string, string> = {

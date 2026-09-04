@@ -43,7 +43,6 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
   // but showing a default is not the user asking for it — so an untouched
   // selector sends nothing and the stored figure survives.
   const [band, setBand] = useState<CgtBandSelection | null>(null)
-  const shownBand: CgtBandSelection = band ?? "higher"
 
   const period: CgtPeriod = buildPeriod(preset, startDate, endDate)
   const canGenerate = !loading && profileId !== ""
@@ -89,10 +88,23 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
         </SelectContent>
       </Select>
 
-      <Select value={shownBand} onValueChange={(v) => v && setBand(v as CgtBandSelection)}>
-        <SelectTrigger className="w-[190px]">
+      {/*
+        `band ?? "higher"` is inlined at both render sites rather than being
+        hoisted into a `shownBand` variable. The two are NOT interchangeable at
+        the `onGenerate` call below: `band` stays null until the user actually
+        picks something, and that null is what tells the server to leave the
+        stored income figure alone. With a non-null fallback in scope, passing
+        it there instead of `band` type-checks, reads naturally, and silently
+        overwrites the user's saved headroom on every generate — so the safest
+        thing is for no such variable to exist.
+
+        The trigger is also labelled: it is a plain `span`, not a native select
+        with an implicit name, and it materially changes a figure someone files.
+      */}
+      <Select value={band ?? "higher"} onValueChange={(v) => v && setBand(v as CgtBandSelection)}>
+        <SelectTrigger className="w-[190px]" aria-label="Income tax band for this report">
           <span className="truncate">
-            {shownBand === "higher" ? "Higher/additional rate" : "Basic rate"}
+            {(band ?? "higher") === "higher" ? "Higher/additional rate" : "Basic rate"}
           </span>
         </SelectTrigger>
         <SelectContent>
