@@ -9,8 +9,10 @@ import { useProfiles } from "@/context/profile_context"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import type { CgtFilters } from "@/api/service"
 import { previousUkTaxYearForDate, periodSlug } from "@/api/cgt_filter_params"
+import { api } from "@/api/client"
 import { useCapitalGains } from "@/hooks/data/use_capital_gains"
 import { CgtFilterBar } from "./cgt_filter_bar"
+import { taxInputsPayloadForBand, type CgtBandSelection } from "./band_headroom"
 import { CgtSummaryCard } from "./cgt_summary_card"
 import { CgtPerSymbolTable } from "./cgt_per_symbol_table"
 import { CgtDisposalSchedule } from "./cgt_disposal_schedule"
@@ -72,7 +74,7 @@ export function CgtReportPage() {
     missing: MissingRatePair[]
     quote: string
     filters: CgtFilters
-    higherRate: boolean
+    band: CgtBandSelection | null
   } | null>(null)
 
   const defaultFilters = useMemo<CgtFilters>(() => {
@@ -105,10 +107,25 @@ export function CgtReportPage() {
    */
   async function handleGenerate(
     filters: CgtFilters,
-    higherRate: boolean,
+    band: CgtBandSelection | null,
     confirmedUtr?: string | null,
   ) {
     try {
+      // The band selector is an input to the computation, not a display flag,
+      // so it has to reach the server before the report runs. It is stored as
+      // `allowable_income_remaining`: "basic" means enough unused basic-rate
+      // income band to cover the whole gain, "higher" means none. Only the
+      // headroom is written — brought-forward losses and the AEA choice are the
+      // user's own settings and must not be disturbed by generating a report.
+      //
+      // An untouched selector yields no payload at all, so generating a report
+      // leaves the stored headroom exactly as the user set it. That decision
+      // lives entirely in `taxInputsPayloadForBand`, which is what this branch
+      // tests — there is no second condition here to drift away from it.
+      const payload = taxInputsPayloadForBand(band)
+      if (payload && filters.period.kind === "tax-year" && filters.profileId) {
+        await api.putTaxInputs(filters.profileId, filters.period.taxYear, payload)
+      }
       const response = await generate(filters)
       const id = newReportId()
       const utr =
@@ -119,7 +136,6 @@ export function CgtReportPage() {
         id,
         generatedAt: new Date().toISOString(),
         filters,
-        higherRate,
         utr,
         response,
       }
@@ -130,7 +146,7 @@ export function CgtReportPage() {
     } catch (err) {
       const missing = missingRatesFrom(err)
       if (missing) {
-        setPreflight({ ...missing, filters, higherRate })
+        setPreflight({ ...missing, filters, band })
         return
       }
       // Anything else stays a plain failure; `state`/`generateError` render it below.
@@ -195,9 +211,14 @@ export function CgtReportPage() {
           missing={preflight.missing}
           quote={preflight.quote}
           profile={profiles.find((p) => p.id === preflight.filters.profileId)}
+          taxYear={
+            preflight.filters.period.kind === "tax-year"
+              ? preflight.filters.period.taxYear
+              : null
+          }
           onCancel={() => setPreflight(null)}
           onReady={(confirmedUtr) =>
-            handleGenerate(preflight.filters, preflight.higherRate, confirmedUtr)
+            handleGenerate(preflight.filters, preflight.band, confirmedUtr)
           }
         />
       )}
@@ -283,6 +304,7 @@ function SavedReportView({
       <CgtSummaryCard
         summary={response.summary}
         disposalCount={response.realized_events.length}
+        tax={response.tax}
       />
 
       <CgtPerSymbolTable

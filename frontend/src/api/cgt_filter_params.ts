@@ -4,6 +4,13 @@ import type { CgtFilters, CgtPeriod } from "./service"
 export function cgtFiltersToParams(filters: CgtFilters): Record<string, string> {
   const params: Record<string, string> = { profile_ids: filters.profileId }
   Object.assign(params, periodToParams(filters.period))
+  // Ask for the tax computation only when the period is a whole UK tax year.
+  // A custom range or an as-at date has no tax year to compute against, and
+  // deriving one from the dates would silently apply a year's allowance to a
+  // window that is not that year.
+  if (filters.period.kind === "tax-year") {
+    params.tax_year = filters.period.taxYear
+  }
   return params
 }
 

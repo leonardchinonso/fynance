@@ -345,6 +345,14 @@ td code { font-size: 12px; }
     <a href="#get-api-investments-pools" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/pools</a>
     <a href="#get-api-investments-capital-gains" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/capital-gains</a>
 
+    <a href="#get-api-investments-brought-forward-losses" class="nav-endpoint"><span class="method-badge method-get">GET</span>/investments/brought-forward-losses</a>
+
+    <div class="nav-section">Tax</div>
+    <a href="#get-api-tax-config" class="nav-endpoint"><span class="method-badge method-get">GET</span>/tax-config</a>
+    <a href="#put-api-tax-config" class="nav-endpoint"><span class="method-badge method-put">PUT</span>/tax-config</a>
+    <a href="#get-api-tax-inputs-profile-id-tax-year" class="nav-endpoint"><span class="method-badge method-get">GET</span>/tax-inputs/:profile_id/:tax_year</a>
+    <a href="#put-api-tax-inputs-profile-id-tax-year" class="nav-endpoint"><span class="method-badge method-put">PUT</span>/tax-inputs/:profile_id/:tax_year</a>
+
     <a href="#changelog" class="nav-section-link" style="margin-top:16px;">Changelog</a>
   </div>
 </nav>
@@ -3516,6 +3524,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
       <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter disposals by account</td></tr>
       <tr><td><code>symbol</code></td><td>query</td><td>string</td><td>No</td><td>Filter by ticker symbol</td></tr>
       <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; includes events from accounts whose profiles intersect this set. Omit for all profiles.</td></tr>
+      <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>No</td><td>UK tax year as <code>YYYY-YY</code> (e.g. <code>2024-25</code>). When present, the response carries a <code>tax</code> object computed from the statutory rates in <code>tax_config</code> and the taxpayer&#39;s figures in <code>tax_inputs</code>. Omit it and <code>tax</code> is absent entirely &mdash; that means &quot;not asked for&quot;, never &quot;no tax due&quot;.</td></tr>
     </tbody>
   </table>
   <h4>Example Request</h4>
@@ -3612,6 +3621,204 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tbody>
       <tr><td>400</td><td><code>invalid_date</code></td><td>start_date or end_date is not a valid date</td></tr>
       <tr><td>400</td><td><code>invalid_date_range</code></td><td>start_date is after end_date</td></tr>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
+      <tr><td>400</td><td><code>tax_computation_failed</code></td><td>No rate bands are configured for the requested tax year, or a disposal falls outside every configured band (the bands must tile the year without gaps)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-investments-brought-forward-losses" data-method="GET" data-path="/api/investments/brought-forward-losses">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/investments/brought-forward-losses</code>
+  </div>
+  <p class="endpoint-summary">A <em>suggested</em> brought-forward loss figure, derived from prior years&#39; disposals. This is a prefill for a field the user confirms, never a value stored on their behalf &mdash; the response carries the years it was built from and an <code>is_upper_bound</code> flag that is always true.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>Yes</td><td>The tax year the losses would be brought forward <em>into</em>, as <code>YYYY-YY</code>. Only years strictly before it contribute.</td></tr>
+      <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; same semantics as on <code>/investments/capital-gains</code>.</td></tr>
+      <tr><td><code>years</code></td><td>query</td><td>integer</td><td>No</td><td>How many prior tax years to look back over. Defaults to 4, capped at 20.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/investments/brought-forward-losses?tax_year=2024-25&profile_ids=alex"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "amount": "1250.00",
+  "contributions": [
+    { "tax_year": "2022-23", "net_loss": "800.00" },
+    { "tax_year": "2023-24", "net_loss": "450.00" }
+  ],
+  "is_upper_bound": true
+}</code></pre>
+  <p><strong>The figure can only overstate, and consumers must present it that way.</strong> A UK capital loss carries forward only if it was <em>claimed</em> within four years of the end of the tax year it arose in, and only the excess left after setting it against that same year&#39;s gains carries at all. This app records neither the claim nor any disposal made outside it. Losses are netted within each year and only years that ended in a net loss contribute; a year that netted to a gain contributes nothing and is omitted rather than cancelling out another year&#39;s loss. The default four-year lookback mirrors the claim window &mdash; a loss older than that can no longer be claimed.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
+      <tr><td>400</td><td><code>missing_exchange_rates</code></td><td>A prior-year disposal needs an exchange rate that has not been entered</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ==================================================================== -->
+<!-- TAX                                                                  -->
+<!-- ==================================================================== -->
+
+<section class="endpoint" id="get-api-tax-config" data-method="GET" data-path="/api/tax-config">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/tax-config</code>
+  </div>
+  <p class="endpoint-summary">The statutory tax table: Annual Exempt Amounts and capital gains rate bands. This is the law &mdash; identical for every UK user and changed only by a Budget &mdash; which is why it is stored and served separately from <code>/api/tax-inputs</code>, the taxpayer&#39;s own situation. Seeded with HMRC-verified values on startup; an entry edited through <code>PUT</code> is never overwritten by a later restart.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>No</td><td>Restrict to one tax year, as <code>YYYY-YY</code>. Omit for every year held.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/tax-config?tax_year=2024-25"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "entries": [
+    {
+      "tax_year": "2024-25",
+      "kind": "aea",
+      "rate_kind": "",
+      "valid_from": "2024-04-06",
+      "valid_to": "2025-04-05",
+      "amount": "3000",
+      "rate": null,
+      "updated_at": "2026-09-01T10:00:00Z"
+    },
+    {
+      "tax_year": "2024-25",
+      "kind": "rate",
+      "rate_kind": "basic",
+      "valid_from": "2024-04-06",
+      "valid_to": "2024-10-29",
+      "amount": null,
+      "rate": "0.10",
+      "updated_at": "2026-09-01T10:00:00Z"
+    },
+    {
+      "tax_year": "2024-25",
+      "kind": "rate",
+      "rate_kind": "higher",
+      "valid_from": "2024-10-30",
+      "valid_to": "2025-04-05",
+      "amount": null,
+      "rate": "0.24",
+      "updated_at": "2026-09-01T10:00:00Z"
+    }
+  ]
+}</code></pre>
+  <p>A tax year normally carries one <code>rate</code> row per <code>rate_kind</code>. 2024-25 carries two of each, because the Autumn Budget 2024 raised CGT on shares from 10%/20% to 18%/24% for disposals made on or after 30 October 2024. That mid-year change is modelled as ordinary rows with adjacent inclusive date ranges, not as a special case &mdash; so a future Budget needs a row, not a code change. <code>rate</code> is a decimal fraction: 24% is <code>0.24</code>.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="put-api-tax-config" data-method="PUT" data-path="/api/tax-config">
+  <div class="endpoint-header">
+    <span class="method-badge method-put">PUT</span>
+    <code class="endpoint-path">/api/tax-config</code>
+  </div>
+  <p class="endpoint-summary">Replace the complete entry set for one tax year. Replace rather than merge, because the entries for a year are a set that must tile it: a partial update could leave a gap between two rate bands, and a disposal falling in that gap would have no rate to be charged at.</p>
+  <h4>Request Body</h4>
+  <pre class="example-request"><code>{
+  "tax_year": "2025-26",
+  "entries": [
+    { "kind": "aea", "valid_from": "2025-04-06", "valid_to": "2026-04-05", "amount": "3000" },
+    { "kind": "rate", "rate_kind": "basic", "valid_from": "2025-04-06", "valid_to": "2026-04-05", "rate": "0.18" },
+    { "kind": "rate", "rate_kind": "higher", "valid_from": "2025-04-06", "valid_to": "2026-04-05", "rate": "0.24" }
+  ]
+}</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{ "tax_year": "2025-26", "written": 3 }</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
+      <tr><td>400</td><td><code>invalid_tax_config_kind</code></td><td><code>kind</code> is not <code>aea</code> or <code>rate</code></td></tr>
+      <tr><td>400</td><td><code>missing_aea_amount</code></td><td>An <code>aea</code> entry carries no <code>amount</code></td></tr>
+      <tr><td>400</td><td><code>negative_aea</code></td><td>The annual exempt amount is negative</td></tr>
+      <tr><td>400</td><td><code>missing_rate</code></td><td>A <code>rate</code> entry carries no <code>rate</code></td></tr>
+      <tr><td>400</td><td><code>rate_out_of_range</code></td><td><code>rate</code> is outside 0&ndash;1. It is a fraction: 24% is <code>0.24</code>, not <code>24</code></td></tr>
+      <tr><td>400</td><td><code>invalid_rate_kind</code></td><td>A <code>rate</code> entry&#39;s <code>rate_kind</code> is not <code>basic</code> or <code>higher</code></td></tr>
+      <tr><td>400</td><td><code>invalid_date</code></td><td><code>valid_from</code> or <code>valid_to</code> is not a <code>YYYY-MM-DD</code> date</td></tr>
+      <tr><td>400</td><td><code>invalid_validity_range</code></td><td><code>valid_to</code> is before <code>valid_from</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-tax-inputs-profile-id-tax-year" data-method="GET" data-path="/api/tax-inputs/:profile_id/:tax_year">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/tax-inputs/:profile_id/:tax_year</code>
+  </div>
+  <p class="endpoint-summary">One taxpayer&#39;s own figures for a tax year. Nothing here is statutory and nothing here can be derived from the ledger &mdash; it is what the taxpayer brings to the computation. A profile-year that has never been given inputs returns the documented defaults rather than 404: no brought-forward losses, no basic-rate headroom, AEA claimed. Each of those is a real, defensible position rather than a placeholder.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/tax-inputs/alex/2024-25"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "profile_id": "alex",
+  "tax_year": "2024-25",
+  "brought_forward_losses": "0",
+  "allowable_income_remaining": "0",
+  "aea_claimed": true
+}</code></pre>
+  <p><code>allowable_income_remaining</code> is the unused headroom in the taxpayer&#39;s basic-rate <em>income</em> tax band. Gains falling within it are charged at the basic CGT rate and the excess at the higher rate. It cannot be derived &mdash; this app does not see PAYE income &mdash; so it defaults to <code>0</code>, meaning every gain is charged at the higher rate. That is the safe direction: over-estimating the tax does not produce a surprise bill.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_profile_id</code></td><td>profile_id is not a valid slug</td></tr>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="put-api-tax-inputs-profile-id-tax-year" data-method="PUT" data-path="/api/tax-inputs/:profile_id/:tax_year">
+  <div class="endpoint-header">
+    <span class="method-badge method-put">PUT</span>
+    <code class="endpoint-path">/api/tax-inputs/:profile_id/:tax_year</code>
+  </div>
+  <p class="endpoint-summary">Set one taxpayer&#39;s figures for a tax year. Every field is optional and an absent key leaves the stored value alone &mdash; a request that only toggles the AEA will not silently zero the brought-forward losses and change the tax due without saying so.</p>
+  <h4>Request Body</h4>
+  <pre class="example-request"><code>{
+  "brought_forward_losses": "1200.00",
+  "allowable_income_remaining": "5000.00",
+  "aea_claimed": true
+}</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "profile_id": "alex",
+  "tax_year": "2024-25",
+  "brought_forward_losses": "1200.00",
+  "allowable_income_remaining": "5000.00",
+  "aea_claimed": true,
+  "updated_at": "2026-09-01T10:00:00Z"
+}</code></pre>
+  <p><code>brought_forward_losses</code> is user-entered, never computed. The UI may offer a figure derived from prior-year disposals as a prefill, but that derivation can only ever <em>overstate</em>: a UK capital loss carries forward only if it was claimed within four years of the end of the year it arose, and only the excess left after that year&#39;s own gains carries at all. Neither fact is visible in the ledger, so the stored value is always the figure the user committed.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_profile_id</code></td><td>profile_id is not a valid slug</td></tr>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
+      <tr><td>400</td><td><code>profile_not_found</code></td><td>No profile with that id exists</td></tr>
+      <tr><td>400</td><td><code>negative_amount</code></td><td><code>brought_forward_losses</code> or <code>allowable_income_remaining</code> is negative</td></tr>
     </tbody>
   </table>
 </section>
@@ -3629,6 +3836,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tr><td>2026-05-30</td><td>Initial API reference: 45 endpoints across 13 groups, 39 models documented.</td></tr>
     <tr><td>2026-06-07</td><td>Added Capital Gains endpoints: <code>GET /api/investments/pools</code> (S104 pools) and <code>GET /api/investments/capital-gains</code> (UK CGT report).</td></tr>
     <tr><td>2026-08-15</td><td><strong>BREAKING:</strong> Capital Gains endpoints drop <code>tax_year</code> and <code>as_at</code> in favour of <code>start_date</code>/<code>end_date</code> alone (plan 23 §0.2 decision 7.3). Added <code>disposal_groups</code> to <code>CapitalGainsResponse</code>, rolling <code>realized_events</code> up by <code>(symbol, disposal_date)</code>.</td></tr>
+    <tr><td>2026-09-03</td><td>Added tax endpoints: <code>GET/PUT /api/tax-config</code> (statutory AEA and rate bands) and <code>GET/PUT /api/tax-inputs/:profile_id/:tax_year</code> (the taxpayer&#39;s own figures). <code>GET /api/investments/capital-gains</code> gains an optional <code>tax_year</code> param that adds a computed <code>tax</code> object to the response, including the pre/post-30-Oct-2024 rate split. Added <code>GET /api/investments/brought-forward-losses</code>, which derives a <em>suggested</em> (upper-bound) carried-loss figure from prior years.</td></tr>
   </tbody>
 </table>
 

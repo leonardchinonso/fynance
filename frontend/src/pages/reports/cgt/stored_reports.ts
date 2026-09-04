@@ -11,13 +11,6 @@ export interface StoredCgtReport {
   generatedAt: string
   filters: CgtFilters
   /**
-   * Higher/additional vs basic CGT rate band chosen at generation. Frontend-only:
-   * the tax estimate is computed client-side, so this is not part of the backend
-   * contract (`CgtFilters`). Optional for reports stored before this field
-   * existed — treat `undefined` as `true`.
-   */
-  higherRate?: boolean
-  /**
    * The profile's HMRC UTR as it stood when this report was generated, confirmed
    * by the user on the pre-flight screen. Snapshotted rather than read live from
    * the profile so that reprinting an old report reproduces the document that was

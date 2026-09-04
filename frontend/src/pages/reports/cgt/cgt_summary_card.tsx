@@ -3,13 +3,19 @@ import { Separator } from "@/components/ui/separator"
 import { formatCurrency } from "@/lib/utils"
 import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import type { CgtSummary } from "@/bindings/CgtSummary"
+import type { TaxComputation } from "@/bindings/TaxComputation"
 
 interface CgtSummaryCardProps {
   summary: CgtSummary
   disposalCount: number
+  /**
+   * The server's tax computation, when the report was run for a whole tax year.
+   * Absent means it was not asked for — never that no tax is due.
+   */
+  tax?: TaxComputation | null
 }
 
-export function CgtSummaryCard({ summary, disposalCount }: CgtSummaryCardProps) {
+export function CgtSummaryCard({ summary, disposalCount, tax }: CgtSummaryCardProps) {
   useRedactedFlag()
   const cur = summary.base_currency
   const net = Number.parseFloat(summary.net_gain_loss)
@@ -37,10 +43,59 @@ export function CgtSummaryCard({ summary, disposalCount }: CgtSummaryCardProps) 
           emphasis
           tone={net >= 0 ? "gain" : "loss"}
         />
+        {tax && (
+          <>
+            <Separator />
+            {Number.parseFloat(tax.current_year_losses_applied) > 0 && (
+              <Row
+                label="Losses in the year, set against gains"
+                value={`-${formatCurrency(tax.current_year_losses_applied, cur)}`}
+              />
+            )}
+            {Number.parseFloat(tax.brought_forward_losses_applied) > 0 && (
+              <>
+                <Row
+                  label="Brought-forward losses used"
+                  value={`-${formatCurrency(tax.brought_forward_losses_applied, cur)}`}
+                />
+                {/*
+                  This caveat has to live where the figure is actually SHOWN.
+                  It previously appeared only inside the pre-flight screen,
+                  which opens solely on `missing_exchange_rates` — the same
+                  condition that makes the derive endpoint refuse — so it could
+                  never be read. A brought-forward figure that carries no
+                  qualification overstates relief: losses carry forward only if
+                  claimed within four years of the end of the year they arose,
+                  and only the part left after that year's own gains carries at
+                  all. Neither is something this app can verify.
+                */}
+                <p className="text-xs text-muted-foreground">
+                  Losses carry forward only if you claimed them within four years of the end
+                  of the year they arose, and only the part left after that year&rsquo;s own
+                  gains carries at all. Check this against your filed returns before using it.
+                </p>
+              </>
+            )}
+            <Row
+              label={`Annual Exempt Amount (${tax.tax_year})`}
+              value={`-${formatCurrency(tax.aea_applied, cur)}`}
+            />
+            <Row
+              label="Taxable gain after losses and allowance"
+              value={formatCurrency(tax.taxable_gain, cur)}
+            />
+            <Separator />
+            <Row
+              label="Capital Gains Tax due"
+              value={formatCurrency(tax.tax_due, cur)}
+              emphasis
+            />
+          </>
+        )}
         <p className="text-xs text-muted-foreground pt-2">
-          Figures are pre-relief. Annual Exempt Amount, brought-forward losses, and
-          tax-year rate adjustments are not applied — see plan 23 for the post-V0
-          roadmap towards filing-grade output.
+          {tax
+            ? `Computed for tax year ${tax.tax_year} from the stored tax configuration and your recorded figures. Gains are charged at the rate in force on the date of each disposal, and losses and the allowance are set against the most heavily taxed gains first. Estimate only — disposals made outside this app are not included.`
+            : "Figures are pre-relief: choose a whole tax year to apply the Annual Exempt Amount, brought-forward losses and the rates in force."}
         </p>
       </CardContent>
     </Card>

@@ -12,10 +12,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ts_rs::TS;
 
-use crate::model::{Account, AccountType, InvestmentEvent, InvestmentEventType};
+use crate::model::{
+    Account, AccountType, DerivedBroughtForwardLosses, InvestmentEvent, InvestmentEventType,
+    TaxComputation,
+};
 use crate::server::error::AppError;
+use crate::server::routes::tax::validate_tax_year;
 use crate::server::state::AppState;
 use crate::server::validation::{parse_date, split_csv_param, validate_date_range};
+use crate::tax::{DisposalForTax, compute_tax};
 use crate::util::fx::{FxRateMap, MissingRate};
 
 // ── Query Parameters ─────────────────────────────────────────────────────────
@@ -39,6 +44,27 @@ pub struct CapitalGainsQuery {
     pub start_date: Option<String>, // YYYY-MM-DD; absent = from time zero
     pub end_date: Option<String>,   // YYYY-MM-DD; absent = no upper bound
     pub profile_ids: Option<String>, // comma-separated; scope to accounts whose profile_ids JSON intersects this set
+    /// `YYYY-YY`. When set, the response carries a `tax` computation for that
+    /// year, using the statutory config and the profile's stored inputs.
+    ///
+    /// Separate from `start_date`/`end_date` on purpose: those bound which
+    /// disposals are *reported*, and a caller is free to report a window that
+    /// is not a tax year at all. Tax is only defined for a whole tax year, so
+    /// asking for it is a distinct request rather than something inferred from
+    /// a date range that happens to look like one.
+    pub tax_year: Option<String>,
+}
+
+/// Query for `GET /api/investments/brought-forward-losses`.
+#[derive(Debug, Deserialize)]
+pub struct DerivedLossesQuery {
+    /// The tax year the losses would be brought forward INTO. Only years
+    /// strictly before it contribute.
+    pub tax_year: String,
+    /// Comma-separated profile IDs; same semantics as on `/capital-gains`.
+    pub profile_ids: Option<String>,
+    /// How many prior tax years to look back over. Defaults to 4.
+    pub years: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -365,6 +391,11 @@ pub struct CapitalGainsResponse {
     /// alongside, not instead of, the granular rows.
     pub disposal_groups: Vec<CgtDisposalGroup>,
     pub pools: Vec<S104PoolState>,
+    /// The tax computation, present only when the request named a `tax_year`.
+    /// Absent means "not asked for", never "no tax due" — a nil tax bill is a
+    /// present computation whose `tax_due` is zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tax: Option<TaxComputation>,
 }
 
 /// A single real-world disposal, with HMRC's matching-rule buckets rolled back up.
@@ -679,6 +710,93 @@ pub async fn get_s104_pools(
     Ok(Json(pools.pools))
 }
 
+// ── Derived brought-forward losses ───────────────────────────────────────────
+
+/// Suggest a brought-forward loss figure from prior years' disposals.
+///
+/// This is a PREFILL for a field the user confirms, never a value stored on
+/// their behalf, and the response type says so: it carries the years it was
+/// built from and an `is_upper_bound` flag that is always true.
+///
+/// It can only overstate. A UK capital loss carries forward only if it was
+/// CLAIMED within four years of the end of the tax year it arose in, and only
+/// the excess left after setting it against that same year's gains carries at
+/// all. The ledger records neither the claim nor any disposal made outside this
+/// app, so the honest thing to return is a bound with its working shown.
+///
+/// The default four-year lookback mirrors that claim window: a loss older than
+/// that cannot now be claimed, so offering it would suggest something the user
+/// cannot actually do.
+pub async fn get_brought_forward_losses(
+    State(state): State<AppState>,
+    Query(q): Query<DerivedLossesQuery>,
+) -> Result<Json<DerivedBroughtForwardLosses>, AppError> {
+    validate_tax_year(&q.tax_year)?;
+
+    let start_year: i32 = q.tax_year[..4].parse().map_err(|_| {
+        AppError::bad_request(
+            format!("tax_year must look like '2024-25', got {:?}", q.tax_year),
+            "invalid_tax_year",
+        )
+    })?;
+    let lookback = q.years.unwrap_or(4).min(20) as i32;
+
+    // The UK tax year runs 6 April to 5 April. Build the boundaries for each
+    // prior year in the window, newest last.
+    let mut boundaries: Vec<(String, NaiveDate, NaiveDate)> = Vec::new();
+    for offset in 1..=lookback {
+        let y = start_year - offset;
+        let label = format!("{y}-{:02}", (y + 1) % 100);
+        let from = NaiveDate::from_ymd_opt(y, 4, 6)
+            .ok_or_else(|| AppError::bad_request("tax year out of range", "invalid_tax_year"))?;
+        let to = NaiveDate::from_ymd_opt(y + 1, 4, 5)
+            .ok_or_else(|| AppError::bad_request("tax year out of range", "invalid_tax_year"))?;
+        boundaries.push((label, from, to));
+    }
+    boundaries.reverse();
+
+    let db = state.db();
+
+    let accounts = db.get_accounts(None)?;
+    let included_account_ids =
+        resolve_profile_ids_to_account_ids(&accounts, q.profile_ids.as_deref());
+    let excluded_accounts: HashSet<String> = accounts
+        .iter()
+        .filter(|a| {
+            matches!(
+                a.account_type,
+                AccountType::InvestmentIsa | AccountType::Pension
+            )
+        })
+        .map(|a| a.id.clone())
+        .collect();
+
+    let events = db.list_investment_events(None, None, None, included_account_ids.as_deref())?;
+
+    let currencies = db.get_currencies()?;
+    let fx = FxRateMap::new(currencies)?;
+    let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
+    let fx = fx.with_historical(historical);
+    check_required_currencies(&events, &fx)?;
+    check_single_owner_accounts(&accounts, &events, &excluded_accounts, None)?;
+    check_single_currency_per_symbol(&events)?;
+
+    // The ledger is never truncated: the S104 pool and the 30-day rule must see
+    // the full history for a prior year's gain to be computed correctly, exactly
+    // as on the main report.
+    let report = run_cgt_engine(events, &excluded_accounts, None, None, None, &fx)?;
+
+    let realized: Vec<(String, Decimal)> = report
+        .realized_events
+        .iter()
+        .map(|e| (disposal_day_of(&e.disposal_date), e.gain_loss))
+        .collect();
+
+    Ok(Json(
+        db.derive_brought_forward_losses(&realized, &boundaries)?,
+    ))
+}
+
 // ── Capital Gains Tax calculation endpoint ───────────────────────────────────
 
 pub async fn get_capital_gains(
@@ -823,6 +941,61 @@ pub async fn get_capital_gains(
     symbol_summaries.sort_by(|a, b| a.symbol.cmp(&b.symbol));
 
     response.symbol_summaries = symbol_summaries;
+
+    // Tax, only when the caller asked for a specific tax year.
+    //
+    // Computed from `realized_events` rather than from `summary`: the bands are
+    // keyed on disposal DATE, and the summary has already collapsed the dates
+    // away. The rate that applies to a gain depends on when it was realized —
+    // that is the whole point of the 30 October 2024 split — so a single netted
+    // total cannot be bucketed after the fact.
+    if let Some(tax_year) = q.tax_year.as_deref().filter(|s| !s.is_empty()) {
+        validate_tax_year(tax_year)?;
+
+        // Reuses the `db` guard taken at the top of this function. Do NOT call
+        // `state.db()` here: it is a non-reentrant `std::sync::Mutex`, so a
+        // second acquisition on this thread while the outer guard is still
+        // alive self-deadlocks the request and wedges the whole server.
+        let (entries, inputs) = {
+            let entries = db.get_tax_config(tax_year)?;
+            // Tax inputs are per profile. A request scoped to exactly one
+            // profile uses that profile's stored figures; anything else (no
+            // scope, or several profiles at once) has no single taxpayer to
+            // read them from, so the documented defaults apply and the caller
+            // gets a computation with no losses and the AEA claimed. Silently
+            // borrowing one profile's losses for a multi-profile report would
+            // understate somebody's tax.
+            let profile_ids = q.profile_ids.as_deref().and_then(split_csv_param);
+            let inputs = match profile_ids.as_deref() {
+                Some([only]) => db.get_tax_inputs(only, tax_year)?,
+                _ => db.get_tax_inputs("", tax_year)?,
+            };
+            (entries, inputs)
+        };
+
+        let disposals: Vec<DisposalForTax> = response
+            .realized_events
+            .iter()
+            .map(|e| {
+                let day = disposal_day_of(&e.disposal_date);
+                NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+                    .map(|disposal_date| DisposalForTax {
+                        disposal_date,
+                        gain_loss: e.gain_loss,
+                    })
+                    .map_err(|_| {
+                        AppError::bad_request(
+                            format!("unparseable disposal date {:?}", e.disposal_date),
+                            "invalid_disposal_date",
+                        )
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+
+        let computed = compute_tax(tax_year, &disposals, &entries, &inputs)
+            .map_err(|e| AppError::bad_request(e.to_string(), "tax_computation_failed"))?;
+        response.tax = Some(computed);
+    }
 
     Ok(Json(response))
 }
@@ -1345,6 +1518,7 @@ fn run_cgt_engine(
         realized_events: all_realized,
         disposal_groups,
         pools: all_pools,
+        tax: None,
     })
 }
 

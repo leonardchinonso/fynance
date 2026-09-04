@@ -3833,3 +3833,441 @@ async fn test_cgt_precheck_ignores_split_and_transfer_dates() {
     assert_eq!(event["proceeds"], "1200.0000");
     assert_eq!(event["gain_loss"], "400.0000");
 }
+
+/// Report a deadlocked request and end the process immediately.
+///
+/// Panicking is not enough here. The deadlocked request has permanently parked
+/// a runtime worker thread inside `Mutex::lock()`, and tokio's shutdown waits
+/// for its workers, so a normal test failure would print the message and then
+/// hang forever on teardown — turning a red test into a wedged CI job. Aborting
+/// gives the harness a non-zero exit straight away, which is a FAILURE rather
+/// than a hang.
+fn deadlocked(what: &str) -> ! {
+    eprintln!("DEADLOCK: {what}");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
+    std::process::abort();
+}
+
+/// Drives `GET /api/investments/capital-gains?tax_year=…` through the real
+/// handler and asserts both that it answers at all and that the tax figure is
+/// right.
+///
+/// **Why this test exists.** The handler takes a `MutexGuard` over the shared
+/// `Db` at the top of the function and holds it for the whole body. The
+/// `tax_year` branch used to call `state.db()` a second time while that guard
+/// was still alive. `AppState::db()` locks a non-reentrant
+/// `std::sync::Mutex`, so that second acquisition self-deadlocked the request
+/// — and, because the guard was never released, every later request including
+/// `/health` hung behind it and the process had to be killed.
+///
+/// 399 tests missed it because `compute_tax` was only ever exercised as a pure
+/// function in `src/tax.rs`, and no test passed `tax_year` to the endpoint. The
+/// defect lived exactly in the gap between the tested unit and its only
+/// production caller, which is why this test drives the HTTP surface rather
+/// than calling `compute_tax` directly.
+///
+/// The whole request is wrapped in a timeout so a regression FAILS here instead
+/// of hanging the test binary and wedging CI.
+///
+/// All figures below are invented for the fixture and are not real UK rates or
+/// allowances.
+///
+/// The runtime is deliberately `multi_thread` with two workers. Under the
+/// default single-threaded runtime a `tokio::time::timeout` around this request
+/// is useless: the deadlock blocks the one and only worker inside
+/// `Mutex::lock()`, so the timer never gets a thread to fire on and the test
+/// hangs forever instead of failing. With a second worker the timer still runs,
+/// the timeout elapses, and the regression surfaces as a FAILURE.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_cgt_tax_year_returns_computation_without_deadlocking() {
+    use fynance::model::{TaxConfigEntry, TaxInputs};
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        // `tax_inputs.profile_id` is a foreign key into `profiles`, so the
+        // profile has to exist before the inputs can be stored.
+        db_lock.create_profile("default", "Default").unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+
+        // Two disposals in different halves of the year, so the two rate
+        // periods below are both exercised.
+        //
+        // Buy 100 @ 10 = 1,000 cost; sell 100 @ 30 = 3,000 -> gain 2,000.
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAA",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAA",
+            "2026-06-01T10:00:00",
+            "100",
+            "30.00",
+            None,
+        );
+        // Buy 100 @ 10 = 1,000 cost; sell 100 @ 70 = 7,000 -> gain 6,000.
+        insert_event(
+            &db_lock,
+            "gia",
+            "buy",
+            "BBB",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia",
+            "sell",
+            "BBB",
+            "2027-01-15T10:00:00",
+            "100",
+            "70.00",
+            None,
+        );
+
+        // Invented tax config: the year splits at 1 Nov 2026 into two rate
+        // periods, mirroring the shape of a real mid-year rate change.
+        let entry =
+            |kind: &str, rate_kind: &str, from: &str, to: &str, amount, rate| TaxConfigEntry {
+                tax_year: "2026-27".to_string(),
+                kind: kind.to_string(),
+                rate_kind: rate_kind.to_string(),
+                valid_from: from.to_string(),
+                valid_to: to.to_string(),
+                amount,
+                rate,
+                updated_at: None,
+            };
+        let d = |s: &str| Some(Decimal::from_str(s).unwrap());
+        db_lock
+            .put_tax_config(
+                "2026-27",
+                &[
+                    entry("aea", "", "2026-04-06", "2027-04-05", d("3000"), None),
+                    // First period: basic 10%, higher 20%.
+                    entry("rate", "basic", "2026-04-06", "2026-10-31", None, d("0.10")),
+                    entry(
+                        "rate",
+                        "higher",
+                        "2026-04-06",
+                        "2026-10-31",
+                        None,
+                        d("0.20"),
+                    ),
+                    // Second period: basic 15%, higher 25%.
+                    entry("rate", "basic", "2026-11-01", "2027-04-05", None, d("0.15")),
+                    entry(
+                        "rate",
+                        "higher",
+                        "2026-11-01",
+                        "2027-04-05",
+                        None,
+                        d("0.25"),
+                    ),
+                ],
+            )
+            .unwrap();
+
+        // 1,000 of basic-rate income headroom, and 500 of losses carried in.
+        db_lock
+            .put_tax_inputs(&TaxInputs {
+                profile_id: "default".to_string(),
+                tax_year: "2026-27".to_string(),
+                brought_forward_losses: Decimal::from_str("500").unwrap(),
+                allowable_income_remaining: Decimal::from_str("1000").unwrap(),
+                aea_claimed: true,
+                updated_at: None,
+            })
+            .unwrap();
+    }
+
+    // The request is driven on its OWN spawned task, not inline on this one.
+    // That is what makes the timeout effective: the deadlock blocks a thread
+    // inside `Mutex::lock()` rather than yielding, so awaiting the request
+    // directly here would block this task too and the timer would never be
+    // polled. Spawning it leaves this task free to observe the timeout elapse.
+    let handle = tokio::spawn(async move {
+        app.oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27&profile_ids=default",
+        ))
+        .await
+    });
+    let response = match tokio::time::timeout(std::time::Duration::from_secs(20), handle).await {
+        Ok(joined) => joined.expect("request task panicked").unwrap(),
+        Err(_) => deadlocked(
+            "GET /api/investments/capital-gains?tax_year=... never responded. The \
+             handler holds a MutexGuard from state.db() for its whole body, so \
+             calling state.db() again inside it locks a non-reentrant mutex \
+             against itself. Reuse the outer `db` guard instead.",
+        ),
+    };
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let tax = &res["tax"];
+    assert_eq!(tax["tax_year"], "2026-27");
+
+    // Gains total 8,000: 2,000 in the first period, 6,000 in the second.
+    assert_eq!(tax["total_gains"], "8000.00");
+
+    // No losses were realized this year.
+    assert_eq!(tax["current_year_losses_applied"], "0");
+
+    // Headroom is spent earliest-period-first, so 1,000 of the first period's
+    // 2,000 sits at basic, leaving three bands:
+    //   p1 basic 10%  1,000
+    //   p1 higher 20% 1,000
+    //   p2 higher 25% 6,000   (headroom already exhausted)
+    //
+    // Deductions run highest-rate-first. Brought-forward losses are limited to
+    // the excess over the AEA: gains 8,000 - AEA 3,000 = 5,000 needed, and
+    // only 500 is available, so all 500 is applied — to the 25% band.
+    // The 3,000 AEA then also hits the 25% band first.
+    //   p2 higher 25%: 6000 - 500 - 3000 = 2,500 taxable -> 625.00
+    //   p1 higher 20%: 1,000 taxable                     -> 200.00
+    //   p1 basic  10%: 1,000 taxable                     -> 100.00
+    // Total taxable 4,500, total tax 925.00.
+    assert_eq!(tax["brought_forward_losses_applied"], "500");
+    assert_eq!(tax["brought_forward_losses_remaining"], "0");
+    assert_eq!(tax["aea_applied"], "3000");
+    assert_eq!(tax["taxable_gain"], "4500.00");
+    assert_eq!(tax["tax_due"], "925.00");
+
+    // The band breakdown must distinguish the two periods and both rate kinds —
+    // a report that collapses them is not filable.
+    let bands = tax["bands"].as_array().unwrap();
+    assert_eq!(bands.len(), 3, "expected three bands, got {bands:#?}");
+
+    let find = |from: &str, kind: &str| {
+        bands
+            .iter()
+            .find(|b| b["valid_from"] == from && b["rate_kind"] == kind)
+            .unwrap_or_else(|| panic!("no {kind} band from {from} in {bands:#?}"))
+    };
+
+    let p1_basic = find("2026-04-06", "basic");
+    assert_eq!(p1_basic["rate"], "0.10");
+    // Unscaled "1000", not "1000.00": this band's gain comes from
+    // `headroom.min(gains)`, so it carries the scale of the income headroom
+    // input rather than of the computed gain.
+    assert_eq!(p1_basic["taxable"], "1000");
+    assert_eq!(p1_basic["tax"], "100.00");
+
+    let p1_higher = find("2026-04-06", "higher");
+    assert_eq!(p1_higher["rate"], "0.20");
+    assert_eq!(p1_higher["taxable"], "1000.00");
+    assert_eq!(p1_higher["tax"], "200.00");
+
+    let p2_higher = find("2026-11-01", "higher");
+    assert_eq!(p2_higher["rate"], "0.25");
+    assert_eq!(p2_higher["taxable"], "2500.00");
+    assert_eq!(p2_higher["tax"], "625.00");
+}
+
+/// A second request on the same router must still be served.
+///
+/// This is the half of the deadlock the tax figure alone cannot catch: the
+/// original defect left the mutex permanently locked, so the damage was not
+/// the one slow response but every request after it — `/health` included —
+/// hanging behind a guard that would never be released.
+///
+/// `multi_thread` for the same reason as the test above: the timeout can only
+/// fire if the blocked request is not occupying the runtime's only worker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_cgt_tax_year_leaves_the_db_usable_for_later_requests() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+    }
+
+    // Deliberately no tax config: the branch is still entered and still took
+    // the second lock, so this reproduces the hang even with no data at all.
+    let app_first = app.clone();
+    let first_handle = tokio::spawn(async move {
+        app_first
+            .oneshot(request(
+                Method::GET,
+                "/api/investments/capital-gains?tax_year=2026-27",
+            ))
+            .await
+    });
+    let first = match tokio::time::timeout(std::time::Duration::from_secs(20), first_handle).await {
+        Ok(joined) => joined.expect("request task panicked").unwrap(),
+        Err(_) => deadlocked("the tax_year request never responded"),
+    };
+    // Status is not the point here; not hanging is.
+    let _ = first.status();
+
+    let second_handle =
+        tokio::spawn(async move { app.oneshot(request(Method::GET, "/api/accounts")).await });
+    let second = match tokio::time::timeout(std::time::Duration::from_secs(20), second_handle).await
+    {
+        Ok(joined) => joined.expect("request task panicked").unwrap(),
+        Err(_) => deadlocked(
+            "a later request hung: the tax_year request left the Db mutex locked, \
+             which is what took the whole server down rather than just one route.",
+        ),
+    };
+
+    assert_eq!(second.status(), StatusCode::OK);
+}
+
+/// Brought-forward losses are restricted to the gains *in excess of* the AEA,
+/// and the unused remainder survives to be carried forward again.
+///
+/// This is the rule with real money attached: a carried-forward loss must never
+/// be spent reducing a gain the annual exemption would have covered for free,
+/// because doing so silently destroys relief the taxpayer is entitled to keep
+/// for a later year. The test in this file above it cannot see the rule at all
+/// — its brought-forward figure is smaller than the excess, so restricted and
+/// unrestricted arithmetic agree. Here the carried-in losses deliberately
+/// exceed the excess, so the restriction is the only thing standing between the
+/// right answer and an overspent loss pot.
+///
+/// All figures are invented for the fixture and are not real UK rates or
+/// allowances.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_cgt_brought_forward_losses_are_capped_at_the_excess_over_the_aea() {
+    use fynance::model::{TaxConfigEntry, TaxInputs};
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        db_lock.create_profile("solo", "Solo").unwrap();
+
+        let account = Account {
+            id: "gia_solo".to_string(),
+            name: "Solo GIA".to_string(),
+            institution: "Trading 212".to_string(),
+            account_type: AccountType::Investment,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["solo".to_string()],
+            is_stale: None,
+            is_available: true,
+        };
+        db_lock.create_account(&account).unwrap();
+
+        // Buy 100 @ 10 = 1,000 cost; sell 100 @ 90 = 9,000 -> gain 8,000.
+        insert_event(
+            &db_lock,
+            "gia_solo",
+            "buy",
+            "CCC",
+            "2026-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+        );
+        insert_event(
+            &db_lock,
+            "gia_solo",
+            "sell",
+            "CCC",
+            "2026-06-01T10:00:00",
+            "100",
+            "90.00",
+            None,
+        );
+
+        // One rate period, one rate: this test is about the loss cap, not banding.
+        let d = |s: &str| Some(Decimal::from_str(s).unwrap());
+        db_lock
+            .put_tax_config(
+                "2026-27",
+                &[
+                    TaxConfigEntry {
+                        tax_year: "2026-27".to_string(),
+                        kind: "aea".to_string(),
+                        rate_kind: String::new(),
+                        valid_from: "2026-04-06".to_string(),
+                        valid_to: "2027-04-05".to_string(),
+                        amount: d("3000"),
+                        rate: None,
+                        updated_at: None,
+                    },
+                    TaxConfigEntry {
+                        tax_year: "2026-27".to_string(),
+                        kind: "rate".to_string(),
+                        rate_kind: "higher".to_string(),
+                        valid_from: "2026-04-06".to_string(),
+                        valid_to: "2027-04-05".to_string(),
+                        amount: None,
+                        rate: d("0.20"),
+                        updated_at: None,
+                    },
+                ],
+            )
+            .unwrap();
+
+        // 6,000 carried in — deliberately MORE than the 5,000 excess over the AEA.
+        db_lock
+            .put_tax_inputs(&TaxInputs {
+                profile_id: "solo".to_string(),
+                tax_year: "2026-27".to_string(),
+                brought_forward_losses: Decimal::from_str("6000").unwrap(),
+                allowable_income_remaining: Decimal::ZERO,
+                aea_claimed: true,
+                updated_at: None,
+            })
+            .unwrap();
+    }
+
+    let handle = tokio::spawn(async move {
+        app.oneshot(request(
+            Method::GET,
+            "/api/investments/capital-gains?tax_year=2026-27&profile_ids=solo",
+        ))
+        .await
+    });
+    let response = match tokio::time::timeout(std::time::Duration::from_secs(20), handle).await {
+        Ok(joined) => joined.expect("request task panicked").unwrap(),
+        Err(_) => deadlocked("the tax_year request never responded"),
+    };
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let tax = &res["tax"];
+
+    // Gains 8,000, AEA 3,000, so only 8,000 - 3,000 = 5,000 of the 6,000
+    // carried-in losses may be used. The other 1,000 stays carried forward.
+    // Applying all 6,000 instead would wipe the bill to zero AND destroy the
+    // 1,000 of relief the taxpayer keeps — which is why both figures are
+    // asserted, not just the tax.
+    assert_eq!(tax["total_gains"], "8000.00");
+    assert_eq!(tax["brought_forward_losses_applied"], "5000.00");
+    assert_eq!(tax["brought_forward_losses_remaining"], "1000.00");
+    assert_eq!(tax["aea_applied"], "3000");
+
+    // 8,000 - 5,000 losses - 3,000 AEA = 0 taxable, so no tax is due — but for
+    // the right reason, with 1,000 of relief preserved.
+    assert_eq!(tax["taxable_gain"], "0.00");
+    // Bare "0": the single band's tax rounds to 0.00, and summing one such
+    // entry from Decimal::ZERO keeps the zero unscaled.
+    assert_eq!(tax["tax_due"], "0");
+}

@@ -1122,11 +1122,26 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             "in": "query",
                             "schema": { "type": "string", "example": "personal,joint" },
                             "description": "Comma-separated profile IDs. Engine includes events from accounts whose profile_ids intersect this set. Omit for all profiles."
+                        },
+                        {
+                            "name": "tax_year",
+                            "in": "query",
+                            "schema": { "type": "string", "example": "2024-25" },
+                            "description": concat!(
+                                "UK tax year as `YYYY-YY`. When present, the response carries a `tax` object ",
+                                "computed from the statutory rates in `tax_config` and the taxpayer's figures in ",
+                                "`tax_inputs`. Gains are bucketed by disposal date against the rate bands in force, ",
+                                "so a 2024-25 report splits across the pre- and post-30-October rates; losses and ",
+                                "the annual exempt amount are deducted from the highest-rate band first. Deliberately ",
+                                "separate from `start_date`/`end_date`, which bound what is *reported*: a caller may ",
+                                "report a window that is not a tax year, and tax is only defined for a whole one. ",
+                                "Omit it and `tax` is absent entirely, which means \"not asked for\", never \"no tax due\"."
+                            )
                         }
                     ],
                     "responses": {
                         "200": {
-                            "description": "Full CGT report: summary, per-symbol breakdown, realized disposals (both granular and grouped by actual sale), and final pool states.",
+                            "description": "Full CGT report: summary, per-symbol breakdown, realized disposals (both granular and grouped by actual sale), and final pool states. Includes a `tax` computation when `tax_year` was supplied.",
                             "content": {
                                 "application/json": {
                                     "schema": { "$ref": "#/components/schemas/CapitalGainsResponse" }
@@ -1139,6 +1154,239 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                                 "application/json": {
                                     "schema": { "$ref": "#/components/schemas/Error" }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/investments/brought-forward-losses": {
+            "get": {
+                "summary": "Suggested brought-forward losses, derived from prior years",
+                "description": concat!(
+                    "A PREFILL for a field the user confirms, never a value stored on their ",
+                    "behalf. The response carries the years it was built from and an ",
+                    "`is_upper_bound` flag that is always true, because the figure can only ",
+                    "overstate: a UK capital loss carries forward only if it was CLAIMED within ",
+                    "four years of the end of the tax year it arose in, and only the excess left ",
+                    "after setting it against that same year's gains carries at all — this app ",
+                    "records neither the claim nor any disposal made outside it. Losses are ",
+                    "netted within each year and only years that ended in a net loss contribute; ",
+                    "a year that netted to a gain contributes nothing rather than cancelling out ",
+                    "another year's loss. The default four-year lookback mirrors the claim window."
+                ),
+                "parameters": [
+                    {
+                        "name": "tax_year",
+                        "in": "query",
+                        "required": true,
+                        "schema": { "type": "string", "example": "2024-25" },
+                        "description": "The tax year the losses would be brought forward INTO. Only years strictly before it contribute."
+                    },
+                    {
+                        "name": "profile_ids",
+                        "in": "query",
+                        "schema": { "type": "string", "example": "personal,joint" },
+                        "description": "Comma-separated profile IDs; same semantics as on /api/investments/capital-gains."
+                    },
+                    {
+                        "name": "years",
+                        "in": "query",
+                        "schema": { "type": "integer", "default": 4 },
+                        "description": "How many prior tax years to look back over. Capped at 20."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The suggested figure, its per-year working, and the upper-bound flag.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DerivedBroughtForwardLosses" }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid tax year, or a prior-year disposal needs an exchange rate that has not been entered.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/Error" }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tax-config": {
+            "get": {
+                "summary": "Statutory tax configuration (annual exempt amounts and CGT rate bands)",
+                "description": concat!(
+                    "The law: identical for every UK user and changed only by a Budget. Served separately ",
+                    "from `/api/tax-inputs` (the taxpayer's own situation) for that reason — reseeding ",
+                    "statutory values must never touch a user's figures. Seeded with HMRC-verified values ",
+                    "on startup, and an entry edited through PUT is never overwritten by a later restart. ",
+                    "A tax year normally carries one `rate` entry per `rate_kind`; 2024-25 carries two of ",
+                    "each, because the Autumn Budget 2024 raised CGT on shares from 10%/20% to 18%/24% for ",
+                    "disposals on or after 30 October 2024. That is modelled as ordinary rows with adjacent ",
+                    "inclusive date ranges, not a special case, so a future Budget needs a row rather than ",
+                    "a code change. `rate` is a decimal fraction: 24% is 0.24."
+                ),
+                "parameters": [
+                    {
+                        "name": "tax_year",
+                        "in": "query",
+                        "schema": { "type": "string", "example": "2024-25" },
+                        "description": "Restrict to one tax year, as `YYYY-YY`. Omit for every year held."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The statutory entries, as `{ \"entries\": [...] }`.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/TaxConfigEntry" }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "tax_year is not in YYYY-YY form.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/Error" }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "summary": "Replace the statutory configuration for one tax year",
+                "description": concat!(
+                    "Replaces the complete entry set for the named year rather than merging into it. The ",
+                    "entries for a year are a set that must tile it: a partial update could leave a gap ",
+                    "between two rate bands, and a disposal falling in that gap would have no rate to be ",
+                    "charged at. Rates are validated as fractions between 0 and 1, so sending 24 instead of ",
+                    "0.24 is rejected rather than computing a bill 100x too large."
+                ),
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/PutTaxConfigPayload" }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Written, as `{ \"tax_year\": ..., \"written\": n }`."
+                    },
+                    "400": {
+                        "description": "Invalid tax year, kind, rate_kind, rate range, date or validity range.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/Error" }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tax-inputs/{profile_id}/{tax_year}": {
+            "get": {
+                "summary": "One taxpayer's own figures for a tax year",
+                "description": concat!(
+                    "Nothing here is statutory and nothing here is derivable from the ledger — it is what ",
+                    "the taxpayer brings to the computation. A profile-year that has never been given inputs ",
+                    "returns the documented defaults rather than 404 (no brought-forward losses, no ",
+                    "basic-rate headroom, AEA claimed); each is a real position rather than a placeholder, ",
+                    "so the computation has no unconfigured branch. `allowable_income_remaining` is unused ",
+                    "headroom in the basic-rate *income* band: gains within it are charged at the basic CGT ",
+                    "rate and the excess at the higher rate. It cannot be derived (this app does not see ",
+                    "PAYE income), so it defaults to 0, meaning every gain is charged at the higher rate — ",
+                    "the safe direction, since over-estimating does not produce a surprise bill."
+                ),
+                "parameters": [
+                    {
+                        "name": "profile_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" },
+                        "description": "Profile slug."
+                    },
+                    {
+                        "name": "tax_year",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string", "example": "2024-25" },
+                        "description": "UK tax year as `YYYY-YY`."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The taxpayer's figures for that year.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/TaxInputs" }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid profile id or tax year.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/Error" }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "summary": "Set one taxpayer's figures for a tax year",
+                "description": concat!(
+                    "Every field is optional and an absent key leaves the stored value alone, so a request ",
+                    "that only toggles the AEA will not silently zero the brought-forward losses and change ",
+                    "the tax due without saying so. `brought_forward_losses` is user-entered, never computed: ",
+                    "a derived figure may be offered as a prefill, but it can only ever overstate, because a ",
+                    "UK capital loss carries forward only if it was claimed within four years of the end of ",
+                    "the year it arose and only the excess after that year's own gains carries at all — ",
+                    "neither fact being visible in the ledger."
+                ),
+                "parameters": [
+                    {
+                        "name": "profile_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" },
+                        "description": "Profile slug."
+                    },
+                    {
+                        "name": "tax_year",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string", "example": "2024-25" },
+                        "description": "UK tax year as `YYYY-YY`."
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/PutTaxInputsPayload" }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "The stored figures after the update.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/TaxInputs" }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid profile id or tax year, unknown profile, or a negative amount.",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/Error" }
                             }
                         }
                     }

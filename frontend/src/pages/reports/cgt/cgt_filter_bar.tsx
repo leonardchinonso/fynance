@@ -7,6 +7,7 @@ import { Calendar } from "@/components/ui/calendar"
 import type { Profile } from "@/types"
 import type { CgtFilters, CgtPeriod } from "@/api/service"
 import { ukTaxYearToDates } from "@/api/cgt_filter_params"
+import type { CgtBandSelection } from "./band_headroom"
 
 const TAX_YEAR_PRESETS = ["2025-26", "2024-25", "2023-24", "2022-23", "2021-22"] as const
 type PresetValue =
@@ -18,17 +19,30 @@ interface CgtFilterBarProps {
   profiles: Profile[]
   initial: CgtFilters
   loading: boolean
-  onGenerate: (filters: CgtFilters, higherRate: boolean) => void
+  /**
+   * `bandSelection` is `null` when the user never touched the band control, so
+   * the caller can leave the stored headroom figure alone rather than writing
+   * this screen's default over it.
+   */
+  onGenerate: (filters: CgtFilters, bandSelection: CgtBandSelection | null) => void
 }
+
+export type { CgtBandSelection }
 
 export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilterBarProps) {
   const [preset, setPreset] = useState<PresetValue>(initialPreset(initial.period))
   const [startDate, setStartDate] = useState(initialStart(initial.period))
   const [endDate, setEndDate] = useState(initialEnd(initial.period))
   const [profileId, setProfileId] = useState(initial.profileId)
-  // Frontend-only: the rate band drives the client-side tax estimate, not the
-  // backend query, so it is not part of CgtFilters / the service contract.
-  const [higherRate, setHigherRate] = useState(true)
+  // The band selector. Converted into `allowable_income_remaining` on the
+  // request rather than being a display flag: the server computes the tax, so
+  // this changes what is asked for, not how the answer is drawn.
+  //
+  // `null` means the user has not touched it on this visit. The control still
+  // *shows* the higher-rate position, because one of the two has to be drawn,
+  // but showing a default is not the user asking for it — so an untouched
+  // selector sends nothing and the stored figure survives.
+  const [band, setBand] = useState<CgtBandSelection | null>(null)
 
   const period: CgtPeriod = buildPeriod(preset, startDate, endDate)
   const canGenerate = !loading && profileId !== ""
@@ -74,13 +88,23 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
         </SelectContent>
       </Select>
 
-      <Select
-        value={higherRate ? "higher" : "basic"}
-        onValueChange={(v) => setHigherRate(v === "higher")}
-      >
-        <SelectTrigger className="w-[190px]">
+      {/*
+        `band ?? "higher"` is inlined at both render sites rather than being
+        hoisted into a `shownBand` variable. The two are NOT interchangeable at
+        the `onGenerate` call below: `band` stays null until the user actually
+        picks something, and that null is what tells the server to leave the
+        stored income figure alone. With a non-null fallback in scope, passing
+        it there instead of `band` type-checks, reads naturally, and silently
+        overwrites the user's saved headroom on every generate — so the safest
+        thing is for no such variable to exist.
+
+        The trigger is also labelled: it is a plain `span`, not a native select
+        with an implicit name, and it materially changes a figure someone files.
+      */}
+      <Select value={band ?? "higher"} onValueChange={(v) => v && setBand(v as CgtBandSelection)}>
+        <SelectTrigger className="w-[190px]" aria-label="Income tax band for this report">
           <span className="truncate">
-            {higherRate ? "Higher/additional rate" : "Basic rate"}
+            {(band ?? "higher") === "higher" ? "Higher/additional rate" : "Basic rate"}
           </span>
         </SelectTrigger>
         <SelectContent>
@@ -91,7 +115,7 @@ export function CgtFilterBar({ profiles, initial, loading, onGenerate }: CgtFilt
 
       <Button
         className="ml-auto"
-        onClick={() => onGenerate({ period, profileId }, higherRate)}
+        onClick={() => onGenerate({ period, profileId }, band)}
         disabled={!canGenerate}
       >
         {loading ? "Generating…" : "Generate"}
