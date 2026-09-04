@@ -952,8 +952,11 @@ pub async fn get_capital_gains(
     if let Some(tax_year) = q.tax_year.as_deref().filter(|s| !s.is_empty()) {
         validate_tax_year(tax_year)?;
 
+        // Reuses the `db` guard taken at the top of this function. Do NOT call
+        // `state.db()` here: it is a non-reentrant `std::sync::Mutex`, so a
+        // second acquisition on this thread while the outer guard is still
+        // alive self-deadlocks the request and wedges the whole server.
         let (entries, inputs) = {
-            let db = state.db();
             let entries = db.get_tax_config(tax_year)?;
             // Tax inputs are per profile. A request scoped to exactly one
             // profile uses that profile's stored figures; anything else (no
