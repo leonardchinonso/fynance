@@ -1292,7 +1292,6 @@ pub struct GeminiProvider {
     client: Client,
     api_key: String,
     standard_model: String,
-    lite_model: String,
     advanced_model: String,
     progress: Option<(ProgressTx, Option<String>)>,
 }
@@ -1312,8 +1311,6 @@ impl GeminiProvider {
 
         let standard_model = std::env::var("FYNANCE_GEMINI_TEXT_MODEL")
             .unwrap_or_else(|_| "gemini-3.8-flash".to_string());
-        let lite_model = std::env::var("FYNANCE_GEMINI_LITE_MODEL")
-            .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
         let advanced_model = std::env::var("FYNANCE_GEMINI_PDF_MODEL")
             .unwrap_or_else(|_| "gemini-3.8-flash".to_string());
 
@@ -1327,7 +1324,6 @@ impl GeminiProvider {
             client,
             api_key,
             standard_model,
-            lite_model,
             advanced_model,
             progress: None,
         })
@@ -1346,12 +1342,8 @@ impl GeminiProvider {
         agent_override: Option<Agent>,
     ) -> Result<String, ProviderError> {
         match agent_override {
-            Some(Agent::FlashLite) => Ok(self.lite_model.clone()),
-            Some(Agent::Flash) => Ok(self.standard_model.clone()),
+            Some(agent) => gemini_model_for_agent(agent).map(|s| s.to_string()),
             None => Ok(self.model_for_tier(tier).to_string()),
-            Some(agent) => Err(ProviderError::NotSupported(format!(
-                "agent '{agent:?}' is not supported by Gemini provider. Valid options: flash, flash_lite"
-            ))),
         }
     }
 
@@ -1360,7 +1352,6 @@ impl GeminiProvider {
             client: self.client.clone(),
             api_key: self.api_key.clone(),
             standard_model: self.standard_model.clone(),
-            lite_model: self.lite_model.clone(),
             advanced_model: self.advanced_model.clone(),
             progress: Some((tx, task_id)),
         }
@@ -1653,6 +1644,17 @@ impl LlmProvider for GeminiProvider {
         task_id: Option<String>,
     ) -> Option<Arc<dyn LlmProvider>> {
         Some(Arc::new(self.clone_with_progress(tx, task_id)))
+    }
+}
+
+/// Latest frontier model id per agent for Gemini. Keep in sync with `pricing.rs`.
+fn gemini_model_for_agent(agent: Agent) -> Result<&'static str, ProviderError> {
+    match agent {
+        Agent::FlashLite => Ok("gemini-3.5-flash-lite"),
+        Agent::Flash => Ok("gemini-3.8-flash"),
+        other => Err(ProviderError::NotSupported(format!(
+            "agent '{other:?}' is not supported by Gemini provider. Valid options: flash, flash_lite"
+        ))),
     }
 }
 
@@ -2285,7 +2287,6 @@ mod tests {
         unsafe {
             std::env::set_var("FYNANCE_GEMINI_API_KEY", "test-key");
             std::env::remove_var("FYNANCE_GEMINI_TEXT_MODEL");
-            std::env::remove_var("FYNANCE_GEMINI_LITE_MODEL");
             std::env::remove_var("FYNANCE_GEMINI_PDF_MODEL");
         };
         let provider = GeminiProvider::from_env().unwrap();
@@ -2471,6 +2472,21 @@ mod tests {
         );
         assert!(anthropic_model_for_agent(Agent::Flash).is_err());
         assert!(anthropic_model_for_agent(Agent::FlashLite).is_err());
+    }
+
+    #[test]
+    fn test_gemini_model_for_agent_mapping() {
+        assert_eq!(
+            gemini_model_for_agent(Agent::FlashLite).unwrap(),
+            "gemini-3.5-flash-lite"
+        );
+        assert_eq!(
+            gemini_model_for_agent(Agent::Flash).unwrap(),
+            "gemini-3.8-flash"
+        );
+        assert!(gemini_model_for_agent(Agent::Haiku).is_err());
+        assert!(gemini_model_for_agent(Agent::Sonnet).is_err());
+        assert!(gemini_model_for_agent(Agent::Opus).is_err());
     }
 
     #[test]

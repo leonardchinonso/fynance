@@ -220,8 +220,11 @@ The variables below can be set any of the three ways described in [Configuring t
 | `FYNANCE_IMPORT_MIN_DETECT_CONF` | `0.80` | No | File-level detection confidence threshold (0.0 to 1.0). Import fails hard below this |
 | `FYNANCE_IMPORT_MIN_ROW_CONF` | `0.70` | No | Row-level confidence threshold (0.0 to 1.0). Rows below this are skipped with a warning |
 | `FYNANCE_PARSE_PDF_MODEL` | `claude-sonnet-4-6` | No | More capable model used for PDF/visual document parsing |
-| `FYNANCE_PARSE_PROVIDER` | `anthropic` | No | LLM provider for `/api/parse` and import: `anthropic` (default) or `openai` |
+| `FYNANCE_PARSE_PROVIDER` | `anthropic` | No | LLM provider for `/api/parse` and import: `anthropic` (default), `openai`, or `gemini` |
 | `FYNANCE_OPENAI_API_KEY` / `_TEXT_MODEL` / `_PDF_MODEL` | (none) | No | OpenAI credentials and models, used only when `FYNANCE_PARSE_PROVIDER=openai`. See `.env.example` |
+| `FYNANCE_GEMINI_API_KEY` | (none) | No | Google Gemini API key (`AIzaSy...`) from [Google AI Studio](https://aistudio.google.com/), used when `FYNANCE_PARSE_PROVIDER=gemini` |
+| `FYNANCE_GEMINI_TEXT_MODEL` | `gemini-3.8-flash` | No | Gemini model used by the CSV/statement parser |
+| `FYNANCE_GEMINI_PDF_MODEL` | `gemini-3.8-flash` | No | Gemini model for PDF/visual document parsing |
 | `VITE_MOCK_ONLY` | (none) | No | Frontend build flag: force mock-data mode for demo/preview deployments |
 
 **LLM credentials.** Importing statements requires an Anthropic credential. You can use either a pay-per-token Console API key (`FYNANCE_ANTHROPIC_API_KEY`) or a Claude Pro/Max subscription token (`FYNANCE_CLAUDE_CODE_OAUTH_TOKEN`, obtained by running `claude setup-token`). The subscription token draws from your plan's monthly Agent SDK credit instead of billing per token, which is much cheaper for large imports. When both are set, the subscription token is used first and the API key is an automatic fallback if it is rejected or its credit is exhausted. The model, prompts, output, streaming, and PDF support are identical either way.

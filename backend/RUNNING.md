@@ -99,7 +99,7 @@ All runtime configuration is done via environment variables. The binary loads `.
 | `FYNANCE_IMPORT_MIN_DETECT_CONF` | `0.80`                      | File-level confidence threshold. Import fails hard below this                           |
 | `FYNANCE_IMPORT_MIN_ROW_CONF`    | `0.70`                      | Row-level confidence threshold. Rows below this are skipped with a warning              |
 | `FYNANCE_PARSE_PDF_MODEL`        | `claude-sonnet-4-6`         | More capable model for PDF/visual document parsing in `/api/parse`                     |
-| `FYNANCE_PARSE_PROVIDER`         | `anthropic`                 | LLM provider for `/api/parse` and import: `anthropic` (default) or `openai` (OpenAI keys live in `.env.example`) |
+| `FYNANCE_PARSE_PROVIDER`         | `anthropic`                 | LLM provider for `/api/parse` and import: `anthropic` (default), `openai`, or `gemini` (OpenAI/Gemini keys live in `.env.example`) |
 
 ### Default database path
 
