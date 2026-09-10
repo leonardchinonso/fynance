@@ -25,13 +25,25 @@ fn rates_for(agent: Agent) -> AgentRates {
             input_per_mtok: Decimal::from(5u64),
             output_per_mtok: Decimal::from(25u64),
         },
+        Agent::Flash => AgentRates {
+            input_per_mtok: Decimal::new(75, 2),
+            output_per_mtok: Decimal::new(375, 2),
+        },
+        Agent::FlashLite => AgentRates {
+            input_per_mtok: Decimal::new(30, 2),
+            output_per_mtok: Decimal::new(250, 2),
+        },
     }
 }
 
 /// `None` for non-frontier model ids; caller decides the fallback.
 pub fn agent_from_model(model: &str) -> Option<Agent> {
     let m = model.to_ascii_lowercase();
-    if m.contains("haiku") {
+    if m.contains("flash-lite") || m.contains("flash_lite") || m.contains("flashlite") {
+        Some(Agent::FlashLite)
+    } else if m.contains("flash") {
+        Some(Agent::Flash)
+    } else if m.contains("haiku") {
         Some(Agent::Haiku)
     } else if m.contains("sonnet") {
         Some(Agent::Sonnet)
@@ -98,12 +110,31 @@ mod tests {
         );
         assert_eq!(agent_from_model("claude-sonnet-4-6"), Some(Agent::Sonnet));
         assert_eq!(agent_from_model("claude-opus-4-7"), Some(Agent::Opus));
+        assert_eq!(agent_from_model("gemini-3.8-flash"), Some(Agent::Flash));
+        assert_eq!(
+            agent_from_model("gemini-3.5-flash-lite"),
+            Some(Agent::FlashLite)
+        );
     }
 
     #[test]
     fn test_agent_from_model_unknown_is_none() {
         assert_eq!(agent_from_model("gpt-4o-mini"), None);
         assert_eq!(agent_from_model("mock"), None);
+    }
+
+    #[test]
+    fn test_cost_for_flash() {
+        // 1M input @ $0.75, 500k output @ $3.75 => 0.75 + 1.875 = 2.625
+        let cost = cost_for(Agent::Flash, 1_000_000, 500_000);
+        assert_eq!(cost, d("2.625"));
+    }
+
+    #[test]
+    fn test_cost_for_flash_lite() {
+        // 1M input @ $0.30, 500k output @ $2.50 => 0.30 + 1.25 = 1.55
+        let cost = cost_for(Agent::FlashLite, 1_000_000, 500_000);
+        assert_eq!(cost, d("1.55"));
     }
 
     #[test]

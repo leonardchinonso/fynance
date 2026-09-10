@@ -323,10 +323,14 @@ impl AnthropicProvider {
         }
     }
 
-    fn resolve_model(&self, tier: ModelTier, agent_override: Option<Agent>) -> String {
+    fn resolve_model(
+        &self,
+        tier: ModelTier,
+        agent_override: Option<Agent>,
+    ) -> Result<String, ProviderError> {
         match agent_override {
-            Some(agent) => anthropic_model_for_agent(agent).to_string(),
-            None => self.model_for_tier(tier).to_string(),
+            Some(agent) => anthropic_model_for_agent(agent).map(|s| s.to_string()),
+            None => Ok(self.model_for_tier(tier).to_string()),
         }
     }
 
@@ -342,11 +346,14 @@ impl AnthropicProvider {
 }
 
 /// Latest frontier model id per agent. Keep in sync with `pricing.rs`.
-fn anthropic_model_for_agent(agent: Agent) -> &'static str {
+fn anthropic_model_for_agent(agent: Agent) -> Result<&'static str, ProviderError> {
     match agent {
-        Agent::Haiku => "claude-haiku-4-5-20251001",
-        Agent::Sonnet => "claude-sonnet-4-6",
-        Agent::Opus => "claude-opus-4-7",
+        Agent::Haiku => Ok("claude-haiku-4-5-20251001"),
+        Agent::Sonnet => Ok("claude-sonnet-4-6"),
+        Agent::Opus => Ok("claude-opus-4-7"),
+        other => Err(ProviderError::NotSupported(format!(
+            "agent '{other:?}' is not supported by Anthropic provider. Valid options: haiku, sonnet, opus"
+        ))),
     }
 }
 
@@ -722,7 +729,7 @@ impl LlmProvider for AnthropicProvider {
         tier: ModelTier,
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        let model = self.resolve_model(tier, agent_override);
+        let model = self.resolve_model(tier, agent_override)?;
 
         let request_body = json!({
             "model": model,
@@ -758,7 +765,7 @@ impl LlmProvider for AnthropicProvider {
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
         let b64 = BASE64.encode(pdf_bytes);
-        let model = self.resolve_model(ModelTier::Advanced, agent_override);
+        let model = self.resolve_model(ModelTier::Advanced, agent_override)?;
 
         let request_body = json!({
             "model": model,
@@ -814,7 +821,7 @@ impl LlmProvider for AnthropicProvider {
         tool_schema: Value,
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        let model = self.resolve_model(ModelTier::Advanced, agent_override);
+        let model = self.resolve_model(ModelTier::Advanced, agent_override)?;
 
         let mut content: Vec<Value> = Vec::with_capacity(files.len() * 2 + 1);
         for (filename, mime, bytes) in files {
@@ -1278,63 +1285,507 @@ fn extract_openai_usage(body: &str) -> TokenUsage {
 
 // ── GeminiProvider ────────────────────────────────────────────────────────────
 
-/// Placeholder for Gemini support. Returns an error for all calls.
-/// Implement in V1 using the Gemini GenerateContent API.
+/// Gemini LLM provider using Google's GenerateContent API.
+/// Defaults to gemini-3.8-flash for standard/PDF tiers and gemini-3.5-flash-lite for lite tier.
 #[derive(Debug)]
-pub struct GeminiProvider;
+pub struct GeminiProvider {
+    client: Client,
+    api_key: String,
+    standard_model: String,
+    lite_model: String,
+    advanced_model: String,
+    progress: Option<(ProgressTx, Option<String>)>,
+}
+
+impl GeminiProvider {
+    pub fn from_env() -> Result<Self> {
+        let api_key = std::env::var("FYNANCE_GEMINI_API_KEY")
+            .or_else(|_| std::env::var("GEMINI_API_KEY"))
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "FYNANCE_GEMINI_API_KEY (or GEMINI_API_KEY) is not set. \
+                     Set it in your .env file or environment."
+                )
+            })?;
+
+        let standard_model = std::env::var("FYNANCE_GEMINI_TEXT_MODEL")
+            .unwrap_or_else(|_| "gemini-3.8-flash".to_string());
+        let lite_model = std::env::var("FYNANCE_GEMINI_LITE_MODEL")
+            .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
+        let advanced_model = std::env::var("FYNANCE_GEMINI_PDF_MODEL")
+            .unwrap_or_else(|_| "gemini-3.8-flash".to_string());
+
+        let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .map_err(|e| anyhow!("failed to build HTTP client: {e}"))?;
+
+        Ok(Self {
+            client,
+            api_key,
+            standard_model,
+            lite_model,
+            advanced_model,
+            progress: None,
+        })
+    }
+
+    fn model_for_tier(&self, tier: ModelTier) -> &str {
+        match tier {
+            ModelTier::Standard => &self.standard_model,
+            ModelTier::Advanced => &self.advanced_model,
+        }
+    }
+
+    fn resolve_model(
+        &self,
+        tier: ModelTier,
+        agent_override: Option<Agent>,
+    ) -> Result<String, ProviderError> {
+        match agent_override {
+            Some(Agent::FlashLite) => Ok(self.lite_model.clone()),
+            Some(Agent::Flash) => Ok(self.standard_model.clone()),
+            None => Ok(self.model_for_tier(tier).to_string()),
+            Some(agent) => Err(ProviderError::NotSupported(format!(
+                "agent '{agent:?}' is not supported by Gemini provider. Valid options: flash, flash_lite"
+            ))),
+        }
+    }
+
+    pub fn clone_with_progress(&self, tx: ProgressTx, task_id: Option<String>) -> Self {
+        Self {
+            client: self.client.clone(),
+            api_key: self.api_key.clone(),
+            standard_model: self.standard_model.clone(),
+            lite_model: self.lite_model.clone(),
+            advanced_model: self.advanced_model.clone(),
+            progress: Some((tx, task_id)),
+        }
+    }
+
+    async fn post_generate_content(
+        &self,
+        model: &str,
+        request_body: &Value,
+        tool_name: &str,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        if let Some((tx, task_id)) = &self.progress {
+            let _ = tx.send(ProgressEvent::LlmStart {
+                model: model.to_string(),
+                input_tokens: 0,
+                task_id: task_id.clone(),
+            });
+        }
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            model
+        );
+
+        let started = Instant::now();
+        let response = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("x-goog-api-key", &self.api_key)
+            .json(request_body)
+            .send()
+            .await
+            .map_err(classify_reqwest_error)?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| ProviderError::ResponseUnreadable(format!("{e}")))?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            return Err(match status_code {
+                429 => ProviderError::RateLimit {
+                    retry_after: None,
+                    detail: body,
+                },
+                401 | 403 => ProviderError::AuthRejected(body),
+                400..=499 => ProviderError::UpstreamClientError {
+                    status: status_code,
+                    body,
+                },
+                _ => ProviderError::UpstreamServerError {
+                    status: status_code,
+                    body,
+                },
+            });
+        }
+
+        let (value, finish_reason) = extract_gemini_tool_input(&body, tool_name)?;
+        let usage = extract_gemini_usage(&body);
+
+        warn_if_truncated(model, tool_name, &finish_reason, &usage);
+
+        Ok(ProviderCallResult {
+            value,
+            usage,
+            model: model.to_string(),
+            duration_ms,
+            stop_reason: finish_reason,
+        })
+    }
+}
 
 #[async_trait]
 impl LlmProvider for GeminiProvider {
     async fn chat_with_tools(
         &self,
-        _system_prompt: &str,
-        _user_message: &str,
-        _tool_name: &str,
-        _tool_schema: Value,
-        _tier: ModelTier,
-        _agent_override: Option<Agent>,
+        system_prompt: &str,
+        user_message: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        tier: ModelTier,
+        agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        Err(ProviderError::NotSupported(
-            "Gemini provider is not yet implemented. \
-             Use FYNANCE_PARSE_PROVIDER=anthropic or FYNANCE_PARSE_PROVIDER=openai."
-                .to_string(),
-        ))
+        let model = self.resolve_model(tier, agent_override)?;
+        let sanitized_schema = sanitize_schema_for_gemini(&tool_schema);
+
+        let request_body = json!({
+            "system_instruction": {
+                "parts": [{ "text": system_prompt }]
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{ "text": user_message }]
+                }
+            ],
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "name": tool_name,
+                            "description": format!("Extract structured data using the {} tool.", tool_name),
+                            "parameters": sanitized_schema
+                        }
+                    ]
+                }
+            ],
+            "tool_config": {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": [tool_name]
+                }
+            },
+            "generation_config": {
+                "max_output_tokens": MAX_TOKENS_TEXT
+            }
+        });
+
+        tracing::debug!(
+            provider = "gemini",
+            model = %model,
+            tool_name,
+            "sending text request"
+        );
+
+        self.post_generate_content(&model, &request_body, tool_name)
+            .await
     }
 
     async fn chat_with_pdf_and_tools(
         &self,
-        _system_prompt: &str,
-        _pdf_bytes: &[u8],
-        _text_supplement: &str,
-        _tool_name: &str,
-        _tool_schema: Value,
-        _agent_override: Option<Agent>,
+        system_prompt: &str,
+        pdf_bytes: &[u8],
+        text_supplement: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        Err(ProviderError::NotSupported(
-            "Gemini provider is not yet implemented. \
-             Use FYNANCE_PARSE_PROVIDER=anthropic for PDF input."
-                .to_string(),
-        ))
+        let model = self.resolve_model(ModelTier::Advanced, agent_override)?;
+        let sanitized_schema = sanitize_schema_for_gemini(&tool_schema);
+        let b64 = BASE64.encode(pdf_bytes);
+
+        let mut parts = vec![json!({
+            "inline_data": {
+                "mime_type": "application/pdf",
+                "data": b64
+            }
+        })];
+        if !text_supplement.is_empty() {
+            parts.push(json!({ "text": text_supplement }));
+        }
+
+        let request_body = json!({
+            "system_instruction": {
+                "parts": [{ "text": system_prompt }]
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": parts
+                }
+            ],
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "name": tool_name,
+                            "description": format!("Extract structured data using the {} tool.", tool_name),
+                            "parameters": sanitized_schema
+                        }
+                    ]
+                }
+            ],
+            "tool_config": {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": [tool_name]
+                }
+            },
+            "generation_config": {
+                "max_output_tokens": MAX_TOKENS_DOCUMENTS
+            }
+        });
+
+        tracing::debug!(
+            provider = "gemini",
+            model = %model,
+            tool_name,
+            pdf_size = pdf_bytes.len(),
+            "sending PDF request"
+        );
+
+        self.post_generate_content(&model, &request_body, tool_name)
+            .await
     }
 
     async fn chat_with_files_and_tools(
         &self,
-        _system_prompt: &str,
-        _files: &[(String, String, Vec<u8>)],
-        _text_supplement: &str,
-        _tool_name: &str,
-        _tool_schema: Value,
-        _agent_override: Option<Agent>,
+        system_prompt: &str,
+        files: &[(String, String, Vec<u8>)],
+        text_supplement: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        Err(ProviderError::NotSupported(
-            "Gemini provider is not yet implemented. \
-             Use FYNANCE_PARSE_PROVIDER=anthropic for unified mode."
-                .to_string(),
-        ))
+        let model = self.resolve_model(ModelTier::Advanced, agent_override)?;
+        let sanitized_schema = sanitize_schema_for_gemini(&tool_schema);
+
+        let mut parts: Vec<Value> = Vec::with_capacity(files.len() * 2 + 1);
+        for (filename, mime, bytes) in files {
+            parts.push(json!({
+                "text": format!(
+                    "Source document filename: {filename}\nFor every row you extract from the document immediately below, set its \"source_file\" field to exactly this filename."
+                )
+            }));
+            if mime == "application/pdf" || mime.starts_with("image/") {
+                parts.push(json!({
+                    "inline_data": {
+                        "mime_type": mime,
+                        "data": BASE64.encode(bytes)
+                    }
+                }));
+            } else {
+                let text = match std::str::from_utf8(bytes) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => String::from_utf8_lossy(bytes).to_string(),
+                };
+                parts.push(json!({ "text": text }));
+            }
+        }
+        if !text_supplement.is_empty() {
+            parts.push(json!({ "text": text_supplement }));
+        }
+
+        let request_body = json!({
+            "system_instruction": {
+                "parts": [{ "text": system_prompt }]
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": parts
+                }
+            ],
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "name": tool_name,
+                            "description": format!("Extract structured data using the {} tool.", tool_name),
+                            "parameters": sanitized_schema
+                        }
+                    ]
+                }
+            ],
+            "tool_config": {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": [tool_name]
+                }
+            },
+            "generation_config": {
+                "max_output_tokens": MAX_TOKENS_DOCUMENTS
+            }
+        });
+
+        tracing::debug!(
+            provider = "gemini",
+            model = %model,
+            tool_name,
+            files_count = files.len(),
+            "sending files request"
+        );
+
+        self.post_generate_content(&model, &request_body, tool_name)
+            .await
     }
 
     fn name(&self) -> &'static str {
         "gemini"
+    }
+
+    fn with_progress(
+        &self,
+        tx: ProgressTx,
+        task_id: Option<String>,
+    ) -> Option<Arc<dyn LlmProvider>> {
+        Some(Arc::new(self.clone_with_progress(tx, task_id)))
+    }
+}
+
+// ── Gemini response parsing helpers ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct GeminiResponse {
+    #[serde(default)]
+    candidates: Option<Vec<GeminiCandidate>>,
+    #[serde(rename = "usageMetadata")]
+    usage_metadata: Option<GeminiUsageMetadata>,
+}
+
+#[derive(Deserialize)]
+struct GeminiCandidate {
+    content: Option<GeminiContent>,
+    #[serde(rename = "finishReason")]
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GeminiContent {
+    parts: Option<Vec<GeminiPart>>,
+}
+
+#[derive(Deserialize)]
+struct GeminiPart {
+    #[serde(rename = "functionCall")]
+    function_call: Option<GeminiFunctionCall>,
+}
+
+#[derive(Deserialize)]
+struct GeminiFunctionCall {
+    name: String,
+    args: Option<Value>,
+}
+
+#[derive(Deserialize, Default)]
+struct GeminiUsageMetadata {
+    #[serde(rename = "promptTokenCount", default)]
+    prompt_token_count: u64,
+    #[serde(rename = "candidatesTokenCount", default)]
+    candidates_token_count: u64,
+}
+
+fn extract_gemini_tool_input(
+    body: &str,
+    tool_name: &str,
+) -> Result<(Value, Option<String>), ProviderError> {
+    let resp: GeminiResponse = serde_json::from_str(body).map_err(|e| {
+        ProviderError::ResponseUnreadable(format!(
+            "parsing Gemini response: {e} (preview: {})",
+            &body[..body.len().min(200)]
+        ))
+    })?;
+
+    let candidate = resp
+        .candidates
+        .and_then(|mut cs| {
+            if cs.is_empty() {
+                None
+            } else {
+                Some(cs.remove(0))
+            }
+        })
+        .ok_or_else(|| {
+            ProviderError::ResponseUnreadable("no candidates in Gemini response".to_string())
+        })?;
+
+    let finish_reason = candidate.finish_reason;
+
+    let parts = candidate.content.and_then(|c| c.parts).ok_or_else(|| {
+        ProviderError::ResponseUnreadable("no content parts in Gemini candidate".to_string())
+    })?;
+
+    let function_call = parts
+        .into_iter()
+        .find_map(|p| p.function_call.filter(|fc| fc.name == tool_name))
+        .ok_or_else(|| ProviderError::NoToolUse {
+            tool_name: tool_name.to_string(),
+        })?;
+
+    let args = function_call.args.unwrap_or(Value::Null);
+    Ok((args, finish_reason))
+}
+
+fn extract_gemini_usage(body: &str) -> TokenUsage {
+    serde_json::from_str::<GeminiResponse>(body)
+        .ok()
+        .and_then(|r| r.usage_metadata)
+        .map(|u| TokenUsage {
+            input_tokens: u.prompt_token_count,
+            output_tokens: u.candidates_token_count,
+        })
+        .unwrap_or_default()
+}
+
+pub fn sanitize_schema_for_gemini(schema: &Value) -> Value {
+    match schema {
+        Value::Object(map) => {
+            let mut new_map = serde_json::Map::new();
+            let mut is_nullable = false;
+            for (k, v) in map {
+                if k == "$schema" {
+                    continue;
+                }
+                if k == "type" {
+                    if let Value::Array(arr) = v {
+                        let mut non_null_type = None;
+                        for item in arr {
+                            if let Value::String(s) = item {
+                                if s == "null" {
+                                    is_nullable = true;
+                                } else {
+                                    non_null_type = Some(s.clone());
+                                }
+                            }
+                        }
+                        if let Some(t) = non_null_type {
+                            new_map.insert("type".to_string(), Value::String(t));
+                        }
+                        continue;
+                    }
+                }
+                new_map.insert(k.clone(), sanitize_schema_for_gemini(v));
+            }
+            if is_nullable {
+                new_map.insert("nullable".to_string(), Value::Bool(true));
+            }
+            Value::Object(new_map)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(sanitize_schema_for_gemini).collect()),
+        other => other.clone(),
     }
 }
 
@@ -1514,7 +1965,7 @@ pub fn create_provider() -> Result<Arc<dyn LlmProvider>> {
 /// # Valid values for FYNANCE_PARSE_PROVIDER
 /// - `"anthropic"` (default): credential chosen per `auth` (see below)
 /// - `"openai"`: requires `FYNANCE_OPENAI_API_KEY`
-/// - `"gemini"`: returns a stub that errors on every call
+/// - `"gemini"`: requires `FYNANCE_GEMINI_API_KEY` or `GEMINI_API_KEY`
 ///
 /// # Anthropic credential selection
 /// - [`AuthSource::Auto`]: prefer the subscription OAuth token; when both it and
@@ -1529,7 +1980,7 @@ pub fn create_provider_with_auth(auth: AuthSource) -> Result<Arc<dyn LlmProvider
     let provider: Arc<dyn LlmProvider> = match provider_name.to_lowercase().as_str() {
         "anthropic" => create_anthropic_provider(auth)?,
         "openai" => Arc::new(OpenAIProvider::from_env()?),
-        "gemini" => Arc::new(GeminiProvider),
+        "gemini" => Arc::new(GeminiProvider::from_env()?),
         other => {
             return Err(anyhow!(
                 "Unknown FYNANCE_PARSE_PROVIDER value: '{}'. \
@@ -1674,11 +2125,36 @@ mod tests {
     }
 
     #[test]
-    fn test_create_provider_gemini_is_stub() {
+    fn test_create_provider_gemini_requires_key() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("FYNANCE_PARSE_PROVIDER", "gemini") };
+        unsafe {
+            std::env::set_var("FYNANCE_PARSE_PROVIDER", "gemini");
+            std::env::remove_var("FYNANCE_GEMINI_API_KEY");
+            std::env::remove_var("GEMINI_API_KEY");
+        }
         let result = create_provider();
         unsafe { std::env::remove_var("FYNANCE_PARSE_PROVIDER") };
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("FYNANCE_GEMINI_API_KEY")
+        );
+    }
+
+    #[test]
+    fn test_create_provider_gemini_success() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("FYNANCE_PARSE_PROVIDER", "gemini");
+            std::env::set_var("FYNANCE_GEMINI_API_KEY", "test-key");
+        }
+        let result = create_provider();
+        unsafe {
+            std::env::remove_var("FYNANCE_PARSE_PROVIDER");
+            std::env::remove_var("FYNANCE_GEMINI_API_KEY");
+        }
         assert!(result.is_ok());
         assert_eq!(result.unwrap().name(), "gemini");
     }
@@ -1793,19 +2269,121 @@ mod tests {
     }
 
     #[test]
-    fn test_gemini_chat_returns_error() {
-        let provider = GeminiProvider;
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(provider.chat_with_tools(
-            "system",
-            "user",
-            "tool",
-            serde_json::json!({}),
-            ModelTier::Standard,
-            None,
-        ));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not supported"));
+    fn test_gemini_from_env_requires_key() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::remove_var("FYNANCE_GEMINI_API_KEY");
+            std::env::remove_var("GEMINI_API_KEY");
+        };
+        let err = GeminiProvider::from_env().unwrap_err();
+        assert!(err.to_string().contains("FYNANCE_GEMINI_API_KEY"));
+    }
+
+    #[test]
+    fn test_gemini_resolve_model() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("FYNANCE_GEMINI_API_KEY", "test-key");
+            std::env::remove_var("FYNANCE_GEMINI_TEXT_MODEL");
+            std::env::remove_var("FYNANCE_GEMINI_LITE_MODEL");
+            std::env::remove_var("FYNANCE_GEMINI_PDF_MODEL");
+        };
+        let provider = GeminiProvider::from_env().unwrap();
+        unsafe {
+            std::env::remove_var("FYNANCE_GEMINI_API_KEY");
+        };
+
+        assert_eq!(
+            provider.resolve_model(ModelTier::Standard, None).unwrap(),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
+            provider.resolve_model(ModelTier::Advanced, None).unwrap(),
+            "gemini-3.8-flash"
+        );
+        assert_eq!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::FlashLite))
+                .unwrap(),
+            "gemini-3.5-flash-lite"
+        );
+        assert_eq!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Flash))
+                .unwrap(),
+            "gemini-3.8-flash"
+        );
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Haiku))
+                .is_err()
+        );
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Sonnet))
+                .is_err()
+        );
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Opus))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_anthropic_resolve_model() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "test-key");
+            std::env::remove_var("FYNANCE_IMPORT_LLM_MODEL");
+            std::env::remove_var("FYNANCE_PARSE_PDF_MODEL");
+        };
+        let provider = AnthropicProvider::from_env().unwrap();
+        unsafe {
+            std::env::remove_var("FYNANCE_ANTHROPIC_API_KEY");
+        };
+
+        // None defaults to tier model
+        assert_eq!(
+            provider.resolve_model(ModelTier::Standard, None).unwrap(),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            provider.resolve_model(ModelTier::Advanced, None).unwrap(),
+            "claude-sonnet-4-6"
+        );
+
+        // Anthropic agents match
+        assert_eq!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Haiku))
+                .unwrap(),
+            "claude-haiku-4-5-20251001"
+        );
+        assert_eq!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Sonnet))
+                .unwrap(),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Opus))
+                .unwrap(),
+            "claude-opus-4-7"
+        );
+
+        // Other agents throw error
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Flash))
+                .is_err()
+        );
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::FlashLite))
+                .is_err()
+        );
     }
 
     #[test]
@@ -1880,14 +2458,19 @@ mod tests {
     #[test]
     fn test_anthropic_model_for_agent_mapping() {
         assert_eq!(
-            anthropic_model_for_agent(Agent::Haiku),
+            anthropic_model_for_agent(Agent::Haiku).unwrap(),
             "claude-haiku-4-5-20251001"
         );
         assert_eq!(
-            anthropic_model_for_agent(Agent::Sonnet),
+            anthropic_model_for_agent(Agent::Sonnet).unwrap(),
             "claude-sonnet-4-6"
         );
-        assert_eq!(anthropic_model_for_agent(Agent::Opus), "claude-opus-4-7");
+        assert_eq!(
+            anthropic_model_for_agent(Agent::Opus).unwrap(),
+            "claude-opus-4-7"
+        );
+        assert!(anthropic_model_for_agent(Agent::Flash).is_err());
+        assert!(anthropic_model_for_agent(Agent::FlashLite).is_err());
     }
 
     #[test]
@@ -1962,5 +2545,122 @@ mod tests {
         let anyhow_err: anyhow::Error = err.into();
         assert!(anyhow_err.to_string().contains("upstream timeout"));
         assert!(anyhow_err.downcast_ref::<ProviderError>().is_some());
+    }
+
+    #[test]
+    fn test_sanitize_schema_for_gemini() {
+        let draft07_schema = json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "notes": { "type": ["string", "null"], "description": "Optional notes" },
+                "amount": { "type": ["number", "null"] },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "code": { "type": ["string", "null"] }
+                        }
+                    }
+                }
+            },
+            "required": ["name"]
+        });
+
+        let sanitized = sanitize_schema_for_gemini(&draft07_schema);
+
+        assert!(sanitized.get("$schema").is_none());
+        assert_eq!(sanitized["type"], "object");
+        assert_eq!(sanitized["properties"]["name"]["type"], "string");
+        assert_eq!(sanitized["properties"]["name"].get("nullable"), None);
+
+        assert_eq!(sanitized["properties"]["notes"]["type"], "string");
+        assert_eq!(sanitized["properties"]["notes"]["nullable"], true);
+        assert_eq!(
+            sanitized["properties"]["notes"]["description"],
+            "Optional notes"
+        );
+
+        assert_eq!(sanitized["properties"]["amount"]["type"], "number");
+        assert_eq!(sanitized["properties"]["amount"]["nullable"], true);
+
+        assert_eq!(
+            sanitized["properties"]["items"]["items"]["properties"]["code"]["type"],
+            "string"
+        );
+        assert_eq!(
+            sanitized["properties"]["items"]["items"]["properties"]["code"]["nullable"],
+            true
+        );
+    }
+
+    #[test]
+    fn test_extract_gemini_tool_input_success() {
+        let body = json!({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "parse_statement",
+                                    "args": {
+                                        "transactions": [
+                                            { "date": "2026-01-01", "amount": "-10.50" }
+                                        ]
+                                    }
+                                }
+                            }
+                        ],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 120,
+                "candidatesTokenCount": 45
+            }
+        })
+        .to_string();
+
+        let (val, finish_reason) = extract_gemini_tool_input(&body, "parse_statement").unwrap();
+        assert_eq!(finish_reason.as_deref(), Some("STOP"));
+        assert_eq!(
+            val,
+            json!({
+                "transactions": [
+                    { "date": "2026-01-01", "amount": "-10.50" }
+                ]
+            })
+        );
+
+        let usage = extract_gemini_usage(&body);
+        assert_eq!(usage.input_tokens, 120);
+        assert_eq!(usage.output_tokens, 45);
+    }
+
+    #[test]
+    fn test_extract_gemini_tool_input_missing_tool() {
+        let body = json!({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "I could not extract any data."
+                            }
+                        ]
+                    },
+                    "finishReason": "STOP"
+                }
+            ]
+        })
+        .to_string();
+
+        let err = extract_gemini_tool_input(&body, "parse_statement").unwrap_err();
+        assert!(matches!(err, ProviderError::NoToolUse { .. }));
     }
 }

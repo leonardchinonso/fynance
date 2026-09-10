@@ -18,7 +18,7 @@ use super::investments_parser::ParsedInvestmentRow;
 use super::provider::{LlmProvider, ProviderCallResult};
 use super::unified::UnifiedStatementRow;
 use crate::importers::document_parser::ParseHints;
-use crate::model::{Agent, Holding};
+use crate::model::Holding;
 
 const INTRO: &str = include_str!("../../config/prompts/unified/intro.txt");
 const OUTPUT_SHAPE: &str = include_str!("../../config/prompts/unified/output_shape.txt");
@@ -142,7 +142,7 @@ pub async fn extract_all(
 ) -> Result<UnifiedExtraction> {
     let system_prompt = build_unified_prompt(hints, ctx);
     let tool_schema = build_unified_tool_schema();
-    let agent_override = Some(hints.agent().unwrap_or(Agent::Sonnet));
+    let agent_override = hints.agent();
 
     let mut text_supplement = format!(
         "Account being imported: {account_id}. Extract entries strictly according to the rules in the system prompt."
