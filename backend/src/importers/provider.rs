@@ -323,7 +323,11 @@ impl AnthropicProvider {
         }
     }
 
-    fn resolve_model(&self, tier: ModelTier, agent_override: Option<Agent>) -> Result<String, ProviderError> {
+    fn resolve_model(
+        &self,
+        tier: ModelTier,
+        agent_override: Option<Agent>,
+    ) -> Result<String, ProviderError> {
         match agent_override {
             Some(agent) => anthropic_model_for_agent(agent).map(|s| s.to_string()),
             None => Ok(self.model_for_tier(tier).to_string()),
@@ -1336,7 +1340,11 @@ impl GeminiProvider {
         }
     }
 
-    fn resolve_model(&self, tier: ModelTier, agent_override: Option<Agent>) -> Result<String, ProviderError> {
+    fn resolve_model(
+        &self,
+        tier: ModelTier,
+        agent_override: Option<Agent>,
+    ) -> Result<String, ProviderError> {
         match agent_override {
             Some(Agent::FlashLite) => Ok(self.lite_model.clone()),
             Some(Agent::Flash) => Ok(self.standard_model.clone()),
@@ -1482,7 +1490,8 @@ impl LlmProvider for GeminiProvider {
             "sending text request"
         );
 
-        self.post_generate_content(&model, &request_body, tool_name).await
+        self.post_generate_content(&model, &request_body, tool_name)
+            .await
     }
 
     async fn chat_with_pdf_and_tools(
@@ -1498,14 +1507,12 @@ impl LlmProvider for GeminiProvider {
         let sanitized_schema = sanitize_schema_for_gemini(&tool_schema);
         let b64 = BASE64.encode(pdf_bytes);
 
-        let mut parts = vec![
-            json!({
-                "inline_data": {
-                    "mime_type": "application/pdf",
-                    "data": b64
-                }
-            })
-        ];
+        let mut parts = vec![json!({
+            "inline_data": {
+                "mime_type": "application/pdf",
+                "data": b64
+            }
+        })];
         if !text_supplement.is_empty() {
             parts.push(json!({ "text": text_supplement }));
         }
@@ -1550,7 +1557,8 @@ impl LlmProvider for GeminiProvider {
             "sending PDF request"
         );
 
-        self.post_generate_content(&model, &request_body, tool_name).await
+        self.post_generate_content(&model, &request_body, tool_name)
+            .await
     }
 
     async fn chat_with_files_and_tools(
@@ -1631,7 +1639,8 @@ impl LlmProvider for GeminiProvider {
             "sending files request"
         );
 
-        self.post_generate_content(&model, &request_body, tool_name).await
+        self.post_generate_content(&model, &request_body, tool_name)
+            .await
     }
 
     fn name(&self) -> &'static str {
@@ -1702,7 +1711,13 @@ fn extract_gemini_tool_input(
 
     let candidate = resp
         .candidates
-        .and_then(|mut cs| if cs.is_empty() { None } else { Some(cs.remove(0)) })
+        .and_then(|mut cs| {
+            if cs.is_empty() {
+                None
+            } else {
+                Some(cs.remove(0))
+            }
+        })
         .ok_or_else(|| {
             ProviderError::ResponseUnreadable("no candidates in Gemini response".to_string())
         })?;
@@ -2287,16 +2302,32 @@ mod tests {
             "gemini-3.8-flash"
         );
         assert_eq!(
-            provider.resolve_model(ModelTier::Standard, Some(Agent::FlashLite)).unwrap(),
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::FlashLite))
+                .unwrap(),
             "gemini-3.5-flash-lite"
         );
         assert_eq!(
-            provider.resolve_model(ModelTier::Standard, Some(Agent::Flash)).unwrap(),
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Flash))
+                .unwrap(),
             "gemini-3.8-flash"
         );
-        assert!(provider.resolve_model(ModelTier::Standard, Some(Agent::Haiku)).is_err());
-        assert!(provider.resolve_model(ModelTier::Standard, Some(Agent::Sonnet)).is_err());
-        assert!(provider.resolve_model(ModelTier::Standard, Some(Agent::Opus)).is_err());
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Haiku))
+                .is_err()
+        );
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Sonnet))
+                .is_err()
+        );
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Opus))
+                .is_err()
+        );
     }
 
     #[test]
@@ -2343,12 +2374,16 @@ mod tests {
         );
 
         // Other agents throw error
-        assert!(provider
-            .resolve_model(ModelTier::Standard, Some(Agent::Flash))
-            .is_err());
-        assert!(provider
-            .resolve_model(ModelTier::Standard, Some(Agent::FlashLite))
-            .is_err());
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Flash))
+                .is_err()
+        );
+        assert!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::FlashLite))
+                .is_err()
+        );
     }
 
     #[test]
@@ -2591,8 +2626,7 @@ mod tests {
         })
         .to_string();
 
-        let (val, finish_reason) =
-            extract_gemini_tool_input(&body, "parse_statement").unwrap();
+        let (val, finish_reason) = extract_gemini_tool_input(&body, "parse_statement").unwrap();
         assert_eq!(finish_reason.as_deref(), Some("STOP"));
         assert_eq!(
             val,

@@ -31,7 +31,8 @@ fn fixture(name: &str) -> PathBuf {
 fn live_gemini_monzo_import() {
     let _ = dotenvy::dotenv();
 
-    let provider = Arc::new(GeminiProvider::from_env().expect("Gemini API key must be set for live tests"));
+    let provider =
+        Arc::new(GeminiProvider::from_env().expect("Gemini API key must be set for live tests"));
     let parser = LlmStatementParser::new(provider);
     let min_detection_confidence = parser.min_detection_confidence;
     let min_row_confidence = parser.min_row_confidence;
@@ -71,10 +72,12 @@ fn live_gemini_monzo_import() {
 async fn live_gemini_pdf_statement_parse() {
     let _ = dotenvy::dotenv();
 
-    let provider = Arc::new(GeminiProvider::from_env().expect("Gemini API key must be set for live tests"));
+    let provider =
+        Arc::new(GeminiProvider::from_env().expect("Gemini API key must be set for live tests"));
     let parser = fynance::importers::pdf_parser::PdfStatementParser::new(provider);
 
-    let pdf_bytes = std::fs::read(fixture("sample_statement.pdf")).expect("fixture sample_statement.pdf must exist");
+    let pdf_bytes = std::fs::read(fixture("sample_statement.pdf"))
+        .expect("fixture sample_statement.pdf must exist");
     let (statement, call_result) = parser
         .parse(&pdf_bytes, "sample_statement.pdf", None, None)
         .await
@@ -85,5 +88,8 @@ async fn live_gemini_pdf_statement_parse() {
     println!("PDF model used: {}", call_result.model);
     println!("PDF duration ms: {}", call_result.duration_ms);
 
-    assert!(!statement.rows.is_empty(), "expected at least 1 transaction from sample_statement.pdf");
+    assert!(
+        !statement.rows.is_empty(),
+        "expected at least 1 transaction from sample_statement.pdf"
+    );
 }
