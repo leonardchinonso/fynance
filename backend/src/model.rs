@@ -1699,6 +1699,9 @@ pub enum Agent {
     Haiku,
     Sonnet,
     Opus,
+    Flash,
+    #[serde(rename = "flash_lite", alias = "flashlite", alias = "flash-lite")]
+    FlashLite,
 }
 
 /// Which Anthropic credential the parse pipeline should use. The actual model,
