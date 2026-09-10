@@ -323,10 +323,10 @@ impl AnthropicProvider {
         }
     }
 
-    fn resolve_model(&self, tier: ModelTier, agent_override: Option<Agent>) -> String {
+    fn resolve_model(&self, tier: ModelTier, agent_override: Option<Agent>) -> Result<String, ProviderError> {
         match agent_override {
-            Some(agent) => anthropic_model_for_agent(agent).to_string(),
-            None => self.model_for_tier(tier).to_string(),
+            Some(agent) => anthropic_model_for_agent(agent).map(|s| s.to_string()),
+            None => Ok(self.model_for_tier(tier).to_string()),
         }
     }
 
@@ -342,11 +342,14 @@ impl AnthropicProvider {
 }
 
 /// Latest frontier model id per agent. Keep in sync with `pricing.rs`.
-fn anthropic_model_for_agent(agent: Agent) -> &'static str {
+fn anthropic_model_for_agent(agent: Agent) -> Result<&'static str, ProviderError> {
     match agent {
-        Agent::Haiku | Agent::FlashLite => "claude-haiku-4-5-20251001",
-        Agent::Sonnet | Agent::Flash => "claude-sonnet-4-6",
-        Agent::Opus => "claude-opus-4-7",
+        Agent::Haiku => Ok("claude-haiku-4-5-20251001"),
+        Agent::Sonnet => Ok("claude-sonnet-4-6"),
+        Agent::Opus => Ok("claude-opus-4-7"),
+        other => Err(ProviderError::NotSupported(format!(
+            "agent '{other:?}' is not supported by Anthropic provider. Valid options: haiku, sonnet, opus"
+        ))),
     }
 }
 
@@ -722,7 +725,7 @@ impl LlmProvider for AnthropicProvider {
         tier: ModelTier,
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        let model = self.resolve_model(tier, agent_override);
+        let model = self.resolve_model(tier, agent_override)?;
 
         let request_body = json!({
             "model": model,
@@ -758,7 +761,7 @@ impl LlmProvider for AnthropicProvider {
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
         let b64 = BASE64.encode(pdf_bytes);
-        let model = self.resolve_model(ModelTier::Advanced, agent_override);
+        let model = self.resolve_model(ModelTier::Advanced, agent_override)?;
 
         let request_body = json!({
             "model": model,
@@ -814,7 +817,7 @@ impl LlmProvider for AnthropicProvider {
         tool_schema: Value,
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        let model = self.resolve_model(ModelTier::Advanced, agent_override);
+        let model = self.resolve_model(ModelTier::Advanced, agent_override)?;
 
         let mut content: Vec<Value> = Vec::with_capacity(files.len() * 2 + 1);
         for (filename, mime, bytes) in files {
@@ -1333,11 +1336,14 @@ impl GeminiProvider {
         }
     }
 
-    fn resolve_model(&self, tier: ModelTier, agent_override: Option<Agent>) -> String {
+    fn resolve_model(&self, tier: ModelTier, agent_override: Option<Agent>) -> Result<String, ProviderError> {
         match agent_override {
-            Some(Agent::FlashLite | Agent::Haiku) => self.lite_model.clone(),
-            Some(Agent::Flash | Agent::Sonnet | Agent::Opus) => self.standard_model.clone(),
-            None => self.model_for_tier(tier).to_string(),
+            Some(Agent::FlashLite) => Ok(self.lite_model.clone()),
+            Some(Agent::Flash) => Ok(self.standard_model.clone()),
+            None => Ok(self.model_for_tier(tier).to_string()),
+            Some(agent) => Err(ProviderError::NotSupported(format!(
+                "agent '{agent:?}' is not supported by Gemini provider. Valid options: flash, flash_lite"
+            ))),
         }
     }
 
@@ -1434,7 +1440,7 @@ impl LlmProvider for GeminiProvider {
         tier: ModelTier,
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        let model = self.resolve_model(tier, agent_override);
+        let model = self.resolve_model(tier, agent_override)?;
         let sanitized_schema = sanitize_schema_for_gemini(&tool_schema);
 
         let request_body = json!({
@@ -1488,7 +1494,7 @@ impl LlmProvider for GeminiProvider {
         tool_schema: Value,
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        let model = self.resolve_model(ModelTier::Advanced, agent_override);
+        let model = self.resolve_model(ModelTier::Advanced, agent_override)?;
         let sanitized_schema = sanitize_schema_for_gemini(&tool_schema);
         let b64 = BASE64.encode(pdf_bytes);
 
@@ -1556,7 +1562,7 @@ impl LlmProvider for GeminiProvider {
         tool_schema: Value,
         agent_override: Option<Agent>,
     ) -> Result<ProviderCallResult, ProviderError> {
-        let model = self.resolve_model(ModelTier::Advanced, agent_override);
+        let model = self.resolve_model(ModelTier::Advanced, agent_override)?;
         let sanitized_schema = sanitize_schema_for_gemini(&tool_schema);
 
         let mut parts: Vec<Value> = Vec::with_capacity(files.len() * 2 + 1);
@@ -2259,7 +2265,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gemini_model_resolution() {
+    fn test_gemini_resolve_model() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_GEMINI_API_KEY", "test-key");
@@ -2273,21 +2279,76 @@ mod tests {
         };
 
         assert_eq!(
-            provider.resolve_model(ModelTier::Standard, None),
+            provider.resolve_model(ModelTier::Standard, None).unwrap(),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            provider.resolve_model(ModelTier::Advanced, None),
+            provider.resolve_model(ModelTier::Advanced, None).unwrap(),
             "gemini-3.8-flash"
         );
         assert_eq!(
-            provider.resolve_model(ModelTier::Standard, Some(Agent::FlashLite)),
+            provider.resolve_model(ModelTier::Standard, Some(Agent::FlashLite)).unwrap(),
             "gemini-3.5-flash-lite"
         );
         assert_eq!(
-            provider.resolve_model(ModelTier::Standard, Some(Agent::Flash)),
+            provider.resolve_model(ModelTier::Standard, Some(Agent::Flash)).unwrap(),
             "gemini-3.8-flash"
         );
+        assert!(provider.resolve_model(ModelTier::Standard, Some(Agent::Haiku)).is_err());
+        assert!(provider.resolve_model(ModelTier::Standard, Some(Agent::Sonnet)).is_err());
+        assert!(provider.resolve_model(ModelTier::Standard, Some(Agent::Opus)).is_err());
+    }
+
+    #[test]
+    fn test_anthropic_resolve_model() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "test-key");
+            std::env::remove_var("FYNANCE_IMPORT_LLM_MODEL");
+            std::env::remove_var("FYNANCE_PARSE_PDF_MODEL");
+        };
+        let provider = AnthropicProvider::from_env().unwrap();
+        unsafe {
+            std::env::remove_var("FYNANCE_ANTHROPIC_API_KEY");
+        };
+
+        // None defaults to tier model
+        assert_eq!(
+            provider.resolve_model(ModelTier::Standard, None).unwrap(),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            provider.resolve_model(ModelTier::Advanced, None).unwrap(),
+            "claude-sonnet-4-6"
+        );
+
+        // Anthropic agents match
+        assert_eq!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Haiku))
+                .unwrap(),
+            "claude-haiku-4-5-20251001"
+        );
+        assert_eq!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Sonnet))
+                .unwrap(),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            provider
+                .resolve_model(ModelTier::Standard, Some(Agent::Opus))
+                .unwrap(),
+            "claude-opus-4-7"
+        );
+
+        // Other agents throw error
+        assert!(provider
+            .resolve_model(ModelTier::Standard, Some(Agent::Flash))
+            .is_err());
+        assert!(provider
+            .resolve_model(ModelTier::Standard, Some(Agent::FlashLite))
+            .is_err());
     }
 
     #[test]
@@ -2362,14 +2423,19 @@ mod tests {
     #[test]
     fn test_anthropic_model_for_agent_mapping() {
         assert_eq!(
-            anthropic_model_for_agent(Agent::Haiku),
+            anthropic_model_for_agent(Agent::Haiku).unwrap(),
             "claude-haiku-4-5-20251001"
         );
         assert_eq!(
-            anthropic_model_for_agent(Agent::Sonnet),
+            anthropic_model_for_agent(Agent::Sonnet).unwrap(),
             "claude-sonnet-4-6"
         );
-        assert_eq!(anthropic_model_for_agent(Agent::Opus), "claude-opus-4-7");
+        assert_eq!(
+            anthropic_model_for_agent(Agent::Opus).unwrap(),
+            "claude-opus-4-7"
+        );
+        assert!(anthropic_model_for_agent(Agent::Flash).is_err());
+        assert!(anthropic_model_for_agent(Agent::FlashLite).is_err());
     }
 
     #[test]
