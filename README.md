@@ -224,7 +224,6 @@ The variables below can be set any of the three ways described in [Configuring t
 | `FYNANCE_OPENAI_API_KEY` / `_TEXT_MODEL` / `_PDF_MODEL` | (none) | No | OpenAI credentials and models, used only when `FYNANCE_PARSE_PROVIDER=openai`. See `.env.example` |
 | `FYNANCE_GEMINI_API_KEY` | (none) | No | Google Gemini API key (`AIzaSy...`) from [Google AI Studio](https://aistudio.google.com/), used when `FYNANCE_PARSE_PROVIDER=gemini` |
 | `FYNANCE_GEMINI_TEXT_MODEL` | `gemini-3.8-flash` | No | Gemini model used by the CSV/statement parser |
-| `FYNANCE_GEMINI_LITE_MODEL` | `gemini-3.5-flash-lite` | No | Gemini model for lite agent tier |
 | `FYNANCE_GEMINI_PDF_MODEL` | `gemini-3.8-flash` | No | Gemini model for PDF/visual document parsing |
 | `VITE_MOCK_ONLY` | (none) | No | Frontend build flag: force mock-data mode for demo/preview deployments |
 
