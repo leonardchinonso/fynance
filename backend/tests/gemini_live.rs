@@ -65,3 +65,25 @@ fn live_gemini_monzo_import() {
     );
     assert_eq!(result.rows_inserted, 3, "monzo.csv has 3 data rows");
 }
+
+#[tokio::test]
+#[ignore = "requires FYNANCE_GEMINI_API_KEY or GEMINI_API_KEY; run with: cargo test --test gemini_live -- --ignored --nocapture"]
+async fn live_gemini_pdf_statement_parse() {
+    let _ = dotenvy::dotenv();
+
+    let provider = Arc::new(GeminiProvider::from_env().expect("Gemini API key must be set for live tests"));
+    let parser = fynance::importers::pdf_parser::PdfStatementParser::new(provider);
+
+    let pdf_bytes = std::fs::read(fixture("sample_statement.pdf")).expect("fixture sample_statement.pdf must exist");
+    let (statement, call_result) = parser
+        .parse(&pdf_bytes, "sample_statement.pdf", None, None)
+        .await
+        .expect("Gemini PDF parsing should succeed");
+
+    println!("PDF detected bank: {:?}", statement.detected_bank);
+    println!("PDF parsed rows: {}", statement.rows.len());
+    println!("PDF model used: {}", call_result.model);
+    println!("PDF duration ms: {}", call_result.duration_ms);
+
+    assert!(!statement.rows.is_empty(), "expected at least 1 transaction from sample_statement.pdf");
+}
