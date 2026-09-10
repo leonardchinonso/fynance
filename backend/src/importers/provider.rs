@@ -1463,6 +1463,9 @@ impl LlmProvider for GeminiProvider {
                     "mode": "ANY",
                     "allowed_function_names": [tool_name]
                 }
+            },
+            "generation_config": {
+                "max_output_tokens": MAX_TOKENS_TEXT
             }
         });
 
@@ -1527,6 +1530,9 @@ impl LlmProvider for GeminiProvider {
                     "mode": "ANY",
                     "allowed_function_names": [tool_name]
                 }
+            },
+            "generation_config": {
+                "max_output_tokens": MAX_TOKENS_DOCUMENTS
             }
         });
 
@@ -1605,6 +1611,9 @@ impl LlmProvider for GeminiProvider {
                     "mode": "ANY",
                     "allowed_function_names": [tool_name]
                 }
+            },
+            "generation_config": {
+                "max_output_tokens": MAX_TOKENS_DOCUMENTS
             }
         });
 
