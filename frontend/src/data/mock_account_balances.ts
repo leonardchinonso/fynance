@@ -332,7 +332,7 @@ function generateBalances(): AccountSnapshot[] {
       balance += contribution
 
       // Apply market return with volatility (Gaussian noise)
-      if (seed.monthlyReturn !== 0 || seed.volatility > 0) {
+      if (seed.monthlyReturn !== 0) {
         const noise = gaussianRandom(rand) * seed.volatility
         const monthReturn = seed.monthlyReturn + noise
         balance *= (1 + monthReturn)
