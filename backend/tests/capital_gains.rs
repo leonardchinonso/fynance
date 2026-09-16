@@ -4271,3 +4271,197 @@ async fn test_cgt_brought_forward_losses_are_capped_at_the_excess_over_the_aea()
     // entry from Decimal::ZERO keeps the zero unscaled.
     assert_eq!(tax["tax_due"], "0");
 }
+
+// ── GET /api/investments/brought-forward-losses ──────────────────────────────
+//
+// The derive endpoint had zero integration coverage before these two tests
+// (`grep -rn "investments/brought" backend/tests/` returned nothing), despite
+// being the endpoint the CGT pre-flight screen calls. The pre-flight opens
+// *only* on `missing_exchange_rates` — i.e. precisely when rates are known to
+// be missing — and then immediately derives, so the no-rates path below is the
+// expected path through this handler, not an edge case.
+
+/// With no stored rates, deriving must fail with the actionable 400 that names
+/// every missing pair — never an `Internal` 500.
+///
+/// The distinction matters to a user: `missing_exchange_rates` tells them which
+/// rates to enter and they can then proceed, whereas the 500 raised by
+/// `unreachable_missing_rate` says explicitly that the problem is a bug they
+/// cannot fix by entering a rate. Getting the latter on the pre-flight's own
+/// path would be a dead end, and the failure is swallowed into `derivedError`
+/// on the client, so nothing else would surface it.
+#[tokio::test]
+async fn test_derived_losses_missing_exchange_rates_is_actionable_400() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // A disposal in 2025-26, the year immediately before the one we derive
+        // INTO, so it falls inside the default four-year lookback window.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2025-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2025-09-01T10:00:00",
+            "100",
+            "6.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    // USD exists as a currency (so this is NOT `missing_currencies`), but no
+    // date-keyed rate is stored for either leg.
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "0.75" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/brought-forward-losses?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "deriving without rates must be an actionable 400, not a 500"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(res["code"], "missing_exchange_rates");
+    assert_eq!(res["quote"], "GBP");
+
+    // Both legs must be named: each disposal converts at its own date's rate
+    // and each acquisition at its own, so the user needs both to proceed.
+    let missing = res["missing"].as_array().unwrap();
+    let mut dates: Vec<&str> = missing
+        .iter()
+        .map(|m| m["date"].as_str().unwrap())
+        .collect();
+    dates.sort_unstable();
+    assert_eq!(
+        dates,
+        vec!["2025-05-01", "2025-09-01"],
+        "every unseeded pair should be reported"
+    );
+    assert!(
+        missing.iter().all(|m| m["currency"] == "USD"),
+        "every missing pair should name the USD leg it belongs to"
+    );
+}
+
+/// The happy path: with every rate seeded, a prior year's net loss is derived
+/// and converted at each leg's OWN date's rate.
+///
+/// The two rates are deliberately far apart (0.80 on acquisition, 0.50 on
+/// disposal) so that the correct per-date conversion is arithmetically
+/// distinguishable from the two ways of getting it wrong. Cost is
+/// 100 x $10 x 0.80 = £800 and proceeds are 100 x $6 x 0.50 = £300, so the
+/// loss is £500. Using the acquisition rate for both legs would give £400, and
+/// the disposal rate for both would give £250 — so this assertion fails if the
+/// engine ever reads a rate for the wrong date, which a single-rate fixture
+/// could not detect.
+#[tokio::test]
+async fn test_derived_losses_happy_path_converts_at_each_events_own_rate() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2025-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2025-09-01T10:00:00",
+            "100",
+            "6.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "0.75" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    seed_rates(
+        &app,
+        "USD",
+        &[("2025-05-01", "0.80"), ("2025-09-01", "0.50")],
+    )
+    .await;
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/brought-forward-losses?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Scale is the engine's own: the conversion carries four decimal places
+    // through, and the derive query sums without rescaling.
+    assert_eq!(res["amount"], "500.0000", "£800 cost - £300 proceeds");
+    assert_eq!(
+        res["is_upper_bound"], true,
+        "the figure is a bound, and the UI says so"
+    );
+
+    let contributions = res["contributions"].as_array().unwrap();
+    assert_eq!(
+        contributions.len(),
+        1,
+        "only the year holding the disposal contributes"
+    );
+    assert_eq!(contributions[0]["tax_year"], "2025-26");
+    assert_eq!(contributions[0]["net_loss"], "500.0000");
+}
