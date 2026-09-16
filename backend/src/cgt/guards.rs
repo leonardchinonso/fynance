@@ -13,7 +13,7 @@ use crate::model::{Account, InvestmentEvent, InvestmentEventType};
 use crate::server::error::AppError;
 use crate::util::fx::{FxRateMap, MissingRate};
 
-use super::models::CalEvent;
+use super::internal::CalEvent;
 
 /// Reject the request up-front if any in-scope investment event references a
 /// currency that isn't configured. Without this check the engine still runs,

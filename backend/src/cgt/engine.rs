@@ -17,9 +17,10 @@ use crate::server::error::AppError;
 use crate::util::fx::FxRateMap;
 
 use super::guards::{check_required_exchange_rates, unreachable_missing_rate};
+use super::internal::{CalEvent, InternalMatch};
 use super::models::{
-    CalEvent, CapitalGainsResponse, CgtDisposalGroup, CgtMatchDetail, CgtRealizedEvent, CgtSummary,
-    InternalMatch, S104PoolState,
+    CapitalGainsResponse, CgtDisposalGroup, CgtMatchDetail, CgtRealizedEvent, CgtSummary,
+    S104PoolState,
 };
 
 /// Runs the HMRC matching rules over the event ledger.
