@@ -31,8 +31,8 @@ ended 5 Apr 2025) rather than inferred. Corrections:
   (£250.48 → £250.00). £6,000.00 + £250.00 = £6,250.00.
   **❌ We are not reproducing this** — see 0.2.
 - **The highest-rate-band-first ordering is confirmed correct.** The Intermediary Summary shows both
-  the £1,454 current-year loss and the £3,000 AEA deducted from the **post-30-Oct (24%)** band,
-  leaving £6,647, with the pre-30-Oct £23,601 untouched. This was previously an assumption.
+  the £1,000 current-year loss and the £3,000 AEA deducted from the **post-30-Oct (24%)** band,
+  leaving £8,000, with the pre-30-Oct £20,000 untouched. This was previously an assumption.
 - **Brought-forward losses were £0** for 2024-25, and income exceeded the higher-rate threshold with
   no basic-rate band left — so every gain sat in the upper band. `allowable_income_remaining: 0` is
   the correct default for this user.
@@ -376,7 +376,7 @@ Reorganised from the synthesis we did after the build. Each item lists what we h
       { "from": "2024-10-30", "to": "2025-04-05", "rate": "0.24" }
     ],
     "annual_exempt_amount": "3000",
-    "brought_forward_losses": "1454",
+    "brought_forward_losses": "1000",
     "allowable_income_remaining": "0"   // headroom in the basic-rate band, drives lower-rate gain bucket
   }
 }
@@ -387,13 +387,13 @@ Reorganised from the synthesis we did after the build. Each item lists what we h
 {
   "tax": {
     "gains_by_band": [
-      { "from": "2024-04-06", "to": "2024-10-29", "gain": "23601", "rate": "0.20", "tax": "4720.20" },
-      { "from": "2024-10-30", "to": "2025-04-05", "gain": "11101", "rate": "0.24", "tax": "1595.28" }
+      { "from": "2024-04-06", "to": "2024-10-29", "gain": "20000", "rate": "0.20", "tax": "4000.00" },
+      { "from": "2024-10-30", "to": "2025-04-05", "gain": "12000", "rate": "0.24", "tax": "1920.00" }
     ],
     "aea_used": "3000",
-    "losses_used": "1454",
-    "taxable_gain": "30248",
-    "tax_due": "6315.48"
+    "losses_used": "1000",
+    "taxable_gain": "28000",
+    "tax_due": "5920.00"
   }
 }
 ```
@@ -519,7 +519,7 @@ The storage-side half of this (a typed `StorageError` enum replacing the message
 
 Engine takes one rate per currency and uses it for every event regardless of date. PLTR (USD) figures last tax year differ from the filing by ~£80k because of this alone.
 
-**Update (2026-06-26):** with the Shareworks ledger rebuilt (gross vests), static FX is now the *only* remaining reason the report doesn't tie to the filed return on the **gains** side (the losses gap is the deliberate sell-to-cover treatment). For 2024-25, fynance reports PLTR gains-before-losses of £31,877.80 vs the filed £34,702 (~£2.8k); HMRC converts each leg at its own date's rate while we convert every leg at one flat rate, and the configured 0.74 also runs below the ~0.78 GBP/USD average for the period. Confirmed cause, tracked here as the fix. Until it lands, USD positions will not tie to the penny and the report's FX footnote says so.
+**Update (2026-06-26):** with the Shareworks ledger rebuilt (gross vests), static FX is now the *only* remaining reason the report doesn't tie to the filed return on the **gains** side (the losses gap is the deliberate sell-to-cover treatment). For 2024-25, fynance reports PLTR gains-before-losses of roughly £31,900 vs the filed £34,700 (~£2.8k, illustrative placeholders — see the note at the top of this document); HMRC converts each leg at its own date's rate while we convert every leg at one flat rate, and the configured 0.74 also runs below the ~0.78 GBP/USD average for the period. Confirmed cause, tracked here as the fix. Until it lands, USD positions will not tie to the penny and the report's FX footnote says so.
 
 `convert_as_of(amount, currency, date)` already exists in `fx.rs` but currently delegates to `convert`. Real impl needs a date-keyed `exchange_rates` cache (shared with multi-currency plan §V4):
 
