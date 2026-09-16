@@ -3,6 +3,7 @@ import { Separator } from "@/components/ui/separator"
 import { formatCurrency } from "@/lib/utils"
 import { useRedactedFlag } from "@/hooks/use_redacted_flag"
 import type { CgtSummary } from "@/bindings/CgtSummary"
+import type { TaxBandResult } from "@/bindings/TaxBandResult"
 import type { TaxComputation } from "@/bindings/TaxComputation"
 
 interface CgtSummaryCardProps {
@@ -19,6 +20,13 @@ export function CgtSummaryCard({ summary, disposalCount, tax }: CgtSummaryCardPr
   useRedactedFlag()
   const cur = summary.base_currency
   const net = Number.parseFloat(summary.net_gain_loss)
+  // Only bands that actually bear tax are worth a row; a band fully covered by
+  // losses or the allowance would print as a £0.00 line that reads like an error.
+  const taxableBands = (tax?.bands ?? []).filter((b) => Number.parseFloat(b.taxable) > 0)
+  // Whether the year splits across more than one *period* (as 2024-25 does, at
+  // 30 October 2024). Decides whether band labels need to name their date range:
+  // with a single period, "Gains from 6 Apr 2024 @ 24%" is noise.
+  const multipleBandPeriods = new Set(taxableBands.map((b) => b.valid_from)).size > 1
   return (
     <Card>
       <CardHeader>
@@ -85,6 +93,27 @@ export function CgtSummaryCard({ summary, disposalCount, tax }: CgtSummaryCardPr
               value={formatCurrency(tax.taxable_gain, cur)}
             />
             <Separator />
+            {/*
+              The rate bands are the working behind the total below. Rendered
+              with the plain (non-emphasis) Row so they read as the derivation
+              and "Capital Gains Tax due" stays the bottom line — the same
+              hierarchy the PDF uses. The label wording is deliberately mirrored
+              from cgt_pdf_document.tsx so the screen and the filed document
+              cannot drift; see bandLabel below.
+            */}
+            {taxableBands.map((b) => (
+              <Row
+                key={`${b.valid_from}-${b.rate_kind}`}
+                label={bandLabel(b, multipleBandPeriods)}
+                value={formatCurrency(b.tax, cur)}
+              />
+            ))}
+            {Number.parseFloat(tax.total_gains) > 0 && taxableBands.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                No Capital Gains Tax due for {tax.tax_year}: the gains are covered by losses
+                and the Annual Exempt Amount.
+              </p>
+            )}
             <Row
               label="Capital Gains Tax due"
               value={formatCurrency(tax.tax_due, cur)}
@@ -100,6 +129,48 @@ export function CgtSummaryCard({ summary, disposalCount, tax }: CgtSummaryCardPr
       </CardContent>
     </Card>
   )
+}
+
+/*
+ * fmtBandDate and bandLabel below are intentionally DUPLICATED from
+ * cgt_pdf_document.tsx rather than shared. The PDF is built from
+ * @react-pdf/renderer primitives and this card from DOM + Tailwind; extracting
+ * a shared helper would drag both modules into one another's scope for the sake
+ * of ten lines. The wording is mirrored verbatim so the screen and the filed
+ * document cannot disagree about which rate produced which figure — if you edit
+ * one, edit the other.
+ */
+
+function fmtBandDate(iso: string): string {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  const [y, m, d] = iso.split("-")
+  return `${Number(d)} ${months[Number(m) - 1]} ${y}`
+}
+
+/**
+ * Label for one rate band row.
+ *
+ * The rate comes from the server as a fraction, so it is rendered as a
+ * percentage here and nowhere else. `multiplePeriods` is why the date range is
+ * conditional: naming it is essential when a year splits (2024-25 does, on 30
+ * October 2024) and is noise when it does not.
+ *
+ * The band kind is named too. A period contributes up to two rows — the slice
+ * of its gains covered by basic-rate income headroom, and the rest at the
+ * higher rate — and both carry the same `valid_from`. Labelled by date alone
+ * they read as two rows for the same period with no stated reason to differ,
+ * which on a document someone files looks like a duplicate or a date error
+ * rather than the basic/higher split it actually is.
+ *
+ * This label is NOT money and must never be routed through formatCurrency: it
+ * carries no personal figure, and hiding the rate under redaction would defeat
+ * the point of showing the bands at all.
+ */
+function bandLabel(band: TaxBandResult, multiplePeriods: boolean): string {
+  const pct = `${(Number.parseFloat(band.rate) * 100).toFixed(0)}%`
+  const kind = band.rate_kind === "basic" ? "basic rate" : "higher rate"
+  if (!multiplePeriods) return `Taxable gains, ${kind} @ ${pct}`
+  return `Gains from ${fmtBandDate(band.valid_from)}, ${kind} @ ${pct}`
 }
 
 function Row({
