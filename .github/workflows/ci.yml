@@ -122,6 +122,24 @@ jobs:
       - name: Check API-doc parity (methods + params across router, api.html, OpenAPI)
         run: python3 scripts/check_api_docs.py
 
+  pii-guard:
+    name: PII / financial-identifier scan
+    # Deliberately unconditional: no path filter and no `needs:`. A
+    # path-filtered job renders green when it is SKIPPED, which for a guard
+    # means the one PR that adds a leaking file could show a green tick for a
+    # scan that never ran. It costs a runner-minute and needs no setup.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scan the working tree for UK financial identifiers
+        run: python3 scripts/check_pii.py
+      - name: Prove the guard can still fail
+        # A guard is only evidence if it can fire. These run the rules against
+        # invented values and assert both directions, so a regression that
+        # quietly stops the scan matching anything fails CI here rather than
+        # passing silently for months.
+        run: python3 scripts/test_check_pii.py
+
   docker-dry-run:
     name: Docker build (dry run)
     needs: [changes, backend]

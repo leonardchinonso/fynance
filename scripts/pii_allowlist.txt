@@ -1,0 +1,17 @@
+# Allowlist for scripts/check_pii.py — one `path:rule` pair per line.
+#
+# AN ENTRY HERE IS A PERMANENT HOLE IN THE GUARD, scoped to one path and one
+# rule. It has to be EARNED by measurement, not assumed: delete it, run
+# `python3 scripts/check_pii.py`, and confirm the match it was excusing is
+# real and genuinely unavoidable. An entry that excuses nothing is worse than
+# no entry, because it silently waves through a real value added to that path
+# later. One sort-code entry was written during development, proved to excuse
+# nothing (the keyword anchor already suppressed the CSV fixtures on its own),
+# and removed for exactly that reason.
+#
+# Before adding an entry, check whether the right fix is structural instead:
+#   - a value that is obviously invented  -> widen PLACEHOLDER_PATTERNS
+#   - a generated file with no prose      -> add it to SKIPPED_FILES
+#   - the checker's own source or tests   -> already in SELF_EXEMPT
+# Those are all better than an allowlist entry because they say *why* in a way
+# that keeps applying to files nobody has written yet.
