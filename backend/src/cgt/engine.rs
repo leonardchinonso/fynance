@@ -241,7 +241,17 @@ pub(crate) fn run_cgt_engine(
             .unwrap_or_else(|| fx.preferred().to_string());
 
         // -- S104 Pool Replay --
-        // Chronological replay to maintain S104 state and complete matches
+        // Chronological replay to maintain S104 state and complete matches.
+        //
+        // NOTE: this is the THIRD matching rule, not the only one. Same-day and
+        // 30-day matches have already been made above and consumed their
+        // quantities; the pool only ever sees what those rules did not claim.
+        //
+        // There is a second, separate average-cost pooling implementation in
+        // `Db::get_investment_history` (storage/db.rs). It applies plain S104
+        // averaging with NO same-day or 30-day matching, which is correct for
+        // the "cumulative invested" chart and wrong for tax. The divergence is
+        // intentional -- see the doc comment there before changing either.
         let mut pool_shares = Decimal::ZERO;
         let mut pool_cost = Decimal::ZERO; // in preferred base currency (GBP)
 
