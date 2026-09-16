@@ -73,8 +73,15 @@ jobs:
       # mismatch. `--no-audit --no-fund --prefer-offline` keeps it close in
       # behaviour and speed to `npm ci` for the cache-warmed case.
       - run: npm install --no-audit --no-fund --prefer-offline
-      - run: npx tsc --noEmit
       - run: npm test
+      # Type checking lives here, not in a separate `tsc --noEmit` step:
+      # `build` is `tsc -b && vite build`, and only `tsc -b` honours the
+      # project references. Root tsconfig.json is solution-style
+      # (`"files": []`), so a bare `tsc --noEmit` has zero inputs and exits 0
+      # however broken the code is — verified by planting a type error:
+      # `tsc --noEmit` exited 0 silently where `tsc -b` exited 2 (TS2322).
+      # The step that used to sit here was removed for projecting exactly
+      # that false assurance. Do not re-add it; keep `npm run build`.
       - run: npm run build
       - name: Upload frontend build
         uses: actions/upload-artifact@v7

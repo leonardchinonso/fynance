@@ -3843,8 +3843,66 @@ async fn test_cgt_precheck_ignores_split_and_transfer_dates() {
 /// gives the harness a non-zero exit straight away, which is a FAILURE rather
 /// than a hang.
 fn deadlocked(what: &str) -> ! {
-    eprintln!("DEADLOCK: {what}");
-    std::io::Write::flush(&mut std::io::stderr()).ok();
+    // Write to the process's REAL stderr, not `std::io::stderr()`.
+    //
+    // Under libtest, `eprintln!` lands in the harness's per-test capture buffer,
+    // which is only printed as part of reporting the test's result. `abort()`
+    // pre-empts that reporting entirely, so the captured message is discarded
+    // and the log shows only an abnormal exit with no cause. Flushing does not
+    // help: it flushes into the capture buffer, not onto the OS handle. This was
+    // reproduced with a standalone probe doing exactly what this function does —
+    // the `DEADLOCK:` line was absent from the output, and appeared once the
+    // write went to the raw handle instead.
+    //
+    // The message names both the cause and the fix for the only bug in this repo
+    // that has ever required killing the process, so losing it is expensive.
+    let msg = format!("DEADLOCK: {what}\n");
+    {
+        use std::io::Write as _;
+
+        #[cfg(unix)]
+        let handle = {
+            use std::os::fd::FromRawFd;
+            // fd 2 is the process's stderr.
+            Some(unsafe { std::fs::File::from_raw_fd(2) })
+        };
+
+        #[cfg(windows)]
+        let handle = {
+            use std::os::windows::io::{FromRawHandle, RawHandle};
+
+            const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+            const INVALID_HANDLE_VALUE: isize = -1;
+
+            // Rust 2024 requires the `unsafe` on the extern block itself.
+            unsafe extern "system" {
+                fn GetStdHandle(nStdHandle: u32) -> isize;
+            }
+
+            let raw = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+            if raw == INVALID_HANDLE_VALUE || raw == 0 {
+                None
+            } else {
+                Some(unsafe { std::fs::File::from_raw_handle(raw as RawHandle) })
+            }
+        };
+
+        #[cfg(not(any(unix, windows)))]
+        let handle: Option<std::fs::File> = None;
+
+        if let Some(mut f) = handle {
+            f.write_all(msg.as_bytes()).ok();
+            f.flush().ok();
+            // Critical: the `File` borrowed a handle it does not own. Dropping it
+            // would close the process's stderr out from under everything else, so
+            // leak it deliberately — the process is about to abort anyway.
+            std::mem::forget(f);
+        } else {
+            // No usable raw handle; the captured write is better than nothing.
+            eprint!("{msg}");
+            std::io::stderr().flush().ok();
+        }
+    }
     std::process::abort();
 }
 
@@ -3872,7 +3930,7 @@ fn deadlocked(what: &str) -> ! {
 /// All figures below are invented for the fixture and are not real UK rates or
 /// allowances.
 ///
-/// The runtime is deliberately `multi_thread` with two workers. Under the
+/// The runtime is deliberately `multi_thread` with four workers. Under the
 /// default single-threaded runtime a `tokio::time::timeout` around this request
 /// is useless: the deadlock blocks the one and only worker inside
 /// `Mutex::lock()`, so the timer never gets a thread to fire on and the test
@@ -4270,4 +4328,198 @@ async fn test_cgt_brought_forward_losses_are_capped_at_the_excess_over_the_aea()
     // Bare "0": the single band's tax rounds to 0.00, and summing one such
     // entry from Decimal::ZERO keeps the zero unscaled.
     assert_eq!(tax["tax_due"], "0");
+}
+
+// ── GET /api/investments/brought-forward-losses ──────────────────────────────
+//
+// The derive endpoint had zero integration coverage before these two tests
+// (`grep -rn "investments/brought" backend/tests/` returned nothing), despite
+// being the endpoint the CGT pre-flight screen calls. The pre-flight opens
+// *only* on `missing_exchange_rates` — i.e. precisely when rates are known to
+// be missing — and then immediately derives, so the no-rates path below is the
+// expected path through this handler, not an edge case.
+
+/// With no stored rates, deriving must fail with the actionable 400 that names
+/// every missing pair — never an `Internal` 500.
+///
+/// The distinction matters to a user: `missing_exchange_rates` tells them which
+/// rates to enter and they can then proceed, whereas the 500 raised by
+/// `unreachable_missing_rate` says explicitly that the problem is a bug they
+/// cannot fix by entering a rate. Getting the latter on the pre-flight's own
+/// path would be a dead end, and the failure is swallowed into `derivedError`
+/// on the client, so nothing else would surface it.
+#[tokio::test]
+async fn test_derived_losses_missing_exchange_rates_is_actionable_400() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        // A disposal in 2025-26, the year immediately before the one we derive
+        // INTO, so it falls inside the default four-year lookback window.
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2025-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2025-09-01T10:00:00",
+            "100",
+            "6.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    // USD exists as a currency (so this is NOT `missing_currencies`), but no
+    // date-keyed rate is stored for either leg.
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "0.75" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/brought-forward-losses?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "deriving without rates must be an actionable 400, not a 500"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(res["code"], "missing_exchange_rates");
+    assert_eq!(res["quote"], "GBP");
+
+    // Both legs must be named: each disposal converts at its own date's rate
+    // and each acquisition at its own, so the user needs both to proceed.
+    let missing = res["missing"].as_array().unwrap();
+    let mut dates: Vec<&str> = missing
+        .iter()
+        .map(|m| m["date"].as_str().unwrap())
+        .collect();
+    dates.sort_unstable();
+    assert_eq!(
+        dates,
+        vec!["2025-05-01", "2025-09-01"],
+        "every unseeded pair should be reported"
+    );
+    assert!(
+        missing.iter().all(|m| m["currency"] == "USD"),
+        "every missing pair should name the USD leg it belongs to"
+    );
+}
+
+/// The happy path: with every rate seeded, a prior year's net loss is derived
+/// and converted at each leg's OWN date's rate.
+///
+/// The two rates are deliberately far apart (0.80 on acquisition, 0.50 on
+/// disposal) so that the correct per-date conversion is arithmetically
+/// distinguishable from the two ways of getting it wrong. Cost is
+/// 100 x $10 x 0.80 = £800 and proceeds are 100 x $6 x 0.50 = £300, so the
+/// loss is £500. Using the acquisition rate for both legs would give £400, and
+/// the disposal rate for both would give £250 — so this assertion fails if the
+/// engine ever reads a rate for the wrong date, which a single-rate fixture
+/// could not detect.
+#[tokio::test]
+async fn test_derived_losses_happy_path_converts_at_each_events_own_rate() {
+    let (app, db) = test_router();
+    {
+        let db_lock = db.lock().unwrap();
+        setup_account(&db_lock, "gia", AccountType::Investment);
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "buy",
+            "AAPL",
+            "2025-05-01T10:00:00",
+            "100",
+            "10.00",
+            None,
+            "USD",
+            None,
+        );
+        insert_event_ccy(
+            &db_lock,
+            "gia",
+            "sell",
+            "AAPL",
+            "2025-09-01T10:00:00",
+            "100",
+            "6.00",
+            None,
+            "USD",
+            None,
+        );
+    }
+
+    let create = app
+        .clone()
+        .oneshot(request_json(
+            Method::POST,
+            "/api/currencies",
+            serde_json::json!({ "code": "USD", "fx_rate": "0.75" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    seed_rates(
+        &app,
+        "USD",
+        &[("2025-05-01", "0.80"), ("2025-09-01", "0.50")],
+    )
+    .await;
+
+    let response = app
+        .oneshot(request(
+            Method::GET,
+            "/api/investments/brought-forward-losses?tax_year=2026-27",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let res: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Scale is the engine's own: the conversion carries four decimal places
+    // through, and the derive query sums without rescaling.
+    assert_eq!(res["amount"], "500.0000", "£800 cost - £300 proceeds");
+    assert_eq!(
+        res["is_upper_bound"], true,
+        "the figure is a bound, and the UI says so"
+    );
+
+    let contributions = res["contributions"].as_array().unwrap();
+    assert_eq!(
+        contributions.len(),
+        1,
+        "only the year holding the disposal contributes"
+    );
+    assert_eq!(contributions[0]["tax_year"], "2025-26");
+    assert_eq!(contributions[0]["net_loss"], "500.0000");
 }
