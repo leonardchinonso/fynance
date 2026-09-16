@@ -134,12 +134,12 @@ Set or update a budget amount for a category + month.
 
 Full portfolio snapshot with breakdowns. This is the primary data query for the Portfolio Overview page.
 
-**Response**: `HoldingsSummaryResponse` with `net_worth`, `available_wealth`, `unavailable_wealth`, `accounts`, `by_type`, `by_institution`, `by_sector`.
+**Response**: `HoldingsSummaryResponse` with `net_worth`, `available_wealth`, `unavailable_wealth`, `accounts`, `by_type`, `by_institution`, `by_asset_class`.
 
 **Backend notes**:
 - `available_wealth` = sum of checking + savings + investment + cash balances
 - `unavailable_wealth` = sum of pension balances
-- `by_type`, `by_institution`, `by_sector` are computed aggregations with percentages
+- `by_type`, `by_institution`, `by_asset_class` are computed aggregations with percentages
 - Joint accounts should be included when filtering to either owner
 
 ---
