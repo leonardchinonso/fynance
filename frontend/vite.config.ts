@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     react({
-      // @ts-ignore - Vite 8 types are still stabilizing
+      // @ts-expect-error - Vite 8 types are still stabilizing
       reactCompiler: true,
     }),
   ],

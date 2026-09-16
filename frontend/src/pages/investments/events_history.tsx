@@ -256,7 +256,6 @@ function EventsTable({
       }
       return true
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events, start, end, accountSet, typeSet, needle, accountLabel])
 
   const sorted = useMemo(() => {
