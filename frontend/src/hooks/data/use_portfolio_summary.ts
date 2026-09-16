@@ -1,14 +1,14 @@
 import { api } from "@/api/client"
-import type { Currency, Granularity, Holding, PortfolioHistoryRow, PortfolioResponse } from "@/types"
+import type { Currency, Granularity, Holding, HoldingsHistoryRow, HoldingsSummaryResponse } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { RemoteData as RD, combineRemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
 
 /** Data needed by the Overview and Charts views. */
 export interface PortfolioSummaryData {
-  portfolio: PortfolioResponse
+  portfolio: HoldingsSummaryResponse
   /** Used in Overview for start/end net worth delta over the selected period. */
-  history: PortfolioHistoryRow[]
+  history: HoldingsHistoryRow[]
   /** Holdings for all accounts (empty array for accounts with no positions). */
   allHoldings: Holding[]
   /** FX rates keyed by currency code, for converting holding values. */

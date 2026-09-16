@@ -5,7 +5,7 @@ import type {
   CashSummaryResponse,
   Currency,
   Holding,
-  PortfolioResponse,
+  HoldingsSummaryResponse,
 } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
@@ -129,7 +129,7 @@ export function PortfolioOverview({
 }
 
 interface PortfolioOverviewProps {
-  portfolio: PortfolioResponse
+  portfolio: HoldingsSummaryResponse
   startNetWorth?: string
   endNetWorth?: string
   dateLabel?: string
