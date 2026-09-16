@@ -3842,6 +3842,23 @@ impl Db {
     /// FX-converted to the preferred currency. Each is `None` for a period with
     /// no underlying data (before the first contribution event / no active
     /// holdings) so the chart shows a gap instead of a phantom zero.
+    ///
+    /// # This is NOT the tax calculation, and must not be made to match it
+    ///
+    /// This method pools by plain S104 average cost and deliberately skips
+    /// HMRC's same-day and 30-day "bed and breakfast" matching rules. That is
+    /// correct HERE -- the question this chart answers is "what was my capital
+    /// worth over time", for which a running average book cost is the right
+    /// model and disposal-matching rules are irrelevant.
+    ///
+    /// It is WRONG for tax. The CGT figures come from [`crate::cgt::engine`],
+    /// which implements the full HMRC share identification rules in order:
+    /// same-day, then 30-day, then the S104 pool. The two implementations
+    /// therefore disagree about the cost attributed to any disposal that falls
+    /// inside a matching window, and they are SUPPOSED to.
+    ///
+    /// So do not "fix" one to agree with the other. If they ever produce the
+    /// same number for such a disposal, one of them has a bug.
     pub fn get_investment_history(
         &self,
         from: NaiveDate,

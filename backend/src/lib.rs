@@ -5,6 +5,7 @@
 // expansion exceeds the default 128 recursion limit.
 #![recursion_limit = "512"]
 
+pub mod cgt;
 pub mod cli;
 pub mod commands;
 pub mod importers;
