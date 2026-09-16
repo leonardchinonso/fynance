@@ -1,0 +1,114 @@
+#!/bin/sh
+# Pre-push gate: scans the working tree for anything shaped like a UK
+# financial identifier before a push leaves this machine.
+#
+# This repository is PUBLIC and its docs are about real tax affairs, so the
+# cost of a leak is paid the moment the push lands. The check needs nothing
+# but python3 and the source tree -- no database, no node_modules, no
+# container -- so it is fast enough to run on every push without anyone
+# wanting to bypass it. A slow hook gets bypassed and then protects nothing.
+#
+# Install: scripts/install_git_hooks.sh, or the one line it runs:
+#     git config core.hooksPath .githooks
+# Git invokes hook files under core.hooksPath directly with `sh` on both
+# Windows (Git for Windows ships a POSIX shell) and Linux, so this one
+# unbranched script covers both.
+#
+# CI runs the same check on every PR, so an unwired or skipped hook does not
+# get anything through -- this is the fast local copy, not the enforcement.
+#
+# Bypass in an emergency: git push --no-verify
+
+# -- Is there any content to check? --------------------------------------
+#
+# Git feeds a pre-push hook one line per ref on stdin:
+#     <local ref> <local sha> <remote ref> <remote sha>
+# A DELETION is signalled by an all-zero local sha. A branch deletion carries
+# no content, so there is nothing to scan, and gating a housekeeping push on
+# the state of an unrelated working tree just teaches --no-verify.
+#
+# Reading stdin is safe when empty: the loop does not execute, has_content
+# stays 0, and the scan is skipped -- correct for a push with no refs.
+has_content=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_sha" in
+    # All zeros of any length: git uses 40 hex digits for SHA-1 and will use
+    # 64 for SHA-256, so match the shape rather than a fixed width.
+    *[!0]*) has_content=1 ;;
+    "") ;;
+    *) ;;
+  esac
+done
+
+if [ "$has_content" -eq 0 ]; then
+  echo "pre-push: nothing to check (no commits being pushed -- a deletion carries no content)."
+  exit 0
+fi
+
+# -- "Could not run" is not "failed" --------------------------------------
+#
+# Three outcomes, not two: ran-and-passed, ran-and-failed, and could-not-run.
+# Collapsing the third into either of the others is the defect. If python3 is
+# absent then nothing was scanned, and saying "blocked -- fix the above"
+# points at a problem that does not exist and teaches --no-verify as a
+# reflex. A bypass already in muscle memory is what makes the next real block
+# useless.
+#
+# So the tool's presence is tested BEFORE anything runs. That is decided
+# without consulting any exit code, so it cannot be confused with a check
+# that ran and had a verdict.
+PYTHON=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+
+if [ -z "$PYTHON" ]; then
+  echo "pre-push: PII scan DID NOT RUN -- python3 was not found on PATH."
+  echo "pre-push: this is not a pass and not a failure -- nothing was scanned."
+  echo "pre-push: not blocking; CI runs this check on every PR."
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CHECK="$REPO_ROOT/scripts/check_pii.py"
+
+if [ ! -f "$CHECK" ]; then
+  echo "pre-push: PII scan DID NOT RUN -- scripts/check_pii.py is not in this checkout."
+  echo "pre-push: this is not a pass and not a failure -- nothing was scanned."
+  echo "pre-push: not blocking; CI runs this check on every PR."
+  exit 0
+fi
+
+echo "pre-push: scanning for UK financial identifiers (see docs/pii-guard.md)"
+
+"$PYTHON" "$CHECK"
+scan_status=$?
+
+# The other absence, kept alongside the probe above because the two catch
+# different things and neither subsumes the other. The probe cannot catch an
+# interpreter that exists but cannot execute the script; the shell's own 127
+# can. Dropping either puts an absence back on the "failed" path.
+TOOL_MISSING=127
+
+if [ "$scan_status" -eq "$TOOL_MISSING" ]; then
+  echo ""
+  echo "pre-push: PII scan DID NOT RUN -- the interpreter could not be executed."
+  echo "pre-push: this is not a pass and not a failure -- nothing was scanned."
+  echo "pre-push: not blocking; CI runs this check on every PR."
+  exit 0
+fi
+
+if [ "$scan_status" -ne 0 ]; then
+  echo ""
+  echo "pre-push: BLOCKED -- something in the working tree is shaped like a real"
+  echo "pre-push: financial identifier, and this repository is public."
+  echo "pre-push: Open the file at the line shown above; the value itself is"
+  echo "pre-push: deliberately not printed."
+  echo "pre-push: Emergency bypass: git push --no-verify (CI still runs this)."
+  exit 1
+fi
+
+exit 0
