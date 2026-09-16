@@ -6,9 +6,11 @@
 //!
 //! Layout:
 //! - [`guards`] -- pre-flight refusals that run before the engine.
-//! - [`models`] -- response types (TS-exported) and internal calculation types.
+//! - [`models`] -- the public response types (TS-exported).
+//! - [`internal`] -- the engine's internal calculation types, crate-private.
 //! - [`engine`] -- the HMRC matching rules themselves.
 
 pub mod engine;
 pub mod guards;
+pub(crate) mod internal;
 pub mod models;
