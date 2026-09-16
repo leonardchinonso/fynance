@@ -108,11 +108,17 @@ what it cost. Re-adding one needs a fresh measurement, not a guess.
 
 ## The measured false-positive rate
 
-**Zero, across 464 scanned files.** With the allowlist emptied, the guard
-fires on exactly one line in the repository: the real UTR in
-`docs/plans/23_capital_gains_post_v0.md`. That single result is both the
-false-positive measurement and the proof the rule would have caught the actual
-leak.
+**Zero, across 467 scanned files, with an empty allowlist.** The guard is green
+on `master` and excuses nothing to get there.
+
+Before the UTR scrub landed (PR #110), the same run with the allowlist emptied
+fired on exactly one line in the repository — the real UTR in
+`docs/plans/23_capital_gains_post_v0.md`. That single result was both the
+false-positive measurement and the proof the rule catches the real thing: the
+one value the guard was built for was the one value it found. That file is now
+scanned with no exemption, and a planted (invented) UTR in it still fires, so
+the coverage survived the scrub rather than being quietly dropped with the
+allowlist entry.
 
 Two matches were resolved structurally rather than with allowlist entries,
 because the reason was structural in both cases:
@@ -145,9 +151,10 @@ Before adding one, check whether the right fix is structural instead:
 Those are better because they state *why* in a way that keeps applying to
 files nobody has written yet.
 
-There is currently **one** entry, and it is temporary — see the comment in the
-file. It covers the real UTR still on `master`, which a sibling PR scrubs; it
-must be deleted when that lands.
+There are currently **no** entries. One temporary entry existed while the real
+UTR was still on `master`; PR #110 scrubbed that value, the entry was removed,
+and the check was re-run to confirm it was green with the file covered normally
+rather than excused.
 
 ## The matched value is never printed
 

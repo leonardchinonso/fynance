@@ -15,19 +15,3 @@
 #   - the checker's own source or tests   -> already in SELF_EXEMPT
 # Those are all better than an allowlist entry because they say *why* in a way
 # that keeps applying to files nobody has written yet.
-
-# TEMPORARY — REMOVE WHEN PR #110 MERGES.
-#
-# This doc currently carries a real UTR on master. It is being scrubbed by a
-# sibling task (Agent Standup item 000199f5-a832-42c6-9e68-d8f933f11e13,
-# PR #110 "docs(cgt): use placeholder reference values in the CGT plan doc"),
-# which was still OPEN when this guard was written. Without this line the
-# guard is red on master from the moment it lands, through no fault of any
-# contributor — and a gate that is red on arrival gets bypassed by reflex
-# before it ever catches anything.
-#
-# Once #110 merges, DELETE THIS LINE and re-run the check. It should be green
-# with the file covered normally. The guard firing on this exact line with the
-# entry removed is the concrete proof the rule would have caught the real
-# leak — that is the test to run before deleting it, not after.
-docs/plans/23_capital_gains_post_v0.md:utr
