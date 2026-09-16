@@ -73,6 +73,20 @@ async fn unknown_path_falls_back_to_embedded_index_html() {
         .oneshot(request(Method::GET, "/some/spa/route"))
         .await
         .unwrap();
+    if response.status() != StatusCode::OK
+        && fynance::server::static_files::embedded_frontend_is_empty()
+    {
+        panic!(
+            "this binary was compiled with an empty frontend/dist, so no frontend is embedded \
+             and every unknown path 404s instead of falling back to index.html.\n\n\
+             `include_dir!` embeds frontend/dist at COMPILE time and does not track its \
+             contents as a build dependency, so running `npm run build` now will NOT fix this \
+             on its own -- cargo has no reason to recompile a source file that didn't change.\n\n\
+             Fix: `cd frontend && npm run build`, then force a recompile with \
+             `touch backend/src/server/static_files.rs` before re-running this test. \
+             See backend/RUNNING.md > Troubleshooting."
+        );
+    }
     assert_eq!(response.status(), StatusCode::OK);
     let content_type = response
         .headers()

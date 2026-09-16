@@ -13,6 +13,19 @@ use include_dir::{Dir, include_dir};
 
 static FRONTEND_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../frontend/dist");
 
+/// True if the binary was compiled against an empty (or otherwise
+/// content-free) `frontend/dist`.
+///
+/// `include_dir!` embeds whatever was on disk in `frontend/dist` **at
+/// compile time** and does not track that directory as a build
+/// dependency, so a binary built while `frontend/dist` was empty stays
+/// empty even after a later `npm run build` fills the directory for
+/// real — cargo sees no reason to recompile. Callers (see the smoke
+/// test) use this to turn that silent staleness into a named failure.
+pub fn embedded_frontend_is_empty() -> bool {
+    FRONTEND_DIR.files().next().is_none() && FRONTEND_DIR.dirs().next().is_none()
+}
+
 /// Axum fallback handler: resolve `uri.path()` against the embedded
 /// bundle, falling back to `index.html` so SPA routes don't 404.
 pub async fn serve_static(uri: Uri) -> Response {

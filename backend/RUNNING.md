@@ -436,6 +436,8 @@ cd ../backend && cargo build   # or cargo test, cargo clippy, cargo watch, etc.
 
 Or from the repo root: `make build` (builds frontend then a release backend build). You only need to repeat the frontend build when frontend source changes — `frontend/dist` persists on disk (it is gitignored, not deleted) across backend rebuilds until you run `make clean` or delete it yourself.
 
+**If you already created `frontend/dist` empty** (e.g. a bare `mkdir` to get past the panic above) and only *afterwards* ran `npm run build`: the proc-macro panic is gone, but `server_smoke::unknown_path_falls_back_to_embedded_index_html` will still fail. `include_dir!` embeds whatever was on disk at compile time and does not track `frontend/dist`'s contents as a build dependency, so cargo has no reason to recompile — the binary still embeds the empty directory it saw the first time. Force a recompile with `touch backend/src/server/static_files.rs` and rebuild; that test names this exact cause if you hit it.
+
 ### `FYNANCE_ANTHROPIC_API_KEY is not set`
 
 The import command requires an Anthropic API key. Add it to your `.env` file:
