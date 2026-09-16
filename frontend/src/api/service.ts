@@ -2,7 +2,7 @@ import type {
   Account,
   AccountSnapshot,
   BudgetRow,
-  CashFlowMonth,
+  HoldingsCashFlowMonth,
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
@@ -15,8 +15,8 @@ import type {
   Holding,
   ImportResult,
   Paginated,
-  PortfolioHistoryRow,
-  PortfolioResponse,
+  HoldingsHistoryRow,
+  HoldingsSummaryResponse,
   Profile,
   SetBudgetOverrideBody,
   SetStandingBudgetBody,
@@ -147,13 +147,13 @@ export interface ApiService {
 
   // Portfolio
   /** Portfolio summary. `asOf` (YYYY-MM-DD) reports balances as of that date (carry-forward); omitted = today. */
-  getPortfolio(profileId?: string, asOf?: string): Promise<PortfolioResponse>
+  getPortfolio(profileId?: string, asOf?: string): Promise<HoldingsSummaryResponse>
   getPortfolioHistory(
     start: string,
     end: string,
     granularity?: Granularity,
     profileId?: string
-  ): Promise<PortfolioHistoryRow[]>
+  ): Promise<HoldingsHistoryRow[]>
   getHoldings(accountId: string): Promise<Holding[]>
   getHoldingsBatch(accountIds: string[]): Promise<Holding[]>
   /** Per-holding value history for a single account. Maps to `GET /api/holdings/account-history`. */
@@ -169,7 +169,7 @@ export interface ApiService {
     granularity?: Granularity,
     profileId?: string,
     excludeCategoryIds?: string[]
-  ): Promise<CashFlowMonth[]>
+  ): Promise<HoldingsCashFlowMonth[]>
 
   // Account balances (per-account monthly balances for delta calculations).
   // No profile filter: the endpoint has none; callers join against their own

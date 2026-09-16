@@ -128,29 +128,29 @@ Set or update a budget amount for a category + month.
 
 ---
 
-### `getPortfolio(profileId?): Promise<PortfolioResponse>`
+### `getPortfolio(profileId?): Promise<HoldingsSummaryResponse>`
 
-**Backend endpoint**: `GET /api/portfolio?profile_id=<id>`
+**Backend endpoint**: `GET /api/holdings/summary?profile_id=<id>`
 
 Full portfolio snapshot with breakdowns. This is the primary data query for the Portfolio Overview page.
 
-**Response**: `PortfolioResponse` with `net_worth`, `available_wealth`, `unavailable_wealth`, `accounts`, `by_type`, `by_institution`, `by_sector`.
+**Response**: `HoldingsSummaryResponse` with `net_worth`, `available_wealth`, `unavailable_wealth`, `accounts`, `by_type`, `by_institution`, `by_asset_class`.
 
 **Backend notes**:
 - `available_wealth` = sum of checking + savings + investment + cash balances
 - `unavailable_wealth` = sum of pension balances
-- `by_type`, `by_institution`, `by_sector` are computed aggregations with percentages
+- `by_type`, `by_institution`, `by_asset_class` are computed aggregations with percentages
 - Joint accounts should be included when filtering to either owner
 
 ---
 
-### `getPortfolioHistory(start?, end?): Promise<PortfolioHistoryRow[]>`
+### `getPortfolioHistory(start?, end?): Promise<HoldingsHistoryRow[]>`
 
-**Backend endpoint**: `GET /api/portfolio/history?start=&end=`
+**Backend endpoint**: `GET /api/holdings/history?start=&end=`
 
 Monthly net worth history with available/unavailable split. Used for the portfolio history line chart and table.
 
-**Response**: `PortfolioHistoryRow[]`
+**Response**: `HoldingsHistoryRow[]`
 ```json
 [{ "month": "2025-04", "available_wealth": "71833.28", "unavailable_wealth": "76200.23", "total_wealth": "148033.51" }]
 ```
@@ -161,7 +161,7 @@ Monthly net worth history with available/unavailable split. Used for the portfol
 
 ### `getAccountBalances(start?, end?): Promise<AccountSnapshot[]>`
 
-**Backend endpoint**: `GET /api/portfolio/balances?start=&end=`
+**Backend endpoint**: `GET /api/holdings/balances?start=&end=`
 
 Raw per-account monthly balance data, derived from SUM of holdings. Used by the accounts grid to compute per-card deltas (change from start of selected period to current balance).
 
@@ -180,7 +180,7 @@ Holdings for an investment account. Used in the holdings drill-down sheet.
 
 ---
 
-### `getCashFlow(start, end, granularity?, profileId?, excludeCategoryIds?): Promise<CashFlowMonth[]>`
+### `getCashFlow(start, end, granularity?, profileId?, excludeCategoryIds?): Promise<HoldingsCashFlowMonth[]>`
 
 **Backend endpoint**: `GET /api/holdings/cash-flow?start=&end=&granularity=&profile_id=&exclude_category_ids=`
 

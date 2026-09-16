@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { PortfolioHistoryRow, Granularity } from "@/types"
+import type { HoldingsHistoryRow, Granularity } from "@/types"
 import { visitRemoteData } from "@/lib/remote_data"
 import { usePortfolioHistoryData } from "@/hooks/data"
 import { PortfolioHistorySkeleton } from "@/components/skeletons"
@@ -49,7 +49,7 @@ export function PortfolioHistory({
 }
 
 interface PortfolioHistoryProps {
-  history: PortfolioHistoryRow[]
+  history: HoldingsHistoryRow[]
   granularity: Granularity
 }
 
@@ -63,9 +63,9 @@ function formatPeriodLabel(key: string, granularity: Granularity): string {
 }
 
 function aggregateHistory(
-  history: PortfolioHistoryRow[],
+  history: HoldingsHistoryRow[],
   granularity: Granularity
-): PortfolioHistoryRow[] {
+): HoldingsHistoryRow[] {
   if (granularity === "monthly") return history
 
   // The backend already returns rows bucketed by granularity ("YYYY-Qn" for

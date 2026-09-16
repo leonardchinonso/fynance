@@ -59,7 +59,7 @@ import type {
   Account,
   AccountSnapshot,
   BudgetRow,
-  CashFlowMonth,
+  HoldingsCashFlowMonth,
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
@@ -72,8 +72,8 @@ import type {
   Holding,
   ImportResult,
   Paginated,
-  PortfolioHistoryRow,
-  PortfolioResponse,
+  HoldingsHistoryRow,
+  HoldingsSummaryResponse,
   Profile,
   SetBudgetOverrideBody,
   SetStandingBudgetBody,
@@ -323,11 +323,11 @@ export class RealApiService implements ApiService {
 
   // ── Portfolio endpoints (now backed by the real backend) ────────
 
-  async getPortfolio(profileId?: string, asOf?: string): Promise<PortfolioResponse> {
+  async getPortfolio(profileId?: string, asOf?: string): Promise<HoldingsSummaryResponse> {
     const params: Record<string, string> = {}
     if (profileId) params.profile_id = profileId
     if (asOf) params.as_of = asOf
-    return get<PortfolioResponse>(`${BASE}/holdings/summary`, params)
+    return get<HoldingsSummaryResponse>(`${BASE}/holdings/summary`, params)
   }
 
   async getInvestmentHistory(
@@ -364,10 +364,10 @@ export class RealApiService implements ApiService {
     end: string,
     granularity: Granularity = "monthly",
     profileId?: string
-  ): Promise<PortfolioHistoryRow[]> {
+  ): Promise<HoldingsHistoryRow[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    const res = await get<{ preferred_currency: string; rows: PortfolioHistoryRow[] }>(`${BASE}/holdings/history`, params)
+    const res = await get<{ preferred_currency: string; rows: HoldingsHistoryRow[] }>(`${BASE}/holdings/history`, params)
     return res.rows
   }
 
@@ -399,13 +399,13 @@ export class RealApiService implements ApiService {
     granularity: Granularity = "monthly",
     profileId?: string,
     excludeCategoryIds?: string[]
-  ): Promise<CashFlowMonth[]> {
+  ): Promise<HoldingsCashFlowMonth[]> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
     if (excludeCategoryIds && excludeCategoryIds.length > 0) {
       params.exclude_category_ids = excludeCategoryIds.join(",")
     }
-    const res = await get<{ preferred_currency: string; rows: CashFlowMonth[] }>(`${BASE}/holdings/cash-flow`, params)
+    const res = await get<{ preferred_currency: string; rows: HoldingsCashFlowMonth[] }>(`${BASE}/holdings/cash-flow`, params)
     return res.rows
   }
 

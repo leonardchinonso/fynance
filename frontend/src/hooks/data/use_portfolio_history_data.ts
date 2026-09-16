@@ -1,5 +1,5 @@
 import { api } from "@/api/client"
-import type { Granularity, PortfolioHistoryRow } from "@/types"
+import type { Granularity, HoldingsHistoryRow } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
 
@@ -23,7 +23,7 @@ export function usePortfolioHistoryData(
   granularity: Granularity,
   profileId: string | undefined,
   enabled = true,
-): RemoteData<PortfolioHistoryRow[]> {
+): RemoteData<HoldingsHistoryRow[]> {
   const [data] = useQuery(
     // Same tag and request shape as the Overview's history sub-query, so the
     // two views share one cache entry (opening History after Overview is a hit).

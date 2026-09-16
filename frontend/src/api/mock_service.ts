@@ -2,7 +2,7 @@ import type {
   Account,
   AccountSnapshot,
   BudgetRow,
-  CashFlowMonth,
+  HoldingsCashFlowMonth,
   CategoryTotal,
   CategoryTotalFilters,
   CreateAccountBody,
@@ -15,8 +15,8 @@ import type {
   Holding,
   ImportResult,
   Paginated,
-  PortfolioHistoryRow,
-  PortfolioResponse,
+  HoldingsHistoryRow,
+  HoldingsSummaryResponse,
   Profile,
   SetBudgetOverrideBody,
   SetStandingBudgetBody,
@@ -503,7 +503,7 @@ export class MockApiService implements ApiService {
     }
   }
 
-  async getPortfolio(profileId?: string, _asOf?: string): Promise<PortfolioResponse> {
+  async getPortfolio(profileId?: string, _asOf?: string): Promise<HoldingsSummaryResponse> {
     await delay(DELAY_MS)
 
     const accounts = profileId
@@ -604,7 +604,7 @@ export class MockApiService implements ApiService {
     end: string,
     _granularity?: Granularity,
     _profileId?: string
-  ): Promise<PortfolioHistoryRow[]> {
+  ): Promise<HoldingsHistoryRow[]> {
     await delay(DELAY_MS)
 
     // Aggregate snapshots by month, split by available/unavailable
@@ -720,7 +720,7 @@ export class MockApiService implements ApiService {
     _granularity?: Granularity,
     _profileId?: string,
     excludeCategoryIds?: string[]
-  ): Promise<CashFlowMonth[]> {
+  ): Promise<HoldingsCashFlowMonth[]> {
     await delay(DELAY_MS)
 
     const months = new Map<string, { income: number; spending: number }>()
