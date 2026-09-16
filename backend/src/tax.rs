@@ -217,6 +217,18 @@ pub fn compute_tax(
     let mut remaining_by_band: Vec<Decimal> = band_gains.iter().map(|(_, g)| *g).collect();
 
     // Highest rate first; ties broken by earliest period so the order is stable.
+    //
+    // On mutation testing: swapping the brought-forward-losses and AEA `apply()`
+    // calls below is an EQUIVALENT mutant, not a coverage gap. Both drain the one
+    // shared `remaining_by_band` greedily through this single `order`, so for a
+    // given total deducted the per-band result is identical whichever pot goes
+    // first — the tax bill cannot move, and no test can distinguish them. (The
+    // pot ORDER still matters for what it leaves behind, which is the separate
+    // point made at step 3 above, and that is asserted elsewhere.)
+    //
+    // The mutation that does move the bill is reversing THIS order — draining
+    // lowest rate first leaves gains sitting in the highest band, and that mutant
+    // is already killed.
     let mut order: Vec<usize> = (0..band_gains.len()).collect();
     order.sort_by(|&a, &b| {
         band_gains[b]

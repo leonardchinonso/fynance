@@ -3843,8 +3843,66 @@ async fn test_cgt_precheck_ignores_split_and_transfer_dates() {
 /// gives the harness a non-zero exit straight away, which is a FAILURE rather
 /// than a hang.
 fn deadlocked(what: &str) -> ! {
-    eprintln!("DEADLOCK: {what}");
-    std::io::Write::flush(&mut std::io::stderr()).ok();
+    // Write to the process's REAL stderr, not `std::io::stderr()`.
+    //
+    // Under libtest, `eprintln!` lands in the harness's per-test capture buffer,
+    // which is only printed as part of reporting the test's result. `abort()`
+    // pre-empts that reporting entirely, so the captured message is discarded
+    // and the log shows only an abnormal exit with no cause. Flushing does not
+    // help: it flushes into the capture buffer, not onto the OS handle. This was
+    // reproduced with a standalone probe doing exactly what this function does —
+    // the `DEADLOCK:` line was absent from the output, and appeared once the
+    // write went to the raw handle instead.
+    //
+    // The message names both the cause and the fix for the only bug in this repo
+    // that has ever required killing the process, so losing it is expensive.
+    let msg = format!("DEADLOCK: {what}\n");
+    {
+        use std::io::Write as _;
+
+        #[cfg(unix)]
+        let handle = {
+            use std::os::fd::FromRawFd;
+            // fd 2 is the process's stderr.
+            Some(unsafe { std::fs::File::from_raw_fd(2) })
+        };
+
+        #[cfg(windows)]
+        let handle = {
+            use std::os::windows::io::{FromRawHandle, RawHandle};
+
+            const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+            const INVALID_HANDLE_VALUE: isize = -1;
+
+            // Rust 2024 requires the `unsafe` on the extern block itself.
+            unsafe extern "system" {
+                fn GetStdHandle(nStdHandle: u32) -> isize;
+            }
+
+            let raw = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+            if raw == INVALID_HANDLE_VALUE || raw == 0 {
+                None
+            } else {
+                Some(unsafe { std::fs::File::from_raw_handle(raw as RawHandle) })
+            }
+        };
+
+        #[cfg(not(any(unix, windows)))]
+        let handle: Option<std::fs::File> = None;
+
+        if let Some(mut f) = handle {
+            f.write_all(msg.as_bytes()).ok();
+            f.flush().ok();
+            // Critical: the `File` borrowed a handle it does not own. Dropping it
+            // would close the process's stderr out from under everything else, so
+            // leak it deliberately — the process is about to abort anyway.
+            std::mem::forget(f);
+        } else {
+            // No usable raw handle; the captured write is better than nothing.
+            eprint!("{msg}");
+            std::io::stderr().flush().ok();
+        }
+    }
     std::process::abort();
 }
 
@@ -3872,7 +3930,7 @@ fn deadlocked(what: &str) -> ! {
 /// All figures below are invented for the fixture and are not real UK rates or
 /// allowances.
 ///
-/// The runtime is deliberately `multi_thread` with two workers. Under the
+/// The runtime is deliberately `multi_thread` with four workers. Under the
 /// default single-threaded runtime a `tokio::time::timeout` around this request
 /// is useless: the deadlock blocks the one and only worker inside
 /// `Mutex::lock()`, so the timer never gets a thread to fire on and the test
