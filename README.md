@@ -414,7 +414,7 @@ cd frontend && npm run build   # frontend only
 
 `make build` runs `npm run build` in the frontend folder then `cargo build --release` in the backend. The result is a single binary at `backend/target/release/fynance` with the compiled React app embedded.
 
-> **⚠️ Any bare `cargo` command (`build`, `test`, `clippy`, `run`, `cargo watch`, …) requires `frontend/dist` to exist first.** `frontend/dist` is gitignored, so a fresh clone or worktree does not have it, and `cargo build` on its own will fail with a proc-macro panic from `include_dir!` rather than a normal compile error. Run `cd frontend && npm run build` (or `make build`) once before any bare `cargo` command. See `backend/RUNNING.md` → Troubleshooting for the exact error text and fix.
+> **⚠️ Any bare `cargo` command (`build`, `test`, `clippy`, `run`, `cargo watch`, …) requires `frontend/dist` to exist first.** `frontend/dist` is gitignored, so a fresh clone or worktree does not have it, and `cargo build` on its own will fail with a proc-macro panic from `include_dir!` rather than a normal compile error. Run `cd frontend && npm run build` (or `make build`) once before any bare `cargo` command — do **not** `mkdir` it empty just to satisfy the macro, since `include_dir!` embeds it at compile time and won't notice a later real build (`touch backend/src/server/static_files.rs` to force a recompile if you already did). See `backend/RUNNING.md` → Troubleshooting for the exact error text and fix.
 
 ### Testing and Validation
 
