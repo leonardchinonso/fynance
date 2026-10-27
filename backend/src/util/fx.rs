@@ -97,6 +97,35 @@ impl FxRateMap {
         amount * rate
     }
 
+    /// Convert an amount from `source_currency` to `target_currency` through the
+    /// preferred currency, using the same flat rates as [`FxRateMap::convert`].
+    /// A missing or zero target rate is handled like a missing source rate:
+    /// warn and return the amount unchanged.
+    pub fn convert_between(
+        &self,
+        amount: Decimal,
+        source_currency: &str,
+        target_currency: &str,
+    ) -> Decimal {
+        if source_currency == target_currency {
+            return amount;
+        }
+        let in_preferred = self.convert(amount, source_currency);
+        if target_currency == self.preferred {
+            return in_preferred;
+        }
+        match self.rates.get(target_currency) {
+            Some(rate) if !rate.is_zero() => in_preferred / rate,
+            _ => {
+                tracing::warn!(
+                    target_currency,
+                    "target currency missing from FxRateMap; returning amount unchanged. Add it under Settings → Currencies to fix aggregates."
+                );
+                amount
+            }
+        }
+    }
+
     /// Convert an amount from `source_currency` to the preferred currency using the rate
     /// stored for that specific `date`.
     ///
@@ -183,5 +212,56 @@ impl CurrencyAggregator {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    fn d(s: &str) -> Decimal {
+        Decimal::from_str(s).unwrap()
+    }
+
+    fn fx() -> FxRateMap {
+        let currency = |code: &str, is_preferred: bool, rate: &str| Currency {
+            code: code.to_string(),
+            is_preferred,
+            fx_rate: d(rate),
+            updated_at: None,
+        };
+        FxRateMap::new(vec![
+            currency("GBP", true, "1"),
+            currency("USD", false, "0.5"),
+            currency("NGN", false, "0.001"),
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn convert_between_same_currency_is_identity() {
+        assert_eq!(fx().convert_between(d("123.45"), "USD", "USD"), d("123.45"));
+    }
+
+    #[test]
+    fn convert_between_into_preferred_matches_convert() {
+        assert_eq!(fx().convert_between(d("1000"), "USD", "GBP"), d("500"));
+    }
+
+    #[test]
+    fn convert_between_out_of_preferred_divides_by_target_rate() {
+        assert_eq!(fx().convert_between(d("500"), "GBP", "USD"), d("1000"));
+    }
+
+    #[test]
+    fn convert_between_two_non_preferred_currencies_goes_through_preferred() {
+        // 1000 USD -> 500 GBP -> 500,000 NGN.
+        assert_eq!(fx().convert_between(d("1000"), "USD", "NGN"), d("500000"));
+    }
+
+    #[test]
+    fn convert_between_unknown_target_returns_amount_unchanged() {
+        assert_eq!(fx().convert_between(d("1000"), "USD", "EUR"), d("1000"));
     }
 }

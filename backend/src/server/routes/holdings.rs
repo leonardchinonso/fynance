@@ -123,10 +123,10 @@ pub async fn get_holdings_summary(
 
     let (accounts, holding_rows, investment_metrics, fx) = {
         let db = state.db();
-        let accounts = db.accounts_as_of(as_of, profile_id)?;
-        let holding_rows = db.get_holdings_for_summary(as_of, profile_id)?;
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
+        let accounts = db.accounts_as_of(as_of, profile_id, &fx)?;
+        let holding_rows = db.get_holdings_for_summary(as_of, profile_id)?;
         let metrics = db.compute_investment_metrics(metrics_start, as_of, profile_id, &fx)?;
         (accounts, holding_rows, metrics, fx)
     };
@@ -366,11 +366,12 @@ pub async fn get_holdings_balances(
     let summary = q.summary.as_deref().unwrap_or("false") == "true";
 
     let db = state.db();
+    let fx = FxRateMap::new(db.get_currencies()?)?;
     if summary {
-        let deltas = db.get_balance_summary(start, end)?;
+        let deltas = db.get_balance_summary(start, end, &fx)?;
         Ok(Json(serde_json::to_value(deltas)?))
     } else {
-        let balances = db.get_balances_in_range(start, end)?;
+        let balances = db.get_balances_in_range(start, end, &fx)?;
         Ok(Json(serde_json::to_value(balances)?))
     }
 }

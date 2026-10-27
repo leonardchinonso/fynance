@@ -1072,9 +1072,9 @@ impl Db {
     /// specific profile. When `profile_id` is `None`, all accounts are returned
     /// (household view).
     ///
-    /// `balance` and `balance_date` are derived at read time from the SUM of
-    /// the account's latest carry-forward holdings (as of today); accounts with
-    /// no holdings get `None` for both.
+    /// `balance` and `balance_date` are derived at read time from the account's
+    /// latest carry-forward holdings (as of today), summed in the account's
+    /// currency; accounts with no holdings get `None` for both.
     pub fn get_accounts(&self, profile_id: Option<&str>) -> Result<Vec<Account>> {
         let (sql, args): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(pid) = profile_id {
             let pattern = format!("%\"{pid}\"%");
@@ -1107,7 +1107,8 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let today = chrono::Local::now().date_naive();
-        let balances = self.balances_from_holdings_as_of(today)?;
+        let fx = crate::util::fx::FxRateMap::new(self.get_currencies()?)?;
+        let balances = self.balances_from_holdings_as_of(today, &fx)?;
         for account in &mut rows {
             if let Some((sum, max_as_of)) = balances.get(&account.id) {
                 account.balance = Some(*sum);
@@ -1128,7 +1129,10 @@ impl Db {
         match result {
             Ok(mut a) => {
                 let today = chrono::Local::now().date_naive();
-                if let Some((sum, max_as_of)) = self.balance_for_account_as_of(&a.id, today)? {
+                let fx = crate::util::fx::FxRateMap::new(self.get_currencies()?)?;
+                if let Some((sum, max_as_of)) =
+                    self.balances_from_holdings_as_of(today, &fx)?.remove(&a.id)
+                {
                     a.balance = Some(sum);
                     a.balance_date = Some(max_as_of);
                 }
@@ -1139,57 +1143,58 @@ impl Db {
         }
     }
 
-    /// SUM(holdings.value) per account, carrying each (account, symbol,
-    /// sub_account) forward to the most recent snapshot on/before `as_of`.
-    /// Returns `account_id -> (balance, latest_as_of_among_carried_rows)`.
+    /// Balance per account: each (account, symbol, sub_account) carried
+    /// forward to its most recent snapshot on/before `as_of`, converted into
+    /// the account's currency, then summed. Returns
+    /// `account_id -> (balance, latest_as_of_among_carried_rows)`.
     ///
     /// Uses `carried_holdings_sql` with `active_only = false`: `get_accounts`
     /// / `get_account_by_id` report balances for inactive accounts too, which
-    /// keeps the reconciliation invariant that account balances sum to
-    /// summary net worth.
+    /// keeps the reconciliation invariant that account balances, converted to
+    /// the preferred currency, sum to summary net worth.
     fn balances_from_holdings_as_of(
         &self,
         as_of: NaiveDate,
-    ) -> Result<std::collections::HashMap<String, (Decimal, NaiveDateTime)>> {
-        use std::collections::HashMap;
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<HashMap<String, (Decimal, NaiveDateTime)>> {
         let as_of_str = as_of.format("%Y-%m-%dT23:59:59").to_string();
-        let sql = carried_holdings_sql("account_id, value, as_of", "AND h.as_of <= ?1", false);
+        let sql = carried_holdings_sql(
+            "account_id, value, currency, as_of",
+            "AND h.as_of <= ?1",
+            false,
+        );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![as_of_str], |row| {
-            let account_id: String = row.get(0)?;
-            let value_str: String = row.get(1)?;
-            let as_of_str: String = row.get(2)?;
-            let value: Decimal = value_str.parse().map_err(|_| {
-                column_error(
-                    1,
-                    format!("invalid holding value {value_str:?} for account {account_id}"),
-                )
-            })?;
-            Ok((account_id, value, as_of_str))
-        })?;
+        let rows = stmt
+            .query_map(params![as_of_str], |row| {
+                let account_id: String = row.get(0)?;
+                let value_str: String = row.get(1)?;
+                let currency: String = row.get(2)?;
+                let as_of_str: String = row.get(3)?;
+                let value: Decimal = value_str.parse().map_err(|_| {
+                    column_error(
+                        1,
+                        format!("invalid holding value {value_str:?} for account {account_id}"),
+                    )
+                })?;
+                let snapshot_dt = parse_transaction_datetime(&as_of_str)
+                    .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+                Ok((account_id, value, currency, snapshot_dt))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut agg: HashMap<String, (Decimal, NaiveDateTime)> = HashMap::new();
-        for r in rows {
-            let (account_id, value, as_of_str) = r?;
-            let snapshot_dt = parse_transaction_datetime(&as_of_str)
-                .unwrap_or_else(|| chrono::Utc::now().naive_utc());
-            let entry = agg
-                .entry(account_id)
-                .or_insert((Decimal::ZERO, snapshot_dt));
-            entry.0 += value;
-            if snapshot_dt > entry.1 {
-                entry.1 = snapshot_dt;
-            }
-        }
-        Ok(agg)
+        Ok(balances_in_account_currency(
+            rows,
+            &self.account_currencies()?,
+            fx,
+        ))
     }
 
-    fn balance_for_account_as_of(
-        &self,
-        account_id: &str,
-        as_of: NaiveDate,
-    ) -> Result<Option<(Decimal, NaiveDateTime)>> {
-        Ok(self.balances_from_holdings_as_of(as_of)?.remove(account_id))
+    fn account_currencies(&self) -> Result<HashMap<String, String>> {
+        let mut stmt = self.conn.prepare("SELECT id, currency FROM accounts")?;
+        let map = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<HashMap<String, String>>>()?;
+        Ok(map)
     }
 
     pub fn account_exists(&self, id: &str) -> Result<bool> {
@@ -4125,21 +4130,23 @@ impl Db {
         Ok((series, rows))
     }
 
-    /// Returns the first and last balance (SUM of holdings) per account within
-    /// `[start, end]`, and the delta between them. Accounts with no snapshot
-    /// inside the range are omitted entirely; snapshots outside the range
-    /// never contribute.
+    /// Returns the first and last balance per account within `[start, end]`,
+    /// and the delta between them. A balance is the account's holdings at that
+    /// snapshot date, each converted into the account's currency. Accounts with
+    /// no snapshot inside the range are omitted entirely; snapshots outside the
+    /// range never contribute.
     pub fn get_balance_summary(
         &self,
         start: NaiveDate,
         end: NaiveDate,
+        fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<BalanceDelta>> {
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
         // One query total: per-account first/last snapshot date over the
-        // range-filtered rows, joined back to sum the balances at those two
-        // dates. The old shape issued ~4 queries per account.
+        // range-filtered rows, joined back to the holdings at those two dates.
+        // Summing happens in Rust so each holding can be FX-converted first.
         let mut stmt = self.conn.prepare(
             r"WITH bounds AS (
                 SELECT account_id, MIN(as_of) AS first_date, MAX(as_of) AS last_date
@@ -4147,58 +4154,76 @@ impl Db {
                 WHERE as_of >= ?1 AND as_of <= ?2
                 GROUP BY account_id
               )
-              SELECT b.account_id,
-                     SUM(CASE WHEN h.as_of = b.first_date THEN CAST(h.value AS REAL) ELSE 0 END),
-                     SUM(CASE WHEN h.as_of = b.last_date THEN CAST(h.value AS REAL) ELSE 0 END)
+              SELECT b.account_id, h.as_of = b.first_date, h.as_of = b.last_date,
+                     h.value, h.currency, a.currency
               FROM bounds b
+              JOIN accounts a ON a.id = b.account_id
               JOIN holdings h
                 ON h.account_id = b.account_id
-               AND h.as_of IN (b.first_date, b.last_date)
-              GROUP BY b.account_id
-              ORDER BY b.account_id",
+               AND h.as_of IN (b.first_date, b.last_date)",
         )?;
 
-        let rows = stmt.query_map(rusqlite::params![start_str, end_str], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<f64>>(1)?,
-                row.get::<_, Option<f64>>(2)?,
-            ))
-        })?;
+        let rows = stmt
+            .query_map(rusqlite::params![start_str, end_str], |row| {
+                let account_id: String = row.get(0)?;
+                let value_str: String = row.get(3)?;
+                let value: Decimal = value_str.parse().map_err(|_| {
+                    column_error(
+                        3,
+                        format!("invalid holding value {value_str:?} for account {account_id}"),
+                    )
+                })?;
+                Ok((
+                    account_id,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, bool>(2)?,
+                    value,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut result = Vec::new();
-        for row in rows {
-            let (account_id, start_f, end_f) = row?;
-            let start_balance = start_f.and_then(|f| Decimal::try_from(f).ok());
-            let end_balance = end_f.and_then(|f| Decimal::try_from(f).ok());
-            let delta = start_balance.zip(end_balance).map(|(s, e)| e - s);
-            result.push(BalanceDelta {
-                account_id,
-                start_balance,
-                end_balance,
-                delta,
-            });
+        let mut totals: BTreeMap<String, (Decimal, Decimal)> = BTreeMap::new();
+        for (account_id, is_first, is_last, value, currency, account_currency) in rows {
+            let value = fx.convert_between(value, &currency, &account_currency);
+            let entry = totals
+                .entry(account_id)
+                .or_insert((Decimal::ZERO, Decimal::ZERO));
+            if is_first {
+                entry.0 += value;
+            }
+            if is_last {
+                entry.1 += value;
+            }
         }
-        Ok(result)
+
+        Ok(totals
+            .into_iter()
+            .map(|(account_id, (start_balance, end_balance))| BalanceDelta {
+                account_id,
+                start_balance: Some(start_balance),
+                end_balance: Some(end_balance),
+                delta: Some(end_balance - start_balance),
+            })
+            .collect())
     }
 
-    /// Returns aggregated account balances (SUM of holdings) for each distinct
-    /// (account_id, as_of) date in `[start, end]`, ordered by date and account.
+    /// Returns each account's balance for every distinct (account_id, as_of)
+    /// snapshot date in `[start, end]`, ordered by date and account. A balance
+    /// is the holdings at that date, each converted into the account's
+    /// currency, and is reported in that currency.
     pub fn get_balances_in_range(
         &self,
         start: NaiveDate,
         end: NaiveDate,
+        fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<AccountSnapshot>> {
         let mut stmt = self.conn.prepare(
-            r"SELECT
-                h.as_of,
-                h.account_id,
-                SUM(CAST(h.value AS REAL)) AS total_balance,
-                MIN(h.currency) AS currency
+            r"SELECT h.as_of, h.account_id, h.value, h.currency, a.currency
               FROM holdings h
-              WHERE h.as_of >= ?1 AND h.as_of <= ?2
-              GROUP BY h.account_id, h.as_of
-              ORDER BY h.as_of, h.account_id",
+              JOIN accounts a ON a.id = h.account_id
+              WHERE h.as_of >= ?1 AND h.as_of <= ?2",
         )?;
         let rows = stmt
             .query_map(
@@ -4207,25 +4232,40 @@ impl Db {
                     end.format("%Y-%m-%dT23:59:59").to_string()
                 ],
                 |row| {
-                    let date_str: String = row.get(0)?;
-                    let total: f64 = row.get(2)?;
+                    let account_id: String = row.get(1)?;
+                    let value_str: String = row.get(2)?;
+                    let value: Decimal = value_str.parse().map_err(|_| {
+                        column_error(
+                            2,
+                            format!("invalid holding value {value_str:?} for account {account_id}"),
+                        )
+                    })?;
                     Ok((
-                        date_str,
-                        row.get::<_, String>(1)?,
-                        total,
+                        row.get::<_, String>(0)?,
+                        account_id,
+                        value,
                         row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
                     ))
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        Ok(rows
+        // Keyed (as_of, account_id): ISO datetime strings sort chronologically.
+        let mut totals: BTreeMap<(String, String), (Decimal, String)> = BTreeMap::new();
+        for (date_str, account_id, value, currency, account_currency) in rows {
+            let value = fx.convert_between(value, &currency, &account_currency);
+            totals
+                .entry((date_str, account_id))
+                .or_insert((Decimal::ZERO, account_currency))
+                .0 += value;
+        }
+
+        Ok(totals
             .into_iter()
-            .filter_map(|(date_str, account_id, total, currency)| {
-                let date = parse_transaction_datetime(&date_str)?;
-                let balance = Decimal::try_from(total).ok()?;
+            .filter_map(|((date_str, account_id), (balance, currency))| {
                 Some(AccountSnapshot {
-                    as_of: date,
+                    as_of: parse_transaction_datetime(&date_str)?,
                     account_id,
                     balance,
                     currency,
@@ -4423,31 +4463,27 @@ impl Db {
     }
 
     /// Per-account balances reduced from `get_holdings_for_summary`, so they
-    /// reconcile with net worth.
+    /// reconcile with net worth once converted to the preferred currency.
     ///
-    /// `balance` = sum of the account's carried holdings (account currency);
-    /// `balance_date` = most recent snapshot among them. Active accounts with
-    /// no holdings as of `as_of` get a `None` balance.
+    /// `balance` = sum of the account's carried holdings, each converted into
+    /// the account's currency; `balance_date` = most recent snapshot among
+    /// them. Active accounts with no holdings as of `as_of` get a `None` balance.
     pub fn accounts_as_of(
         &self,
         as_of: NaiveDate,
         profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<Account>> {
-        use std::collections::HashMap;
         let stale_days = 45i64;
 
-        let holdings = self.get_holdings_for_summary(as_of, profile_id)?;
-        let mut agg: HashMap<String, (Decimal, NaiveDateTime)> = HashMap::new();
-        for row in &holdings {
-            let h = &row.holding;
-            let entry = agg
-                .entry(h.account_id.clone())
-                .or_insert((Decimal::ZERO, h.as_of));
-            entry.0 += h.value;
-            if h.as_of > entry.1 {
-                entry.1 = h.as_of;
-            }
-        }
+        let holdings = self
+            .get_holdings_for_summary(as_of, profile_id)?
+            .into_iter()
+            .map(|row| {
+                let h = row.holding;
+                (h.account_id, h.value, h.currency, h.as_of)
+            });
+        let agg = balances_in_account_currency(holdings, &self.account_currencies()?, fx);
 
         let (profile_filter, profile_arg): (String, Option<String>) = if let Some(pid) = profile_id
         {
@@ -5744,6 +5780,31 @@ fn carried_holdings_sql(select: &str, filters: &str, active_only: bool) -> Strin
     )
 }
 
+/// Reduces carried holdings `(account_id, value, currency, as_of)` to
+/// `account_id -> (balance, latest as_of)`, converting each holding into its
+/// account's currency before summing: a GBP account holding USD stocks must
+/// not add dollars to pounds. Holdings of accounts missing from
+/// `account_currencies` are skipped.
+fn balances_in_account_currency(
+    holdings: impl IntoIterator<Item = (String, Decimal, String, NaiveDateTime)>,
+    account_currencies: &HashMap<String, String>,
+    fx: &crate::util::fx::FxRateMap,
+) -> HashMap<String, (Decimal, NaiveDateTime)> {
+    let mut balances: HashMap<String, (Decimal, NaiveDateTime)> = HashMap::new();
+    for (account_id, value, currency, as_of) in holdings {
+        let Some(account_currency) = account_currencies.get(&account_id) else {
+            continue;
+        };
+        let value = fx.convert_between(value, &currency, account_currency);
+        let entry = balances.entry(account_id).or_insert((Decimal::ZERO, as_of));
+        entry.0 += value;
+        if as_of > entry.1 {
+            entry.1 = as_of;
+        }
+    }
+    balances
+}
+
 /// One holdings row as stored, joined with its account type. Produced by
 /// `Db::holding_snapshots_in_range` for the [`CarryForward`] walk.
 struct HoldingSnapshot {
@@ -6576,7 +6637,9 @@ mod consolidation_tests {
         )
         .unwrap();
 
-        let accounts = db.accounts_as_of(naive_date(2025, 2, 1), None).unwrap();
+        let accounts = db
+            .accounts_as_of(naive_date(2025, 2, 1), None, &gbp_fx())
+            .unwrap();
         let t212 = accounts.iter().find(|a| a.id == "t212").unwrap();
         // accounts_as_of sums Decimal values exactly (no CAST AS REAL).
         assert_eq!(t212.balance.unwrap(), dec!(10000));
@@ -6594,12 +6657,16 @@ mod consolidation_tests {
             .unwrap();
 
         // Query for Feb: should carry forward Jan value.
-        let accounts = db.accounts_as_of(naive_date(2025, 2, 15), None).unwrap();
+        let accounts = db
+            .accounts_as_of(naive_date(2025, 2, 15), None, &gbp_fx())
+            .unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
         assert_eq!(monzo.balance.unwrap(), dec!(1000));
 
         // Query for April: should use March value.
-        let accounts = db.accounts_as_of(naive_date(2025, 4, 15), None).unwrap();
+        let accounts = db
+            .accounts_as_of(naive_date(2025, 4, 15), None, &gbp_fx())
+            .unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
         assert_eq!(monzo.balance.unwrap(), dec!(1500));
     }
@@ -6613,14 +6680,18 @@ mod consolidation_tests {
         // Record balance on Jan 1. Query 60 days later: should be stale.
         db.set_account_balance("monzo", dec!(500), naive_dt(2025, 1, 1))
             .unwrap();
-        let accounts = db.accounts_as_of(naive_date(2025, 3, 2), None).unwrap();
+        let accounts = db
+            .accounts_as_of(naive_date(2025, 3, 2), None, &gbp_fx())
+            .unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
         assert_eq!(monzo.is_stale, Some(true));
 
         // Record balance on Feb 28. Query March 2: within 45 days, not stale.
         db.set_account_balance("monzo", dec!(600), naive_dt(2025, 2, 28))
             .unwrap();
-        let accounts = db.accounts_as_of(naive_date(2025, 3, 2), None).unwrap();
+        let accounts = db
+            .accounts_as_of(naive_date(2025, 3, 2), None, &gbp_fx())
+            .unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
         assert_eq!(monzo.is_stale, Some(false));
     }
@@ -6637,7 +6708,7 @@ mod consolidation_tests {
             .unwrap();
 
         let summary = db
-            .get_balance_summary(naive_date(2025, 1, 1), naive_date(2025, 3, 31))
+            .get_balance_summary(naive_date(2025, 1, 1), naive_date(2025, 3, 31), &gbp_fx())
             .unwrap();
         assert_eq!(summary.len(), 1);
         let row = &summary[0];
@@ -6685,7 +6756,7 @@ mod consolidation_tests {
             .unwrap();
 
         let mut summary = db
-            .get_balance_summary(naive_date(2025, 1, 1), naive_date(2025, 3, 31))
+            .get_balance_summary(naive_date(2025, 1, 1), naive_date(2025, 3, 31), &gbp_fx())
             .unwrap();
         summary.sort_by(|a, b| a.account_id.cmp(&b.account_id));
         assert_eq!(summary.len(), 2, "out-of-range-only account is omitted");
@@ -6726,7 +6797,7 @@ mod consolidation_tests {
         .unwrap();
 
         let rows = db
-            .get_balances_in_range(naive_date(2025, 1, 1), naive_date(2025, 2, 28))
+            .get_balances_in_range(naive_date(2025, 1, 1), naive_date(2025, 2, 28), &gbp_fx())
             .unwrap();
         assert_eq!(rows.len(), 2, "one row per (account, date)");
 
@@ -6802,7 +6873,9 @@ mod consolidation_tests {
 
         // Carry-forward picks AAPL's latest snapshot (the closed £0 one), so it
         // contributes nothing; only the £2000 cash remains.
-        let accounts = db.accounts_as_of(naive_date(2025, 2, 1), None).unwrap();
+        let accounts = db
+            .accounts_as_of(naive_date(2025, 2, 1), None, &gbp_fx())
+            .unwrap();
         let t212 = accounts.iter().find(|a| a.id == "t212").unwrap();
         assert_eq!(t212.balance.unwrap(), dec!(2000));
 
@@ -6858,7 +6931,9 @@ mod consolidation_tests {
             "all three sub-account holdings should be stored"
         );
 
-        let accounts = db.accounts_as_of(naive_date(2026, 4, 30), None).unwrap();
+        let accounts = db
+            .accounts_as_of(naive_date(2026, 4, 30), None, &gbp_fx())
+            .unwrap();
         let monzo = accounts.iter().find(|a| a.id == "monzo").unwrap();
         let balance = monzo.balance.unwrap();
         let tol = Decimal::from_str("0.01").unwrap();
@@ -7277,11 +7352,158 @@ mod consolidation_tests {
         assert_eq!(last.unavailable_wealth, dec!(1000));
 
         // Per-account list must also sum to net worth.
-        let accounts = db.accounts_as_of(as_of, None).unwrap();
+        let accounts = db.accounts_as_of(as_of, None, &fx).unwrap();
         let sum: Decimal = accounts.iter().filter_map(|a| a.balance).sum();
         assert_eq!(sum, net_worth);
         let t212 = accounts.iter().find(|a| a.id == "t212").unwrap();
         assert_eq!(t212.balance.unwrap(), dec!(170));
+    }
+
+    /// GBP-preferred map with USD at 0.5, so conversions are exact.
+    fn gbp_usd_fx() -> crate::util::fx::FxRateMap {
+        crate::util::fx::FxRateMap::new(vec![
+            crate::model::Currency {
+                code: "GBP".to_string(),
+                is_preferred: true,
+                fx_rate: dec!(1),
+                updated_at: None,
+            },
+            crate::model::Currency {
+                code: "USD".to_string(),
+                is_preferred: false,
+                fx_rate: dec!(0.5),
+                updated_at: None,
+            },
+        ])
+        .unwrap()
+    }
+
+    fn make_usd_holding(
+        account_id: &str,
+        symbol: &str,
+        value: Decimal,
+        as_of: NaiveDateTime,
+    ) -> Holding {
+        let mut h = make_holding(account_id, symbol, HoldingType::Stock, value, as_of);
+        h.currency = "USD".to_string();
+        h
+    }
+
+    /// A GBP ISA holding US stocks priced in USD plus GBP cash (the Trading
+    /// 212 shape), and a USD brokerage holding a GBP cash line.
+    fn seed_mixed_currency_accounts(db: &Db, as_of: NaiveDateTime) {
+        db.create_currency("USD", dec!(0.5)).unwrap();
+        db.create_account(&make_account("t212", AccountType::InvestmentIsa))
+            .unwrap();
+        let mut schwab = make_account("schwab", AccountType::Investment);
+        schwab.currency = "USD".to_string();
+        db.create_account(&schwab).unwrap();
+
+        db.upsert_holdings(
+            "t212",
+            &[
+                make_usd_holding("t212", "AAPL", dec!(1000), as_of),
+                make_holding("t212", "_CASH", HoldingType::Cash, dec!(200), as_of),
+            ],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "schwab",
+            &[
+                make_usd_holding("schwab", "PLTR", dec!(1000), as_of),
+                make_holding("schwab", "_CASH", HoldingType::Cash, dec!(100), as_of),
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn account_balances_convert_holdings_into_account_currency() {
+        let (db, _file) = test_db();
+        seed_mixed_currency_accounts(&db, naive_dt(2025, 1, 15));
+
+        // t212 (GBP): 1000 USD * 0.5 + 200 GBP = 700 GBP, not the raw 1200.
+        // schwab (USD): 1000 USD + 100 GBP / 0.5 = 1200 USD, not the raw 1100.
+        let as_of = db
+            .accounts_as_of(naive_date(2025, 2, 1), None, &gbp_usd_fx())
+            .unwrap();
+        let listed = db.get_accounts(None).unwrap();
+        for accounts in [&as_of, &listed] {
+            let balance = |id: &str| accounts.iter().find(|a| a.id == id).unwrap().balance;
+            assert_eq!(balance("t212"), Some(dec!(700)));
+            assert_eq!(balance("schwab"), Some(dec!(1200)));
+        }
+
+        let single = db.get_account_by_id("t212").unwrap().unwrap();
+        assert_eq!(single.balance, Some(dec!(700)));
+    }
+
+    // The invariant the per-account list exists to keep: account balances,
+    // each converted to the preferred currency, sum to summary net worth.
+    #[test]
+    fn mixed_currency_account_balances_reconcile_with_summary_net_worth() {
+        let (db, _file) = test_db();
+        seed_mixed_currency_accounts(&db, naive_dt(2025, 1, 15));
+
+        let fx = gbp_usd_fx();
+        let as_of = naive_date(2025, 2, 1);
+        let net_worth = summary_net_worth(&db, as_of, &fx);
+        // t212 700 GBP + schwab (500 + 100) GBP.
+        assert_eq!(net_worth, dec!(1300));
+
+        let reconciled: Decimal = db
+            .accounts_as_of(as_of, None, &fx)
+            .unwrap()
+            .iter()
+            .filter_map(|a| a.balance.map(|b| fx.convert(b, &a.currency)))
+            .sum();
+        assert_eq!(reconciled, net_worth);
+    }
+
+    #[test]
+    fn balance_summary_and_range_convert_holdings_into_account_currency() {
+        let (db, _file) = test_db();
+        seed_mixed_currency_accounts(&db, naive_dt(2025, 1, 15));
+        db.upsert_holdings(
+            "t212",
+            &[
+                make_usd_holding("t212", "AAPL", dec!(1400), naive_dt(2025, 2, 15)),
+                make_holding(
+                    "t212",
+                    "_CASH",
+                    HoldingType::Cash,
+                    dec!(100),
+                    naive_dt(2025, 2, 15),
+                ),
+            ],
+        )
+        .unwrap();
+        let fx = gbp_usd_fx();
+
+        let summary = db
+            .get_balance_summary(naive_date(2025, 1, 1), naive_date(2025, 3, 31), &fx)
+            .unwrap();
+        let t212 = summary.iter().find(|d| d.account_id == "t212").unwrap();
+        assert_eq!(t212.start_balance, Some(dec!(700)));
+        assert_eq!(t212.end_balance, Some(dec!(800))); // 1400 * 0.5 + 100
+        assert_eq!(t212.delta, Some(dec!(100)));
+        let schwab = summary.iter().find(|d| d.account_id == "schwab").unwrap();
+        assert_eq!(schwab.start_balance, Some(dec!(1200)));
+
+        let snapshots = db
+            .get_balances_in_range(naive_date(2025, 1, 1), naive_date(2025, 3, 31), &fx)
+            .unwrap();
+        let t212: Vec<_> = snapshots
+            .iter()
+            .filter(|s| s.account_id == "t212")
+            .collect();
+        assert_eq!(t212.len(), 2);
+        assert_eq!(t212[0].balance, dec!(700));
+        assert_eq!(t212[1].balance, dec!(800));
+        assert!(t212.iter().all(|s| s.currency == "GBP"));
+        let schwab = snapshots.iter().find(|s| s.account_id == "schwab").unwrap();
+        assert_eq!(schwab.balance, dec!(1200));
+        assert_eq!(schwab.currency, "USD");
     }
 
     // A position closed (zeroed) later must still be counted at its open value
@@ -7318,7 +7540,9 @@ mod consolidation_tests {
             .unwrap();
 
         // February: position still active at its open value.
-        let feb = db.accounts_as_of(naive_date(2025, 2, 15), None).unwrap();
+        let feb = db
+            .accounts_as_of(naive_date(2025, 2, 15), None, &gbp_fx())
+            .unwrap();
         assert_eq!(
             feb.iter()
                 .find(|a| a.id == "t212")
@@ -7329,7 +7553,9 @@ mod consolidation_tests {
         );
 
         // May: latest snapshot is the closed £0 one -> contributes nothing.
-        let may = db.accounts_as_of(naive_date(2025, 5, 1), None).unwrap();
+        let may = db
+            .accounts_as_of(naive_date(2025, 5, 1), None, &gbp_fx())
+            .unwrap();
         assert_eq!(
             may.iter()
                 .find(|a| a.id == "t212")

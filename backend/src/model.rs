@@ -962,7 +962,8 @@ impl ChecklistStatus {
     }
 }
 
-/// Point-in-time account balance derived from SUM(holdings.value).
+/// Point-in-time account balance: the account's holdings at `as_of`, each
+/// converted into the account's currency (`currency`), summed.
 /// Used by `GET /api/portfolio/balances` (non-summary mode).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
@@ -1425,7 +1426,7 @@ pub struct HoldingsCashFlowMonth {
 }
 
 /// Start/end balance delta for one account. Used by `GET /api/portfolio/balances?summary=true`.
-/// Balance is computed as SUM(holdings.value) per account.
+/// Balances are the account's holdings, each converted into the account's currency, summed.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct BalanceDelta {

@@ -519,7 +519,7 @@ td code { font-size: 12px; }
       <tr><td><code>institution</code></td><td>string</td><td>Bank/provider name</td></tr>
       <tr><td><code>type</code></td><td>string</td><td>AccountType enum value</td></tr>
       <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code (default: GBP)</td></tr>
-      <tr><td><code>balance</code></td><td>string | null</td><td>Last known balance (decimal string)</td></tr>
+      <tr><td><code>balance</code></td><td>string | null</td><td>Last known balance (decimal string), in the account&#39;s <code>currency</code>: each holding is converted into it before summing</td></tr>
       <tr><td><code>balance_date</code></td><td>string | null</td><td>Date of last balance</td></tr>
       <tr><td><code>is_active</code></td><td>boolean</td><td>Active account flag</td></tr>
       <tr><td><code>notes</code></td><td>string | null</td><td>Free-text notes</td></tr>
@@ -994,8 +994,8 @@ td code { font-size: 12px; }
     <tbody>
       <tr><td><code>as_of</code></td><td>string</td><td>Snapshot date (ISO 8601)</td></tr>
       <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
-      <tr><td><code>balance</code></td><td>string</td><td>Decimal string (SUM of holdings.value)</td></tr>
-      <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
+      <tr><td><code>balance</code></td><td>string</td><td>Decimal string: the holdings at that date, each converted into the account&#39;s currency, summed</td></tr>
+      <tr><td><code>currency</code></td><td>string</td><td>The account&#39;s currency (ISO 4217 code)</td></tr>
     </tbody>
   </table>
 </section>
@@ -1007,8 +1007,8 @@ td code { font-size: 12px; }
     <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
-      <tr><td><code>start_balance</code></td><td>string | null</td><td>Balance at period start</td></tr>
-      <tr><td><code>end_balance</code></td><td>string | null</td><td>Balance at period end</td></tr>
+      <tr><td><code>start_balance</code></td><td>string | null</td><td>Balance at period start, in the account&#39;s currency</td></tr>
+      <tr><td><code>end_balance</code></td><td>string | null</td><td>Balance at period end, in the account&#39;s currency</td></tr>
       <tr><td><code>delta</code></td><td>string | null</td><td>end_balance - start_balance</td></tr>
     </tbody>
   </table>
