@@ -994,7 +994,7 @@ td code { font-size: 12px; }
     <tbody>
       <tr><td><code>as_of</code></td><td>string</td><td>Snapshot date (ISO 8601)</td></tr>
       <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
-      <tr><td><code>balance</code></td><td>string</td><td>Decimal string: the holdings at that date, each converted into the account&#39;s currency, summed</td></tr>
+      <tr><td><code>balance</code></td><td>string</td><td>Decimal string: all of the account&#39;s holdings carried forward to the end of that day (latest snapshot per symbol), each converted into the account&#39;s currency, summed</td></tr>
       <tr><td><code>currency</code></td><td>string</td><td>The account&#39;s currency (ISO 4217 code)</td></tr>
     </tbody>
   </table>

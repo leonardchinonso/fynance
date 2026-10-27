@@ -962,8 +962,9 @@ impl ChecklistStatus {
     }
 }
 
-/// Point-in-time account balance: the account's holdings at `as_of`, each
-/// converted into the account's currency (`currency`), summed.
+/// Point-in-time account balance: all of the account's holdings carried forward
+/// to the end of that day, each converted into the account's currency
+/// (`currency`), summed.
 /// Used by `GET /api/portfolio/balances` (non-summary mode).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
