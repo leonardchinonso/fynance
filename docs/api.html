@@ -1007,7 +1007,7 @@ td code { font-size: 12px; }
     <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
-      <tr><td><code>start_balance</code></td><td>string | null</td><td>Balance at period start, in the account&#39;s currency</td></tr>
+      <tr><td><code>start_balance</code></td><td>string | null</td><td>Balance at period start (carried in from before the range, else the first snapshot in it), in the account&#39;s currency</td></tr>
       <tr><td><code>end_balance</code></td><td>string | null</td><td>Balance at period end, in the account&#39;s currency</td></tr>
       <tr><td><code>delta</code></td><td>string | null</td><td>end_balance - start_balance</td></tr>
     </tbody>

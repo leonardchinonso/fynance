@@ -965,7 +965,7 @@ impl ChecklistStatus {
 /// Point-in-time account balance: all of the account's holdings carried forward
 /// to the end of that day, each converted into the account's currency
 /// (`currency`), summed.
-/// Used by `GET /api/portfolio/balances` (non-summary mode).
+/// Used by `GET /api/holdings/balances` (non-summary mode).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct AccountSnapshot {
@@ -1426,7 +1426,7 @@ pub struct HoldingsCashFlowMonth {
     pub spending_display: Option<DisplayCurrency>,
 }
 
-/// Start/end balance delta for one account. Used by `GET /api/portfolio/balances?summary=true`.
+/// Start/end balance delta for one account. Used by `GET /api/holdings/balances?summary=true`.
 /// Balances are the account's holdings, each converted into the account's currency, summed.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]

@@ -4131,8 +4131,10 @@ impl Db {
     }
 
     /// Returns the first and last balance per account within `[start, end]`,
-    /// and the delta between them, taken from [`Db::get_balances_in_range`].
-    /// Accounts with no snapshot inside the range are omitted entirely.
+    /// and the delta between them, taken from [`Db::get_balances_in_range`]:
+    /// the start is the balance carried into the range when the account held
+    /// anything before it. Accounts with no snapshot inside the range are
+    /// omitted entirely.
     pub fn get_balance_summary(
         &self,
         start: NaiveDate,
@@ -4160,11 +4162,13 @@ impl Db {
 
     /// Returns each account's balance at the end of every day in
     /// `[start, end]` on which it has a holdings snapshot, ordered by date and
-    /// account. A balance is all of the account's holdings carried forward to
-    /// that day (the latest snapshot per symbol and sub_account, as in
-    /// `balances_from_holdings_as_of`), each converted into the account's
-    /// currency, and is reported in that currency. `as_of` is the day's latest
-    /// snapshot time.
+    /// account, preceded by an opening point at `start` (00:00) carrying what
+    /// the account held before the range, if anything. A balance is all of the
+    /// account's holdings carried forward to that moment (the latest snapshot
+    /// per symbol and sub_account, as in `balances_from_holdings_as_of`), each
+    /// converted into the account's currency, and is reported in that
+    /// currency. `as_of` is the day's latest snapshot time. Accounts with no
+    /// snapshot inside the range get no points.
     ///
     /// Carrying forward matters because one day's rows are often a partial
     /// update: a cash-only snapshot, or a mortgage statement without a new
@@ -4211,10 +4215,34 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let account_currencies = self.account_currencies()?;
+        let range_start = start.and_hms_opt(0, 0, 0).expect("midnight is valid");
+        let range_start_str = range_start.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let balance_of = |held: &HashMap<(String, String), (Decimal, String)>,
+                          account_currency: &str|
+         -> Decimal {
+            held.values()
+                .map(|(v, c)| fx.convert_between(*v, c, account_currency))
+                .sum()
+        };
         let mut snapshots = Vec::new();
         let mut held: HashMap<(String, String), (Decimal, String)> = HashMap::new();
+        let mut opened = false;
         let mut rows = rows.into_iter().peekable();
         while let Some((account_id, key, as_of_str, value, currency)) = rows.next() {
+            if !opened && as_of_str >= range_start_str {
+                opened = true;
+                let carried_in = account_currencies
+                    .get(&account_id)
+                    .filter(|_| !held.is_empty());
+                if let Some(account_currency) = carried_in {
+                    snapshots.push(AccountSnapshot {
+                        as_of: range_start,
+                        account_id: account_id.clone(),
+                        balance: balance_of(&held, account_currency),
+                        currency: account_currency.clone(),
+                    });
+                }
+            }
             held.insert(key, (value, currency));
             let next = rows.peek();
             let account_ends = next.is_none_or(|n| n.0 != account_id);
@@ -4232,16 +4260,14 @@ impl Db {
                     snapshots.push(AccountSnapshot {
                         as_of,
                         account_id: account_id.clone(),
-                        balance: held
-                            .values()
-                            .map(|(v, c)| fx.convert_between(*v, c, account_currency))
-                            .sum(),
+                        balance: balance_of(&held, account_currency),
                         currency: account_currency.clone(),
                     });
                 }
             }
             if account_ends {
                 held.clear();
+                opened = false;
             }
         }
 
@@ -6714,8 +6740,9 @@ mod consolidation_tests {
         db.set_account_balance("single", dec!(500), naive_dt(2025, 2, 10))
             .unwrap();
 
-        // Snapshots on both sides of the range plus two inside it: the
-        // out-of-range ones must not contribute.
+        // Snapshots on both sides of the range plus two inside it: the one
+        // before the range is the balance carried in (the period's start), and
+        // the one after it never contributes.
         db.set_account_balance("spanning", dec!(100), naive_dt(2024, 12, 1))
             .unwrap();
         db.set_account_balance("spanning", dec!(200), naive_dt(2025, 1, 10))
@@ -6747,9 +6774,9 @@ mod consolidation_tests {
 
         let spanning = &summary[1];
         assert_eq!(spanning.account_id, "spanning");
-        assert!((spanning.start_balance.unwrap() - dec!(200)).abs() < tol);
+        assert!((spanning.start_balance.unwrap() - dec!(100)).abs() < tol);
         assert!((spanning.end_balance.unwrap() - dec!(350)).abs() < tol);
-        assert!((spanning.delta.unwrap() - dec!(150)).abs() < tol);
+        assert!((spanning.delta.unwrap() - dec!(250)).abs() < tol);
     }
 
     // One day's rows are often a partial update. The mortgage-only and
@@ -6812,6 +6839,7 @@ mod consolidation_tests {
         assert_eq!(
             balances,
             vec![
+                (naive_date(2025, 2, 1), dec!(190000)), // carried into the range
                 (naive_date(2025, 2, 13), dec!(191000)),
                 (naive_date(2025, 3, 31), dec!(196000)),
             ],
@@ -6822,9 +6850,9 @@ mod consolidation_tests {
             .get_balance_summary(naive_date(2025, 2, 1), naive_date(2025, 3, 31), &fx)
             .unwrap();
         assert_eq!(summary.len(), 1);
-        assert_eq!(summary[0].start_balance, Some(dec!(191000)));
+        assert_eq!(summary[0].start_balance, Some(dec!(190000)));
         assert_eq!(summary[0].end_balance, Some(dec!(196000)));
-        assert_eq!(summary[0].delta, Some(dec!(5000)));
+        assert_eq!(summary[0].delta, Some(dec!(6000)));
     }
 
     // The Trading 212 shape: cash snapshotted at 00:00 and USD stocks at
