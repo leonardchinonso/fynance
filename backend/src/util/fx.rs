@@ -99,8 +99,8 @@ impl FxRateMap {
 
     /// Convert an amount from `source_currency` to `target_currency` through the
     /// preferred currency, using the same flat rates as [`FxRateMap::convert`].
-    /// A missing or zero target rate is handled like a missing source rate:
-    /// warn and return the amount unchanged.
+    /// A missing source rate leaves that leg unconverted, as in `convert`; a
+    /// missing or zero target rate returns the amount unchanged. Both warn.
     pub fn convert_between(
         &self,
         amount: Decimal,

@@ -6385,8 +6385,9 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
     }
 
     // ── 9. Drop denormalised accounts.balance / accounts.balance_date ──
-    // Balances are now sourced at read time from SUM(holdings.value) per account
-    // (see Db::get_accounts and Db::accounts_as_of). Any historical column data
+    // Balances are now sourced at read time from each account's holdings,
+    // converted into the account currency and summed (see Db::get_accounts and
+    // Db::accounts_as_of). Any historical column data
     // was already mirrored to a `_CASH` holding by set_account_balance.
     if conn.prepare("SELECT balance FROM accounts LIMIT 0").is_ok() {
         conn.execute_batch("ALTER TABLE accounts DROP COLUMN balance")?;
