@@ -2,6 +2,6 @@
 
 /**
  * Start/end balance delta for one account. Used by `GET /api/portfolio/balances?summary=true`.
- * Balance is computed as SUM(holdings.value) per account.
+ * Balances are the account's holdings, each converted into the account's currency, summed.
  */
 export type BalanceDelta = { account_id: string, start_balance: string | null, end_balance: string | null, delta: string | null, };

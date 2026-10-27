@@ -196,7 +196,7 @@ GET    /api/holdings                         # list holdings for an account (?ac
 GET    /api/holdings/summary                 # portfolio summary: net worth, by_asset_class, by_type, by_institution
 GET    /api/holdings/history                 # net worth history over time (available/unavailable/total)
 GET    /api/holdings/account-history?account_id=&start=&end=&granularity=   # per-account, per-holding value series over time
-GET    /api/holdings/balances               # per-account balances derived from holdings SUM
+GET    /api/holdings/balances               # per-account balances: holdings converted into the account currency, summed
 GET    /api/holdings/cash-flow              # income/spending cash flow
 POST   /api/holdings/import                 # bulk import holdings
 POST   /api/holdings/:account_id            # upsert holdings for one account
