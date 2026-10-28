@@ -182,7 +182,7 @@ Schema-level refinements (no new tables, so not drawn above) — see Status Lege
 |--------|-------|
 | **profiles** | Multi-person household support. Seeded with a "default" row on first startup. |
 | **accounts** | Core entity. `profile_ids` is a JSON array (not a join table). Types: `checking`, `savings`, `investment`, `credit`, `cash`, `pension`. |
-| **transactions** | Deduplicated by `fingerprint = sha256(date \| amount \| account_id)`. `is_recurring` flag for budget projections. |
+| **transactions** | Deduplicated by `fingerprint = sha256(date \| canonical amount \| account_id \| occurrence)`, where the date has no time and occurrence numbers identical rows within one import (`util/dedupe.rs`). `is_recurring` flag for budget projections. |
 | **holdings** | Per-symbol detail within accounts, plus cash balances as `symbol='_CASH'`, `holding_type='cash'`. Migration 004 consolidated `portfolio_snapshots` into this table (Option A of the consolidation proposal). `short_name` added for chart labels. |
 | **standing_budgets + budget_overrides** | Option C from the handover: standing targets with per-month overrides. `COALESCE(override.amount, standing.amount)` gives the effective value. |
 | **section_mappings** | Maps categories to spending grid sections (Income, Bills, Spending, Irregular, Transfers). |
@@ -199,7 +199,6 @@ Schema-level refinements (no new tables, so not drawn above) — see Status Lege
 | **transaction_edits** (audit log) | Appendix B.4 | Not shipped. `PATCH /api/transactions/:id` currently overwrites silently. Minimum ask: one row per changed field with old→new for revertability. |
 | **holdings pots support** | Plan 13 §1 | Not shipped. `UNIQUE(account_id, symbol, as_of)` + fixed `_CASH` sentinel blocks Monzo pots and multi-currency balances. Pick Option A (meaningful symbols), B (widen UNIQUE), or C (new column). |
 | **accounts.type: property, mortgage** | Handover §1.4 | Not shipped. Frontend already uses these; backend enum needs extending or frontend needs to stick to existing types. |
-| **transactions.date: always datetime** | Appendix B.6 | Not fully shipped. CSVs with date-only dates still zero to `T00:00:00`, causing fingerprint collisions on same-day same-amount rows. Importer must synthesize distinct times per row. |
 | **timezone policy** | Appendix B.2 | Not shipped. Naive timestamps through the whole stack. Proposal: stamp user's local TZ at ingestion time. |
 
 ### Derived views (not stored)

@@ -100,7 +100,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         },
                         "fingerprint": {
                             "type": "string",
-                            "description": "Stable dedup hash: sha256(datetime, amount, account_id)."
+                            "description": "Stable dedup hash of the date (not the time), the canonical amount, the account and the row's occurrence number among identical rows in its import."
                         },
                         "fitid": {
                             "type": ["string", "null"],
@@ -521,7 +521,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/transactions/import": {
                 "post": {
                     "summary": "Programmatic typed JSON import of transactions",
-                    "description": "Current route for structured (non-CSV) imports by agents and scripts.",
+                    "description": "Current route for structured (non-CSV) imports by agents and scripts. When committing a preview, send every non-error row, duplicates included, in preview order: rows sharing a date, amount and account are numbered across the whole payload, so leaving out a duplicate or reordering rows can change which rows land. To decline a row marked new, leave that row out.",
                     "security": [{ "bearerAuth": [] }],
                     "parameters": [
                         { "name": "dry_run", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Preview without committing (returns TransactionImportPreview)." }
@@ -995,13 +995,18 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 },
                 "post": {
                     "summary": "Create one investment event",
+                    "description": "The time of day is not part of an event's identity. If an event with the same account, symbol, type, quantity and price already exists on that date, nothing is created and the response is 409. Genuine repeats on one day go through /api/investments/import, which numbers them.",
                     "security": [{ "bearerAuth": [] }],
-                    "responses": { "200": { "description": "Created investment event" } }
+                    "responses": {
+                        "200": { "description": "Created investment event" },
+                        "409": { "description": "investment_exists: an identical event already exists on that date, at any time of day; existing_id names it" }
+                    }
                 }
             },
             "/api/investments/import": {
                 "post": {
                     "summary": "Bulk import investment events",
+                    "description": "Send every non-error row of the /api/parse preview, duplicates included, in preview order. Events sharing a key are numbered across the whole payload, so leaving out a duplicate or reordering rows can change which events land. To decline a row marked new, leave that row out.",
                     "security": [{ "bearerAuth": [] }],
                     "responses": { "200": { "description": "Investment import summary" } }
                 }

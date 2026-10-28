@@ -113,17 +113,37 @@ pub async fn create_investment(
         ));
     }
 
-    let event = {
+    let (event, outcome) = {
         let db = state.db();
         validate_event_currencies(&db, &body.currency, body.fee_currency.as_deref())?;
         validate_symbol_currency(&db, &body.symbol, &body.currency, None)?;
-        let (event, _outcome) = db
-            .create_investment_event(&body)
-            .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?;
-        event
+        db.create_investment_event(&body)
+            .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?
     };
 
+    // An event whose key (the time of day aside) is already stored is reported,
+    // not answered with the stored row as if it had just been created. The
+    // time of day cannot separate a re-send from a repeat: most stored broker
+    // events carry a made-up time.
+    if outcome == InsertOutcome::Duplicate {
+        return Err(investment_exists(&event));
+    }
+
     Ok(Json(event))
+}
+
+fn investment_exists(event: &InvestmentEvent) -> AppError {
+    AppError::conflict_with_details(
+        format!(
+            "An identical event already exists on that date ({}): same account, symbol, type, \
+             quantity and price, at any time of day. No new event was created. To record \
+             genuine repeats on one day, send all of that day's identical events together \
+             through POST /api/investments/import, which numbers repeats.",
+            event.id
+        ),
+        "investment_exists",
+        serde_json::json!({ "existing_id": event.id }),
+    )
 }
 
 // ── GET /api/investments ─────────────────────────────────────────────────────
@@ -342,6 +362,7 @@ pub async fn import_investments(
             }
         }
 
+        let mut occurrences = crate::util::dedupe::Occurrences::default();
         for (index, event) in payload.events.iter().enumerate() {
             let body = CreateInvestmentEventBody {
                 account_id: payload.account_id.clone(),
@@ -357,7 +378,7 @@ pub async fn import_investments(
                 source_document_ids: event.source_document_ids.clone(),
             };
 
-            match db.create_investment_event(&body) {
+            match db.create_investment_event_in_batch(&body, &mut occurrences, index) {
                 Ok((_, InsertOutcome::Inserted)) => inserted += 1,
                 Ok((_, InsertOutcome::Duplicate)) => duplicates += 1,
                 Err(e) => errors.push(InvestmentImportError {

@@ -442,6 +442,7 @@ td code { font-size: 12px; }
     <tr><td><code>profile_in_use</code></td><td>Profile referenced by accounts, cannot delete (409)</td></tr>
     <tr><td><code>currency_exists</code></td><td>Currency code already exists (409)</td></tr>
     <tr><td><code>currency_in_use</code></td><td>Currency referenced by accounts/transactions (409)</td></tr>
+    <tr><td><code>investment_exists</code></td><td>An identical investment event (same account, symbol, type, quantity and price) already exists on that date, at any time of day; the body's <code>existing_id</code> names it (409)</td></tr>
     <tr><td><code>invalid_currency_code</code></td><td>Not a valid ISO 4217 code</td></tr>
     <tr><td><code>unauthorized</code></td><td>Missing or invalid bearer token (401)</td></tr>
     <tr><td><code>upstream_timeout</code></td><td>LLM provider timed out (504)</td></tr>
@@ -502,7 +503,7 @@ td code { font-size: 12px; }
       <tr><td><code>notes</code></td><td>string | null</td><td>User notes</td></tr>
       <tr><td><code>is_recurring</code></td><td>boolean</td><td>Recurring transaction flag</td></tr>
       <tr><td><code>exclude_from_summary</code></td><td>boolean</td><td>Excluded from budget summaries</td></tr>
-      <tr><td><code>fingerprint</code></td><td>string</td><td>SHA-256 dedup hash</td></tr>
+      <tr><td><code>fingerprint</code></td><td>string</td><td>SHA-256 dedup hash of the date (not the time), the amount (formatting ignored), the account and the row's occurrence number among identical rows in its import</td></tr>
       <tr><td><code>fitid</code></td><td>string | null</td><td>Financial institution transaction ID</td></tr>
       <tr><td><code>source_document_ids</code></td><td>string[]</td><td>IDs of the source documents this transaction was extracted from (documents.id). Empty for manual / CSV / API imports with no document.</td></tr>
     </tbody>
@@ -704,7 +705,7 @@ td code { font-size: 12px; }
       <tr><td><code>rows_new</code></td><td>integer</td><td>New rows</td></tr>
       <tr><td><code>rows_duplicate</code></td><td>integer</td><td>Duplicate rows</td></tr>
       <tr><td><code>rows_error</code></td><td>integer</td><td>Error rows</td></tr>
-      <tr><td><code>payload</code></td><td>ImportPayload</td><td>Payload ready for confirmation</td></tr>
+      <tr><td><code>payload</code></td><td>ImportPayload</td><td>The request payload, to commit as is. Leave out only rows marked new: commit numbers rows that share a date, amount and account across the payload, so dropping a duplicate or reordering can change which rows land.</td></tr>
     </tbody>
   </table>
 </section>
@@ -725,6 +726,8 @@ td code { font-size: 12px; }
       <tr><td><code>error_reason</code></td><td>string | null</td><td>Reason for error status</td></tr>
       <tr><td><code>category_id</code></td><td>string | null</td><td>LLM-assigned category (unified mode)</td></tr>
       <tr><td><code>category_confidence</code></td><td>number | null</td><td>LLM confidence [0.0, 1.0] (unified mode)</td></tr>
+      <tr><td><code>same_key_as_row</code></td><td>integer (optional)</td><td>Index of an earlier row in this preview with the same date, amount and account. Both are imported: check they are two real transactions, not one row extracted twice.</td></tr>
+      <tr><td><code>likely_duplicate_of</code></td><td>object (optional)</td><td>An existing transaction (<code>id</code>, <code>date</code>, <code>description</code>) on the same account with the same amount, a date within 3 days and a similar description, that no other row in this import already matches. The row is still imported unless you remove it.</td></tr>
     </tbody>
   </table>
 </section>
@@ -771,7 +774,7 @@ td code { font-size: 12px; }
       <tr><td><code>duplicate</code></td><td>integer</td><td>Already in DB</td></tr>
       <tr><td><code>errors</code></td><td>integer</td><td>Failed rows</td></tr>
       <tr><td><code>rows</code></td><td>TransactionPreviewRow[]</td><td>Per-row preview</td></tr>
-      <tr><td><code>payload</code></td><td>ImportPayload | null</td><td>Ready for confirmation import</td></tr>
+      <tr><td><code>payload</code></td><td>ImportPayload | null</td><td>Commit payload for <code>POST /api/transactions/import</code>: every non-error row, duplicates included, in <code>rows</code> order. Send it as is: commit numbers rows that share a date, amount and account across the whole payload, so leaving out a duplicate or reordering rows can change which rows land. To decline a row marked new, leave that row out.</td></tr>
     </tbody>
   </table>
 </section>
@@ -800,7 +803,7 @@ td code { font-size: 12px; }
       <tr><td><code>new</code></td><td>integer</td><td>New events</td></tr>
       <tr><td><code>duplicate</code></td><td>integer</td><td>Duplicate events</td></tr>
       <tr><td><code>rows</code></td><td>InvestmentPreviewRow[]</td><td>Per-row preview</td></tr>
-      <tr><td><code>payload</code></td><td>InvestmentsImportPayload | null</td><td>Ready for confirmation import</td></tr>
+      <tr><td><code>payload</code></td><td>InvestmentsImportPayload | null</td><td>Commit payload for <code>POST /api/investments/import</code>: every non-error row, duplicates included, in <code>rows</code> order. Send it as is: commit numbers events that share an account, symbol, date, quantity, price and type across the whole payload, so leaving out a duplicate or reordering rows can change which events land. To decline a row marked new, leave that row out.</td></tr>
     </tbody>
   </table>
 </section>
@@ -853,6 +856,7 @@ td code { font-size: 12px; }
       <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
       <tr><td><code>status</code></td><td>string</td><td>new, duplicate, or error</td></tr>
       <tr><td><code>existing_id</code></td><td>string | null</td><td>UUID of matching existing event</td></tr>
+      <tr><td><code>same_key_as_row</code></td><td>integer (optional)</td><td>Index of an earlier row in this preview with the same symbol, date, quantity, price and type. Both are imported: check they are two real events.</td></tr>
     </tbody>
   </table>
 </section>
@@ -1874,6 +1878,7 @@ td code { font-size: 12px; }
     <code class="endpoint-path">/api/transactions/import</code>
   </div>
   <p class="endpoint-summary">Import structured transaction JSON. Supports dry_run for preview. Each transaction may carry <code>source_document_ids</code> (ids from <code>POST /api/documents</code>, or forwarded verbatim from a <code>/api/parse</code> payload) linking it to the document it was extracted from. Omitting the field stores the row with no provenance and raises no error.</p>
+  <p><strong>Committing a preview:</strong> whether a row lands depends on the rest of the payload. Rows that share a date, amount and account are numbered 0, 1, 2 in payload order, and that number is part of the fingerprint. So send every non-error row of the preview, duplicates included, in preview order, and to decline a row marked new, leave that row out. Leaving out a duplicate or reordering rows can change which rows land: with TfL 08:00 stored, a preview of TfL 08:00 and TfL 18:00 shows duplicate, new, but committing only the new row reports it as a duplicate and inserts nothing.</p>
   <h4>Parameters</h4>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -3296,6 +3301,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <code class="endpoint-path">/api/investments</code>
   </div>
   <p class="endpoint-summary">Create a single investment event.</p>
+  <p>The time of day is not part of an event's identity. If an event with the same account, symbol, type, quantity and price already exists on that date, at any time of day, nothing is created and the response is <code>409 investment_exists</code> with the stored event's <code>existing_id</code>. Most stored broker events carry a made-up time, so a time cannot tell a re-send from a second event. To record genuine repeats on one day, send all of that day's identical events together through <code>POST /api/investments/import</code>, which numbers repeats.</p>
   <h4>Request Body <span class="content-type">application/json</span></h4>
   <table class="params-table">
     <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -3340,6 +3346,15 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   "fingerprint": "ghi789...",
   "created_at": "2026-05-30T12:00:00"
 }</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_body</code></td><td>Unknown event type, or an unparseable date, quantity, price or fee</td></tr>
+      <tr><td>400</td><td><code>symbol_currency_conflict</code></td><td>The symbol is already recorded in another currency</td></tr>
+      <tr><td>409</td><td><code>investment_exists</code></td><td>An identical event already exists on that date, at any time of day. The body carries <code>existing_id</code>. Genuine repeats go through <code>POST /api/investments/import</code>.</td></tr>
+    </tbody>
+  </table>
 </section>
 
 <section class="endpoint" id="post-api-investments-import" data-method="POST" data-path="/api/investments/import">
@@ -3348,6 +3363,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <code class="endpoint-path">/api/investments/import</code>
   </div>
   <p class="endpoint-summary">Bulk import investment events. Each event may carry <code>source_document_ids</code> (ids from <code>POST /api/documents</code>, or forwarded verbatim from a <code>/api/parse</code> payload) linking it to the document it was extracted from. Omitting the field stores the event with no provenance and raises no error.</p>
+  <p><strong>Committing a preview:</strong> whether an event lands depends on the rest of the payload. Events that share an account, symbol, date, quantity, price and type are numbered 0, 1, 2 in payload order, and that number is part of the fingerprint. So send every non-error row of the preview, duplicates included, in preview order, and to decline a row marked new, leave that row out. Leaving out a duplicate or reordering rows can change which events land.</p>
   <h4>Request Body <span class="content-type">application/json</span></h4>
   <p>InvestmentsImportPayload object (see Models).</p>
   <h4>Example Request</h4>

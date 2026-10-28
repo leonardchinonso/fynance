@@ -1673,6 +1673,29 @@ pub struct TransactionPreviewRow {
     /// via `IngestionPreview.documents`). Empty for the user-driven JSON dryrun.
     #[serde(default)]
     pub source_document_ids: Vec<String>,
+    /// Index of an earlier row in this preview with the same date, amount and
+    /// account. Both are imported, so check they are two real transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub same_key_as_row: Option<usize>,
+    /// An existing transaction this new row probably duplicates even though
+    /// the dates or times differ. The row is still imported unless removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub likely_duplicate_of: Option<LikelyDuplicate>,
+}
+
+/// An existing transaction on the same account with the same amount, a date
+/// within `util::dedupe::NEAR_MATCH_DAYS` and a similar description, that no
+/// other row in the import already matches exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct LikelyDuplicate {
+    pub id: String,
+    #[serde(with = "serde_naive_datetime")]
+    #[ts(type = "string")]
+    pub date: NaiveDateTime,
+    pub description: String,
 }
 
 /// Full response from a transaction import dryrun.
@@ -1884,6 +1907,12 @@ pub struct InvestmentPreviewRow {
     /// via `IngestionPreview.documents`).
     #[serde(default)]
     pub source_document_ids: Vec<String>,
+    /// Index of an earlier row in this preview with the same account, symbol,
+    /// date, quantity, price and type. Both are imported, so check they are
+    /// two real events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub same_key_as_row: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

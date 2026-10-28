@@ -16,10 +16,11 @@ import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPaylo
 import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
 import type { InvestmentEventType } from "@/bindings/InvestmentEventType"
 import type { Currency } from "@/types"
-import { StatusBadge } from "./status_badge"
+import { DuplicateHint, StatusBadge } from "./status_badge"
 import { DateCell, DecimalCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
 import { SortHeader } from "./sort_header"
+import { editablePayloadIndices } from "./payload_index"
 import { InlineDateRange } from "@/components/inline_date_range"
 import { useUrlState } from "@/hooks/use_url_state"
 import {
@@ -143,13 +144,10 @@ export function InvestmentsSection({
   }
 
   /**
-   * Investment payload only contains rows with status === "new" in the
-   * same order as `rows[]`.
+   * Each preview row's index into payload.events, or null for rows the user
+   * cannot edit or remove (duplicate/error). See `editablePayloadIndices`.
    */
-  const rowPayloadIndex = useMemo(() => {
-    let n = 0
-    return result.rows.map((r) => (r.status === "new" ? n++ : null))
-  }, [result.rows])
+  const rowPayloadIndex = useMemo(() => editablePayloadIndices(result.rows), [result.rows])
 
   const filteredEntries = useMemo(() => {
     const fromIso = dateFrom ? `${dateFrom}T00:00:00` : null
@@ -283,7 +281,10 @@ export function InvestmentsSection({
                 )}
               >
                 <TableCell>
-                  <StatusBadge status={marked ? "removed" : row.status} />
+                  <div className="flex items-center gap-1">
+                    <StatusBadge status={marked ? "removed" : row.status} />
+                    {!marked && <DuplicateHint sameKeyAsRow={row.same_key_as_row} />}
+                  </div>
                 </TableCell>
                 <TableCell>
                   {editable && ev && !marked ? (

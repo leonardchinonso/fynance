@@ -334,7 +334,7 @@ Other
 
 2. **Accounts table for portfolio**: Rather than inferring balances from transaction sums (which requires complete history), the `accounts` table holds point-in-time balance snapshots. Users update balances after each import. The `portfolio_snapshots` table records these over time for trend charts.
 
-3. **Fingerprint deduplication**: Every transaction gets a SHA-256 fingerprint of `(date, amount, description, account_id)`. This catches duplicates across re-imports even without an OFX FITID.
+3. **Fingerprint deduplication**: Every transaction gets a SHA-256 fingerprint of its calendar date, canonical amount (`500` and `500.00` agree), account and occurrence number: the n-th row of one import sharing those fields gets occurrence n. Re-imports dedupe even when the time of day or amount formatting differs, and two genuine identical rows in one statement both land. Description is excluded; the import preview uses it instead to flag likely duplicates whose dates differ. See `backend/src/util/dedupe.rs`.
 
 4. **Category rules in YAML, not just DB**: `config/rules.yaml` is the source of truth for rules so they can be version-controlled. The DB table is a read cache for the UI.
 

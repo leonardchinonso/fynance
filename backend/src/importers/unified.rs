@@ -16,7 +16,8 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::model::{CategorySource, Transaction};
-use crate::util::{fingerprint, normalize_description, serde_naive_datetime};
+use crate::util::dedupe::{Occurrences, transaction_key};
+use crate::util::{normalize_description, serde_naive_datetime};
 
 /// One row of a bank statement after the LLM has normalised it.
 ///
@@ -75,14 +76,18 @@ pub struct UnifiedStatementRow {
 }
 
 impl Transaction {
-    /// Build a `Transaction` from a normalised LLM statement row.
+    /// Build a `Transaction` from a normalised LLM statement row, the
+    /// `row_index`-th of an import whose repeated keys `occurrences` numbers.
     ///
-    /// The fingerprint is computed from `(datetime, amount, account_id)`.
+    /// The fingerprint covers date, amount and account (see `util::dedupe`).
     /// Description is excluded so that the same transaction imported via
     /// different channels (CSV vs agent) deduplicates correctly.
-    pub fn from_unified(row: UnifiedStatementRow, account_id: &str) -> Self {
-        let date_iso = row.date.format("%Y-%m-%dT%H:%M:%S").to_string();
-
+    pub fn from_unified(
+        row: UnifiedStatementRow,
+        account_id: &str,
+        occurrences: &mut Occurrences,
+        row_index: usize,
+    ) -> Self {
         // Sub-unit conversion (GBX/USX/ZAC/ILA -> parent currency) happens here,
         // the single conversion point every CSV-imported transaction row goes
         // through. After this point no sub-unit code is ever persisted. The
@@ -92,7 +97,6 @@ impl Transaction {
             Some((converted, parent)) => (converted, parent.to_string()),
             None => (row.amount, row.currency),
         };
-        let amount_str = amount.to_string();
 
         // Prefer the explicit merchant field when present (it is more stable
         // than a generic description that may include payment-method noise).
@@ -102,7 +106,12 @@ impl Transaction {
             .unwrap_or(row.description);
 
         let normalized = normalize_description(&description);
-        let fp = fingerprint(&date_iso, &amount_str, account_id);
+        let fp = occurrences
+            .next(
+                &transaction_key(row.date.date(), amount, account_id),
+                row_index,
+            )
+            .fingerprint;
 
         let category_id = row.category_id.filter(|s| !s.is_empty());
         let category_source = category_id.as_ref().map(|_| CategorySource::Rule);

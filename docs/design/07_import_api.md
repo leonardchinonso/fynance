@@ -494,7 +494,13 @@ Stage 2 endpoints are independent. Call them in any order. If one fails, the oth
 >
 > Every row in a Stage 1 `payload` carries `source_document_ids`, linking it to the document it was extracted from. That is what populates the Source column and lets a stored figure be traced back to the statement it came from.
 >
-> Dropping or filtering rows is fine (`payload.events.filter(...)`), but reconstructing each row field-by-field is not: it is easy to omit `source_document_ids` and nothing will fail. The rows commit cleanly, and the provenance is simply gone. A bulk import that reconstructed its payload this way left 691 investment events with no source link and no error to show for it.
+> Leaving out rows marked `new` is fine (`payload.events.filter(...)`), but reconstructing each row field-by-field is not: it is easy to omit `source_document_ids` and nothing will fail. The rows commit cleanly, and the provenance is simply gone. A bulk import that reconstructed its payload this way left 691 investment events with no source link and no error to show for it.
+
+> **Send every non-error row, duplicates included, in preview order.**
+>
+> The transactions and investments payloads hold every non-error row of the preview, duplicates included, in `rows` order. Commit numbers the rows that share an identity key (date, amount and account for a transaction; account, symbol, date, quantity, price and type for an investment event) 0, 1, 2 in payload order, and the number is part of the fingerprint. So whether a row lands depends on the rows sent before it.
+>
+> Leaving out a duplicate, or reordering, can therefore change the outcome. With TfL £15.50 at 08:00 already stored, a preview of TfL 08:00 and TfL 18:00 shows duplicate, new. Committing only the new row numbers it 0, matches the stored row, and reports inserted 0, duplicate 1. To decline rows, leave out only rows marked `new`.
 >
 > If you must build a payload without a Stage 1 parse (a CSV you already hold, a correction script), upload the source file via `POST /api/documents` first and set `source_document_ids` to the returned id. Leave it empty only when there genuinely is no source document.
 
@@ -951,7 +957,7 @@ For each section, the `rows` array contains every row (new, duplicate, and error
 | `"error"` | Failed to parse, will be skipped | Red highlight, show `error_reason` |
 | `"modify"` | Exists but values differ (holdings only) | Yellow/amber highlight, show old vs new value |
 
-The `payload` field in each section contains only the rows that should be committed (new rows, or new + modified for holdings). The frontend sends the payload as-is; no filtering is needed.
+The transactions and investments `payload` holds every non-error row, duplicates included, in `rows` order; commit skips the duplicates, but they must be sent (see Stage 2 above). The holdings `payload` holds the new and modified rows. The frontend sends each payload as is, less any `new` rows the user removed. A row's payload index is the number of non-error rows before it (`frontend/src/pages/import/preview/payload_index.ts`).
 
 ### Handling `needs_clarification`
 

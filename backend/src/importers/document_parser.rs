@@ -257,12 +257,19 @@ pub fn build_multi_preview(
 
         // API contract is id-only: resolve legacy name-only categories
         // (Monzo CSV) to ids; ImportTransaction.category stays None.
+        //
+        // The payload holds every non-error preview row, duplicates included,
+        // in preview order. Commit numbers same-key rows across the whole
+        // payload, so a duplicate must be sent for the rows after it to keep
+        // the occurrence numbers the preview showed; the web UI maps preview
+        // rows to payload indices by this rule (`payload_index.ts`).
         let import_transactions: Vec<ImportTransaction> = extraction
             .transactions
             .iter()
+            .zip(&preview_rows)
             .enumerate()
-            .filter(|(_, r)| r.row_confidence >= min_row_confidence)
-            .map(|(i, r)| {
+            .filter(|(_, (_, p))| p.status != TransactionPreviewStatus::Error)
+            .map(|(i, (r, _))| {
                 let (category_id, category_source) = if let Some(ref id) = r.category_id {
                     (Some(id.clone()), Some(CategorySource::Agent))
                 } else if let Some(ref name) = r.category {
@@ -421,12 +428,18 @@ pub fn build_multi_preview(
             .filter(|r| r.status == TransactionPreviewStatus::Duplicate)
             .count();
 
+        // Every non-error preview row, duplicates included, in preview order,
+        // as for transactions above. A row the preview could not read (an
+        // unknown type, a bad date or number) stays out like a low-confidence
+        // one: commit would only reject it, and keeping it would shift the
+        // payload index of every row after it.
         let payload_events: Vec<CreateInvestmentEventBody> = extraction
             .investments
             .iter()
+            .zip(&preview_rows)
             .enumerate()
-            .filter(|(_, r)| r.row_confidence >= min_row_confidence)
-            .map(|(i, r)| CreateInvestmentEventBody {
+            .filter(|(_, (_, p))| p.status != TransactionPreviewStatus::Error)
+            .map(|(i, (r, _))| CreateInvestmentEventBody {
                 account_id: account_id.to_string(),
                 event_type: r.event_type.clone(),
                 symbol: r.symbol.clone(),
@@ -1206,6 +1219,164 @@ mod tests {
             result.len(),
             0,
             "row with no value and no price should be skipped"
+        );
+    }
+
+    /// The web UI finds a preview row's payload entry by counting the non-error
+    /// rows before it (`frontend/src/pages/import/preview/payload_index.ts`), so
+    /// the payload must be exactly the non-error rows, duplicates included, in
+    /// preview order. An investment row the preview cannot read, at full
+    /// confidence, used to stay in the payload and shift every later index.
+    #[test]
+    fn payload_is_every_non_error_row_in_preview_order() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open(file.path()).unwrap();
+        db.create_account(&crate::model::Account {
+            id: "acct".to_string(),
+            name: "Test".to_string(),
+            institution: "Test Bank".to_string(),
+            account_type: crate::model::AccountType::Investment,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+
+        let tx =
+            |date: &str, description: &str, amount: &str, confidence: f32| UnifiedStatementRow {
+                date: chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%dT%H:%M:%S").unwrap(),
+                description: description.to_string(),
+                amount: amount.parse().unwrap(),
+                currency: "GBP".to_string(),
+                fitid: None,
+                category: None,
+                merchant: None,
+                counterparty: None,
+                transaction_type: None,
+                balance_after: None,
+                notes: None,
+                reference: None,
+                row_confidence: confidence,
+                category_id: None,
+                category_confidence: None,
+                source_file: None,
+            };
+        let event = |event_type: &str, date: &str, confidence: f32| ParsedInvestmentRow {
+            event_type: event_type.to_string(),
+            symbol: "VUSA".to_string(),
+            date: date.to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            total_value: None,
+            fee: "0".to_string(),
+            currency: "GBP".to_string(),
+            fee_currency: None,
+            notes: None,
+            row_confidence: confidence,
+            source_file: None,
+        };
+
+        // Already stored, so each preview opens with a duplicate row.
+        db.insert_transactions_bulk(
+            "acct",
+            &[ImportTransaction {
+                date: chrono::NaiveDate::from_ymd_opt(2026, 7, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+                description: "Rent".to_string(),
+                amount: "-900".parse().unwrap(),
+                currency: Some("GBP".to_string()),
+                category_id: None,
+                category_source: None,
+                notes: None,
+                is_recurring: None,
+                exclude_from_summary: None,
+                source_document_ids: vec![],
+            }],
+        )
+        .unwrap();
+        db.create_investment_event(&CreateInvestmentEventBody {
+            account_id: "acct".to_string(),
+            event_type: "buy".to_string(),
+            symbol: "VUSA".to_string(),
+            date: "2026-07-01T00:00:00".to_string(),
+            quantity: "10".to_string(),
+            price_per_share: "76.32".to_string(),
+            fee: None,
+            currency: "GBP".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: vec![],
+        })
+        .unwrap();
+
+        let extraction = ExtractionResult {
+            transactions: vec![
+                tx("2026-07-01T00:00:00", "Rent", "-900", 0.95),
+                tx("2026-07-02T00:00:00", "Unreadable", "-1", 0.1),
+                tx("2026-07-02T00:00:00", "Coffee", "-3.20", 0.95),
+                tx("2026-07-03T00:00:00", "Taxi", "-15.50", 0.95),
+            ],
+            holdings: vec![],
+            investments: vec![
+                event("buy", "2026-07-01T00:00:00", 0.95),
+                event("buy", "not a date", 0.95),
+                event("buy", "2026-07-02T00:00:00", 0.1),
+                event("sell", "2026-07-03T00:00:00", 0.95),
+            ],
+            detected_bank: BankFormat::Unknown,
+            detection_confidence: 0.9,
+            calls: vec![],
+        };
+        let preview = build_multi_preview(
+            extraction,
+            "acct",
+            "Test Bank",
+            1,
+            &db,
+            0,
+            &std::collections::HashMap::new(),
+            &[],
+        )
+        .unwrap();
+
+        use TransactionPreviewStatus::{Duplicate, Error, New};
+        let tx_result = &preview.transactions;
+        let statuses: Vec<_> = tx_result.rows.iter().map(|r| r.status.clone()).collect();
+        assert_eq!(statuses, vec![Duplicate, Error, New, New]);
+        let payload: Vec<&str> = tx_result
+            .payload
+            .as_ref()
+            .unwrap()
+            .transactions
+            .iter()
+            .map(|t| t.description.as_str())
+            .collect();
+        assert_eq!(payload, vec!["Rent", "Coffee", "Taxi"]);
+
+        let inv_result = &preview.investments;
+        let statuses: Vec<_> = inv_result.rows.iter().map(|r| r.status.clone()).collect();
+        assert_eq!(statuses, vec![Duplicate, Error, Error, New]);
+        let payload: Vec<(&str, &str)> = inv_result
+            .payload
+            .as_ref()
+            .unwrap()
+            .events
+            .iter()
+            .map(|e| (e.event_type.as_str(), e.date.as_str()))
+            .collect();
+        assert_eq!(
+            payload,
+            vec![
+                ("buy", "2026-07-01T00:00:00"),
+                ("sell", "2026-07-03T00:00:00")
+            ]
         );
     }
 }

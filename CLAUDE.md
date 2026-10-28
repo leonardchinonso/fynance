@@ -340,7 +340,7 @@ A reasonable rule of thumb: if you're about to type "I'll wait for X to finish b
 - Dates stored as ISO 8601 datetime strings (`YYYY-MM-DDTHH:MM:SS`) in SQLite; date-only imports use `T00:00:00`
 - Money stored as TEXT in SQLite, parsed as `Decimal` in Rust; never store as REAL
 - Return `anyhow::Result<T>` at command / route boundaries, define `thiserror` enums inside modules
-- Every importer deduplicates by a stable fingerprint hash `sha256(datetime, amount, account_id)`
+- Every importer deduplicates by a stable fingerprint: the calendar date, canonical amount and account, numbered by occurrence within the import (`backend/src/util/dedupe.rs`). Build it with `Occurrences`, never by hashing raw text
 - Never log raw transaction descriptions at INFO level (may leak merchant info)
 - Axum handlers return `Result<Json<T>, AppError>` where `AppError` implements `IntoResponse`
 - Frontend fetches through `src/api/client.ts`, never direct `fetch()` in components
