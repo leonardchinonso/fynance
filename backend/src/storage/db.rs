@@ -4131,74 +4131,25 @@ impl Db {
     }
 
     /// Returns the first and last balance per account within `[start, end]`,
-    /// and the delta between them. A balance is the account's holdings at that
-    /// snapshot date, each converted into the account's currency. Accounts with
-    /// no snapshot inside the range are omitted entirely; snapshots outside the
-    /// range never contribute.
+    /// and the delta between them, taken from [`Db::get_balances_in_range`]:
+    /// the start is the balance carried into the range when the account held
+    /// anything before it. Accounts with no snapshot inside the range are
+    /// omitted entirely.
     pub fn get_balance_summary(
         &self,
         start: NaiveDate,
         end: NaiveDate,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<BalanceDelta>> {
-        let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
-        let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
-
-        // One query total: per-account first/last snapshot date over the
-        // range-filtered rows, joined back to the holdings at those two dates.
-        // Summing happens in Rust so each holding can be FX-converted first.
-        let mut stmt = self.conn.prepare(
-            r"WITH bounds AS (
-                SELECT account_id, MIN(as_of) AS first_date, MAX(as_of) AS last_date
-                FROM holdings
-                WHERE as_of >= ?1 AND as_of <= ?2
-                GROUP BY account_id
-              )
-              SELECT b.account_id, h.as_of = b.first_date, h.as_of = b.last_date,
-                     h.value, h.currency, a.currency
-              FROM bounds b
-              JOIN accounts a ON a.id = b.account_id
-              JOIN holdings h
-                ON h.account_id = b.account_id
-               AND h.as_of IN (b.first_date, b.last_date)",
-        )?;
-
-        let rows = stmt
-            .query_map(rusqlite::params![start_str, end_str], |row| {
-                let account_id: String = row.get(0)?;
-                let value_str: String = row.get(3)?;
-                let value: Decimal = value_str.parse().map_err(|_| {
-                    column_error(
-                        3,
-                        format!("invalid holding value {value_str:?} for account {account_id}"),
-                    )
-                })?;
-                Ok((
-                    account_id,
-                    row.get::<_, bool>(1)?,
-                    row.get::<_, bool>(2)?,
-                    value,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                ))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        let mut totals: BTreeMap<String, (Decimal, Decimal)> = BTreeMap::new();
-        for (account_id, is_first, is_last, value, currency, account_currency) in rows {
-            let value = fx.convert_between(value, &currency, &account_currency);
-            let entry = totals
-                .entry(account_id)
-                .or_insert((Decimal::ZERO, Decimal::ZERO));
-            if is_first {
-                entry.0 += value;
-            }
-            if is_last {
-                entry.1 += value;
-            }
+        let mut bounds: BTreeMap<String, (Decimal, Decimal)> = BTreeMap::new();
+        for snapshot in self.get_balances_in_range(start, end, fx)? {
+            bounds
+                .entry(snapshot.account_id)
+                .and_modify(|(_, last)| *last = snapshot.balance)
+                .or_insert((snapshot.balance, snapshot.balance));
         }
 
-        Ok(totals
+        Ok(bounds
             .into_iter()
             .map(|(account_id, (start_balance, end_balance))| BalanceDelta {
                 account_id,
@@ -4209,22 +4160,41 @@ impl Db {
             .collect())
     }
 
-    /// Returns each account's balance for every distinct (account_id, as_of)
-    /// snapshot date in `[start, end]`, ordered by date and account. A balance
-    /// is the holdings at that date, each converted into the account's
-    /// currency, and is reported in that currency.
+    /// Returns each account's balance at the end of every day in
+    /// `[start, end]` on which it has a holdings snapshot, ordered by date and
+    /// account, preceded by an opening point at `start` (00:00) carrying what
+    /// the account held before the range, if anything. A balance is all of the
+    /// account's holdings carried forward to that moment (the latest snapshot
+    /// per symbol and sub_account, as in `balances_from_holdings_as_of`), each
+    /// converted into the account's currency, and is reported in that
+    /// currency. `as_of` is the day's latest snapshot time. Accounts with no
+    /// snapshot inside the range get no points.
+    ///
+    /// Carrying forward matters because one day's rows are often a partial
+    /// update: a cash-only snapshot, or a mortgage statement without a new
+    /// property valuation. Summing only that day's rows reports the fragment
+    /// as the whole account.
     pub fn get_balances_in_range(
         &self,
         start: NaiveDate,
         end: NaiveDate,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<Vec<AccountSnapshot>> {
-        let mut stmt = self.conn.prepare(
-            r"SELECT h.as_of, h.account_id, h.value, h.currency, a.currency
+        let carried_before_start = carried_holdings_sql(
+            "account_id, symbol, COALESCE(sub_account, '') AS sub_account, as_of, value, currency",
+            "AND h.as_of < ?1",
+            false,
+        );
+        let sql = format!(
+            r"{carried_before_start}
+              UNION ALL
+              SELECT h.account_id, h.symbol, COALESCE(h.sub_account, ''), h.as_of,
+                     h.value, h.currency
               FROM holdings h
-              JOIN accounts a ON a.id = h.account_id
-              WHERE h.as_of >= ?1 AND h.as_of <= ?2",
-        )?;
+              WHERE h.as_of >= ?1 AND h.as_of <= ?2
+              ORDER BY account_id, as_of"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
             .query_map(
                 rusqlite::params![
@@ -4232,46 +4202,79 @@ impl Db {
                     end.format("%Y-%m-%dT23:59:59").to_string()
                 ],
                 |row| {
-                    let account_id: String = row.get(1)?;
-                    let value_str: String = row.get(2)?;
-                    let value: Decimal = value_str.parse().map_err(|_| {
-                        column_error(
-                            2,
-                            format!("invalid holding value {value_str:?} for account {account_id}"),
-                        )
-                    })?;
+                    let value_str: String = row.get(4)?;
                     Ok((
                         row.get::<_, String>(0)?,
-                        account_id,
-                        value,
+                        (row.get::<_, String>(1)?, row.get::<_, String>(2)?),
                         row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
+                        parse_decimal_column(4, "holding value", &value_str)?,
+                        row.get::<_, String>(5)?,
                     ))
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        // Keyed (as_of, account_id): ISO datetime strings sort chronologically.
-        let mut totals: BTreeMap<(String, String), (Decimal, String)> = BTreeMap::new();
-        for (date_str, account_id, value, currency, account_currency) in rows {
-            let value = fx.convert_between(value, &currency, &account_currency);
-            totals
-                .entry((date_str, account_id))
-                .or_insert((Decimal::ZERO, account_currency))
-                .0 += value;
+        let account_currencies = self.account_currencies()?;
+        let range_start = start.and_hms_opt(0, 0, 0).expect("midnight is valid");
+        let range_start_str = range_start.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let balance_of = |held: &HashMap<(String, String), (Decimal, String)>,
+                          account_currency: &str|
+         -> Decimal {
+            held.values()
+                .map(|(v, c)| fx.convert_between(*v, c, account_currency))
+                .sum()
+        };
+        let mut snapshots = Vec::new();
+        let mut held: HashMap<(String, String), (Decimal, String)> = HashMap::new();
+        let mut opened = false;
+        let mut rows = rows.into_iter().peekable();
+        while let Some((account_id, key, as_of_str, value, currency)) = rows.next() {
+            if !opened && as_of_str >= range_start_str {
+                opened = true;
+                let carried_in = account_currencies
+                    .get(&account_id)
+                    .filter(|_| !held.is_empty());
+                if let Some(account_currency) = carried_in {
+                    snapshots.push(AccountSnapshot {
+                        as_of: range_start,
+                        account_id: account_id.clone(),
+                        balance: balance_of(&held, account_currency),
+                        currency: account_currency.clone(),
+                    });
+                }
+            }
+            held.insert(key, (value, currency));
+            let next = rows.peek();
+            let account_ends = next.is_none_or(|n| n.0 != account_id);
+            let day_ends =
+                account_ends || next.is_some_and(|n| n.2.get(..10) != as_of_str.get(..10));
+            if day_ends {
+                let as_of = parse_transaction_datetime(&as_of_str);
+                if as_of.is_none() {
+                    tracing::warn!(%account_id, as_of = %as_of_str, "unparseable holding as_of");
+                }
+                let in_range = as_of.filter(|d| d.date() >= start);
+                if let (Some(as_of), Some(account_currency)) =
+                    (in_range, account_currencies.get(&account_id))
+                {
+                    snapshots.push(AccountSnapshot {
+                        as_of,
+                        account_id: account_id.clone(),
+                        balance: balance_of(&held, account_currency),
+                        currency: account_currency.clone(),
+                    });
+                }
+            }
+            if account_ends {
+                held.clear();
+                opened = false;
+            }
         }
 
-        Ok(totals
-            .into_iter()
-            .filter_map(|((date_str, account_id), (balance, currency))| {
-                Some(AccountSnapshot {
-                    as_of: parse_transaction_datetime(&date_str)?,
-                    account_id,
-                    balance,
-                    currency,
-                })
-            })
-            .collect())
+        // Stable: an opening point keeps its place ahead of a snapshot stored
+        // at exactly `start` 00:00:00.
+        snapshots.sort_by(|a, b| (a.as_of, &a.account_id).cmp(&(b.as_of, &b.account_id)));
+        Ok(snapshots)
     }
 
     /// Returns income and spending aggregated by period.
@@ -6739,8 +6742,9 @@ mod consolidation_tests {
         db.set_account_balance("single", dec!(500), naive_dt(2025, 2, 10))
             .unwrap();
 
-        // Snapshots on both sides of the range plus two inside it: the
-        // out-of-range ones must not contribute.
+        // Snapshots on both sides of the range plus two inside it: the one
+        // before the range is the balance carried in (the period's start), and
+        // the one after it never contributes.
         db.set_account_balance("spanning", dec!(100), naive_dt(2024, 12, 1))
             .unwrap();
         db.set_account_balance("spanning", dec!(200), naive_dt(2025, 1, 10))
@@ -6772,9 +6776,167 @@ mod consolidation_tests {
 
         let spanning = &summary[1];
         assert_eq!(spanning.account_id, "spanning");
-        assert!((spanning.start_balance.unwrap() - dec!(200)).abs() < tol);
+        assert!((spanning.start_balance.unwrap() - dec!(100)).abs() < tol);
         assert!((spanning.end_balance.unwrap() - dec!(350)).abs() < tol);
-        assert!((spanning.delta.unwrap() - dec!(150)).abs() < tol);
+        assert!((spanning.delta.unwrap() - dec!(250)).abs() < tol);
+    }
+
+    // One day's rows are often a partial update. The mortgage-only and
+    // cash-only days below must still count the holdings carried from earlier
+    // snapshots, or the first point in a range reads as a fragment of the
+    // account and the period change is wildly wrong.
+    #[test]
+    fn balances_in_range_carry_other_holdings_forward() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("house", AccountType::Property))
+            .unwrap();
+        db.upsert_holdings(
+            "house",
+            &[
+                make_holding(
+                    "house",
+                    "_PROPERTY",
+                    HoldingType::Property,
+                    dec!(450000),
+                    naive_dt(2025, 1, 31),
+                ),
+                make_holding(
+                    "house",
+                    "_MORTGAGE",
+                    HoldingType::Debt,
+                    dec!(-260000),
+                    naive_dt(2025, 1, 31),
+                ),
+            ],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "house",
+            &[make_holding(
+                "house",
+                "_MORTGAGE",
+                HoldingType::Debt,
+                dec!(-259000),
+                naive_dt(2025, 2, 13),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "house",
+            &[make_holding(
+                "house",
+                "_PROPERTY",
+                HoldingType::Property,
+                dec!(455000),
+                naive_dt(2025, 3, 31),
+            )],
+        )
+        .unwrap();
+
+        let fx = gbp_fx();
+        let rows = db
+            .get_balances_in_range(naive_date(2025, 2, 1), naive_date(2025, 3, 31), &fx)
+            .unwrap();
+        let balances: Vec<_> = rows.iter().map(|r| (r.as_of.date(), r.balance)).collect();
+        assert_eq!(
+            balances,
+            vec![
+                (naive_date(2025, 2, 1), dec!(190000)), // carried into the range
+                (naive_date(2025, 2, 13), dec!(191000)),
+                (naive_date(2025, 3, 31), dec!(196000)),
+            ],
+            "each point is the whole account, not just that day's rows"
+        );
+
+        let summary = db
+            .get_balance_summary(naive_date(2025, 2, 1), naive_date(2025, 3, 31), &fx)
+            .unwrap();
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0].start_balance, Some(dec!(190000)));
+        assert_eq!(summary[0].end_balance, Some(dec!(196000)));
+        assert_eq!(summary[0].delta, Some(dec!(6000)));
+    }
+
+    // The Trading 212 shape: cash snapshotted at 00:00 and USD stocks at
+    // 23:59:59 on the same day, and a cash-only update in between. One point
+    // per day, holding everything carried to the end of it, in GBP.
+    #[test]
+    fn balances_in_range_one_point_per_day_with_carried_usd_stocks() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::InvestmentIsa))
+            .unwrap();
+        let usd = |symbol: &str, value: Decimal, as_of: NaiveDateTime| {
+            let mut h = make_holding("t212", symbol, HoldingType::Stock, value, as_of);
+            h.currency = "USD".to_string();
+            h
+        };
+        let end_of_day = |y, m, d| naive_dt(y, m, d) + chrono::Duration::seconds(86399);
+        db.upsert_holdings(
+            "t212",
+            &[
+                make_holding(
+                    "t212",
+                    "_CASH",
+                    HoldingType::Cash,
+                    dec!(200),
+                    naive_dt(2025, 1, 31),
+                ),
+                usd("AAPL", dec!(1000), end_of_day(2025, 1, 31)),
+                make_holding(
+                    "t212",
+                    "_CASH",
+                    HoldingType::Cash,
+                    dec!(300),
+                    naive_dt(2025, 2, 15),
+                ),
+            ],
+        )
+        .unwrap();
+
+        let rows = db
+            .get_balances_in_range(
+                naive_date(2025, 1, 1),
+                naive_date(2025, 2, 28),
+                &gbp_usd_fx(),
+            )
+            .unwrap();
+        let points: Vec<_> = rows.iter().map(|r| (r.as_of, r.balance)).collect();
+        assert_eq!(
+            points,
+            vec![
+                (end_of_day(2025, 1, 31), dec!(700)), // 1000 USD * 0.5 + 200
+                (naive_dt(2025, 2, 15), dec!(800)),   // AAPL carried + new cash
+            ]
+        );
+        assert!(rows.iter().all(|r| r.currency == "GBP"));
+    }
+
+    // A snapshot stored at exactly `start` 00:00:00 shares its timestamp with
+    // the opening point; the opening point must still come first, or the
+    // period's start balance silently becomes the post-snapshot value.
+    #[test]
+    fn opening_point_precedes_a_snapshot_at_the_range_start() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::InvestmentIsa))
+            .unwrap();
+        db.set_account_balance("t212", dec!(100), naive_dt(2025, 1, 31))
+            .unwrap();
+        db.set_account_balance("t212", dec!(150), naive_dt(2025, 2, 1))
+            .unwrap();
+
+        let fx = gbp_fx();
+        let rows = db
+            .get_balances_in_range(naive_date(2025, 2, 1), naive_date(2025, 2, 28), &fx)
+            .unwrap();
+        let balances: Vec<_> = rows.iter().map(|r| r.balance).collect();
+        assert_eq!(balances, vec![dec!(100), dec!(150)]);
+        assert!(rows.iter().all(|r| r.as_of == naive_dt(2025, 2, 1)));
+
+        let summary = db
+            .get_balance_summary(naive_date(2025, 2, 1), naive_date(2025, 2, 28), &fx)
+            .unwrap();
+        assert_eq!(summary[0].start_balance, Some(dec!(100)));
+        assert_eq!(summary[0].delta, Some(dec!(50)));
     }
 
     #[test]
