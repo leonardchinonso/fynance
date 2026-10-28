@@ -4271,6 +4271,8 @@ impl Db {
             }
         }
 
+        // Stable: an opening point keeps its place ahead of a snapshot stored
+        // at exactly `start` 00:00:00.
         snapshots.sort_by(|a, b| (a.as_of, &a.account_id).cmp(&(b.as_of, &b.account_id)));
         Ok(snapshots)
     }
@@ -6907,6 +6909,34 @@ mod consolidation_tests {
             ]
         );
         assert!(rows.iter().all(|r| r.currency == "GBP"));
+    }
+
+    // A snapshot stored at exactly `start` 00:00:00 shares its timestamp with
+    // the opening point; the opening point must still come first, or the
+    // period's start balance silently becomes the post-snapshot value.
+    #[test]
+    fn opening_point_precedes_a_snapshot_at_the_range_start() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::InvestmentIsa))
+            .unwrap();
+        db.set_account_balance("t212", dec!(100), naive_dt(2025, 1, 31))
+            .unwrap();
+        db.set_account_balance("t212", dec!(150), naive_dt(2025, 2, 1))
+            .unwrap();
+
+        let fx = gbp_fx();
+        let rows = db
+            .get_balances_in_range(naive_date(2025, 2, 1), naive_date(2025, 2, 28), &fx)
+            .unwrap();
+        let balances: Vec<_> = rows.iter().map(|r| r.balance).collect();
+        assert_eq!(balances, vec![dec!(100), dec!(150)]);
+        assert!(rows.iter().all(|r| r.as_of == naive_dt(2025, 2, 1)));
+
+        let summary = db
+            .get_balance_summary(naive_date(2025, 2, 1), naive_date(2025, 2, 28), &fx)
+            .unwrap();
+        assert_eq!(summary[0].start_balance, Some(dec!(100)));
+        assert_eq!(summary[0].delta, Some(dec!(50)));
     }
 
     #[test]

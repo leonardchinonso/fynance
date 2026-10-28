@@ -2,8 +2,8 @@
 
 /**
  * Point-in-time account balance: all of the account's holdings carried forward
- * to the end of that day, each converted into the account's currency
- * (`currency`), summed.
+ * to the end of that day (or, for a range's opening point, to its start), each
+ * converted into the account's currency (`currency`), summed.
  * Used by `GET /api/holdings/balances` (non-summary mode).
  */
 export type AccountSnapshot = { as_of: string, account_id: string, balance: string, currency: string, };

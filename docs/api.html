@@ -992,9 +992,9 @@ td code { font-size: 12px; }
   <table class="model-table">
     <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>as_of</code></td><td>string</td><td>Snapshot date (ISO 8601)</td></tr>
+      <tr><td><code>as_of</code></td><td>string</td><td>The day&#39;s latest snapshot time (ISO 8601). A range&#39;s first point per account may instead be an opening point at <code>start</code> 00:00:00, the balance carried in from before the range, and comes first even when a snapshot shares its timestamp</td></tr>
       <tr><td><code>account_id</code></td><td>string</td><td>FK to account</td></tr>
-      <tr><td><code>balance</code></td><td>string</td><td>Decimal string: all of the account&#39;s holdings carried forward to the end of that day (latest snapshot per symbol), each converted into the account&#39;s currency, summed</td></tr>
+      <tr><td><code>balance</code></td><td>string</td><td>Decimal string: all of the account&#39;s holdings carried forward to that point (latest snapshot per symbol), each converted into the account&#39;s currency, summed</td></tr>
       <tr><td><code>currency</code></td><td>string</td><td>The account&#39;s currency (ISO 4217 code)</td></tr>
     </tbody>
   </table>
