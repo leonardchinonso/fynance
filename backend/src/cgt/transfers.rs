@@ -93,20 +93,27 @@ impl PersonTransfer {
 }
 
 /// Pair each departing `transfer` (negative quantity) with an arriving one of
-/// the same symbol and size, on the same day or at most
-/// [`TRANSFER_PAIRING_DAYS`] later. Days are compared, not timestamps, so an
-/// arrival stamped earlier in the day than its departure still pairs.
+/// the same symbol and size in a different account, on the same day or at
+/// most [`TRANSFER_PAIRING_DAYS`] later. Days are compared, not timestamps, so
+/// an arrival stamped earlier in the day than its departure still pairs.
 ///
 /// Moves between one person's own accounts are paired first, so they are
 /// never mistaken for a transfer to someone else. Within each of those, a
 /// departure on the arrival's own day is preferred, and only then the closest
-/// earlier one, skipping a departure that an unpaired arrival on its own day
-/// could still take. Without that skip, a move between one person's own
-/// accounts, sent on the 1st and arriving on the 5th, took the closer
-/// departure of their gift on the 3rd, leaving the gift paired with the 1st's
-/// departure, at the wrong date and price. Putting same-day pairs ahead of
-/// same-person ones instead paired two spouses' own moves with each other
-/// when one arrived on the day the other left, swapping their costs.
+/// earlier one, skipping a departure whose own day still has at least as many
+/// unpaired arrivals waiting as free departures to give them. Without that
+/// skip, a move between one person's own accounts, sent on the 1st and
+/// arriving on the 5th, took the closer departure of their gift on the 3rd,
+/// leaving the gift paired with the 1st's departure, at the wrong date and
+/// price. Skipping every departure with any arrival waiting on its day held
+/// back departures nobody else needed, and the move then paired with someone
+/// else's. Putting same-day pairs ahead of same-person ones instead paired two
+/// spouses' own moves with each other when one arrived on the day the other
+/// left, swapping their costs.
+///
+/// The two sides are never in one account: a move arriving in an account on
+/// the day it sends shares on to someone else would otherwise pair with its
+/// own onward departure.
 ///
 /// Returns both sides of every person-to-person transfer, keyed by event id.
 /// Transfers within one person, and any side left unpaired, are absent: the
@@ -137,16 +144,33 @@ pub(crate) fn pair_person_transfers(
                 continue;
             }
             let arrived = arrival.date.date();
-            // Whether an arrival other than this one, still unpaired, matches
-            // `out` on the day it left.
-            let wanted_that_day = |out: &InvestmentEvent| {
-                ins.iter().enumerate().any(|(j, (other, _))| {
-                    j != i
-                        && !used_in[j]
-                        && other.symbol == out.symbol
-                        && other.quantity == -out.quantity
-                        && other.date.date() == out.date.date()
-                })
+            // Whether the day `out` left still has as many unpaired arrivals
+            // other than this one matching it as free departures to give
+            // them, so that every one of those departures is needed there.
+            let held_for_its_day = |out: &InvestmentEvent| {
+                let day = out.date.date();
+                let waiting = ins
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, (other, _))| {
+                        *j != i
+                            && !used_in[*j]
+                            && other.symbol == out.symbol
+                            && other.quantity == -out.quantity
+                            && other.date.date() == day
+                    })
+                    .count();
+                let free = outs
+                    .iter()
+                    .enumerate()
+                    .filter(|(o, (other, _))| {
+                        !used_out[*o]
+                            && other.symbol == out.symbol
+                            && other.quantity == out.quantity
+                            && other.date.date() == day
+                    })
+                    .count();
+                waiting >= free
             };
             let departure = outs
                 .iter()
@@ -155,6 +179,7 @@ pub(crate) fn pair_person_transfers(
                     let sent = out.date.date();
                     !used_out[*o]
                         && (sender == receiver) == same_person
+                        && out.account_id != arrival.account_id
                         && out.symbol == arrival.symbol
                         && -out.quantity == arrival.quantity
                         && sent <= arrived
@@ -162,7 +187,7 @@ pub(crate) fn pair_person_transfers(
                         && if same_day {
                             sent == arrived
                         } else {
-                            !wanted_that_day(out)
+                            !held_for_its_day(out)
                         }
                 })
                 .max_by_key(|(_, (out, _))| out.date);
@@ -466,6 +491,109 @@ mod tests {
         assert_eq!(gift.sent_price, Decimal::from(130));
         assert!(!transfers.contains_key("move-out"));
         assert!(!transfers.contains_key("move-in"));
+    }
+
+    /// Ope moves 100 from Shareworks to Schwab (sent the 3rd, arriving the
+    /// 5th) and gives Tomi 100 from Schwab on the 3rd. `tomi_after` adds what
+    /// Tomi then does with 100 shares of her own.
+    fn move_and_gift_on_the_third(tomi_after: &[InvestmentEvent]) -> Vec<InvestmentEvent> {
+        let mut events = vec![
+            transfer("move-out", "ope-shareworks", "2026-08-03", -100),
+            transfer("move-in", "ope-schwab", "2026-08-05", 100),
+            transfer("gift-out", "ope-schwab", "2026-08-03", -100),
+            transfer("gift-in", "tomi-schwab", "2026-08-03", 100),
+        ];
+        events.extend_from_slice(tomi_after);
+        events
+    }
+
+    fn only_the_gift(transfers: &HashMap<String, PersonTransfer>) {
+        let mut ids: Vec<&str> = transfers.keys().map(String::as_str).collect();
+        ids.sort();
+        assert_eq!(ids, ["gift-in", "gift-out"], "{transfers:#?}");
+        assert_eq!(transfers["gift-in"].counterpart_id, "gift-out");
+        assert_eq!(transfers["gift-in"].from, "ope");
+    }
+
+    #[test]
+    fn one_waiting_arrival_holds_back_only_one_departure_on_its_day() {
+        // Tomi sends 100 on the 4th to an account with no arrival recorded.
+        // Holding back both of Ope's departures on the 3rd for the gift's one
+        // arrival left his move to pair with her departure instead.
+        let events =
+            move_and_gift_on_the_third(&[transfer("tomi-out", "tomi-schwab", "2026-08-04", -100)]);
+
+        for married in [true, false] {
+            only_the_gift(&pair_person_transfers(&events, &household(married)));
+        }
+    }
+
+    #[test]
+    fn a_held_back_departure_does_not_invent_transfers_between_spouses() {
+        // Tomi moves her 100 to T212, sent the 5th and arriving the 6th. Two
+        // transfers between Ope and Tomi were invented from these.
+        let events = move_and_gift_on_the_third(&[
+            transfer("tomi-out", "tomi-schwab", "2026-08-05", -100),
+            transfer("tomi-in", "tomi-t212", "2026-08-06", 100),
+        ]);
+
+        for married in [true, false] {
+            only_the_gift(&pair_person_transfers(&events, &household(married)));
+        }
+    }
+
+    #[test]
+    fn a_departure_never_pairs_with_an_arrival_in_its_own_account() {
+        // Shares reach Schwab on the 13th and leave it for Tomi the same day.
+        // Paired with each other, they left the gift to pair with the move's
+        // departure on the 10th, dated the 10th at that day's price.
+        let mut events = vec![
+            transfer("sw-out", "ope-shareworks", "2026-08-10", -565),
+            transfer("schwab-in", "ope-schwab", "2026-08-13", 565),
+            transfer("schwab-out", "ope-schwab", "2026-08-13", -565),
+            transfer("tomi-in", "tomi-schwab", "2026-08-13", 565),
+        ];
+        events[0].price_per_share = Decimal::from(120);
+        events[2].price_per_share = Decimal::from(130);
+
+        let transfers = pair_person_transfers(&events, &household(false));
+
+        let gift = &transfers["tomi-in"];
+        assert_eq!(gift.counterpart_id, "schwab-out");
+        assert_eq!(gift.sent_on.to_string(), "2026-08-13");
+        assert_eq!(gift.sent_price, Decimal::from(130));
+        assert_eq!(transfers.len(), 2, "{transfers:#?}");
+    }
+
+    #[test]
+    fn shares_passed_straight_on_keep_both_gifts() {
+        // Ope gives Tomi 50, and she gives them on to their child the day
+        // they arrive. Her arrival paired with her own onward departure, so
+        // the chain collapsed to Ope giving to Kid and her gift disappeared.
+        let accounts = [
+            account("ope-schwab", &["ope"]),
+            account("tomi-schwab", &["tomi"]),
+            account("kid-schwab", &["kid"]),
+        ];
+        let profiles = [
+            profile("ope", None),
+            profile("tomi", None),
+            profile("kid", None),
+        ];
+        let ownership = Ownership::new(&accounts, &profiles);
+        let events = vec![
+            transfer("ope-out", "ope-schwab", "2026-08-01", -50),
+            transfer("tomi-in", "tomi-schwab", "2026-08-02", 50),
+            transfer("tomi-out", "tomi-schwab", "2026-08-02", -50),
+            transfer("kid-in", "kid-schwab", "2026-08-04", 50),
+        ];
+
+        let transfers = pair_person_transfers(&events, &ownership);
+
+        assert_eq!(transfers["tomi-in"].counterpart_id, "ope-out");
+        assert_eq!(transfers["tomi-in"].from, "ope");
+        assert_eq!(transfers["kid-in"].counterpart_id, "tomi-out");
+        assert_eq!(transfers["kid-in"].from, "tomi");
     }
 
     #[test]
