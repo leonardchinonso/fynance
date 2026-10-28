@@ -10,18 +10,18 @@
 
 use chrono::{Duration, NaiveDate};
 use rust_decimal::Decimal;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
-use crate::model::{InvestmentEvent, InvestmentEventType};
+use crate::model::InvestmentEventType;
 use crate::server::error::AppError;
 use crate::util::fx::FxRateMap;
 
 use super::guards::{check_required_exchange_rates, unreachable_missing_rate};
 use super::internal::{CalEvent, InternalMatch};
 use super::models::{
-    CapitalGainsResponse, CgtDisposalGroup, CgtMatchDetail, CgtRealizedEvent, CgtSummary,
-    S104PoolState,
+    CapitalGainsResponse, CgtDisposalGroup, CgtRealizedEvent, CgtSummary, S104PoolState,
 };
+use super::transfers::{Ledger, TransferRule};
 
 /// Runs the HMRC matching rules over the event ledger.
 ///
@@ -29,37 +29,43 @@ use super::models::{
 /// rather than emitting a number that looks authoritative. A silently-wrong tax figure is the
 /// failure mode this whole report exists to prevent, so ambiguity is surfaced as a 4xx the user
 /// can act on. See plan 23 §0.2.
+///
+/// A pool belongs to a person, so events are pooled per (symbol, owning
+/// profile). Within the ledger, only disposals in scope are emitted, and only
+/// in-scope owners' pools are returned.
 pub(crate) fn run_cgt_engine(
-    raw_events: Vec<InvestmentEvent>,
-    excluded_accounts: &HashSet<String>,
+    ledger: &Ledger,
     as_at: Option<NaiveDate>,
     filter_start: Option<NaiveDate>,
     filter_end: Option<NaiveDate>,
     fx: &FxRateMap,
 ) -> Result<CapitalGainsResponse, AppError> {
-    // 1. Filter out sheltered/excluded accounts and respect `as_at`
-    let filtered_events: Vec<InvestmentEvent> = raw_events
-        .into_iter()
-        .filter(|e| {
-            if excluded_accounts.contains(&e.account_id) {
-                return false;
-            }
-            if let Some(limit_date) = as_at {
-                if e.date.date() > limit_date {
-                    return false;
-                }
-            }
-            true
-        })
-        .collect();
-
-    // 2. Group events by symbol
-    let mut symbol_groups: HashMap<String, Vec<CalEvent>> = HashMap::new();
-    for event in filtered_events {
-        symbol_groups
-            .entry(event.symbol.clone())
+    // 1-2. Respect `as_at`, and group events by symbol and owner. A transfer to
+    // or from another person becomes a disposal or an acquisition; one between
+    // a person's own accounts stays a `Transfer`, which moves nothing.
+    let mut owner_groups: BTreeMap<(String, String), Vec<CalEvent>> = BTreeMap::new();
+    for event in &ledger.events {
+        if as_at.is_some_and(|limit| event.date.date() > limit) {
+            continue;
+        }
+        let mut cal: CalEvent = event.clone().into();
+        if let Some(owner) = ledger.ownership.owner(&event.account_id) {
+            cal.owner = owner.to_string();
+        }
+        if let Some(transfer) = ledger.transfers.get(&event.id) {
+            cal.event_type = if transfer.outgoing {
+                InvestmentEventType::Sell
+            } else {
+                InvestmentEventType::Buy
+            };
+            cal.quantity = cal.quantity.abs();
+            cal.remaining_qty = cal.quantity;
+            cal.transfer = Some(transfer.clone());
+        }
+        owner_groups
+            .entry((event.symbol.clone(), cal.owner.clone()))
             .or_default()
-            .push(event.into());
+            .push(cal);
     }
 
     let mut all_realized: Vec<CgtRealizedEvent> = Vec::new();
@@ -71,8 +77,8 @@ pub(crate) fn run_cgt_engine(
     // below sees the complete picture and can report every missing rate in one response.
     // Interleaving them would fail on the first symbol that needs an unstored rate and hide
     // the rest, turning a single pre-flight round-trip into one request per missing rate.
-    let mut matched_groups: Vec<(String, Vec<CalEvent>)> = Vec::new();
-    for (symbol, mut events) in symbol_groups {
+    let mut matched_groups: Vec<((String, String), Vec<CalEvent>)> = Vec::new();
+    for (group_key, mut events) in owner_groups {
         // Sort chronologically
         events.sort_by_key(|e| e.date);
 
@@ -129,6 +135,7 @@ pub(crate) fn run_cgt_engine(
                                 quantity: matched,
                                 price: events[a_idx].price_per_share,
                                 is_s104: false,
+                                carried: events[a_idx].is_spouse_transfer(),
                             };
                             events[d_idx].same_day_matches.push(match_detail);
                         }
@@ -188,13 +195,14 @@ pub(crate) fn run_cgt_engine(
                         quantity: matched,
                         price: events[acq_idx].price_per_share,
                         is_s104: false,
+                        carried: events[acq_idx].is_spouse_transfer(),
                     };
                     events[idx].thirty_day_matches.push(match_detail);
                 }
             }
         }
 
-        matched_groups.push((symbol, events));
+        matched_groups.push((group_key, events));
     }
 
     // 3b. FX precheck — every rate the engine is about to need must already be stored.
@@ -226,23 +234,31 @@ pub(crate) fn run_cgt_engine(
         ));
     }
 
-    // 4. Replay the S104 pool and emit results, now that every rate is known to be present.
-    for (symbol, mut events) in matched_groups {
-        // Record the symbol's source trade currency as metadata while every event is
-        // still to hand — pool_cost itself is always converted to base currency (GBP)
-        // below, this is not the currency it is held in. A symbol group is only created
-        // by pushing an event, so `first()` is always populated; the fallback exists to
-        // keep this total rather than introduce an unwrap. Events for one symbol are
-        // expected to share a currency — if that ever stops holding, this reports the
-        // earliest and the mismatch belongs in the warnings channel (plan 23 §7.8)
-        // rather than in a nullable field.
-        let pool_currency = events
-            .first()
-            .map(|e| e.currency.clone())
-            .unwrap_or_else(|| fx.preferred().to_string());
+    // 4. Replay the S104 pools and emit results, now that every rate is known to be present.
+    //
+    // Each symbol's pools are replayed together, one per owner, in date order, so a transfer
+    // between spouses can hand the sender's cost to the receiver: the departing side is
+    // replayed first and records the cost per share it took out of the sender's pool, and the
+    // arriving side brings exactly that into the receiver's.
+    let mut by_symbol: BTreeMap<String, Vec<(String, Vec<CalEvent>)>> = BTreeMap::new();
+    for ((symbol, owner), events) in matched_groups {
+        by_symbol.entry(symbol).or_default().push((owner, events));
+    }
+    // Arriving spouse transfer id -> the cost per share it carries, in base currency.
+    let mut carried: HashMap<String, Decimal> = HashMap::new();
+
+    for (symbol, mut groups) in by_symbol {
+        let mut order: Vec<(usize, usize)> = groups
+            .iter()
+            .enumerate()
+            .flat_map(|(g, (_, events))| (0..events.len()).map(move |i| (g, i)))
+            .collect();
+        order.sort_by_key(|&(g, i)| {
+            let e = &groups[g].1[i];
+            (e.date, e.transfer.as_ref().is_some_and(|t| !t.outgoing))
+        });
 
         // -- S104 Pool Replay --
-        // Chronological replay to maintain S104 state and complete matches.
         //
         // NOTE: this is the THIRD matching rule, not the only one. Same-day and
         // 30-day matches have already been made above and consumed their
@@ -253,32 +269,43 @@ pub(crate) fn run_cgt_engine(
         // averaging with NO same-day or 30-day matching, which is correct for
         // the "cumulative invested" chart and wrong for tax. The divergence is
         // intentional -- see the doc comment there before changing either.
-        let mut pool_shares = Decimal::ZERO;
-        let mut pool_cost = Decimal::ZERO; // in preferred base currency (GBP)
+        //
+        // (shares, cost in preferred base currency) per owner.
+        let mut pools = vec![(Decimal::ZERO, Decimal::ZERO); groups.len()];
 
-        for e in &mut events {
+        for (g, i) in order {
+            let (pool_shares, pool_cost) = &mut pools[g];
+            let e = &mut groups[g].1[i];
             match e.event_type {
                 InvestmentEventType::Buy | InvestmentEventType::Vest => {
                     // Unmatched quantity entering the pool
                     let entering = e.remaining_qty;
                     if entering > Decimal::ZERO {
-                        let prop_fee = if e.quantity > Decimal::ZERO {
-                            e.fee * (entering / e.quantity)
+                        let acq_cost = if e.is_spouse_transfer() {
+                            entering * carried_cost_per_share(&carried, e, &symbol)?
                         } else {
-                            Decimal::ZERO
+                            let prop_fee = if e.quantity > Decimal::ZERO {
+                                e.fee * (entering / e.quantity)
+                            } else {
+                                Decimal::ZERO
+                            };
+                            // Price and fee can be in different currencies, so convert
+                            // each at its own rate before summing into the pool cost.
+                            let price_cost = fx
+                                .convert_as_of(
+                                    entering * e.price_per_share,
+                                    &e.currency,
+                                    e.date.date(),
+                                )
+                                .map_err(unreachable_missing_rate)?;
+                            let fee_cost = fx
+                                .convert_as_of(prop_fee, &e.fee_currency, e.date.date())
+                                .map_err(unreachable_missing_rate)?;
+                            price_cost + fee_cost
                         };
-                        // Price and fee can be in different currencies, so convert
-                        // each at its own rate before summing into the pool cost.
-                        let price_cost = fx
-                            .convert_as_of(entering * e.price_per_share, &e.currency, e.date.date())
-                            .map_err(unreachable_missing_rate)?;
-                        let fee_cost = fx
-                            .convert_as_of(prop_fee, &e.fee_currency, e.date.date())
-                            .map_err(unreachable_missing_rate)?;
-                        let acq_cost = price_cost + fee_cost;
 
-                        pool_shares += entering;
-                        pool_cost += acq_cost;
+                        *pool_shares += entering;
+                        *pool_cost += acq_cost;
 
                         e.remaining_qty = Decimal::ZERO;
                     }
@@ -286,10 +313,10 @@ pub(crate) fn run_cgt_engine(
                 InvestmentEventType::Sell | InvestmentEventType::Withhold => {
                     let exiting = e.remaining_qty;
                     if exiting > Decimal::ZERO {
-                        let matched = exiting.min(pool_shares);
+                        let matched = exiting.min(*pool_shares);
                         if matched > Decimal::ZERO {
-                            let avg_cost = if pool_shares > Decimal::ZERO {
-                                pool_cost / pool_shares
+                            let avg_cost = if *pool_shares > Decimal::ZERO {
+                                *pool_cost / *pool_shares
                             } else {
                                 Decimal::ZERO
                             };
@@ -302,17 +329,40 @@ pub(crate) fn run_cgt_engine(
                                 quantity: matched,
                                 price: avg_cost,
                                 is_s104: true,
+                                carried: false,
                             };
                             e.pool_matches.push(match_detail);
 
-                            pool_shares -= matched;
-                            pool_cost -= pool_cost_basis;
-                            if pool_shares == Decimal::ZERO {
-                                pool_cost = Decimal::ZERO;
+                            *pool_shares -= matched;
+                            *pool_cost -= pool_cost_basis;
+                            if *pool_shares == Decimal::ZERO {
+                                *pool_cost = Decimal::ZERO;
                             }
 
                             e.remaining_qty -= matched;
                         }
+                    }
+                    if e.is_spouse_transfer() {
+                        let (to, counterpart_id) = e
+                            .transfer
+                            .as_ref()
+                            .map(|t| (t.to.clone(), t.counterpart_id.clone()))
+                            .unwrap_or_default();
+                        if e.remaining_qty > Decimal::ZERO {
+                            return Err(AppError::bad_request(
+                                format!(
+                                    "{symbol}: {} shares moved to {to} on {} are more than the \
+                                     sender held, so there is no cost to pass on. Import or add \
+                                     the sender's missing acquisition for {symbol} before this \
+                                     date.",
+                                    e.quantity,
+                                    e.date.date(),
+                                ),
+                                "transfer_exceeds_holding",
+                            ));
+                        }
+                        let leaving_cost = disposal_cost(e, fx, &carried, &symbol)?;
+                        carried.insert(counterpart_id, leaving_cost / e.quantity);
                     }
                 }
                 InvestmentEventType::Split => {
@@ -340,7 +390,7 @@ pub(crate) fn run_cgt_engine(
                     // cost, making average cost zero and reporting 100% of the proceeds of
                     // every later disposal as gain. That overstates tax while looking
                     // perfectly ordinary.
-                    let after = pool_shares + e.quantity;
+                    let after = *pool_shares + e.quantity;
                     if after < Decimal::ZERO {
                         return Err(AppError::bad_request(
                             format!(
@@ -354,7 +404,7 @@ pub(crate) fn run_cgt_engine(
                             "consolidation_exceeds_pool",
                         ));
                     }
-                    pool_shares = after;
+                    *pool_shares = after;
                     // A consolidation to exactly zero is legitimate data (a holding fully
                     // wound up), not an error — but it must clear pool_cost the same way
                     // the Sell branch does above. Left unhandled, the orphaned cost sits on
@@ -362,171 +412,139 @@ pub(crate) fn run_cgt_engine(
                     // so avg_cost carries that stale cost over the new shares instead of
                     // zero, and the following Sell reports the entire stale cost as
                     // allowable expenditure against a disposal that never earned it.
-                    if pool_shares == Decimal::ZERO {
-                        pool_cost = Decimal::ZERO;
+                    if *pool_shares == Decimal::ZERO {
+                        *pool_cost = Decimal::ZERO;
                     }
                 }
                 InvestmentEventType::Transfer => {
-                    // Internal transfers are neutral within a single S104 pool scope
+                    // Between one person's own accounts: the shares and their cost
+                    // stay in that person's pool.
                 }
             }
         }
 
-        // Save current pool state
-        let final_avg = if pool_shares > Decimal::ZERO {
-            pool_cost / pool_shares
-        } else {
-            Decimal::ZERO
-        };
-        all_pools.push(S104PoolState {
-            symbol: symbol.clone(),
-            original_currency: pool_currency,
-            current_shares: pool_shares,
-            total_allowable_expenditure: pool_cost,
-            average_cost_per_share: final_avg,
-        });
+        for ((owner, events), (pool_shares, pool_cost)) in groups.into_iter().zip(pools) {
+            // Record the symbol's source trade currency as metadata while every event is
+            // still to hand — pool_cost itself is always converted to base currency (GBP)
+            // above, this is not the currency it is held in. A group is only created by
+            // pushing an event, so `first()` is always populated; the fallback exists to
+            // keep this total rather than introduce an unwrap. Events for one symbol are
+            // expected to share a currency — if that ever stops holding, this reports the
+            // earliest and the mismatch belongs in the warnings channel (plan 23 §7.8)
+            // rather than in a nullable field.
+            let pool_currency = events
+                .first()
+                .map(|e| e.currency.clone())
+                .unwrap_or_else(|| fx.preferred().to_string());
 
-        // 4. Assemble realized events inside the filter range
-        for e in events {
-            if !matches!(
-                e.event_type,
-                InvestmentEventType::Sell | InvestmentEventType::Withhold
-            ) {
-                continue;
+            if ledger.owner_in_scope(&owner) {
+                let final_avg = if pool_shares > Decimal::ZERO {
+                    pool_cost / pool_shares
+                } else {
+                    Decimal::ZERO
+                };
+                all_pools.push(S104PoolState {
+                    symbol: symbol.clone(),
+                    profile_id: Some(owner.clone()),
+                    original_currency: pool_currency,
+                    current_shares: pool_shares,
+                    total_allowable_expenditure: pool_cost,
+                    average_cost_per_share: final_avg,
+                });
             }
 
-            let date_check = e.date.date();
-            if let Some(start) = filter_start {
-                if date_check < start {
+            // Assemble realized events inside the filter range
+            for e in events {
+                if !matches!(
+                    e.event_type,
+                    InvestmentEventType::Sell | InvestmentEventType::Withhold
+                ) {
                     continue;
                 }
-            }
-            if let Some(end) = filter_end {
-                if date_check > end {
+                // A transfer to a spouse is not a disposal to report: no gain, no loss.
+                if e.is_spouse_transfer() || !ledger.in_scope(&e.account_id) {
                     continue;
                 }
-            }
 
-            // We compile all matches for this disposal
-            let mut matches_list: Vec<CgtMatchDetail> = Vec::new();
+                let date_check = e.date.date();
+                if let Some(start) = filter_start {
+                    if date_check < start {
+                        continue;
+                    }
+                }
+                if let Some(end) = filter_end {
+                    if date_check > end {
+                        continue;
+                    }
+                }
 
-            // Process same-day matches
-            for m in &e.same_day_matches {
-                let (m_proceeds, fee_prop_matched) = e
-                    .calculate_matched_finance(m.quantity, fx)
-                    .map_err(unreachable_missing_rate)?;
+                let gift_to = e
+                    .transfer
+                    .as_ref()
+                    .filter(|t| t.rule == TransferRule::MarketValue)
+                    .map(|t| t.to.clone());
+                let legs = e
+                    .same_day_matches
+                    .iter()
+                    .map(|m| ("Same-Day", m))
+                    .chain(e.thirty_day_matches.iter().map(|m| ("30-Day Rule", m)))
+                    .chain(e.pool_matches.iter().map(|m| ("S104 Pool", m)));
+                let mut total_matched = Decimal::ZERO;
+                for (rule, m) in legs {
+                    let (m_proceeds, fee_prop_matched) = e
+                        .calculate_matched_finance(m.quantity, fx)
+                        .map_err(unreachable_missing_rate)?;
+                    let m_cost = match_cost(&e, m, fx, &carried, &symbol)?;
 
-                let m_cost_raw = m.quantity * m.price;
-                let m_cost = fx
-                    .convert_as_of(m_cost_raw, &e.currency, e.date.date())
-                    .map_err(unreachable_missing_rate)?;
+                    let mut api_match = m.to_cgt_match_detail();
+                    if m.carried {
+                        api_match.price = m_cost / m.quantity;
+                    }
+                    total_matched += m.quantity;
 
-                let api_match = m.to_cgt_match_detail();
-                matches_list.push(api_match.clone());
+                    all_realized.push(CgtRealizedEvent {
+                        symbol: symbol.clone(),
+                        disposal_id: e.id.clone(),
+                        disposal_date: e.date.to_string(),
+                        quantity: m.quantity,
+                        disposal_price: e.price_per_share,
+                        proceeds: m_proceeds - fee_prop_matched,
+                        cost_basis: m_cost,
+                        gain_loss: (m_proceeds - fee_prop_matched) - m_cost,
+                        rule_applied: rule.to_string(),
+                        original_currency: e.currency.clone(),
+                        matches: vec![api_match],
+                        gift_to: gift_to.clone(),
+                    });
+                }
 
-                all_realized.push(CgtRealizedEvent {
-                    symbol: symbol.clone(),
-                    disposal_id: e.id.clone(),
-                    disposal_date: e.date.to_string(),
-                    quantity: m.quantity,
-                    disposal_price: e.price_per_share,
-                    proceeds: m_proceeds - fee_prop_matched,
-                    cost_basis: m_cost,
-                    gain_loss: (m_proceeds - fee_prop_matched) - m_cost,
-                    rule_applied: "Same-Day".to_string(),
-                    original_currency: e.currency.clone(),
-                    matches: vec![api_match],
-                });
-            }
-
-            // Process 30-day matches
-            for m in &e.thirty_day_matches {
-                let (m_proceeds, fee_prop_matched) = e
-                    .calculate_matched_finance(m.quantity, fx)
-                    .map_err(unreachable_missing_rate)?;
-
-                let acq_date = m
-                    .acquisition_date
-                    .map(|d| d.date())
-                    .unwrap_or_else(|| e.date.date());
-
-                let m_cost_raw = m.quantity * m.price;
-                let m_cost = fx
-                    .convert_as_of(m_cost_raw, &e.currency, acq_date)
-                    .map_err(unreachable_missing_rate)?;
-
-                let api_match = m.to_cgt_match_detail();
-                matches_list.push(api_match.clone());
-
-                all_realized.push(CgtRealizedEvent {
-                    symbol: symbol.clone(),
-                    disposal_id: e.id.clone(),
-                    disposal_date: e.date.to_string(),
-                    quantity: m.quantity,
-                    disposal_price: e.price_per_share,
-                    proceeds: m_proceeds - fee_prop_matched,
-                    cost_basis: m_cost,
-                    gain_loss: (m_proceeds - fee_prop_matched) - m_cost,
-                    rule_applied: "30-Day Rule".to_string(),
-                    original_currency: e.currency.clone(),
-                    matches: vec![api_match],
-                });
-            }
-
-            // Process S104 pool matches
-            for m in &e.pool_matches {
-                let (m_proceeds, fee_prop_matched) = e
-                    .calculate_matched_finance(m.quantity, fx)
-                    .map_err(unreachable_missing_rate)?;
-
-                // m.price is avg_cost which is ALREADY in preferred base currency (GBP)
-                let m_cost = m.quantity * m.price;
-
-                let api_match = m.to_cgt_match_detail();
-                matches_list.push(api_match.clone());
-
-                all_realized.push(CgtRealizedEvent {
-                    symbol: symbol.clone(),
-                    disposal_id: e.id.clone(),
-                    disposal_date: e.date.to_string(),
-                    quantity: m.quantity,
-                    disposal_price: e.price_per_share,
-                    proceeds: m_proceeds - fee_prop_matched,
-                    cost_basis: m_cost,
-                    gain_loss: (m_proceeds - fee_prop_matched) - m_cost,
-                    rule_applied: "S104 Pool".to_string(),
-                    original_currency: e.currency.clone(),
-                    matches: vec![api_match],
-                });
-            }
-
-            // A disposal that exhausts all three HMRC matching rules — same-day,
-            // 30-day, and the S104 pool — has no acquisition to draw a cost from.
-            //
-            // This used to be emitted as a row with `cost_basis = 0` and
-            // rule_applied "Unmatched", which counts 100% of the proceeds as gain
-            // and OVERSTATES the tax due. It looks like an ordinary line on the
-            // report, so nothing signals that the number is wrong.
-            //
-            // In law this shape is a short sale, but a retail portfolio effectively
-            // never contains one: in practice it always means acquisition data is
-            // missing — an un-imported statement, a wrong symbol, or a transfer-in
-            // recorded without its original cost. Refuse, and name the symbol, date
-            // and quantity so the missing acquisition can actually be found.
-            let total_matched: Decimal = matches_list.iter().map(|m| m.quantity).sum();
-            if total_matched < e.quantity {
-                let unmatched_qty = e.quantity - total_matched;
-                return Err(AppError::bad_request(
-                    format!(
-                        "{symbol}: the disposal of {unmatched_qty} shares on {} has no matching \
-                         acquisition, so there is no cost to set against it. Counting it as \
-                         all-gain would overstate the tax due. Import or add the missing \
-                         acquisition for {symbol} before this date, and check the disposal is \
-                         filed under the right symbol.",
-                        e.date.date(),
-                    ),
-                    "unmatched_disposal",
-                ));
+                // A disposal that exhausts all three HMRC matching rules — same-day,
+                // 30-day, and the S104 pool — has no acquisition to draw a cost from.
+                //
+                // This used to be emitted as a row with `cost_basis = 0` and
+                // rule_applied "Unmatched", which counts 100% of the proceeds as gain
+                // and OVERSTATES the tax due. It looks like an ordinary line on the
+                // report, so nothing signals that the number is wrong.
+                //
+                // In law this shape is a short sale, but a retail portfolio effectively
+                // never contains one: in practice it always means acquisition data is
+                // missing — an un-imported statement, a wrong symbol, or a transfer-in
+                // recorded without its original cost. Refuse, and name the symbol, date
+                // and quantity so the missing acquisition can actually be found.
+                if total_matched < e.quantity {
+                    let unmatched_qty = e.quantity - total_matched;
+                    return Err(AppError::bad_request(
+                        format!(
+                            "{symbol}: the disposal of {unmatched_qty} shares on {} has no matching \
+                             acquisition, so there is no cost to set against it. Counting it as \
+                             all-gain would overstate the tax due. Import or add the missing \
+                             acquisition for {symbol} before this date, and check the disposal is \
+                             filed under the right symbol.",
+                            e.date.date(),
+                        ),
+                        "unmatched_disposal",
+                    ));
+                }
             }
         }
     }
@@ -551,6 +569,77 @@ pub(crate) fn run_cgt_engine(
         pools: all_pools,
         tax: None,
     })
+}
+
+/// The base-currency cost of one match leg of disposal `e`. A same-day or
+/// 30-day leg converts at the acquisition's date (the disposal's own, for a
+/// same-day one), unless the acquisition is a transfer from a spouse, whose
+/// cost was carried over from the sender's pool.
+fn match_cost(
+    e: &CalEvent,
+    m: &InternalMatch,
+    fx: &FxRateMap,
+    carried: &HashMap<String, Decimal>,
+    symbol: &str,
+) -> Result<Decimal, AppError> {
+    if m.is_s104 {
+        // m.price is avg_cost which is ALREADY in preferred base currency (GBP)
+        return Ok(m.quantity * m.price);
+    }
+    if m.carried {
+        let per_share = m
+            .acquisition_id
+            .as_ref()
+            .and_then(|id| carried.get(id))
+            .ok_or_else(|| uncosted_spouse_transfer(symbol, e.date.date()))?;
+        return Ok(m.quantity * per_share);
+    }
+    let rate_date = m
+        .acquisition_date
+        .map(|d| d.date())
+        .unwrap_or_else(|| e.date.date());
+    fx.convert_as_of(m.quantity * m.price, &e.currency, rate_date)
+        .map_err(unreachable_missing_rate)
+}
+
+/// The total base-currency cost of the shares disposal `e` took, across every
+/// match leg.
+fn disposal_cost(
+    e: &CalEvent,
+    fx: &FxRateMap,
+    carried: &HashMap<String, Decimal>,
+    symbol: &str,
+) -> Result<Decimal, AppError> {
+    e.same_day_matches
+        .iter()
+        .chain(&e.thirty_day_matches)
+        .chain(&e.pool_matches)
+        .map(|m| match_cost(e, m, fx, carried, symbol))
+        .sum()
+}
+
+/// The cost per share a spouse transfer arriving as `e` carries.
+fn carried_cost_per_share(
+    carried: &HashMap<String, Decimal>,
+    e: &CalEvent,
+    symbol: &str,
+) -> Result<Decimal, AppError> {
+    carried
+        .get(&e.id)
+        .copied()
+        .ok_or_else(|| uncosted_spouse_transfer(symbol, e.date.date()))
+}
+
+/// Shares moved between spouses whose cost is not known when it is needed:
+/// the sender's shares were matched with shares that only come back to them
+/// later, so neither side can be costed first.
+fn uncosted_spouse_transfer(symbol: &str, date: NaiveDate) -> AppError {
+    AppError::bad_request(
+        format!(
+            "{symbol}: the cost of shares moved between spouses around {date} depends on              shares that move back to the sender within 30 days, so neither side's cost can              be worked out first. Check the dates of the transfers around {date}."
+        ),
+        "uncosted_spouse_transfer",
+    )
 }
 
 /// The calendar day of a `CgtRealizedEvent.disposal_date`, which is a

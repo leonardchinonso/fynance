@@ -39,7 +39,7 @@ export function CgtPoolWorkings({ pools }: CgtPoolWorkingsProps) {
             // Passing it previously produced amounts labelled with the wrong currency
             // symbol (e.g. a GBP amount rendered with a "$" prefix for a USD symbol).
             return (
-              <div key={p.symbol} className="rounded-md border bg-card p-4">
+              <div key={`${p.profile_id ?? ""}-${p.symbol}`} className="rounded-md border bg-card p-4">
                 <h3 className="text-sm font-semibold">{p.symbol}</h3>
                 <dl className="mt-2 space-y-1 text-sm">
                   <Pair label="Current shares" value={fmtShares(p.current_shares)} />

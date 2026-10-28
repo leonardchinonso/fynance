@@ -25,4 +25,9 @@ gain_loss: string, rule_applied: string,
  * Use it the way `cgt_per_symbol_table.tsx` does: as a non-formatting badge shown
  * when it differs from base.
  */
-original_currency: string, matches: Array<CgtMatchDetail>, };
+original_currency: string, matches: Array<CgtMatchDetail>, 
+/**
+ * The profile these shares were given to, when the disposal is a transfer
+ * to someone who is not the owner's spouse: a gift at market value.
+ */
+gift_to?: string, };

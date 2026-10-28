@@ -2,6 +2,10 @@
 
 export type S104PoolState = { symbol: string, 
 /**
+ * The profile the pool belongs to: an S104 pool is a person's.
+ */
+profile_id?: string, 
+/**
  * Source metadata only: the currency the underlying trades were originally
  * denominated in. It does NOT describe the currency of `total_allowable_expenditure`
  * or `average_cost_per_share` — both of those are always in the preferred base

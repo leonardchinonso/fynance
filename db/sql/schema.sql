@@ -196,10 +196,14 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 -- needed to produce a filing-grade CGT report, and it is per-taxpayer rather
 -- than per-household, which is why it hangs off profiles — the two profiles
 -- file separately and CGT reports already scope by profile.
+-- `spouse_id` links spouses or civil partners (always both ways), so the CGT
+-- engine moves shares transferred between them at no gain, no loss (TCGA s58)
+-- rather than as a gift at market value.
 CREATE TABLE IF NOT EXISTS profiles (
-    id   TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    utr  TEXT
+    id        TEXT PRIMARY KEY,
+    name      TEXT NOT NULL,
+    utr       TEXT,
+    spouse_id TEXT
 );
 
 -- ── standing_budgets ──────────────────────────────────────────────────────────

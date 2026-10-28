@@ -9,8 +9,10 @@
 //! - [`models`] -- the public response types (TS-exported).
 //! - [`internal`] -- the engine's internal calculation types, crate-private.
 //! - [`engine`] -- the HMRC matching rules themselves.
+//! - [`transfers`] -- who owns each pool, and transfers between people.
 
 pub mod engine;
 pub mod guards;
 pub(crate) mod internal;
 pub mod models;
+pub(crate) mod transfers;

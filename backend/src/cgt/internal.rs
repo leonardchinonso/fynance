@@ -16,6 +16,7 @@ use crate::model::{InvestmentEvent, InvestmentEventType};
 use crate::util::fx::{FxRateMap, MissingRate};
 
 use super::models::CgtMatchDetail;
+use super::transfers::{PersonTransfer, TransferRule};
 
 #[derive(Debug, Clone)]
 pub(crate) struct InternalMatch {
@@ -24,6 +25,9 @@ pub(crate) struct InternalMatch {
     pub quantity: Decimal,
     pub price: Decimal,
     pub is_s104: bool,
+    /// The acquisition is a transfer from a spouse, so its cost is the
+    /// sender's, carried over in base currency, not `price`.
+    pub carried: bool,
 }
 
 impl InternalMatch {
@@ -44,6 +48,12 @@ impl InternalMatch {
 #[derive(Debug, Clone)]
 pub(crate) struct CalEvent {
     pub(crate) id: String,
+    pub(crate) account_id: String,
+    /// The profile whose pool this event belongs to.
+    pub(crate) owner: String,
+    /// Set when this is one side of a transfer to or from another person. The
+    /// engine then treats it as a disposal or an acquisition.
+    pub(crate) transfer: Option<PersonTransfer>,
     pub(crate) event_type: InvestmentEventType,
     pub(crate) date: NaiveDateTime,
     pub(crate) quantity: Decimal,
@@ -64,6 +74,9 @@ impl From<InvestmentEvent> for CalEvent {
     fn from(e: InvestmentEvent) -> Self {
         CalEvent {
             id: e.id,
+            owner: e.account_id.clone(),
+            account_id: e.account_id,
+            transfer: None,
             event_type: e.event_type,
             date: e.date,
             quantity: e.quantity,
@@ -83,6 +96,14 @@ impl From<InvestmentEvent> for CalEvent {
 }
 
 impl CalEvent {
+    /// Whether this is a transfer between spouses, whose cost carries over
+    /// rather than being converted at its own date.
+    pub(crate) fn is_spouse_transfer(&self) -> bool {
+        self.transfer
+            .as_ref()
+            .is_some_and(|t| t.rule == TransferRule::NoGainNoLoss)
+    }
+
     /// Calculates the normalized proceeds and proportional fee in preferred base currency (GBP)
     /// for a matched quantity, each converted at this event's own date.
     ///

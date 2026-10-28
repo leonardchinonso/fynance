@@ -43,7 +43,7 @@ Event types and their CGT semantics:
 | `buy`, `vest` | Acquisition. Enters the S104 pool unless matched by the same-day or 30-day rules first. For RSU vests, the vest-date price is the acquisition cost. |
 | `sell`, `withhold` | Disposal. Matched against acquisitions in rule order. `withhold` represents employer shares retained at vest to cover income tax (HMRC treats this as an immediate disposal at vest price). Including these is a deliberate choice — see [Deliberate Divergences](#deliberate-divergences-from-common-practice). |
 | `split` | Adjusts pool share count. `quantity` is the number of shares **added** by the split, not a ratio (a 10-for-1 on 1.728 shares is stored as 15.554). Pool cost is unchanged; average cost per share falls accordingly. |
-| `transfer` | No-op for CGT. Pool state is global per symbol so account-to-account moves do not change anything. |
+| `transfer` | One side of a move of shares: negative leaving an account, positive arriving. Sides are paired by symbol, size and date (arrival within 7 days, `cgt/transfers.rs`). Between one person's own accounts it changes nothing: the shares and their cost stay in that person's pool. Between two people the departing side is a disposal and the arriving side an acquisition: at no gain, no loss between spouses (`profiles.spouse_id`, TCGA s58), where the receiver takes over the sender's matched cost and nothing is reported; otherwise a gift at market value (s17) at the transfer price, reported with `gift_to`. An unpaired side changes nothing. |
 
 ---
 
@@ -63,7 +63,7 @@ For each remaining disposal `D`, match against acquisitions occurring in days `D
 
 A chronological replay through the per-symbol event list maintains two running totals: `pool_shares` and `pool_cost` (in the trade's native currency). Acquisitions not consumed by the same-day or 30-day rules contribute `entering * price_per_share + proportional_fee` to `pool_cost` and `entering` to `pool_shares`. Disposals consume `matched * (pool_cost / pool_shares)` from the pool.
 
-The pool is global per symbol across all non-sheltered accounts. Holding 50 AAPL in a Trading 212 GIA and 20 AAPL in a Freetrade GIA produces a single pool of 70 AAPL.
+A pool belongs to a person: one per (symbol, owning profile) across that person's non-sheltered accounts. Holding 50 AAPL in a Trading 212 GIA and 20 AAPL in a Freetrade GIA produces a single pool of 70 AAPL; a spouse's AAPL is a separate pool, and matching never crosses people. A report scoped by `account_id` or `profile_ids` still replays each owner's whole ledger, plus the ledger of anyone who transferred shares to them, and only emits the scoped disposals and pools. The pools of one symbol are replayed together in date order so a spouse transfer's departing side can hand its cost to the arriving side.
 
 ### 4. Unmatched remainder
 
