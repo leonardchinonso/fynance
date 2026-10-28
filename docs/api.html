@@ -3524,7 +3524,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
       <tr><td>400</td><td><code>invalid_date</code></td><td>end_date is not a valid YYYY-MM-DD date</td></tr>
-      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>A gift of shares into one of these pools has no price; see <code>/investments/capital-gains</code></td></tr>
+      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>A gift of shares received into one of these pools has no price; see <code>/investments/capital-gains</code>. A gift given out of a pool is not refused here, since the giver&#39;s pool does not depend on its price</td></tr>
     </tbody>
   </table>
 </section>
@@ -3683,7 +3683,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tbody>
       <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
       <tr><td>400</td><td><code>missing_exchange_rates</code></td><td>A prior-year disposal needs an exchange rate that has not been entered</td></tr>
-      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>A prior-year gift of shares has no price; see <code>/investments/capital-gains</code></td></tr>
+      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>A gift of shares has no price; see <code>/investments/capital-gains</code>. Refused for a gift received at any date, since it sets the receiver&#39;s pool, and for a gift given only within the lookback years</td></tr>
     </tbody>
   </table>
 </section>

@@ -503,3 +503,64 @@ async fn the_receivers_report_needs_nothing_from_the_senders_other_holdings() {
     let spouse = report(&app, "profile_ids=tomi").await;
     assert_eq!(money(&spouse["summary"]["total_allowable_costs"]), 600.0);
 }
+
+/// Ope gives Tomi 50 of his 100 shares on `date`, with no price on either row.
+fn unpriced_gift(db: &Arc<Mutex<Db>>, date: &str) {
+    event(db, "ope-a", "buy", "2023-01-10", "100", "10");
+    event(db, "ope-a", "transfer", date, "-50", "0");
+    event(db, "tomi-a", "transfer", date, "50", "0");
+}
+
+#[tokio::test]
+async fn an_unpriced_gift_does_not_refuse_the_givers_pools() {
+    let (app, db) = household();
+    unpriced_gift(&db, "2024-06-01");
+
+    let (status, pools) = call(
+        &app,
+        Method::GET,
+        "/api/investments/pools?profile_ids=ope",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pools}");
+    assert_eq!(money(&pools[0]["current_shares"]), 50.0);
+    assert_eq!(money(&pools[0]["total_allowable_expenditure"]), 500.0);
+
+    // The receiver's pool is built from the gift's value, so hers is refused.
+    let (status, body) = call(
+        &app,
+        Method::GET,
+        "/api/investments/pools?profile_ids=tomi",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "unpriced_gift_transfer", "{body}");
+}
+
+#[tokio::test]
+async fn brought_forward_losses_check_only_gifts_given_in_the_lookback_years() {
+    let losses = |app: axum::Router| async move {
+        call(
+            &app,
+            Method::GET,
+            "/api/investments/brought-forward-losses?tax_year=2024-25&profile_ids=ope",
+            None,
+        )
+        .await
+    };
+
+    // Given in 2024-25 itself, which brings losses in rather than out.
+    let (app, db) = household();
+    unpriced_gift(&db, "2024-06-01");
+    let (status, body) = losses(app).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Given in 2023-24, a lookback year, where it would be a reported loss.
+    let (app, db) = household();
+    unpriced_gift(&db, "2023-06-01");
+    let (status, body) = losses(app).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "unpriced_gift_transfer", "{body}");
+}

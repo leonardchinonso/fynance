@@ -97,13 +97,16 @@ impl PersonTransfer {
 /// [`TRANSFER_PAIRING_DAYS`] later. Days are compared, not timestamps, so an
 /// arrival stamped earlier in the day than its departure still pairs.
 ///
-/// A departure on the arrival's own day is preferred over any other, and only
-/// then the closest earlier one. Within each of those, moves between one
-/// person's own accounts are paired first, so they are never mistaken for a
-/// transfer to someone else. Without the same-day preference, a move between
-/// one person's own accounts, sent on the 1st and arriving on the 5th, took
-/// the closer departure of their gift on the 3rd, leaving the gift paired with
-/// the 1st's departure, at the wrong date and price.
+/// Moves between one person's own accounts are paired first, so they are
+/// never mistaken for a transfer to someone else. Within each of those, a
+/// departure on the arrival's own day is preferred, and only then the closest
+/// earlier one, skipping a departure that an unpaired arrival on its own day
+/// could still take. Without that skip, a move between one person's own
+/// accounts, sent on the 1st and arriving on the 5th, took the closer
+/// departure of their gift on the 3rd, leaving the gift paired with the 1st's
+/// departure, at the wrong date and price. Putting same-day pairs ahead of
+/// same-person ones instead paired two spouses' own moves with each other
+/// when one arrived on the day the other left, swapping their costs.
 ///
 /// Returns both sides of every person-to-person transfer, keyed by event id.
 /// Transfers within one person, and any side left unpaired, are absent: the
@@ -128,12 +131,23 @@ pub(crate) fn pair_person_transfers(
     let mut used_in = vec![false; ins.len()];
     let mut transfers = HashMap::new();
     let passes = [(true, true), (true, false), (false, true), (false, false)];
-    for (same_day, same_person) in passes {
+    for (same_person, same_day) in passes {
         for (i, (arrival, receiver)) in ins.iter().enumerate() {
             if used_in[i] {
                 continue;
             }
             let arrived = arrival.date.date();
+            // Whether an arrival other than this one, still unpaired, matches
+            // `out` on the day it left.
+            let wanted_that_day = |out: &InvestmentEvent| {
+                ins.iter().enumerate().any(|(j, (other, _))| {
+                    j != i
+                        && !used_in[j]
+                        && other.symbol == out.symbol
+                        && other.quantity == -out.quantity
+                        && other.date.date() == out.date.date()
+                })
+            };
             let departure = outs
                 .iter()
                 .enumerate()
@@ -145,7 +159,11 @@ pub(crate) fn pair_person_transfers(
                         && -out.quantity == arrival.quantity
                         && sent <= arrived
                         && arrived - sent <= Duration::days(TRANSFER_PAIRING_DAYS)
-                        && (sent == arrived || !same_day)
+                        && if same_day {
+                            sent == arrived
+                        } else {
+                            !wanted_that_day(out)
+                        }
                 })
                 .max_by_key(|(_, (out, _))| out.date);
             let Some((o, (out, sender))) = departure else {
@@ -350,6 +368,7 @@ mod tests {
             account("ope-shareworks", &["ope"]),
             account("ope-schwab", &["ope"]),
             account("tomi-schwab", &["tomi"]),
+            account("tomi-t212", &["tomi"]),
         ];
         let profiles = if married {
             [profile("ope", Some("tomi")), profile("tomi", Some("ope"))]
@@ -447,6 +466,22 @@ mod tests {
         assert_eq!(gift.sent_price, Decimal::from(130));
         assert!(!transfers.contains_key("move-out"));
         assert!(!transfers.contains_key("move-in"));
+    }
+
+    #[test]
+    fn spouses_own_account_moves_meeting_on_one_day_stay_their_own() {
+        // Ope's move arrives on the day Tomi's leaves. Preferring a same-day
+        // departure over a same-person one paired those two with each other,
+        // and the remaining two as well, swapping the spouses' costs.
+        let events = vec![
+            transfer("ope-out", "ope-shareworks", "2026-08-01", -100),
+            transfer("ope-in", "ope-schwab", "2026-08-03", 100),
+            transfer("tomi-out", "tomi-schwab", "2026-08-03", -100),
+            transfer("tomi-in", "tomi-t212", "2026-08-05", 100),
+        ];
+
+        assert!(pair_person_transfers(&events, &household(true)).is_empty());
+        assert!(pair_person_transfers(&events, &household(false)).is_empty());
     }
 
     #[test]

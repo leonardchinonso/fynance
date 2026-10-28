@@ -23,6 +23,16 @@ use super::models::{
 };
 use super::transfers::{Ledger, PersonTransfer, TransferRule};
 
+/// What a run of the engine is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reporting {
+    /// The disposals dated within the run's window, and the pools.
+    Disposals,
+    /// The pools alone. A refusal that only a disposal's own figures depend
+    /// on, such as an unpriced gift's proceeds, does not apply.
+    PoolsOnly,
+}
+
 /// Runs the HMRC matching rules over the event ledger.
 ///
 /// Fallible on purpose: some ledger states have no honest answer, and the engine refuses them
@@ -38,6 +48,7 @@ pub(crate) fn run_cgt_engine(
     as_at: Option<NaiveDate>,
     filter_start: Option<NaiveDate>,
     filter_end: Option<NaiveDate>,
+    reporting: Reporting,
     fx: &FxRateMap,
 ) -> Result<CapitalGainsResponse, AppError> {
     // 1-2. Respect `as_at`, and group events by symbol and owner. A transfer to
@@ -59,9 +70,12 @@ pub(crate) fn run_cgt_engine(
             // A gift with no price would report the giver's proceeds and the
             // receiver's cost as zero. Refuse it wherever it would count: on
             // the arriving side always, since it sets the receiver's pool, and
-            // on the departing side when that disposal is being reported.
+            // on the departing side when that disposal is being reported. The
+            // giver's own pool does not depend on the price.
             let counts = !transfer.outgoing
-                || (ledger.in_scope(&event.account_id) && in_window(event.date.date()));
+                || (reporting == Reporting::Disposals
+                    && ledger.in_scope(&event.account_id)
+                    && in_window(event.date.date()));
             if transfer.is_unpriced_gift() && counts {
                 return Err(unpriced_gift_transfer(transfer, event.quantity.abs()));
             }

@@ -24,7 +24,7 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
-use crate::cgt::engine::{disposal_day_of, run_cgt_engine};
+use crate::cgt::engine::{Reporting, disposal_day_of, run_cgt_engine};
 use crate::cgt::guards::{
     check_required_currencies, check_single_currency_per_symbol, check_single_owner_accounts,
 };
@@ -182,7 +182,7 @@ pub async fn get_s104_pools(
     // exactly the events that will actually build the pools it is protecting.
     check_single_owner_accounts(&accounts, &ledger.events, &excluded_accounts, as_at)?;
     check_single_currency_per_symbol(&ledger.events)?;
-    let pools = run_cgt_engine(&ledger, as_at, None, None, &fx)?;
+    let pools = run_cgt_engine(&ledger, as_at, None, None, Reporting::PoolsOnly, &fx)?;
 
     Ok(Json(pools.pools))
 }
@@ -259,8 +259,20 @@ pub async fn get_brought_forward_losses(
 
     // The ledger is never truncated: the S104 pool and the 30-day rule must see
     // the full history for a prior year's gain to be computed correctly, exactly
-    // as on the main report.
-    let report = run_cgt_engine(&ledger, None, None, None, &fx)?;
+    // as on the main report. Only the lookback years' disposals are reported, so
+    // nothing in the year the losses are brought into, or later, can refuse it.
+    let (from, to) = (boundaries.first(), boundaries.last());
+    let report = match from.zip(to) {
+        Some(((_, start, _), (_, _, end))) => run_cgt_engine(
+            &ledger,
+            None,
+            Some(*start),
+            Some(*end),
+            Reporting::Disposals,
+            &fx,
+        )?,
+        None => run_cgt_engine(&ledger, None, None, None, Reporting::PoolsOnly, &fx)?,
+    };
 
     let realized: Vec<(String, Decimal)> = report
         .realized_events
@@ -350,6 +362,7 @@ pub async fn get_capital_gains(
         None, // no ledger truncation — see the `filter_start`/`filter_end` comment above
         filter_start,
         filter_end,
+        Reporting::Disposals,
         &fx,
     )?;
 
