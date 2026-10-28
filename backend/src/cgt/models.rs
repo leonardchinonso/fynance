@@ -159,6 +159,11 @@ pub struct CgtRealizedEvent {
     /// when it differs from base.
     pub original_currency: String,
     pub matches: Vec<CgtMatchDetail>,
+    /// The profile these shares were given to, when the disposal is a transfer
+    /// to someone who is not the owner's spouse: a gift at market value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gift_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -178,6 +183,10 @@ pub struct CgtMatchDetail {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct S104PoolState {
     pub symbol: String,
+    /// The profile the pool belongs to: an S104 pool is a person's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub profile_id: Option<String>,
     /// Source metadata only: the currency the underlying trades were originally
     /// denominated in. It does NOT describe the currency of `total_allowable_expenditure`
     /// or `average_cost_per_share` — both of those are always in the preferred base

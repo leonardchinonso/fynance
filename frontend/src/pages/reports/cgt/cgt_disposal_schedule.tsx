@@ -112,7 +112,17 @@ function DisposalRow({ event }: { event: CgtRealizedEvent }) {
         {formatCurrency(event.gain_loss, currencyForField("gain_loss", event.original_currency))}
       </TableCell>
       <TableCell>
-        <RulePill rule={event.rule_applied} />
+        <div className="flex flex-wrap items-center gap-1">
+          <RulePill rule={event.rule_applied} />
+          {event.gift_to && (
+            <span
+              className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium"
+              title="Shares given to someone who is not a recorded spouse are disposed of at market value."
+            >
+              Gift to {event.gift_to}
+            </span>
+          )}
+        </div>
       </TableCell>
     </TableRow>
   )

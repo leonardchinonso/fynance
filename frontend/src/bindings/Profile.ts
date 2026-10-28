@@ -8,4 +8,10 @@ export type Profile = { id: string, name: string,
  * HMRC Unique Taxpayer Reference (10 digits), used on SA108 pages of a
  * generated CGT report. `None` until the user supplies one.
  */
-utr: string | null, };
+utr: string | null, 
+/**
+ * The profile this person is married to or in a civil partnership with.
+ * Shares transferred between spouses move at no gain, no loss (TCGA
+ * s58); between anyone else they are a gift at market value.
+ */
+spouse_id?: string, };

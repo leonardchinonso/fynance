@@ -251,6 +251,7 @@ function RealisedValue({ summary }: { summary: CgtSummary | null }) {
 function PoolsTable({ pools }: { pools: S104PoolState[] }) {
   useRedactedFlag()
   const open = pools.filter((p) => parseFloat(p.current_shares) > 0)
+  const owners = new Set(open.map((p) => p.profile_id))
   if (open.length === 0) {
     return (
       <EmptyState
@@ -269,7 +270,7 @@ function PoolsTable({ pools }: { pools: S104PoolState[] }) {
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           Average-cost pools per symbol, derived from your investment events. This is your CGT cost basis, not market value.
-          {" "}Pools are always profile-wide: HMRC pools a symbol across all of your accounts, so the account filter does not apply here.
+          {" "}Pools are always per person: HMRC pools a symbol across all of one person's accounts, so the account filter does not apply here.
         </p>
       </CardHeader>
       <CardContent className="p-0">
@@ -284,8 +285,13 @@ function PoolsTable({ pools }: { pools: S104PoolState[] }) {
           </TableHeader>
           <TableBody>
             {open.map((p) => (
-              <TableRow key={p.symbol}>
-                <TableCell className="font-medium">{p.symbol}</TableCell>
+              <TableRow key={`${p.profile_id ?? ""}-${p.symbol}`}>
+                <TableCell className="font-medium">
+                  {p.symbol}
+                  {owners.size > 1 && p.profile_id && (
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">{p.profile_id}</span>
+                  )}
+                </TableCell>
                 <TableCell className="text-right tabular-nums">{fmtShares(p.current_shares)}</TableCell>
                 <TableCell className="text-right tabular-nums">{formatCurrency(p.average_cost_per_share)}</TableCell>
                 <TableCell className="text-right tabular-nums">{formatCurrency(p.total_allowable_expenditure)}</TableCell>

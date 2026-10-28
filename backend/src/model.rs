@@ -353,6 +353,12 @@ pub struct Profile {
     /// generated CGT report. `None` until the user supplies one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub utr: Option<String>,
+    /// The profile this person is married to or in a civil partnership with.
+    /// Shares transferred between spouses move at no gain, no loss (TCGA
+    /// s58); between anyone else they are a gift at market value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub spouse_id: Option<String>,
 }
 
 /// Time granularity used by spending-grid and portfolio-history endpoints.

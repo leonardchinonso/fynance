@@ -959,13 +959,14 @@ impl Db {
     pub fn get_profiles(&self) -> Result<Vec<Profile>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, name, utr FROM profiles ORDER BY name")?;
+            .prepare("SELECT id, name, utr, spouse_id FROM profiles ORDER BY name")?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(Profile {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     utr: row.get(2)?,
+                    spouse_id: row.get(3)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -981,6 +982,34 @@ impl Db {
         if updated == 0 {
             return Err(anyhow!("profile {id} not found"));
         }
+        Ok(())
+    }
+
+    /// Record `spouse_id` as the spouse of `id`, or clear `id`'s spouse with
+    /// `None`. The link is kept symmetric: both sides are set together, and any
+    /// earlier spouse of either profile is unlinked.
+    pub fn update_profile_spouse(&self, id: &str, spouse_id: Option<&str>) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut affected = vec![id];
+        affected.extend(spouse_id);
+        for profile in &affected {
+            tx.execute(
+                "UPDATE profiles SET spouse_id = NULL WHERE id = ?1 OR spouse_id = ?1",
+                params![profile],
+            )?;
+        }
+        if let Some(spouse) = spouse_id {
+            for (a, b) in [(id, spouse), (spouse, id)] {
+                if tx.execute(
+                    "UPDATE profiles SET spouse_id = ?1 WHERE id = ?2",
+                    params![b, a],
+                )? == 0
+                {
+                    return Err(anyhow!("profile {a} not found"));
+                }
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1016,6 +1045,10 @@ impl Db {
     }
 
     pub fn delete_profile(&self, id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE profiles SET spouse_id = NULL WHERE spouse_id = ?1",
+            params![id],
+        )?;
         let deleted = self
             .conn
             .execute("DELETE FROM profiles WHERE id = ?1", params![id])?;
@@ -6806,6 +6839,16 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         rekey_investment_fingerprints(&tx)?;
         tx.execute_batch("PRAGMA user_version = 1")?;
         tx.commit()?;
+    }
+
+    // ── 17. Add spouse_id to profiles ──
+    // Links spouses for the CGT engine's s58 transfer rule. Nullable: no
+    // profile has a spouse until one is recorded.
+    if conn
+        .prepare("SELECT spouse_id FROM profiles LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE profiles ADD COLUMN spouse_id TEXT")?;
     }
 
     Ok(())

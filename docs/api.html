@@ -1396,12 +1396,14 @@ td code { font-size: 12px; }
     <span class="method-badge method-patch">PATCH</span>
     <code class="endpoint-path">/api/profiles/:id</code>
   </div>
-  <p class="endpoint-summary">Rename a profile.</p>
+  <p class="endpoint-summary">Update a profile's name, UTR or spouse. At least one field is required.</p>
   <h4>Request Body <span class="content-type">application/json</span></h4>
   <table class="params-table">
     <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>name</code></td><td>string</td><td>Yes</td><td>New display name</td></tr>
+      <tr><td><code>name</code></td><td>string</td><td>No</td><td>New display name</td></tr>
+      <tr><td><code>utr</code></td><td>string | null</td><td>No</td><td>HMRC Unique Taxpayer Reference (10 digits); <code>null</code> clears it</td></tr>
+      <tr><td><code>spouse_id</code></td><td>string | null</td><td>No</td><td>The profile this person is married to or in a civil partnership with. Set on both profiles at once, unlinking any earlier spouse; <code>null</code> unlinks. Shares transferred between spouses move at no gain, no loss (TCGA s58); between anyone else they are a gift at market value.</td></tr>
     </tbody>
   </table>
   <h4>Example Request</h4>
@@ -3502,7 +3504,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>end_date</code></td><td>query</td><td>string</td><td>No</td><td>Replay only events up to and including this date (YYYY-MM-DD) — truncates the event ledger itself, a genuine point-in-time snapshot. Omit for the current state.</td></tr>
-      <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; includes events from accounts whose profiles intersect this set. Omit for all profiles.</td></tr>
+      <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; reports the disposals and pools of these people. Pools are kept per person, and a transfer to someone else is a disposal by the sender (not reported between spouses) and an acquisition by the receiver. Omit for all profiles.</td></tr>
     </tbody>
   </table>
   <h4>Example Request</h4>
@@ -3511,6 +3513,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <pre class="example-response"><code>[
   {
     "symbol": "VWRL",
+    "profile_id": "alex",
     "current_shares": "20.000",
     "total_allowable_expenditure": "1900.00",
     "average_cost_per_share": "95.00"
@@ -3521,6 +3524,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
       <tr><td>400</td><td><code>invalid_date</code></td><td>end_date is not a valid YYYY-MM-DD date</td></tr>
+      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>A gift of shares received into one of these pools has no price; see <code>/investments/capital-gains</code>. A gift given out of a pool is not refused here, since the giver&#39;s pool does not depend on its price</td></tr>
     </tbody>
   </table>
 </section>
@@ -3537,9 +3541,9 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tbody>
       <tr><td><code>start_date</code></td><td>query</td><td>string</td><td>No</td><td>Only disposals on or after this date are emitted (YYYY-MM-DD). Omit for no lower bound ("from time zero").</td></tr>
       <tr><td><code>end_date</code></td><td>query</td><td>string</td><td>No</td><td>Only disposals on or before this date are emitted (YYYY-MM-DD). Omit for no upper bound.</td></tr>
-      <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No</td><td>Filter disposals by account</td></tr>
+      <tr><td><code>account_id</code></td><td>query</td><td>string</td><td>No</td><td>Report only this account's disposals. Its owner's whole pool still applies: an S104 pool is a person's, across all their accounts and including shares transferred to them.</td></tr>
       <tr><td><code>symbol</code></td><td>query</td><td>string</td><td>No</td><td>Filter by ticker symbol</td></tr>
-      <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; includes events from accounts whose profiles intersect this set. Omit for all profiles.</td></tr>
+      <tr><td><code>profile_ids</code></td><td>query</td><td>string</td><td>No</td><td>Comma-separated profile IDs; reports the disposals and pools of these people. Pools are kept per person, and a transfer to someone else is a disposal by the sender (not reported between spouses) and an acquisition by the receiver. Omit for all profiles.</td></tr>
       <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>No</td><td>UK tax year as <code>YYYY-YY</code> (e.g. <code>2024-25</code>). When present, the response carries a <code>tax</code> object computed from the statutory rates in <code>tax_config</code> and the taxpayer&#39;s figures in <code>tax_inputs</code>. Omit it and <code>tax</code> is absent entirely &mdash; that means &quot;not asked for&quot;, never &quot;no tax due&quot;.</td></tr>
     </tbody>
   </table>
@@ -3630,7 +3634,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     }
   ]
 }</code></pre>
-  <p><code>rule_applied</code> is one of <code>Same-Day</code>, <code>30-Day Rule</code>, <code>S104 Pool</code>, or <code>Unmatched</code>. <code>disposal_groups</code> rolls <code>realized_events</code> up by <code>(symbol, disposal_date)</code> into one row per actual sale — additive, not a replacement; use it for an SA108-style disposal count, use <code>realized_events</code> for the per-rule cost-basis breakdown.</p>
+  <p>A realized event carries <code>gift_to</code> (a profile id) when the disposal is shares given to someone other than the owner's spouse, at market value. <code>rule_applied</code> is one of <code>Same-Day</code>, <code>30-Day Rule</code>, <code>S104 Pool</code>, or <code>Unmatched</code>. <code>disposal_groups</code> rolls <code>realized_events</code> up by <code>(symbol, disposal_date)</code> into one row per actual sale — additive, not a replacement; use it for an SA108-style disposal count, use <code>realized_events</code> for the per-rule cost-basis breakdown.</p>
   <h4>Errors</h4>
   <table class="errors-table">
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
@@ -3639,6 +3643,9 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
       <tr><td>400</td><td><code>invalid_date_range</code></td><td>start_date is after end_date</td></tr>
       <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
       <tr><td>400</td><td><code>tax_computation_failed</code></td><td>No rate bands are configured for the requested tax year, or a disposal falls outside every configured band (the bands must tile the year without gaps)</td></tr>
+      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>Shares were transferred to someone who is not a recorded spouse, so the transfer is a gift at market value, but the departing side has no price (0). The message names the symbol, the date and both profiles. Set the departing side's price to the market price that day, or link the profiles as spouses</td></tr>
+      <tr><td>400</td><td><code>transfer_exceeds_holding</code></td><td>A transfer to a spouse moves more shares than the sender's pool holds, so there is no cost to pass on</td></tr>
+      <tr><td>400</td><td><code>uncosted_spouse_transfer</code></td><td>The cost of shares moved between spouses depends on shares that move back to the sender within 30 days, so neither side can be costed first</td></tr>
     </tbody>
   </table>
 </section>
@@ -3676,6 +3683,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tbody>
       <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
       <tr><td>400</td><td><code>missing_exchange_rates</code></td><td>A prior-year disposal needs an exchange rate that has not been entered</td></tr>
+      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>A gift of shares has no price; see <code>/investments/capital-gains</code>. Refused for a gift received at any date, since it sets the receiver&#39;s pool, and for a gift given only within the lookback years</td></tr>
     </tbody>
   </table>
 </section>

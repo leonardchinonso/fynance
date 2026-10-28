@@ -50,6 +50,7 @@ pub async fn create_profile(
         id: body.id,
         name: body.name,
         utr: None,
+        spouse_id: None,
     }))
 }
 
@@ -62,11 +63,15 @@ pub struct PatchProfileBody {
     /// absent key leaves it alone. `Option<Option<_>>` is what distinguishes
     /// the two — without it, "don't touch the UTR" and "remove the UTR" would
     /// arrive as the same request.
-    #[serde(default, deserialize_with = "deserialize_optional_utr")]
+    #[serde(default, deserialize_with = "deserialize_nullable")]
     pub utr: Option<Option<String>>,
+    /// The profile this person is married to or in a civil partnership with.
+    /// Set on both profiles at once; an explicit `null` unlinks them.
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub spouse_id: Option<Option<String>>,
 }
 
-fn deserialize_optional_utr<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+fn deserialize_nullable<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -96,10 +101,20 @@ pub async fn update_profile(
     Path(id): Path<String>,
     Json(body): Json<PatchProfileBody>,
 ) -> Result<Json<Profile>, AppError> {
-    if body.name.is_none() && body.utr.is_none() {
+    if body.name.is_none() && body.utr.is_none() && body.spouse_id.is_none() {
         return Err(AppError::bad_request(
-            "at least one of 'name' or 'utr' is required",
+            "at least one of 'name', 'utr' or 'spouse_id' is required",
             "empty_body",
+        ));
+    }
+    if body
+        .spouse_id
+        .as_ref()
+        .is_some_and(|s| s.as_deref() == Some(id.as_str()))
+    {
+        return Err(AppError::bad_request(
+            "a profile cannot be its own spouse",
+            "invalid_spouse",
         ));
     }
 
@@ -123,12 +138,23 @@ pub async fn update_profile(
     if !db.profile_exists(&id)? {
         return Err(AppError::NotFound(format!("profile {id} not found")));
     }
+    if let Some(Some(ref spouse)) = body.spouse_id {
+        if !db.profile_exists(spouse)? {
+            return Err(AppError::bad_request(
+                format!("spouse profile {spouse} not found"),
+                "invalid_spouse",
+            ));
+        }
+    }
 
     if let Some(ref name) = body.name {
         db.update_profile_name(&id, name)?;
     }
     if let Some(ref utr) = utr_update {
         db.update_profile_utr(&id, utr.as_deref())?;
+    }
+    if let Some(ref spouse) = body.spouse_id {
+        db.update_profile_spouse(&id, spouse.as_deref())?;
     }
 
     // Read back rather than reconstructing, so the response reflects whichever fields were

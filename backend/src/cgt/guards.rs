@@ -105,8 +105,28 @@ pub(crate) fn required_rate_pairs(
             continue;
         }
         let date = e.date.date();
-        if e.currency != preferred {
-            pairs.insert((e.currency.clone(), date));
+        // A transfer between spouses carries the sender's cost in base currency, so it has
+        // no proceeds and no price to convert. Only a same-day leg against an ordinary
+        // acquisition converts anything at its date.
+        if e.is_spouse_transfer() {
+            if e.currency != preferred && e.same_day_matches.iter().any(|m| !m.carried) {
+                pairs.insert((e.currency.clone(), date));
+            }
+            continue;
+        }
+        // Shares arriving as a gift cost their market value when they were sent, converted
+        // at the departing side's date and in its currency, not at the arrival's own.
+        match e.transfer.as_ref().filter(|t| !t.outgoing) {
+            Some(gift) => {
+                if gift.sent_currency != preferred {
+                    pairs.insert((gift.sent_currency.clone(), gift.sent_on));
+                }
+            }
+            None => {
+                if e.currency != preferred {
+                    pairs.insert((e.currency.clone(), date));
+                }
+            }
         }
         if !e.fee.is_zero() && e.fee_currency != preferred {
             pairs.insert((e.fee_currency.clone(), date));
@@ -125,7 +145,7 @@ pub(crate) fn required_rate_pairs(
         ) {
             continue;
         }
-        for m in &e.thirty_day_matches {
+        for m in e.thirty_day_matches.iter().filter(|m| !m.carried) {
             if let Some(acq) = m.acquisition_date {
                 if e.currency != preferred {
                     pairs.insert((e.currency.clone(), acq.date()));

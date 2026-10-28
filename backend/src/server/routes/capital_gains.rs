@@ -24,11 +24,12 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
-use crate::cgt::engine::{disposal_day_of, run_cgt_engine};
+use crate::cgt::engine::{Reporting, disposal_day_of, run_cgt_engine};
 use crate::cgt::guards::{
     check_required_currencies, check_single_currency_per_symbol, check_single_owner_accounts,
 };
 use crate::cgt::models::{CapitalGainsResponse, CgtSummary, S104PoolState, SymbolSummary};
+use crate::cgt::transfers::{Ledger, Ownership};
 use crate::model::{Account, AccountType, DerivedBroughtForwardLosses};
 use crate::server::error::AppError;
 use crate::server::routes::tax::validate_tax_year;
@@ -104,6 +105,37 @@ fn resolve_profile_ids_to_account_ids(
     Some(scoped)
 }
 
+/// The accounts a report covers: those of `profile_ids`, narrowed to
+/// `account_id` when that is given too. `None` means every account.
+fn report_scope(
+    accounts: &[Account],
+    account_id: Option<&str>,
+    profile_ids: Option<&str>,
+) -> Option<HashSet<String>> {
+    let by_profile = resolve_profile_ids_to_account_ids(accounts, profile_ids)
+        .map(|ids| ids.into_iter().collect::<HashSet<String>>());
+    match (account_id.filter(|s| !s.is_empty()), by_profile) {
+        (Some(id), Some(ids)) => Some(ids.into_iter().filter(|a| a == id).collect()),
+        (Some(id), None) => Some(HashSet::from([id.to_string()])),
+        (None, ids) => ids,
+    }
+}
+
+/// Every investment event a report on `scope` depends on. All accounts are
+/// read, because a pool belongs to a person and shares received from a spouse
+/// carry that sender's cost; [`Ledger::build`] keeps only what is needed.
+fn load_ledger(
+    db: &crate::storage::Db,
+    accounts: &[Account],
+    scope: Option<HashSet<String>>,
+    symbol: Option<&str>,
+    excluded_accounts: &HashSet<String>,
+) -> Result<Ledger, AppError> {
+    let events = db.list_investment_events(None, symbol, None, None)?;
+    let ownership = Ownership::new(accounts, &db.get_profiles()?);
+    Ok(Ledger::build(events, ownership, scope, excluded_accounts))
+}
+
 // ── S104 Pool state calculations ─────────────────────────────────────────────
 
 pub async fn get_s104_pools(
@@ -125,8 +157,6 @@ pub async fn get_s104_pools(
 
     // Fetch all accounts once; derive both the profile scope and the ISA/Pension exclusion from it.
     let accounts = db.get_accounts(None)?;
-    let included_account_ids =
-        resolve_profile_ids_to_account_ids(&accounts, q.profile_ids.as_deref());
     let excluded_accounts: HashSet<String> = accounts
         .iter()
         .filter(|a| {
@@ -138,7 +168,8 @@ pub async fn get_s104_pools(
         .map(|a| a.id.clone())
         .collect();
 
-    let events = db.list_investment_events(None, None, None, included_account_ids.as_deref())?;
+    let scope = report_scope(&accounts, None, q.profile_ids.as_deref());
+    let ledger = load_ledger(&db, &accounts, scope, None, &excluded_accounts)?;
 
     // Compute pools. The pool's cost basis is built from acquisitions converted at their own
     // dates, so it needs the same date-keyed rates the full report does.
@@ -146,12 +177,12 @@ pub async fn get_s104_pools(
     let fx = FxRateMap::new(currencies)?;
     let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
     let fx = fx.with_historical(historical);
-    check_required_currencies(&events, &fx)?;
+    check_required_currencies(&ledger.events, &fx)?;
     // Same `as_at` the engine truncates the ledger with, so the guard's scope is
     // exactly the events that will actually build the pools it is protecting.
-    check_single_owner_accounts(&accounts, &events, &excluded_accounts, as_at)?;
-    check_single_currency_per_symbol(&events)?;
-    let pools = run_cgt_engine(events, &excluded_accounts, as_at, None, None, &fx)?;
+    check_single_owner_accounts(&accounts, &ledger.events, &excluded_accounts, as_at)?;
+    check_single_currency_per_symbol(&ledger.events)?;
+    let pools = run_cgt_engine(&ledger, as_at, None, None, Reporting::PoolsOnly, &fx)?;
 
     Ok(Json(pools.pools))
 }
@@ -204,8 +235,6 @@ pub async fn get_brought_forward_losses(
     let db = state.db();
 
     let accounts = db.get_accounts(None)?;
-    let included_account_ids =
-        resolve_profile_ids_to_account_ids(&accounts, q.profile_ids.as_deref());
     let excluded_accounts: HashSet<String> = accounts
         .iter()
         .filter(|a| {
@@ -217,20 +246,33 @@ pub async fn get_brought_forward_losses(
         .map(|a| a.id.clone())
         .collect();
 
-    let events = db.list_investment_events(None, None, None, included_account_ids.as_deref())?;
+    let scope = report_scope(&accounts, None, q.profile_ids.as_deref());
+    let ledger = load_ledger(&db, &accounts, scope, None, &excluded_accounts)?;
 
     let currencies = db.get_currencies()?;
     let fx = FxRateMap::new(currencies)?;
     let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
     let fx = fx.with_historical(historical);
-    check_required_currencies(&events, &fx)?;
-    check_single_owner_accounts(&accounts, &events, &excluded_accounts, None)?;
-    check_single_currency_per_symbol(&events)?;
+    check_required_currencies(&ledger.events, &fx)?;
+    check_single_owner_accounts(&accounts, &ledger.events, &excluded_accounts, None)?;
+    check_single_currency_per_symbol(&ledger.events)?;
 
     // The ledger is never truncated: the S104 pool and the 30-day rule must see
     // the full history for a prior year's gain to be computed correctly, exactly
-    // as on the main report.
-    let report = run_cgt_engine(events, &excluded_accounts, None, None, None, &fx)?;
+    // as on the main report. Only the lookback years' disposals are reported, so
+    // nothing in the year the losses are brought into, or later, can refuse it.
+    let (from, to) = (boundaries.first(), boundaries.last());
+    let report = match from.zip(to) {
+        Some(((_, start, _), (_, _, end))) => run_cgt_engine(
+            &ledger,
+            None,
+            Some(*start),
+            Some(*end),
+            Reporting::Disposals,
+            &fx,
+        )?,
+        None => run_cgt_engine(&ledger, None, None, None, Reporting::PoolsOnly, &fx)?,
+    };
 
     let realized: Vec<(String, Decimal)> = report
         .realized_events
@@ -278,8 +320,6 @@ pub async fn get_capital_gains(
 
     // Fetch all accounts once; derive both the profile scope and the ISA/Pension exclusion from it.
     let accounts = db.get_accounts(None)?;
-    let included_account_ids =
-        resolve_profile_ids_to_account_ids(&accounts, q.profile_ids.as_deref());
     let excluded_accounts: HashSet<String> = accounts
         .iter()
         .filter(|a| {
@@ -291,14 +331,16 @@ pub async fn get_capital_gains(
         .map(|a| a.id.clone())
         .collect();
 
-    // Fetch investment events. account_ids (when set) narrows the SQL scope.
-    // The global S104 pool is still per-symbol — the engine handles that — but its
-    // input is now scoped to the requested profile set.
-    let events = db.list_investment_events(
-        q.account_id.as_deref(),
+    // `account_id` and `profile_ids` choose which disposals are reported, not which
+    // events are pooled: a pool is a person's, across all their accounts and including
+    // shares other people transferred to them.
+    let scope = report_scope(&accounts, q.account_id.as_deref(), q.profile_ids.as_deref());
+    let ledger = load_ledger(
+        &db,
+        &accounts,
+        scope,
         q.symbol.as_deref(),
-        None,
-        included_account_ids.as_deref(),
+        &excluded_accounts,
     )?;
 
     // Load currency exchange rates for final base-currency summary normalization, plus the
@@ -309,18 +351,18 @@ pub async fn get_capital_gains(
     let historical = db.get_exchange_rates_for_quote(&base_currency)?;
     let fx = fx.with_historical(historical);
 
-    check_required_currencies(&events, &fx)?;
+    check_required_currencies(&ledger.events, &fx)?;
     // `None`, mirroring the engine call below: this endpoint never truncates the
     // ledger, so every event contributes to the pool and can make a figure ambiguous.
-    check_single_owner_accounts(&accounts, &events, &excluded_accounts, None)?;
-    check_single_currency_per_symbol(&events)?;
+    check_single_owner_accounts(&accounts, &ledger.events, &excluded_accounts, None)?;
+    check_single_currency_per_symbol(&ledger.events)?;
 
     let mut response = run_cgt_engine(
-        events,
-        &excluded_accounts,
+        &ledger,
         None, // no ledger truncation — see the `filter_start`/`filter_end` comment above
         filter_start,
         filter_end,
+        Reporting::Disposals,
         &fx,
     )?;
 
