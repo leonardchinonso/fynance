@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { api } from "@/api/client"
+import { ApiError } from "@/api/real_service"
 import type { Account } from "@/types"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
 import type { InvestmentEventType } from "@/bindings/InvestmentEventType"
@@ -136,7 +137,15 @@ export function EventDialog({ event, accounts, onClose, onSaved }: Props) {
       }
       onSaved()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      // The dialog has no time field, so the backend's own advice about the
+      // time of day does not apply here; repeats on one day need an import.
+      if (err instanceof ApiError && err.code === "investment_exists") {
+        setError(
+          "An identical event already exists on that date. Use import for genuine repeats."
+        )
+      } else {
+        setError(err instanceof Error ? err.message : String(err))
+      }
     } finally {
       setSaving(false)
     }

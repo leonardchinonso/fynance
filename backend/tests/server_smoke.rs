@@ -195,11 +195,11 @@ async fn token_lifecycle_create_validate_revoke() {
     }
 }
 
-/// `POST /api/investments` numbers a lone event within its day: a second event
-/// with the same key at another time of day is stored, and only an exact
-/// re-send is refused, with the stored event's id.
+/// A second `POST /api/investments` with the same key as a stored event (the
+/// time of day aside) is refused with the stored event's id, whatever its
+/// time, and stores nothing. Genuine repeats go through the import route.
 #[tokio::test]
-async fn single_investment_posts_on_one_day_store_two_events() {
+async fn second_same_key_investment_post_is_409_whatever_the_time() {
     let (app, db) = test_router();
     {
         let db = db.lock().unwrap();
@@ -245,20 +245,14 @@ async fn single_investment_posts_on_one_day_store_two_events() {
         }
     };
 
-    let (status, first) = post(event_at("09:00:00")).await;
+    let (status, first) = post(event_at("12:00:00")).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, second) = post(event_at("15:30:00")).await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "a second event on the same day: {second}"
-    );
-    assert_ne!(first["id"], second["id"]);
-
-    let (status, resent) = post(event_at("15:30:00")).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(resent["code"], "investment_exists");
-    assert_eq!(resent["existing_id"], second["id"]);
+    for time in ["12:00:00", "15:30:00"] {
+        let (status, refused) = post(event_at(time)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "posted at {time}: {refused}");
+        assert_eq!(refused["code"], "investment_exists");
+        assert_eq!(refused["existing_id"], first["id"]);
+    }
 
     let response = app
         .oneshot(request(Method::GET, "/api/investments?account_id=isa"))
@@ -266,5 +260,5 @@ async fn single_investment_posts_on_one_day_store_two_events() {
         .unwrap();
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let events: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(events.as_array().map(|a| a.len()), Some(2));
+    assert_eq!(events.as_array().map(|a| a.len()), Some(1));
 }

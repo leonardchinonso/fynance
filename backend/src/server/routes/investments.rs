@@ -121,9 +121,10 @@ pub async fn create_investment(
             .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?
     };
 
-    // A second event on the same day is stored. Only an exact re-send, the
-    // same event at the same time of day, lands here, and it is reported
-    // rather than answered with the stored row as if it had just been created.
+    // An event whose key (the time of day aside) is already stored is reported,
+    // not answered with the stored row as if it had just been created. The
+    // time of day cannot separate a re-send from a repeat: most stored broker
+    // events carry a made-up time.
     if outcome == InsertOutcome::Duplicate {
         return Err(investment_exists(&event));
     }
@@ -134,9 +135,10 @@ pub async fn create_investment(
 fn investment_exists(event: &InvestmentEvent) -> AppError {
     AppError::conflict_with_details(
         format!(
-            "This event is already recorded as {}: same account, symbol, type, quantity and \
-             price at the same date and time, so no new event was created. To record a second \
-             identical event on the same day, give it a different time of day.",
+            "An identical event already exists on that date ({}): same account, symbol, type, \
+             quantity and price, at any time of day. No new event was created. To record \
+             genuine repeats on one day, send all of that day's identical events together \
+             through POST /api/investments/import, which numbers repeats.",
             event.id
         ),
         "investment_exists",

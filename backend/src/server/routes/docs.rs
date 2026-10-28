@@ -995,11 +995,11 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 },
                 "post": {
                     "summary": "Create one investment event",
-                    "description": "Takes the lowest occurrence number its account, symbol, date, quantity, price and type leave free, so a second identical event on the same day at another time of day is stored. A re-send of a stored event, time of day included, creates nothing and returns 409.",
+                    "description": "The time of day is not part of an event's identity. If an event with the same account, symbol, type, quantity and price already exists on that date, nothing is created and the response is 409. Genuine repeats on one day go through /api/investments/import, which numbers them.",
                     "security": [{ "bearerAuth": [] }],
                     "responses": {
                         "200": { "description": "Created investment event" },
-                        "409": { "description": "investment_exists: the same event at the same date and time is already stored; existing_id names it" }
+                        "409": { "description": "investment_exists: an identical event already exists on that date, at any time of day; existing_id names it" }
                     }
                 }
             },

@@ -442,7 +442,7 @@ td code { font-size: 12px; }
     <tr><td><code>profile_in_use</code></td><td>Profile referenced by accounts, cannot delete (409)</td></tr>
     <tr><td><code>currency_exists</code></td><td>Currency code already exists (409)</td></tr>
     <tr><td><code>currency_in_use</code></td><td>Currency referenced by accounts/transactions (409)</td></tr>
-    <tr><td><code>investment_exists</code></td><td>The same investment event, time of day included, is already stored; the body's <code>existing_id</code> names it (409)</td></tr>
+    <tr><td><code>investment_exists</code></td><td>An identical investment event (same account, symbol, type, quantity and price) already exists on that date, at any time of day; the body's <code>existing_id</code> names it (409)</td></tr>
     <tr><td><code>invalid_currency_code</code></td><td>Not a valid ISO 4217 code</td></tr>
     <tr><td><code>unauthorized</code></td><td>Missing or invalid bearer token (401)</td></tr>
     <tr><td><code>upstream_timeout</code></td><td>LLM provider timed out (504)</td></tr>
@@ -3301,7 +3301,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <code class="endpoint-path">/api/investments</code>
   </div>
   <p class="endpoint-summary">Create a single investment event.</p>
-  <p>A single event takes the lowest occurrence number its account, symbol, date, quantity, price and type leave free, so a second identical event on the same day at a different time of day is stored as a second event. Sending an event that is already stored with the same time of day is a re-send: nothing is created and the response is <code>409 investment_exists</code> with the stored event's <code>existing_id</code>.</p>
+  <p>The time of day is not part of an event's identity. If an event with the same account, symbol, type, quantity and price already exists on that date, at any time of day, nothing is created and the response is <code>409 investment_exists</code> with the stored event's <code>existing_id</code>. Most stored broker events carry a made-up time, so a time cannot tell a re-send from a second event. To record genuine repeats on one day, send all of that day's identical events together through <code>POST /api/investments/import</code>, which numbers repeats.</p>
   <h4>Request Body <span class="content-type">application/json</span></h4>
   <table class="params-table">
     <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -3352,7 +3352,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tbody>
       <tr><td>400</td><td><code>invalid_body</code></td><td>Unknown event type, or an unparseable date, quantity, price or fee</td></tr>
       <tr><td>400</td><td><code>symbol_currency_conflict</code></td><td>The symbol is already recorded in another currency</td></tr>
-      <tr><td>409</td><td><code>investment_exists</code></td><td>The same event at the same date and time is already stored. The body carries <code>existing_id</code>.</td></tr>
+      <tr><td>409</td><td><code>investment_exists</code></td><td>An identical event already exists on that date, at any time of day. The body carries <code>existing_id</code>. Genuine repeats go through <code>POST /api/investments/import</code>.</td></tr>
     </tbody>
   </table>
 </section>
