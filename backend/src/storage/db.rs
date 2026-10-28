@@ -1386,24 +1386,45 @@ impl Db {
 
     // ── Investments ───────────────────────────────────────────────────────────
 
-    /// Insert one investment event. `INSERT OR IGNORE` on the unique
-    /// fingerprint makes creation idempotent; the returned [`InsertOutcome`]
-    /// says whether a row was inserted or the fingerprint already existed
-    /// (the existing event is returned either way).
+    /// Insert one investment event that is not part of an import.
+    ///
+    /// A lone event has no batch to number it within, so it takes the lowest
+    /// occurrence of its identity key that no stored event holds, and a second
+    /// genuine event on the same day is stored rather than dropped. A re-send,
+    /// identical to a stored event down to the time of day, returns that event
+    /// with [`InsertOutcome::Duplicate`] instead of writing a copy. This keeps
+    /// what the time of day meant before keys dropped it.
     pub fn create_investment_event(
         &self,
         body: &CreateInvestmentEventBody,
     ) -> Result<(InvestmentEvent, InsertOutcome)> {
-        self.create_investment_event_in_batch(body, &mut Occurrences::default(), 0)
+        self.insert_investment_event(body, EventSlot::Single)
     }
 
-    /// [`Self::create_investment_event`] for the `row_index`-th event of an
-    /// import, whose events sharing an identity key `occurrences` numbers.
+    /// Insert the `row_index`-th event of an import, whose events sharing an
+    /// identity key `occurrences` numbers. `INSERT OR IGNORE` on the unique
+    /// fingerprint makes the import idempotent; the returned [`InsertOutcome`]
+    /// says whether a row was inserted or the fingerprint already existed
+    /// (the existing event is returned either way).
     pub fn create_investment_event_in_batch(
         &self,
         body: &CreateInvestmentEventBody,
         occurrences: &mut Occurrences,
         row_index: usize,
+    ) -> Result<(InvestmentEvent, InsertOutcome)> {
+        self.insert_investment_event(
+            body,
+            EventSlot::Batch {
+                occurrences,
+                row_index,
+            },
+        )
+    }
+
+    fn insert_investment_event(
+        &self,
+        body: &CreateInvestmentEventBody,
+        slot: EventSlot<'_>,
     ) -> Result<(InvestmentEvent, InsertOutcome)> {
         let event_type = InvestmentEventType::parse(&body.event_type)
             .ok_or_else(|| anyhow::anyhow!("invalid event_type: {}", body.event_type))?;
@@ -1465,9 +1486,27 @@ impl Db {
             price_per_share,
             event_type.as_str(),
         );
-        let fingerprint = occurrences.next(&key, row_index).fingerprint;
 
         let id = uuid::Uuid::new_v4().to_string();
+        let fingerprint = match slot {
+            EventSlot::Batch {
+                occurrences,
+                row_index,
+            } => occurrences.next(&key, row_index).fingerprint,
+            EventSlot::Single => {
+                match self.resent_investment_fingerprint(
+                    &key,
+                    &body.account_id,
+                    &body.symbol,
+                    event_type.as_str(),
+                    date,
+                )? {
+                    Some(fingerprint) => fingerprint,
+                    None => free_fingerprint(&self.conn, "investments", &key, &id)?,
+                }
+            }
+        };
+
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let source_ids_json =
             serde_json::to_string(&body.source_document_ids).unwrap_or_else(|_| "[]".to_string());
@@ -1518,6 +1557,56 @@ impl Db {
             row_to_investment_event,
         )?;
         Ok((event, outcome))
+    }
+
+    /// The fingerprint of a stored event with identity `key` recorded at
+    /// exactly `date`, time of day included. Such an event means a single
+    /// insert is a re-send of something already recorded, not a second event
+    /// on the same day.
+    fn resent_investment_fingerprint(
+        &self,
+        key: &str,
+        account_id: &str,
+        symbol: &str,
+        event_type: &str,
+        date: NaiveDateTime,
+    ) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT fingerprint, date, quantity, price_per_share FROM investments
+             WHERE account_id = ?1 AND symbol = ?2 AND event_type = ?3 AND substr(date, 1, 10) = ?4",
+        )?;
+        let rows = stmt.query_map(
+            params![
+                account_id,
+                symbol,
+                event_type,
+                date.format("%Y-%m-%d").to_string()
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )?;
+        for row in rows {
+            let (fingerprint, stored_date, quantity, price) = row?;
+            if parse_transaction_datetime(&stored_date) != Some(date) {
+                continue;
+            }
+            let (Ok(quantity), Ok(price)) = (quantity.parse::<Decimal>(), price.parse::<Decimal>())
+            else {
+                continue;
+            };
+            let stored_key =
+                investment_key(account_id, symbol, date.date(), quantity, price, event_type);
+            if stored_key == key {
+                return Ok(Some(fingerprint));
+            }
+        }
+        Ok(None)
     }
 
     /// The `(symbol, currency)` pair of a single event, or `None` if it does not
@@ -6195,9 +6284,22 @@ impl DuplicateCheck {
     }
 }
 
+/// How a new investment event's occurrence number is chosen.
+enum EventSlot<'a> {
+    /// The `row_index`-th event of an import, numbered among the import's
+    /// events that share its key.
+    Batch {
+        occurrences: &'a mut Occurrences,
+        row_index: usize,
+    },
+    /// A lone event: a re-send of a stored event keeps that event's number,
+    /// anything else takes the lowest free one.
+    Single,
+}
+
 /// The lowest-occurrence fingerprint of `key` that no row of `table` other
-/// than `id` holds. Used when re-keying a single stored row, which has no
-/// import batch to number it within.
+/// than `id` holds. Used for a single row, stored or new, which has no import
+/// batch to number it within.
 fn free_fingerprint(conn: &Connection, table: &str, key: &str, id: &str) -> Result<String> {
     let mut taken = conn.prepare_cached(&format!(
         "SELECT EXISTS(SELECT 1 FROM {table} WHERE fingerprint = ?1 AND id != ?2)"
@@ -9031,6 +9133,63 @@ mod investment_dedup_tests {
             .list_investment_events(Some("acct-1"), None, None, None)
             .unwrap();
         assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn single_events_on_one_day_take_the_lowest_free_occurrence() {
+        use crate::model::InsertOutcome::{Duplicate, Inserted};
+        let (db, _file) = test_db();
+        make_test_account(&db, "acct-1");
+        let at = |time: &str| crate::model::CreateInvestmentEventBody {
+            date: format!("2026-03-15T{time}"),
+            ..make_event_body("VUSA")
+        };
+
+        // Two genuine events on one day, told apart only by the time of day.
+        let (morning, outcome) = db.create_investment_event(&at("08:00:00")).unwrap();
+        assert_eq!(outcome, Inserted);
+        let (evening, outcome) = db.create_investment_event(&at("18:00:00")).unwrap();
+        assert_eq!(
+            outcome, Inserted,
+            "a second event on the same day is stored"
+        );
+        assert_ne!(evening.id, morning.id);
+
+        let key = investment_key(
+            "acct-1",
+            "VUSA",
+            NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+            Decimal::from(10),
+            Decimal::new(7632, 2),
+            "buy",
+        );
+        assert_eq!(
+            morning.fingerprint,
+            crate::util::dedupe::fingerprint(&key, 0)
+        );
+        assert_eq!(
+            evening.fingerprint,
+            crate::util::dedupe::fingerprint(&key, 1)
+        );
+
+        // A re-send, time of day included, is the stored event.
+        let (resent, outcome) = db.create_investment_event(&at("18:00:00")).unwrap();
+        assert_eq!(outcome, Duplicate);
+        assert_eq!(resent.id, evening.id);
+
+        // The statement that lists both, at whatever time it records, dedupes.
+        let mut occurrences = Occurrences::default();
+        for i in 0..2 {
+            let (_, outcome) = db
+                .create_investment_event_in_batch(&at("00:00:00"), &mut occurrences, i)
+                .unwrap();
+            assert_eq!(outcome, Duplicate);
+        }
+
+        let events = db
+            .list_investment_events(Some("acct-1"), None, None, None)
+            .unwrap();
+        assert_eq!(events.len(), 2);
     }
 
     #[test]

@@ -28,6 +28,14 @@ pub enum AppError {
     },
     /// 409: conflict (e.g. duplicate ID). Specific machine-readable code.
     Conflict { message: String, code: &'static str },
+    /// 409 carrying a structured payload merged into the response body, for a
+    /// conflict the client resolves by reading a field: `investment_exists`
+    /// names the stored event in `existing_id`.
+    ConflictWithDetails {
+        message: String,
+        code: &'static str,
+        details: serde_json::Value,
+    },
     /// 401: missing or invalid bearer token. code = "unauthorized"
     Unauthorized(String),
     /// 502: upstream service error with a specific machine-readable code.
@@ -72,6 +80,19 @@ impl AppError {
         }
     }
 
+    /// Construct a 409 error whose body also carries a structured `details` object.
+    pub fn conflict_with_details(
+        message: impl Into<String>,
+        code: &'static str,
+        details: serde_json::Value,
+    ) -> Self {
+        Self::ConflictWithDetails {
+            message: message.into(),
+            code,
+            details,
+        }
+    }
+
     pub fn bad_gateway(message: impl Into<String>, code: &'static str) -> Self {
         Self::BadGateway {
             message: message.into(),
@@ -97,7 +118,7 @@ impl AppError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest { .. } | Self::BadRequestWithDetails { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict { .. } => StatusCode::CONFLICT,
+            Self::Conflict { .. } | Self::ConflictWithDetails { .. } => StatusCode::CONFLICT,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::BadGateway { .. } => StatusCode::BAD_GATEWAY,
             Self::GatewayTimeout { .. } => StatusCode::GATEWAY_TIMEOUT,
@@ -112,6 +133,7 @@ impl AppError {
             Self::BadRequest { code, .. } => code,
             Self::BadRequestWithDetails { code, .. } => code,
             Self::Conflict { code, .. } => code,
+            Self::ConflictWithDetails { code, .. } => code,
             Self::Unauthorized(_) => "unauthorized",
             Self::BadGateway { code, .. } => code,
             Self::GatewayTimeout { code, .. } => code,
@@ -126,6 +148,7 @@ impl AppError {
             Self::BadRequest { message, .. }
             | Self::BadRequestWithDetails { message, .. }
             | Self::Conflict { message, .. }
+            | Self::ConflictWithDetails { message, .. }
             | Self::BadGateway { message, .. }
             | Self::GatewayTimeout { message, .. }
             | Self::TooManyRequests { message, .. } => message.clone(),
@@ -149,7 +172,9 @@ impl IntoResponse for AppError {
         // e.g. `missing` beside `error`/`code` rather than nested under a key it
         // has to know about. `error` and `code` are written first and the merge
         // skips them, so a details object can never shadow either.
-        if let Self::BadRequestWithDetails { details, .. } = &self {
+        if let Self::BadRequestWithDetails { details, .. }
+        | Self::ConflictWithDetails { details, .. } = &self
+        {
             if let (Some(obj), Some(extra)) = (body.as_object_mut(), details.as_object()) {
                 for (k, v) in extra {
                     if k != "error" && k != "code" {

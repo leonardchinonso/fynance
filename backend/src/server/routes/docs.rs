@@ -521,7 +521,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/transactions/import": {
                 "post": {
                     "summary": "Programmatic typed JSON import of transactions",
-                    "description": "Current route for structured (non-CSV) imports by agents and scripts.",
+                    "description": "Current route for structured (non-CSV) imports by agents and scripts. When committing a preview, send every non-error row, duplicates included, in preview order: rows sharing a date, amount and account are numbered across the whole payload, so leaving out a duplicate or reordering rows can change which rows land. To decline a row marked new, leave that row out.",
                     "security": [{ "bearerAuth": [] }],
                     "parameters": [
                         { "name": "dry_run", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Preview without committing (returns TransactionImportPreview)." }
@@ -995,13 +995,18 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 },
                 "post": {
                     "summary": "Create one investment event",
+                    "description": "Takes the lowest occurrence number its account, symbol, date, quantity, price and type leave free, so a second identical event on the same day at another time of day is stored. A re-send of a stored event, time of day included, creates nothing and returns 409.",
                     "security": [{ "bearerAuth": [] }],
-                    "responses": { "200": { "description": "Created investment event" } }
+                    "responses": {
+                        "200": { "description": "Created investment event" },
+                        "409": { "description": "investment_exists: the same event at the same date and time is already stored; existing_id names it" }
+                    }
                 }
             },
             "/api/investments/import": {
                 "post": {
                     "summary": "Bulk import investment events",
+                    "description": "Send every non-error row of the /api/parse preview, duplicates included, in preview order. Events sharing a key are numbered across the whole payload, so leaving out a duplicate or reordering rows can change which events land. To decline a row marked new, leave that row out.",
                     "security": [{ "bearerAuth": [] }],
                     "responses": { "200": { "description": "Investment import summary" } }
                 }

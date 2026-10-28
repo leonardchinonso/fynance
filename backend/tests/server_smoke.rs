@@ -194,3 +194,77 @@ async fn token_lifecycle_create_validate_revoke() {
         assert!(after.is_none());
     }
 }
+
+/// `POST /api/investments` numbers a lone event within its day: a second event
+/// with the same key at another time of day is stored, and only an exact
+/// re-send is refused, with the stored event's id.
+#[tokio::test]
+async fn single_investment_posts_on_one_day_store_two_events() {
+    let (app, db) = test_router();
+    {
+        let db = db.lock().unwrap();
+        db.create_profile("alice", "Alice").unwrap();
+    }
+    let account = serde_json::json!({
+        "id": "isa",
+        "name": "ISA",
+        "institution": "TestBroker",
+        "type": "investment",
+        "profile_ids": ["alice"],
+    });
+    let response = app
+        .clone()
+        .oneshot(request_json(Method::POST, "/api/accounts", account))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let event_at = |time: &str| {
+        serde_json::json!({
+            "account_id": "isa",
+            "event_type": "vest",
+            "symbol": "ACME",
+            "date": format!("2026-03-15T{time}"),
+            "quantity": "10",
+            "price_per_share": "25.00",
+            "currency": "GBP",
+            "source_document_ids": [],
+        })
+    };
+    let post = |body: serde_json::Value| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(request_json(Method::POST, "/api/investments", body))
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            (status, body)
+        }
+    };
+
+    let (status, first) = post(event_at("09:00:00")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, second) = post(event_at("15:30:00")).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a second event on the same day: {second}"
+    );
+    assert_ne!(first["id"], second["id"]);
+
+    let (status, resent) = post(event_at("15:30:00")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(resent["code"], "investment_exists");
+    assert_eq!(resent["existing_id"], second["id"]);
+
+    let response = app
+        .oneshot(request(Method::GET, "/api/investments?account_id=isa"))
+        .await
+        .unwrap();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let events: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(events.as_array().map(|a| a.len()), Some(2));
+}

@@ -113,17 +113,35 @@ pub async fn create_investment(
         ));
     }
 
-    let event = {
+    let (event, outcome) = {
         let db = state.db();
         validate_event_currencies(&db, &body.currency, body.fee_currency.as_deref())?;
         validate_symbol_currency(&db, &body.symbol, &body.currency, None)?;
-        let (event, _outcome) = db
-            .create_investment_event(&body)
-            .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?;
-        event
+        db.create_investment_event(&body)
+            .map_err(|e| AppError::bad_request(e.to_string(), "invalid_body"))?
     };
 
+    // A second event on the same day is stored. Only an exact re-send, the
+    // same event at the same time of day, lands here, and it is reported
+    // rather than answered with the stored row as if it had just been created.
+    if outcome == InsertOutcome::Duplicate {
+        return Err(investment_exists(&event));
+    }
+
     Ok(Json(event))
+}
+
+fn investment_exists(event: &InvestmentEvent) -> AppError {
+    AppError::conflict_with_details(
+        format!(
+            "This event is already recorded as {}: same account, symbol, type, quantity and \
+             price at the same date and time, so no new event was created. To record a second \
+             identical event on the same day, give it a different time of day.",
+            event.id
+        ),
+        "investment_exists",
+        serde_json::json!({ "existing_id": event.id }),
+    )
 }
 
 // ── GET /api/investments ─────────────────────────────────────────────────────

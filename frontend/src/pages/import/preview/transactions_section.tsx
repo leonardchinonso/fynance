@@ -21,6 +21,7 @@ import { DuplicateHint, StatusBadge } from "./status_badge"
 import { DateCell, DecimalCell, SelectCell, TextCell, moneyDirectionClass } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
 import { SortHeader } from "./sort_header"
+import { editablePayloadIndices } from "./payload_index"
 import { useCategoryColorsContext } from "@/context/category_colors_context"
 import { CATEGORY_COLORS } from "@/lib/colors"
 import { InlineDateRange } from "@/components/inline_date_range"
@@ -196,16 +197,10 @@ export function TransactionsSection({
   }, [payload])
 
   /**
-   * Map each preview row to the index of its corresponding payload entry,
-   * or null for non-actionable rows (duplicate/error).
-   *
-   * Backend invariant: payload.transactions is in the same order as
-   * `rows[]` filtered to status === "new".
+   * Each preview row's index into payload.transactions, or null for rows the
+   * user cannot edit or remove (duplicate/error). See `editablePayloadIndices`.
    */
-  const rowPayloadIndex = useMemo(() => {
-    let n = 0
-    return result.rows.map((r) => (r.status === "new" ? n++ : null))
-  }, [result.rows])
+  const rowPayloadIndex = useMemo(() => editablePayloadIndices(result.rows), [result.rows])
 
   const filteredEntries = useMemo(() => {
     const fromIso = dateFrom ? `${dateFrom}T00:00:00` : null
