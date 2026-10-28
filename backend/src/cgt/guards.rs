@@ -114,8 +114,19 @@ pub(crate) fn required_rate_pairs(
             }
             continue;
         }
-        if e.currency != preferred {
-            pairs.insert((e.currency.clone(), date));
+        // Shares arriving as a gift cost their market value when they were sent, converted
+        // at the departing side's date and in its currency, not at the arrival's own.
+        match e.transfer.as_ref().filter(|t| !t.outgoing) {
+            Some(gift) => {
+                if gift.sent_currency != preferred {
+                    pairs.insert((gift.sent_currency.clone(), gift.sent_on));
+                }
+            }
+            None => {
+                if e.currency != preferred {
+                    pairs.insert((e.currency.clone(), date));
+                }
+            }
         }
         if !e.fee.is_zero() && e.fee_currency != preferred {
             pairs.insert((e.fee_currency.clone(), date));

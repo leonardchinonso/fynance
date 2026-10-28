@@ -3524,6 +3524,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
       <tr><td>400</td><td><code>invalid_date</code></td><td>end_date is not a valid YYYY-MM-DD date</td></tr>
+      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>A gift of shares into one of these pools has no price; see <code>/investments/capital-gains</code></td></tr>
     </tbody>
   </table>
 </section>
@@ -3642,6 +3643,9 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
       <tr><td>400</td><td><code>invalid_date_range</code></td><td>start_date is after end_date</td></tr>
       <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
       <tr><td>400</td><td><code>tax_computation_failed</code></td><td>No rate bands are configured for the requested tax year, or a disposal falls outside every configured band (the bands must tile the year without gaps)</td></tr>
+      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>Shares were transferred to someone who is not a recorded spouse, so the transfer is a gift at market value, but the departing side has no price (0). The message names the symbol, the date and both profiles. Set the departing side's price to the market price that day, or link the profiles as spouses</td></tr>
+      <tr><td>400</td><td><code>transfer_exceeds_holding</code></td><td>A transfer to a spouse moves more shares than the sender's pool holds, so there is no cost to pass on</td></tr>
+      <tr><td>400</td><td><code>uncosted_spouse_transfer</code></td><td>The cost of shares moved between spouses depends on shares that move back to the sender within 30 days, so neither side can be costed first</td></tr>
     </tbody>
   </table>
 </section>
@@ -3679,6 +3683,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tbody>
       <tr><td>400</td><td><code>invalid_tax_year</code></td><td>tax_year is not in <code>YYYY-YY</code> form</td></tr>
       <tr><td>400</td><td><code>missing_exchange_rates</code></td><td>A prior-year disposal needs an exchange rate that has not been entered</td></tr>
+      <tr><td>400</td><td><code>unpriced_gift_transfer</code></td><td>A prior-year gift of shares has no price; see <code>/investments/capital-gains</code></td></tr>
     </tbody>
   </table>
 </section>

@@ -21,7 +21,7 @@ use super::internal::{CalEvent, InternalMatch};
 use super::models::{
     CapitalGainsResponse, CgtDisposalGroup, CgtRealizedEvent, CgtSummary, S104PoolState,
 };
-use super::transfers::{Ledger, TransferRule};
+use super::transfers::{Ledger, PersonTransfer, TransferRule};
 
 /// Runs the HMRC matching rules over the event ledger.
 ///
@@ -43,6 +43,9 @@ pub(crate) fn run_cgt_engine(
     // 1-2. Respect `as_at`, and group events by symbol and owner. A transfer to
     // or from another person becomes a disposal or an acquisition; one between
     // a person's own accounts stays a `Transfer`, which moves nothing.
+    let in_window = |date: NaiveDate| {
+        filter_start.is_none_or(|start| date >= start) && filter_end.is_none_or(|end| date <= end)
+    };
     let mut owner_groups: BTreeMap<(String, String), Vec<CalEvent>> = BTreeMap::new();
     for event in &ledger.events {
         if as_at.is_some_and(|limit| event.date.date() > limit) {
@@ -53,6 +56,15 @@ pub(crate) fn run_cgt_engine(
             cal.owner = owner.to_string();
         }
         if let Some(transfer) = ledger.transfers.get(&event.id) {
+            // A gift with no price would report the giver's proceeds and the
+            // receiver's cost as zero. Refuse it wherever it would count: on
+            // the arriving side always, since it sets the receiver's pool, and
+            // on the departing side when that disposal is being reported.
+            let counts = !transfer.outgoing
+                || (ledger.in_scope(&event.account_id) && in_window(event.date.date()));
+            if transfer.is_unpriced_gift() && counts {
+                return Err(unpriced_gift_transfer(transfer, event.quantity.abs()));
+            }
             cal.event_type = if transfer.outgoing {
                 InvestmentEventType::Sell
             } else {
@@ -135,7 +147,7 @@ pub(crate) fn run_cgt_engine(
                                 quantity: matched,
                                 price: events[a_idx].price_per_share,
                                 is_s104: false,
-                                carried: events[a_idx].is_spouse_transfer(),
+                                carried: events[a_idx].is_transfer_in(),
                             };
                             events[d_idx].same_day_matches.push(match_detail);
                         }
@@ -195,7 +207,7 @@ pub(crate) fn run_cgt_engine(
                         quantity: matched,
                         price: events[acq_idx].price_per_share,
                         is_s104: false,
-                        carried: events[acq_idx].is_spouse_transfer(),
+                        carried: events[acq_idx].is_transfer_in(),
                     };
                     events[idx].thirty_day_matches.push(match_detail);
                 }
@@ -240,12 +252,30 @@ pub(crate) fn run_cgt_engine(
     // between spouses can hand the sender's cost to the receiver: the departing side is
     // replayed first and records the cost per share it took out of the sender's pool, and the
     // arriving side brings exactly that into the receiver's.
+    //
+    // A gift's cost is known before any pool is replayed: the market value is the departing
+    // side's price, converted at the date it was sent. The receiver uses that one figure,
+    // not the arriving row's own price and date, so it equals the giver's proceeds.
+    //
+    // Arriving transfer id -> the cost per share it brings, in base currency.
+    let mut carried: HashMap<String, Decimal> = HashMap::new();
+    for e in &all_matched_events {
+        let gift = e
+            .transfer
+            .as_ref()
+            .filter(|t| !t.outgoing && t.rule == TransferRule::MarketValue);
+        if let Some(t) = gift {
+            let value = fx
+                .convert_as_of(t.sent_price, &t.sent_currency, t.sent_on)
+                .map_err(unreachable_missing_rate)?;
+            carried.insert(e.id.clone(), value);
+        }
+    }
+
     let mut by_symbol: BTreeMap<String, Vec<(String, Vec<CalEvent>)>> = BTreeMap::new();
     for ((symbol, owner), events) in matched_groups {
         by_symbol.entry(symbol).or_default().push((owner, events));
     }
-    // Arriving spouse transfer id -> the cost per share it carries, in base currency.
-    let mut carried: HashMap<String, Decimal> = HashMap::new();
 
     for (symbol, mut groups) in by_symbol {
         let mut order: Vec<(usize, usize)> = groups
@@ -253,9 +283,12 @@ pub(crate) fn run_cgt_engine(
             .enumerate()
             .flat_map(|(g, (_, events))| (0..events.len()).map(move |i| (g, i)))
             .collect();
+        // By day, with shares arriving from another person last in their day, so a spouse
+        // transfer's departing side is replayed first even when the arrival is stamped
+        // earlier in the day.
         order.sort_by_key(|&(g, i)| {
             let e = &groups[g].1[i];
-            (e.date, e.transfer.as_ref().is_some_and(|t| !t.outgoing))
+            (e.date.date(), e.is_transfer_in(), e.date)
         });
 
         // -- S104 Pool Replay --
@@ -290,17 +323,26 @@ pub(crate) fn run_cgt_engine(
                                 Decimal::ZERO
                             };
                             // Price and fee can be in different currencies, so convert
-                            // each at its own rate before summing into the pool cost.
-                            let price_cost = fx
-                                .convert_as_of(
+                            // each at its own rate before summing into the pool cost. A
+                            // gift's price is its market value when it was sent.
+                            let price_cost = if e.is_transfer_in() {
+                                entering * carried_cost_per_share(&carried, e, &symbol)?
+                            } else {
+                                fx.convert_as_of(
                                     entering * e.price_per_share,
                                     &e.currency,
                                     e.date.date(),
                                 )
-                                .map_err(unreachable_missing_rate)?;
-                            let fee_cost = fx
-                                .convert_as_of(prop_fee, &e.fee_currency, e.date.date())
-                                .map_err(unreachable_missing_rate)?;
+                                .map_err(unreachable_missing_rate)?
+                            };
+                            // A gift converts nothing at its arrival date unless it has a
+                            // fee, so only then is that date's rate known to be stored.
+                            let fee_cost = if prop_fee.is_zero() {
+                                Decimal::ZERO
+                            } else {
+                                fx.convert_as_of(prop_fee, &e.fee_currency, e.date.date())
+                                    .map_err(unreachable_missing_rate)?
+                            };
                             price_cost + fee_cost
                         };
 
@@ -573,8 +615,8 @@ pub(crate) fn run_cgt_engine(
 
 /// The base-currency cost of one match leg of disposal `e`. A same-day or
 /// 30-day leg converts at the acquisition's date (the disposal's own, for a
-/// same-day one), unless the acquisition is a transfer from a spouse, whose
-/// cost was carried over from the sender's pool.
+/// same-day one), unless the acquisition is shares from another person, whose
+/// cost the transfer set: the sender's, from a spouse, or the market value.
 fn match_cost(
     e: &CalEvent,
     m: &InternalMatch,
@@ -618,7 +660,7 @@ fn disposal_cost(
         .sum()
 }
 
-/// The cost per share a spouse transfer arriving as `e` carries.
+/// The base-currency cost per share of shares arriving from another person as `e`.
 fn carried_cost_per_share(
     carried: &HashMap<String, Decimal>,
     e: &CalEvent,
@@ -636,9 +678,36 @@ fn carried_cost_per_share(
 fn uncosted_spouse_transfer(symbol: &str, date: NaiveDate) -> AppError {
     AppError::bad_request(
         format!(
-            "{symbol}: the cost of shares moved between spouses around {date} depends on              shares that move back to the sender within 30 days, so neither side's cost can              be worked out first. Check the dates of the transfers around {date}."
+            "{symbol}: the cost of shares moved between spouses around {date} depends on \
+             shares that move back to the sender within 30 days, so neither side's cost can \
+             be worked out first. Check the dates of the transfers around {date}."
         ),
         "uncosted_spouse_transfer",
+    )
+}
+
+/// A gift whose market value cannot be established, because the departing
+/// side carries no price. Reporting it would show the giver a loss of their
+/// whole cost on nothing received, and give the receiver shares that cost
+/// nothing, so all of a later sale counts as gain. Both figures look ordinary.
+fn unpriced_gift_transfer(t: &PersonTransfer, quantity: Decimal) -> AppError {
+    let PersonTransfer {
+        symbol,
+        from,
+        to,
+        sent_on,
+        ..
+    } = t;
+    AppError::bad_request(
+        format!(
+            "{symbol}: the {quantity} shares {from} transferred to {to} on {sent_on} have no \
+             price. {from} and {to} are not linked as spouses, so the transfer is a gift at \
+             market value, and without a price neither {from}'s proceeds nor {to}'s cost can \
+             be worked out. Set the price on the transfer leaving {from}'s account to the \
+             market price per share on {sent_on}, or link the two profiles as spouses if they \
+             are married or in a civil partnership."
+        ),
+        "unpriced_gift_transfer",
     )
 }
 
@@ -704,4 +773,40 @@ pub(crate) fn group_disposals(realized_events: &[CgtRealizedEvent]) -> Vec<CgtDi
     }
 
     groups.into_values().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(err: AppError) -> String {
+        match err {
+            AppError::BadRequest { message, .. } => message,
+            other => panic!("expected a 400, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transfer_refusals_read_as_one_sentence_each() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 13).unwrap();
+        let gift = PersonTransfer {
+            outgoing: false,
+            counterpart_id: "out".to_string(),
+            from: "ope".to_string(),
+            to: "tomi".to_string(),
+            rule: TransferRule::MarketValue,
+            symbol: "PLTR".to_string(),
+            sent_on: date,
+            sent_price: Decimal::ZERO,
+            sent_currency: "USD".to_string(),
+        };
+
+        for text in [
+            message(uncosted_spouse_transfer("PLTR", date)),
+            message(unpriced_gift_transfer(&gift, Decimal::from(565))),
+        ] {
+            assert!(!text.contains("  "), "a broken line continuation: {text:?}");
+            assert!(text.starts_with("PLTR: "), "{text}");
+        }
+    }
 }

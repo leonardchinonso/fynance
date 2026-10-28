@@ -13,7 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::Duration;
+use chrono::{Duration, NaiveDate};
 use rust_decimal::Decimal;
 
 use crate::model::{Account, InvestmentEvent, InvestmentEventType, Profile};
@@ -74,12 +74,36 @@ pub(crate) struct PersonTransfer {
     pub(crate) from: String,
     pub(crate) to: String,
     pub(crate) rule: TransferRule,
+    pub(crate) symbol: String,
+    /// The departing side's date, price per share and currency. A gift's
+    /// market value comes from here on both sides, so the giver's proceeds and
+    /// the receiver's cost are one figure whatever the arriving row says.
+    pub(crate) sent_on: NaiveDate,
+    pub(crate) sent_price: Decimal,
+    pub(crate) sent_currency: String,
+}
+
+impl PersonTransfer {
+    /// A gift whose market value cannot be established, because the departing
+    /// side has no price. The import is told to use 0 for a price that does
+    /// not apply, so transfer rows often carry one.
+    pub(crate) fn is_unpriced_gift(&self) -> bool {
+        self.rule == TransferRule::MarketValue && self.sent_price <= Decimal::ZERO
+    }
 }
 
 /// Pair each departing `transfer` (negative quantity) with an arriving one of
-/// the same symbol and size, no earlier and at most [`TRANSFER_PAIRING_DAYS`]
-/// later, preferring the closest. Moves between one person's own accounts are
-/// paired first, so they are never mistaken for a transfer to someone else.
+/// the same symbol and size, on the same day or at most
+/// [`TRANSFER_PAIRING_DAYS`] later. Days are compared, not timestamps, so an
+/// arrival stamped earlier in the day than its departure still pairs.
+///
+/// A departure on the arrival's own day is preferred over any other, and only
+/// then the closest earlier one. Within each of those, moves between one
+/// person's own accounts are paired first, so they are never mistaken for a
+/// transfer to someone else. Without the same-day preference, a move between
+/// one person's own accounts, sent on the 1st and arriving on the 5th, took
+/// the closer departure of their gift on the 3rd, leaving the gift paired with
+/// the 1st's departure, at the wrong date and price.
 ///
 /// Returns both sides of every person-to-person transfer, keyed by event id.
 /// Transfers within one person, and any side left unpaired, are absent: the
@@ -103,21 +127,25 @@ pub(crate) fn pair_person_transfers(
     let mut used_out = vec![false; outs.len()];
     let mut used_in = vec![false; ins.len()];
     let mut transfers = HashMap::new();
-    for same_person in [true, false] {
+    let passes = [(true, true), (true, false), (false, true), (false, false)];
+    for (same_day, same_person) in passes {
         for (i, (arrival, receiver)) in ins.iter().enumerate() {
             if used_in[i] {
                 continue;
             }
+            let arrived = arrival.date.date();
             let departure = outs
                 .iter()
                 .enumerate()
                 .filter(|(o, (out, sender))| {
+                    let sent = out.date.date();
                     !used_out[*o]
                         && (sender == receiver) == same_person
                         && out.symbol == arrival.symbol
                         && -out.quantity == arrival.quantity
-                        && out.date <= arrival.date
-                        && arrival.date - out.date <= Duration::days(TRANSFER_PAIRING_DAYS)
+                        && sent <= arrived
+                        && arrived - sent <= Duration::days(TRANSFER_PAIRING_DAYS)
+                        && (sent == arrived || !same_day)
                 })
                 .max_by_key(|(_, (out, _))| out.date);
             let Some((o, (out, sender))) = departure else {
@@ -139,6 +167,10 @@ pub(crate) fn pair_person_transfers(
                 from: sender.to_string(),
                 to: receiver.to_string(),
                 rule,
+                symbol: out.symbol.clone(),
+                sent_on: out.date.date(),
+                sent_price: out.price_per_share,
+                sent_currency: out.currency.clone(),
             };
             transfers.insert(out.id.clone(), leg(true, arrival));
             transfers.insert(arrival.id.clone(), leg(false, out));
@@ -147,19 +179,37 @@ pub(crate) fn pair_person_transfers(
     transfers
 }
 
-/// The profiles a report on `owners` depends on: those, plus everyone who
-/// transferred shares to one of them, transitively, since a receiver's cost
-/// can come from the sender's pool.
-pub(crate) fn owners_needed(
+/// What a report on `owners` needs beyond their own events: for each symbol a
+/// spouse moved to one of them, the sender's events in that symbol, since the
+/// receiver takes over the sender's cost. Transitive, as the sender's pool may
+/// in turn hold shares from their own spouse. Returned as (sender, symbol).
+///
+/// A gift needs nothing of the giver's, because its market value travels with
+/// the transfer, and a spouse's other symbols play no part in the cost. Pulling
+/// in more than this would let an unrelated gap in the sender's ledger, such as
+/// a missing exchange rate on another holding, refuse the receiver's report.
+pub(crate) fn spouse_holdings_needed(
     owners: &HashSet<String>,
     transfers: &HashMap<String, PersonTransfer>,
-) -> HashSet<String> {
-    let mut needed = owners.clone();
+) -> HashSet<(String, String)> {
+    fn holds(
+        owners: &HashSet<String>,
+        needed: &HashSet<(String, String)>,
+        owner: &str,
+        symbol: &str,
+    ) -> bool {
+        owners.contains(owner) || needed.contains(&(owner.to_string(), symbol.to_string()))
+    }
+    let mut needed = HashSet::new();
     loop {
-        let senders: Vec<String> = transfers
+        let senders: Vec<(String, String)> = transfers
             .values()
-            .filter(|t| needed.contains(&t.to) && !needed.contains(&t.from))
-            .map(|t| t.from.clone())
+            .filter(|t| t.rule == TransferRule::NoGainNoLoss)
+            .filter(|t| {
+                holds(owners, &needed, &t.to, &t.symbol)
+                    && !holds(owners, &needed, &t.from, &t.symbol)
+            })
+            .map(|t| (t.from.clone(), t.symbol.clone()))
             .collect();
         if senders.is_empty() {
             return needed;
@@ -181,9 +231,9 @@ pub(crate) struct Ledger {
 impl Ledger {
     /// Narrow `events` to what a report on the `scope` accounts (all when
     /// `None`) needs: the events of every profile owning a scoped account, and
-    /// of everyone who transferred shares to them. A scoped account with
-    /// several owners keeps its events, for `check_single_owner_accounts` to
-    /// refuse. `excluded_accounts` (ISAs, pensions) never take part.
+    /// those of [`spouse_holdings_needed`]. A scoped account with several
+    /// owners keeps its events, for `check_single_owner_accounts` to refuse.
+    /// `excluded_accounts` (ISAs, pensions) never take part.
     pub(crate) fn build(
         events: Vec<InvestmentEvent>,
         ownership: Ownership,
@@ -203,11 +253,14 @@ impl Ledger {
                     .filter_map(|a| ownership.owner(a))
                     .map(str::to_string)
                     .collect();
-                let needed = owners_needed(&scoped_owners, &transfers);
+                let from_spouses = spouse_holdings_needed(&scoped_owners, &transfers);
                 events
                     .into_iter()
                     .filter(|e| match ownership.owner(&e.account_id) {
-                        Some(owner) => needed.contains(owner),
+                        Some(owner) => {
+                            scoped_owners.contains(owner)
+                                || from_spouses.contains(&(owner.to_string(), e.symbol.clone()))
+                        }
                         None => accounts.contains(&e.account_id),
                     })
                     .collect()
@@ -267,14 +320,19 @@ mod tests {
         }
     }
 
+    /// `date` is `YYYY-MM-DD` (midnight) or `YYYY-MM-DDTHH:MM:SS`.
     fn transfer(id: &str, account: &str, date: &str, quantity: i64) -> InvestmentEvent {
+        let date = if date.contains('T') {
+            date.to_string()
+        } else {
+            format!("{date}T00:00:00")
+        };
         InvestmentEvent {
             id: id.to_string(),
             account_id: account.to_string(),
             event_type: InvestmentEventType::Transfer,
             symbol: "PLTR".to_string(),
-            date: NaiveDateTime::parse_from_str(&format!("{date}T00:00:00"), "%Y-%m-%dT%H:%M:%S")
-                .unwrap(),
+            date: NaiveDateTime::parse_from_str(&date, "%Y-%m-%dT%H:%M:%S").unwrap(),
             quantity: Decimal::from(quantity),
             price_per_share: Decimal::from(150),
             fee: None,
@@ -349,15 +407,93 @@ mod tests {
     }
 
     #[test]
-    fn a_report_on_the_receiver_needs_the_senders_ledger() {
-        let transfers = pair_person_transfers(&august_chain(), &household(true));
+    fn an_arrival_stamped_earlier_in_the_day_than_its_departure_still_pairs() {
+        let events = vec![
+            transfer("out", "ope-schwab", "2026-08-13T15:30:00", -565),
+            transfer("in", "tomi-schwab", "2026-08-13T09:00:00", 565),
+            transfer("late-out", "ope-schwab", "2026-09-01T08:00:00", -10),
+            transfer("late-in", "tomi-schwab", "2026-09-08T23:00:00", 10),
+        ];
+
+        let transfers = pair_person_transfers(&events, &household(true));
+
+        assert_eq!(transfers["in"].counterpart_id, "out");
+        assert_eq!(
+            transfers["late-in"].counterpart_id, "late-out",
+            "seven days apart by date, though more than seven by the clock"
+        );
+    }
+
+    #[test]
+    fn a_departure_on_the_arrivals_own_day_wins_over_a_closer_own_account_move() {
+        // Ope moves 100 between his own accounts (sent 1 Aug, arriving 5 Aug)
+        // and gives 100 to Tomi on 3 Aug. The own-account arrival is closer to
+        // the 3 Aug departure, which used to take it and leave the gift paired
+        // with the 1 Aug departure.
+        let mut events = vec![
+            transfer("move-out", "ope-shareworks", "2026-08-01", -100),
+            transfer("move-in", "ope-schwab", "2026-08-05", 100),
+            transfer("gift-out", "ope-shareworks", "2026-08-03", -100),
+            transfer("gift-in", "tomi-schwab", "2026-08-03", 100),
+        ];
+        events[0].price_per_share = Decimal::from(120);
+        events[2].price_per_share = Decimal::from(130);
+
+        let transfers = pair_person_transfers(&events, &household(false));
+
+        let gift = &transfers["gift-in"];
+        assert_eq!(gift.counterpart_id, "gift-out");
+        assert_eq!(gift.sent_on.to_string(), "2026-08-03");
+        assert_eq!(gift.sent_price, Decimal::from(130));
+        assert!(!transfers.contains_key("move-out"));
+        assert!(!transfers.contains_key("move-in"));
+    }
+
+    #[test]
+    fn a_report_on_the_receiver_needs_only_the_spouses_holding_in_that_symbol() {
+        let married = pair_person_transfers(&august_chain(), &household(true));
+        let unmarried = pair_person_transfers(&august_chain(), &household(false));
         let tomi = HashSet::from(["tomi".to_string()]);
         let ope = HashSet::from(["ope".to_string()]);
 
         assert_eq!(
-            owners_needed(&tomi, &transfers),
-            HashSet::from(["tomi".to_string(), "ope".to_string()])
+            spouse_holdings_needed(&tomi, &married),
+            HashSet::from([("ope".to_string(), "PLTR".to_string())])
         );
-        assert_eq!(owners_needed(&ope, &transfers), ope);
+        assert!(spouse_holdings_needed(&ope, &married).is_empty());
+        assert!(
+            spouse_holdings_needed(&tomi, &unmarried).is_empty(),
+            "a gift carries its own market value"
+        );
+    }
+
+    #[test]
+    fn a_report_on_the_receiver_leaves_out_the_senders_other_symbols() {
+        let mut msft = transfer("msft-buy", "ope-schwab", "2026-01-05", 0);
+        msft.event_type = InvestmentEventType::Buy;
+        msft.symbol = "MSFT".to_string();
+        msft.quantity = Decimal::from(5);
+        let mut events = august_chain();
+        events.push(msft);
+        let scope = HashSet::from(["tomi-schwab".to_string()]);
+
+        let married = Ledger::build(
+            events.clone(),
+            household(true),
+            Some(scope.clone()),
+            &HashSet::new(),
+        );
+        let unmarried = Ledger::build(events, household(false), Some(scope), &HashSet::new());
+
+        let ids = |ledger: &Ledger| -> Vec<String> {
+            let mut ids: Vec<String> = ledger.events.iter().map(|e| e.id.clone()).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(
+            ids(&married),
+            ["schwab-in", "schwab-out", "sw-out", "tomi-in"]
+        );
+        assert_eq!(ids(&unmarried), ["tomi-in"]);
     }
 }

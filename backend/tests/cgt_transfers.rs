@@ -42,23 +42,75 @@ fn household() -> (axum::Router, Arc<Mutex<Db>>) {
     (build_router(shared.clone(), true), shared)
 }
 
+/// A GBP PLTR event at midnight on `date`, for a test to adjust before [`insert`].
+fn row(account: &str, kind: &str, date: &str, qty: &str, price: &str) -> CreateInvestmentEventBody {
+    CreateInvestmentEventBody {
+        account_id: account.to_string(),
+        event_type: kind.to_string(),
+        symbol: "PLTR".to_string(),
+        date: format!("{date}T00:00:00"),
+        quantity: qty.to_string(),
+        price_per_share: price.to_string(),
+        fee: None,
+        currency: "GBP".to_string(),
+        fee_currency: None,
+        notes: None,
+        source_document_ids: Vec::new(),
+    }
+}
+
+fn insert(db: &Arc<Mutex<Db>>, body: CreateInvestmentEventBody) {
+    db.lock().unwrap().create_investment_event(&body).unwrap();
+}
+
 fn event(db: &Arc<Mutex<Db>>, account: &str, kind: &str, date: &str, qty: &str, price: &str) {
-    db.lock()
-        .unwrap()
-        .create_investment_event(&CreateInvestmentEventBody {
-            account_id: account.to_string(),
-            event_type: kind.to_string(),
-            symbol: "PLTR".to_string(),
-            date: format!("{date}T00:00:00"),
-            quantity: qty.to_string(),
-            price_per_share: price.to_string(),
-            fee: None,
-            currency: "GBP".to_string(),
-            fee_currency: None,
-            notes: None,
-            source_document_ids: Vec::new(),
-        })
-        .unwrap();
+    insert(db, row(account, kind, date, qty, price));
+}
+
+/// A USD event, as most of the household's real holdings are.
+fn usd_event(
+    db: &Arc<Mutex<Db>>,
+    account: &str,
+    symbol: &str,
+    (kind, date): (&str, &str),
+    qty: &str,
+    price: &str,
+) {
+    insert(
+        db,
+        CreateInvestmentEventBody {
+            symbol: symbol.to_string(),
+            currency: "USD".to_string(),
+            ..row(account, kind, date, qty, price)
+        },
+    );
+}
+
+/// Configure USD and store a USD->GBP rate for each of `rates`' dates.
+async fn usd_rates(app: &axum::Router, rates: &[(&str, &str)]) {
+    let (status, body) = call(
+        app,
+        Method::POST,
+        "/api/currencies",
+        Some(json!({ "code": "USD", "fx_rate": "0.8" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    if rates.is_empty() {
+        return;
+    }
+    let rates: Vec<Value> = rates
+        .iter()
+        .map(|(date, rate)| json!({ "base": "USD", "date": date, "rate": rate }))
+        .collect();
+    let (status, body) = call(
+        app,
+        Method::POST,
+        "/api/exchange-rates",
+        Some(json!({ "rates": rates })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }
 
 async fn call(
@@ -84,14 +136,18 @@ async fn call(
     )
 }
 
-async fn report(app: &axum::Router, query: &str) -> Value {
-    let (status, body) = call(
+async fn try_report(app: &axum::Router, query: &str) -> (StatusCode, Value) {
+    call(
         app,
         Method::GET,
         &format!("/api/investments/capital-gains?{query}"),
         None,
     )
-    .await;
+    .await
+}
+
+async fn report(app: &axum::Router, query: &str) -> Value {
+    let (status, body) = try_report(app, query).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     body
 }
@@ -300,4 +356,150 @@ async fn the_spouse_link_is_set_and_cleared_on_both_profiles() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_gift_with_no_price_is_refused_on_both_sides() {
+    let (app, db) = household();
+    event(&db, "ope-a", "buy", "2025-01-10", "100", "10");
+    event(&db, "ope-a", "transfer", "2025-02-01", "-50", "0");
+    event(&db, "tomi-a", "transfer", "2025-02-01", "50", "0");
+    event(&db, "tomi-a", "sell", "2025-03-01", "40", "30");
+
+    // Reported, Ope's gift was a £500 loss on nothing received, and all of
+    // Tomi's £1,200 sale was gain on shares that cost nothing.
+    for profile in ["ope", "tomi"] {
+        let (status, body) = try_report(&app, &format!("profile_ids={profile}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{profile}: {body}");
+        assert_eq!(body["code"], "unpriced_gift_transfer", "{body}");
+        let message = body["error"].as_str().unwrap();
+        for detail in ["PLTR", "2025-02-01", "ope", "tomi"] {
+            assert!(message.contains(detail), "{detail} missing: {message}");
+        }
+    }
+
+    // Between spouses no market value is needed, so the same ledger reports.
+    marry(&app).await;
+    let tomi = report(&app, "profile_ids=tomi").await;
+    assert_eq!(money(&tomi["summary"]["total_allowable_costs"]), 400.0);
+}
+
+#[tokio::test]
+async fn a_gift_out_of_the_reported_years_is_refused_only_where_it_still_counts() {
+    let (app, db) = household();
+    event(&db, "ope-a", "buy", "2024-01-10", "100", "10");
+    event(&db, "ope-a", "transfer", "2024-02-01", "-50", "0");
+    event(&db, "tomi-a", "transfer", "2024-02-01", "50", "0");
+    event(&db, "ope-a", "sell", "2025-06-01", "10", "20");
+    event(&db, "tomi-a", "sell", "2025-06-01", "10", "20");
+    let year = "start_date=2025-04-06&end_date=2026-04-05";
+
+    // Ope's later sale does not depend on what the gift was worth.
+    let ope = report(&app, &format!("profile_ids=ope&{year}")).await;
+    assert_eq!(money(&ope["summary"]["total_allowable_costs"]), 100.0);
+
+    // Tomi's does: the gift is the cost of the shares she sold.
+    let (status, body) = try_report(&app, &format!("profile_ids=tomi&{year}")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "unpriced_gift_transfer", "{body}");
+}
+
+#[tokio::test]
+async fn a_gift_is_valued_once_at_the_senders_price_and_date() {
+    let (app, db) = household();
+    // The arriving row is two days later at a different rate and carries no
+    // price. The receiver's cost must still be the giver's proceeds.
+    usd_rates(
+        &app,
+        &[
+            ("2025-01-10", "0.8"),
+            ("2025-02-03", "0.75"),
+            ("2025-03-01", "0.8"),
+        ],
+    )
+    .await;
+    usd_event(&db, "ope-a", "PLTR", ("buy", "2025-01-10"), "100", "10");
+    usd_event(
+        &db,
+        "ope-a",
+        "PLTR",
+        ("transfer", "2025-02-03"),
+        "-100",
+        "20",
+    );
+    usd_event(
+        &db,
+        "tomi-a",
+        "PLTR",
+        ("transfer", "2025-02-05"),
+        "100",
+        "0",
+    );
+    usd_event(&db, "tomi-a", "PLTR", ("sell", "2025-03-01"), "100", "30");
+
+    let ope = report(&app, "profile_ids=ope").await;
+    assert_eq!(ope["realized_events"][0]["gift_to"], "tomi");
+    assert_eq!(
+        money(&ope["summary"]["total_proceeds"]),
+        1500.0,
+        "100 x $20 x 0.75"
+    );
+
+    let tomi = report(&app, "profile_ids=tomi").await;
+    assert_eq!(
+        money(&tomi["summary"]["total_allowable_costs"]),
+        1500.0,
+        "the giver's proceeds, not the arriving row's $0 or its date's rate"
+    );
+}
+
+#[tokio::test]
+async fn a_transfer_arriving_earlier_in_the_day_than_it_left_still_carries_cost() {
+    let (app, db) = household();
+    marry(&app).await;
+    event(&db, "ope-a", "buy", "2025-01-10", "100", "10");
+    insert(
+        &db,
+        CreateInvestmentEventBody {
+            date: "2025-02-01T16:00:00".to_string(),
+            ..row("ope-a", "transfer", "2025-02-01", "-50", "25")
+        },
+    );
+    insert(
+        &db,
+        CreateInvestmentEventBody {
+            date: "2025-02-01T09:30:00".to_string(),
+            ..row("tomi-a", "transfer", "2025-02-01", "50", "25")
+        },
+    );
+    event(&db, "tomi-a", "sell", "2025-03-01", "50", "30");
+
+    let tomi = report(&app, "profile_ids=tomi").await;
+
+    assert_eq!(
+        money(&tomi["summary"]["total_allowable_costs"]),
+        500.0,
+        "50 at Ope's £10, not refused as unmatched"
+    );
+}
+
+#[tokio::test]
+async fn the_receivers_report_needs_nothing_from_the_senders_other_holdings() {
+    let (app, db) = household();
+    // USD is configured but no rate is stored for Ope's MSFT purchase, so any
+    // report that pulls it in is refused for a missing exchange rate.
+    usd_rates(&app, &[]).await;
+    gift_fifty_to_tomi(&db);
+    usd_event(&db, "ope-a", "MSFT", ("buy", "2025-01-15"), "10", "400");
+
+    let (status, body) = try_report(&app, "profile_ids=ope").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "missing_exchange_rates", "{body}");
+
+    let gift = report(&app, "profile_ids=tomi").await;
+    assert_eq!(money(&gift["summary"]["total_allowable_costs"]), 1000.0);
+
+    marry(&app).await;
+    let spouse = report(&app, "profile_ids=tomi").await;
+    assert_eq!(money(&spouse["summary"]["total_allowable_costs"]), 600.0);
 }

@@ -122,8 +122,8 @@ fn report_scope(
 }
 
 /// Every investment event a report on `scope` depends on. All accounts are
-/// read, because a pool belongs to a person and shares received from someone
-/// else carry that sender's cost; [`Ledger::build`] keeps what is needed.
+/// read, because a pool belongs to a person and shares received from a spouse
+/// carry that sender's cost; [`Ledger::build`] keeps only what is needed.
 fn load_ledger(
     db: &crate::storage::Db,
     accounts: &[Account],

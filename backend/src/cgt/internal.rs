@@ -25,8 +25,9 @@ pub(crate) struct InternalMatch {
     pub quantity: Decimal,
     pub price: Decimal,
     pub is_s104: bool,
-    /// The acquisition is a transfer from a spouse, so its cost is the
-    /// sender's, carried over in base currency, not `price`.
+    /// The acquisition is shares from another person, so its cost per share
+    /// is set by the transfer, in base currency, not by `price`: the sender's
+    /// cost from a spouse, the market value when they were sent otherwise.
     pub carried: bool,
 }
 
@@ -102,6 +103,12 @@ impl CalEvent {
         self.transfer
             .as_ref()
             .is_some_and(|t| t.rule == TransferRule::NoGainNoLoss)
+    }
+
+    /// Whether this is shares arriving from another person, whose cost is set
+    /// by the transfer rather than by this row's own price and date.
+    pub(crate) fn is_transfer_in(&self) -> bool {
+        self.transfer.as_ref().is_some_and(|t| !t.outgoing)
     }
 
     /// Calculates the normalized proceeds and proportional fee in preferred base currency (GBP)
