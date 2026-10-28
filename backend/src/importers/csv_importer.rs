@@ -78,7 +78,8 @@ impl Importer for CsvImporter {
             ..ImportResult::default()
         };
 
-        for row in parsed.rows {
+        let mut occurrences = crate::util::dedupe::Occurrences::default();
+        for (i, row) in parsed.rows.into_iter().enumerate() {
             result.rows_total += 1;
             progress.inc(1);
 
@@ -94,7 +95,7 @@ impl Importer for CsvImporter {
 
             let mut row = row;
             crate::importers::unified::resolve_row_category_id(db, &mut row)?;
-            let tx = Transaction::from_unified(row, account_id);
+            let tx = Transaction::from_unified(row, account_id, &mut occurrences, i);
             match db.insert_transaction(&tx)? {
                 InsertOutcome::Inserted => result.rows_inserted += 1,
                 InsertOutcome::Duplicate => result.rows_duplicate += 1,

@@ -342,6 +342,7 @@ pub async fn import_investments(
             }
         }
 
+        let mut occurrences = crate::util::dedupe::Occurrences::default();
         for (index, event) in payload.events.iter().enumerate() {
             let body = CreateInvestmentEventBody {
                 account_id: payload.account_id.clone(),
@@ -357,7 +358,7 @@ pub async fn import_investments(
                 source_document_ids: event.source_document_ids.clone(),
             };
 
-            match db.create_investment_event(&body) {
+            match db.create_investment_event_in_batch(&body, &mut occurrences, index) {
                 Ok((_, InsertOutcome::Inserted)) => inserted += 1,
                 Ok((_, InsertOutcome::Duplicate)) => duplicates += 1,
                 Err(e) => errors.push(InvestmentImportError {

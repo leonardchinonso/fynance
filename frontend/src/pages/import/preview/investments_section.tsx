@@ -16,7 +16,7 @@ import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPaylo
 import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
 import type { InvestmentEventType } from "@/bindings/InvestmentEventType"
 import type { Currency } from "@/types"
-import { StatusBadge } from "./status_badge"
+import { DuplicateHint, StatusBadge } from "./status_badge"
 import { DateCell, DecimalCell, SelectCell, TextCell } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
 import { SortHeader } from "./sort_header"
@@ -283,7 +283,10 @@ export function InvestmentsSection({
                 )}
               >
                 <TableCell>
-                  <StatusBadge status={marked ? "removed" : row.status} />
+                  <div className="flex items-center gap-1">
+                    <StatusBadge status={marked ? "removed" : row.status} />
+                    {!marked && <DuplicateHint sameKeyAsRow={row.same_key_as_row} />}
+                  </div>
                 </TableCell>
                 <TableCell>
                   {editable && ev && !marked ? (

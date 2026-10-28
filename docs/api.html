@@ -502,7 +502,7 @@ td code { font-size: 12px; }
       <tr><td><code>notes</code></td><td>string | null</td><td>User notes</td></tr>
       <tr><td><code>is_recurring</code></td><td>boolean</td><td>Recurring transaction flag</td></tr>
       <tr><td><code>exclude_from_summary</code></td><td>boolean</td><td>Excluded from budget summaries</td></tr>
-      <tr><td><code>fingerprint</code></td><td>string</td><td>SHA-256 dedup hash</td></tr>
+      <tr><td><code>fingerprint</code></td><td>string</td><td>SHA-256 dedup hash of the date (not the time), the amount (formatting ignored), the account and the row's occurrence number among identical rows in its import</td></tr>
       <tr><td><code>fitid</code></td><td>string | null</td><td>Financial institution transaction ID</td></tr>
       <tr><td><code>source_document_ids</code></td><td>string[]</td><td>IDs of the source documents this transaction was extracted from (documents.id). Empty for manual / CSV / API imports with no document.</td></tr>
     </tbody>
@@ -725,6 +725,8 @@ td code { font-size: 12px; }
       <tr><td><code>error_reason</code></td><td>string | null</td><td>Reason for error status</td></tr>
       <tr><td><code>category_id</code></td><td>string | null</td><td>LLM-assigned category (unified mode)</td></tr>
       <tr><td><code>category_confidence</code></td><td>number | null</td><td>LLM confidence [0.0, 1.0] (unified mode)</td></tr>
+      <tr><td><code>same_key_as_row</code></td><td>integer (optional)</td><td>Index of an earlier row in this preview with the same date, amount and account. Both are imported: check they are two real transactions, not one row extracted twice.</td></tr>
+      <tr><td><code>likely_duplicate_of</code></td><td>object (optional)</td><td>An existing transaction (<code>id</code>, <code>date</code>, <code>description</code>) on the same account with the same amount, a date within 3 days and a similar description, that no other row in this import already matches. The row is still imported unless you remove it.</td></tr>
     </tbody>
   </table>
 </section>
@@ -853,6 +855,7 @@ td code { font-size: 12px; }
       <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 code</td></tr>
       <tr><td><code>status</code></td><td>string</td><td>new, duplicate, or error</td></tr>
       <tr><td><code>existing_id</code></td><td>string | null</td><td>UUID of matching existing event</td></tr>
+      <tr><td><code>same_key_as_row</code></td><td>integer (optional)</td><td>Index of an earlier row in this preview with the same symbol, date, quantity, price and type. Both are imported: check they are two real events.</td></tr>
     </tbody>
   </table>
 </section>

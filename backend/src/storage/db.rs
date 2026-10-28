@@ -5,7 +5,7 @@
 //! synchronous and single-threaded; the Axum server wraps this behind a
 //! shared `Arc<Mutex<Db>>` without changing the surface area here.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
@@ -21,10 +21,14 @@ use crate::model::{
     DocumentReferences, DocumentSummary, ExchangeRate, Granularity, Holding, HoldingPreview,
     HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow, ImportLog,
     ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentEvent,
-    InvestmentEventType, InvestmentHistoryRow, InvestmentMetrics, PatchCategoryPayload,
-    PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy, TaxConfigEntry, TaxInputs,
-    Transaction, TransactionPreviewRow, TransactionPreviewStatus,
+    InvestmentEventType, InvestmentHistoryRow, InvestmentMetrics, LikelyDuplicate,
+    PatchCategoryPayload, PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy,
+    TaxConfigEntry, TaxInputs, Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
+use crate::util::dedupe::{
+    NEAR_MATCH_DAYS, Occurrences, descriptions_similar, investment_key, transaction_key,
+};
+use crate::util::normalize_description;
 
 /// The full schema DDL. Embedded at compile time so a release binary can
 /// create a fresh DB on a new machine with no files on disk beside itself.
@@ -541,10 +545,6 @@ impl Db {
                 )
             };
 
-            let new_fingerprint = sha256_hex(&format!(
-                "{account_id}|{symbol}|{date_str}|{quantity}|{new_price}|{event_type}"
-            ));
-
             report.rows.push(SubunitMigrationRow {
                 table: "investments",
                 id: id.clone(),
@@ -569,6 +569,17 @@ impl Db {
             });
 
             if let Some(tx) = &inv_tx {
+                let date = parse_transaction_datetime(date_str)
+                    .ok_or_else(|| anyhow::anyhow!("investment {id}: bad date {date_str:?}"))?;
+                let key = investment_key(
+                    account_id,
+                    symbol,
+                    date.date(),
+                    quantity,
+                    new_price,
+                    event_type,
+                );
+                let new_fingerprint = free_fingerprint(tx, "investments", &key, id)?;
                 tx.execute(
                     "UPDATE investments SET price_per_share = ?1, currency = ?2, fee = ?3, fee_currency = ?4, fingerprint = ?5 WHERE id = ?6",
                     params![
@@ -660,8 +671,8 @@ impl Db {
             tx.commit()?;
         }
 
-        // ── transactions ── amount scales; fingerprint = (date, amount,
-        // account_id), so it must be recomputed for every row we touch.
+        // ── transactions ── amount scales, and the fingerprint covers the
+        // amount, so it must be recomputed for every row we touch.
         let txn_rows: Vec<(String, String, String, String, String)> = {
             let mut stmt = self
                 .conn
@@ -693,8 +704,6 @@ impl Db {
                 .with_context(|| format!("transaction {id}: bad amount {amount_str:?}"))?;
             let (new_amount, new_currency) = crate::util::subunits::to_parent(amount, currency)
                 .expect("checked is_sub_unit above");
-            let new_fingerprint =
-                crate::util::fingerprint(date_str, &new_amount.to_string(), account_id);
 
             report.rows.push(SubunitMigrationRow {
                 table: "transactions",
@@ -706,6 +715,10 @@ impl Db {
             });
 
             if let Some(tx) = &txn_tx {
+                let date = parse_transaction_datetime(date_str)
+                    .ok_or_else(|| anyhow::anyhow!("transaction {id}: bad date {date_str:?}"))?;
+                let key = transaction_key(date.date(), new_amount, account_id);
+                let new_fingerprint = free_fingerprint(tx, "transactions", &key, id)?;
                 tx.execute(
                     "UPDATE transactions SET amount = ?1, currency = ?2, fingerprint = ?3 WHERE id = ?4",
                     params![new_amount.to_string(), new_currency, new_fingerprint, id],
@@ -1381,6 +1394,17 @@ impl Db {
         &self,
         body: &CreateInvestmentEventBody,
     ) -> Result<(InvestmentEvent, InsertOutcome)> {
+        self.create_investment_event_in_batch(body, &mut Occurrences::default(), 0)
+    }
+
+    /// [`Self::create_investment_event`] for the `row_index`-th event of an
+    /// import, whose events sharing an identity key `occurrences` numbers.
+    pub fn create_investment_event_in_batch(
+        &self,
+        body: &CreateInvestmentEventBody,
+        occurrences: &mut Occurrences,
+        row_index: usize,
+    ) -> Result<(InvestmentEvent, InsertOutcome)> {
         let event_type = InvestmentEventType::parse(&body.event_type)
             .ok_or_else(|| anyhow::anyhow!("invalid event_type: {}", body.event_type))?;
         let quantity = body
@@ -1433,15 +1457,15 @@ impl Db {
             .ok_or_else(|| anyhow::anyhow!("invalid date format"))?;
         let date_str = date.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-        let fingerprint = sha256_hex(&format!(
-            "{}|{}|{}|{}|{}|{}",
-            body.account_id,
-            body.symbol,
-            date_str,
+        let key = investment_key(
+            &body.account_id,
+            &body.symbol,
+            date.date(),
             quantity,
             price_per_share,
-            event_type.as_str()
-        ));
+            event_type.as_str(),
+        );
+        let fingerprint = occurrences.next(&key, row_index).fingerprint;
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -1592,8 +1616,8 @@ impl Db {
     /// Patch an investment event. All field updates land in one transaction,
     /// and the fingerprint is recomputed whenever an identity field
     /// (event_type, symbol, date, quantity, price_per_share) changes so that
-    /// dedup on re-import keeps working. A recompute that collides with
-    /// another event's fingerprint fails the whole patch.
+    /// dedup on re-import keeps working. An event patched into the same key as
+    /// another takes the next free occurrence number.
     pub fn update_investment_event(
         &self,
         id: &str,
@@ -1705,9 +1729,8 @@ impl Db {
             || body.quantity.is_some()
             || body.price_per_share.is_some();
         if identity_changed {
-            // Same formula as create_investment_event: decimals go through
-            // Decimal Display and event_type through as_str(), so the stored
-            // fingerprint stays comparable with future imports.
+            // Same key as create_investment_event, so the stored fingerprint
+            // stays comparable with future imports.
             let quantity_dec = quantity.parse::<Decimal>().map_err(|_| {
                 anyhow!("stored quantity {quantity:?} on investment event {id} is not a decimal")
             })?;
@@ -1721,9 +1744,18 @@ impl Db {
                     anyhow!("unknown event_type {event_type:?} stored on investment event {id}")
                 })?
                 .as_str();
-            let fingerprint = sha256_hex(&format!(
-                "{account_id}|{symbol}|{date_str}|{quantity_dec}|{price_dec}|{canonical_event_type}"
-            ));
+            let date = parse_transaction_datetime(&date_str).ok_or_else(|| {
+                anyhow!("stored date {date_str:?} on investment event {id} is not a datetime")
+            })?;
+            let key = investment_key(
+                &account_id,
+                &symbol,
+                date.date(),
+                quantity_dec,
+                price_dec,
+                canonical_event_type,
+            );
+            let fingerprint = free_fingerprint(&tx, "investments", &key, id)?;
             tx.execute(
                 "UPDATE investments SET fingerprint = ?1 WHERE id = ?2",
                 params![fingerprint, id],
@@ -1808,8 +1840,6 @@ impl Db {
         account_id: &str,
         txns: &[ImportTransaction],
     ) -> Result<ImportResult> {
-        use crate::util::{fingerprint, normalize_description};
-        use std::collections::HashSet;
         use uuid::Uuid;
 
         let mut result = ImportResult {
@@ -1846,6 +1876,7 @@ impl Db {
         }
 
         let db_tx = self.conn.unchecked_transaction()?;
+        let mut occurrences = Occurrences::default();
         {
             let mut insert_stmt = self.conn.prepare_cached(
                 r"INSERT OR IGNORE INTO transactions (
@@ -1869,7 +1900,9 @@ impl Db {
                     };
                 let amount_str = amount.to_string();
                 let normalized = normalize_description(&t.description);
-                let fp = fingerprint(&date_iso, &amount_str, account_id);
+                let fp = occurrences
+                    .next(&transaction_key(t.date.date(), amount, account_id), i)
+                    .fingerprint;
 
                 let category_id = match &t.category_id {
                     Some(cid) if active_leaves.contains(cid) => Some(cid.as_str()),
@@ -1955,53 +1988,55 @@ impl Db {
         account_id: &str,
         transactions: &[ImportTransaction],
     ) -> Result<Vec<TransactionPreviewRow>> {
-        let mut previews = Vec::with_capacity(transactions.len());
-
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, description FROM transactions WHERE fingerprint = ?1")?;
-
-        for (i, t) in transactions.iter().enumerate() {
-            let date_iso = t.date.format("%Y-%m-%dT%H:%M:%S").to_string();
-            let raw_currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
-            // Mirror insert_transactions_bulk's sub-unit conversion so the
-            // preview shown to the user matches what would actually be written.
-            let (amount, currency) = match crate::util::subunits::to_parent(t.amount, &raw_currency)
-            {
-                Some((converted, parent)) => (converted, parent.to_string()),
-                None => (t.amount, raw_currency),
-            };
-            let amount_str = amount.to_string();
-            let fp = crate::util::fingerprint(&date_iso, &amount_str, account_id);
-
-            let existing: Option<(String, String)> = stmt
-                .query_row(rusqlite::params![fp], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .ok();
-
-            let (status, existing_id, existing_description) = match existing {
-                Some((id, desc)) => (TransactionPreviewStatus::Duplicate, Some(id), Some(desc)),
-                None => (TransactionPreviewStatus::New, None, None),
-            };
-
-            previews.push(TransactionPreviewRow {
+        // Mirror insert_transactions_bulk's sub-unit conversion so the
+        // preview shown to the user matches what would actually be written.
+        let converted: Vec<(Decimal, String)> = transactions
+            .iter()
+            .map(|t| {
+                let raw_currency = t.currency.clone().unwrap_or_else(|| "GBP".to_string());
+                match crate::util::subunits::to_parent(t.amount, &raw_currency) {
+                    Some((converted, parent)) => (converted, parent.to_string()),
+                    None => (t.amount, raw_currency),
+                }
+            })
+            .collect();
+        let candidates: Vec<DuplicateCandidate> = transactions
+            .iter()
+            .zip(&converted)
+            .enumerate()
+            .map(|(i, (t, (amount, _)))| DuplicateCandidate {
                 index: i,
                 date: t.date,
-                description: t.description.clone(),
-                amount,
-                currency,
-                status,
-                existing_id,
-                existing_description,
-                error_reason: None,
-                category_id: t.category_id.clone(),
-                category_confidence: None,
-                source_document_ids: Vec::new(),
-            });
-        }
+                description: &t.description,
+                amount: *amount,
+            })
+            .collect();
+        let checks = self.check_transaction_duplicates(account_id, &candidates)?;
 
-        Ok(previews)
+        Ok(transactions
+            .iter()
+            .zip(converted)
+            .zip(checks)
+            .enumerate()
+            .map(|(i, ((t, (amount, currency)), check))| {
+                check.into_preview_row(TransactionPreviewRow {
+                    index: i,
+                    date: t.date,
+                    description: t.description.clone(),
+                    amount,
+                    currency,
+                    status: TransactionPreviewStatus::New,
+                    existing_id: None,
+                    existing_description: None,
+                    error_reason: None,
+                    category_id: t.category_id.clone(),
+                    category_confidence: None,
+                    source_document_ids: Vec::new(),
+                    same_key_as_row: None,
+                    likely_duplicate_of: None,
+                })
+            })
+            .collect())
     }
 
     /// Preview parsed CSV rows (from LLM) without writing anything.
@@ -2013,10 +2048,6 @@ impl Db {
         min_row_confidence: f32,
     ) -> Result<Vec<TransactionPreviewRow>> {
         let mut previews = Vec::with_capacity(rows.len());
-
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, description FROM transactions WHERE fingerprint = ?1")?;
 
         for (i, row) in rows.iter().enumerate() {
             if row.row_confidence < min_row_confidence {
@@ -2036,11 +2067,12 @@ impl Db {
                     category_id: row.category_id.clone(),
                     category_confidence: row.category_confidence,
                     source_document_ids: Vec::new(),
+                    same_key_as_row: None,
+                    likely_duplicate_of: None,
                 });
                 continue;
             }
 
-            let date_iso = row.date.format("%Y-%m-%dT%H:%M:%S").to_string();
             // Mirror Transaction::from_unified's sub-unit conversion so the
             // preview shown to the user matches what would actually be written.
             let (amount, currency) =
@@ -2048,19 +2080,6 @@ impl Db {
                     Some((converted, parent)) => (converted, parent.to_string()),
                     None => (row.amount, row.currency.clone()),
                 };
-            let amount_str = amount.to_string();
-            let fp = crate::util::fingerprint(&date_iso, &amount_str, account_id);
-
-            let existing: Option<(String, String)> = stmt
-                .query_row(rusqlite::params![fp], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .ok();
-
-            let (status, existing_id, existing_description) = match existing {
-                Some((id, desc)) => (TransactionPreviewStatus::Duplicate, Some(id), Some(desc)),
-                None => (TransactionPreviewStatus::New, None, None),
-            };
 
             previews.push(TransactionPreviewRow {
                 index: i,
@@ -2073,17 +2092,144 @@ impl Db {
                     .to_string(),
                 amount,
                 currency,
-                status,
-                existing_id,
-                existing_description,
+                status: TransactionPreviewStatus::New,
+                existing_id: None,
+                existing_description: None,
                 error_reason: None,
                 category_id: row.category_id.clone(),
                 category_confidence: row.category_confidence,
                 source_document_ids: Vec::new(),
+                same_key_as_row: None,
+                likely_duplicate_of: None,
             });
         }
 
-        Ok(previews)
+        // Error rows stay out of the commit payload, so they take no
+        // occurrence number here either.
+        let candidates: Vec<DuplicateCandidate> = previews
+            .iter()
+            .filter(|p| p.status != TransactionPreviewStatus::Error)
+            .map(|p| DuplicateCandidate {
+                index: p.index,
+                date: p.date,
+                description: &p.description,
+                amount: p.amount,
+            })
+            .collect();
+        let checks = self.check_transaction_duplicates(account_id, &candidates)?;
+        let mut checks: HashMap<usize, DuplicateCheck> =
+            candidates.iter().map(|c| c.index).zip(checks).collect();
+
+        Ok(previews
+            .into_iter()
+            .map(|p| match checks.remove(&p.index) {
+                Some(check) => check.into_preview_row(p),
+                None => p,
+            })
+            .collect())
+    }
+
+    /// Check `candidates`, in import order, against the stored transactions of
+    /// `account_id`. A candidate whose fingerprint is already stored is a
+    /// duplicate the commit will skip. One that repeats an earlier candidate's
+    /// key, or that sits near an existing row with the same amount and a
+    /// similar description which no candidate matches exactly, is flagged.
+    fn check_transaction_duplicates(
+        &self,
+        account_id: &str,
+        candidates: &[DuplicateCandidate],
+    ) -> Result<Vec<DuplicateCheck>> {
+        let mut by_fingerprint = self
+            .conn
+            .prepare_cached("SELECT id, description FROM transactions WHERE fingerprint = ?1")?;
+        let mut occurrences = Occurrences::default();
+        let mut checks = Vec::with_capacity(candidates.len());
+        for c in candidates {
+            let key = transaction_key(c.date.date(), c.amount, account_id);
+            let occurrence = occurrences.next(&key, c.index);
+            let existing = by_fingerprint
+                .query_row(params![occurrence.fingerprint], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .optional()?;
+            checks.push(DuplicateCheck {
+                existing,
+                same_key_as_row: occurrence.earlier_row,
+                likely_duplicate_of: None,
+            });
+        }
+
+        let dates = candidates.iter().map(|c| c.date.date());
+        let (Some(first), Some(last)) = (dates.clone().min(), dates.max()) else {
+            return Ok(checks);
+        };
+        let window = chrono::Duration::days(NEAR_MATCH_DAYS);
+        let claimed: HashSet<String> = checks
+            .iter()
+            .filter_map(|c| c.existing.as_ref().map(|(id, _)| id.clone()))
+            .collect();
+        let mut stmt = self.conn.prepare(
+            "SELECT id, date, description, normalized, amount FROM transactions \
+             WHERE account_id = ?1 AND date >= ?2 AND date < ?3",
+        )?;
+        let nearby: Vec<(LikelyDuplicate, String, Decimal)> = stmt
+            .query_map(
+                params![
+                    account_id,
+                    (first - window).format("%Y-%m-%d").to_string(),
+                    (last + window + chrono::Duration::days(1))
+                        .format("%Y-%m-%d")
+                        .to_string(),
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|(id, ..)| !claimed.contains(id))
+            .filter_map(|(id, date, description, normalized, amount)| {
+                let date = parse_transaction_datetime(&date)?;
+                let amount = amount.parse::<Decimal>().ok()?;
+                Some((
+                    LikelyDuplicate {
+                        id,
+                        date,
+                        description,
+                    },
+                    normalized,
+                    amount,
+                ))
+            })
+            .collect();
+
+        for (c, check) in candidates.iter().zip(checks.iter_mut()) {
+            if check.existing.is_some() {
+                continue;
+            }
+            let normalized = normalize_description(c.description);
+            check.likely_duplicate_of = nearby
+                .iter()
+                .filter(|(_, _, amount)| *amount == c.amount)
+                .map(|(existing, existing_normalized, _)| {
+                    let days = (existing.date.date() - c.date.date()).num_days().abs();
+                    (days, existing, existing_normalized)
+                })
+                .filter(|(days, _, existing_normalized)| {
+                    *days <= NEAR_MATCH_DAYS
+                        && descriptions_similar(&normalized, existing_normalized)
+                })
+                .min_by_key(|(days, ..)| *days)
+                .map(|(_, existing, _)| existing.clone());
+        }
+
+        Ok(checks)
     }
 
     /// List transactions with filtering, search, and pagination.
@@ -5133,6 +5279,7 @@ impl Db {
         let mut stmt = self
             .conn
             .prepare("SELECT id FROM investments WHERE fingerprint = ?1")?;
+        let mut occurrences = Occurrences::default();
 
         for (i, row) in rows.iter().enumerate() {
             let err_row = |reason: String| crate::model::InvestmentPreviewRow {
@@ -5147,6 +5294,7 @@ impl Db {
                 error_reason: Some(reason),
                 existing_id: None,
                 source_document_ids: Vec::new(),
+                same_key_as_row: None,
             };
 
             if row.row_confidence < min_row_confidence {
@@ -5157,8 +5305,16 @@ impl Db {
                 continue;
             }
 
-            let date_str = match parse_transaction_datetime(&row.date) {
-                Some(dt) => dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            let Some(event_type) = InvestmentEventType::parse(&row.event_type) else {
+                previews.push(err_row(format!(
+                    "Unknown event type \"{}\"",
+                    row.event_type
+                )));
+                continue;
+            };
+
+            let date = match parse_transaction_datetime(&row.date) {
+                Some(dt) => dt.date(),
                 None => {
                     tracing::warn!(
                         symbol = %row.symbol,
@@ -5171,7 +5327,7 @@ impl Db {
             };
 
             let quantity = match row.quantity.parse::<rust_decimal::Decimal>() {
-                Ok(d) => d.to_string(),
+                Ok(d) => d,
                 Err(_) => {
                     tracing::warn!(symbol = %row.symbol, "invalid quantity in investment row; marking as error");
                     previews.push(err_row(format!("Invalid quantity \"{}\"", row.quantity)));
@@ -5199,12 +5355,16 @@ impl Db {
                     Some((converted, parent)) => (converted, parent.to_string()),
                     None => (price_per_share_dec, row.currency.clone()),
                 };
-            let price_per_share = price_per_share_dec.to_string();
-
-            let fingerprint = sha256_hex(&format!(
-                "{}|{}|{}|{}|{}|{}",
-                account_id, row.symbol, date_str, quantity, price_per_share, row.event_type,
-            ));
+            let key = investment_key(
+                account_id,
+                &row.symbol,
+                date,
+                quantity,
+                price_per_share_dec,
+                event_type.as_str(),
+            );
+            let occurrence = occurrences.next(&key, i);
+            let fingerprint = occurrence.fingerprint;
 
             let existing_id: Option<String> = stmt
                 .query_row(rusqlite::params![fingerprint], |row| {
@@ -5224,12 +5384,13 @@ impl Db {
                 symbol: row.symbol.clone(),
                 date: row.date.clone(),
                 quantity: row.quantity.clone(),
-                price_per_share,
+                price_per_share: price_per_share_dec.to_string(),
                 currency,
                 status,
                 error_reason: None,
                 existing_id,
                 source_document_ids: Vec::new(),
+                same_key_as_row: occurrence.earlier_row,
             });
         }
 
@@ -5996,6 +6157,60 @@ fn generate_raw_token() -> String {
     format!("fyn_{}", hex::encode(bytes))
 }
 
+/// A transaction being previewed, after sub-unit conversion.
+struct DuplicateCandidate<'a> {
+    /// Index of the row in the preview.
+    index: usize,
+    date: NaiveDateTime,
+    description: &'a str,
+    amount: Decimal,
+}
+
+/// What [`Db::check_transaction_duplicates`] found for one candidate.
+struct DuplicateCheck {
+    /// `(id, description)` of the stored row holding this candidate's fingerprint.
+    existing: Option<(String, String)>,
+    same_key_as_row: Option<usize>,
+    likely_duplicate_of: Option<LikelyDuplicate>,
+}
+
+impl DuplicateCheck {
+    fn into_preview_row(self, row: TransactionPreviewRow) -> TransactionPreviewRow {
+        let (status, existing_id, existing_description) = match self.existing {
+            Some((id, description)) => (
+                TransactionPreviewStatus::Duplicate,
+                Some(id),
+                Some(description),
+            ),
+            None => (TransactionPreviewStatus::New, None, None),
+        };
+        TransactionPreviewRow {
+            status,
+            existing_id,
+            existing_description,
+            same_key_as_row: self.same_key_as_row,
+            likely_duplicate_of: self.likely_duplicate_of,
+            ..row
+        }
+    }
+}
+
+/// The lowest-occurrence fingerprint of `key` that no row of `table` other
+/// than `id` holds. Used when re-keying a single stored row, which has no
+/// import batch to number it within.
+fn free_fingerprint(conn: &Connection, table: &str, key: &str, id: &str) -> Result<String> {
+    let mut taken = conn.prepare_cached(&format!(
+        "SELECT EXISTS(SELECT 1 FROM {table} WHERE fingerprint = ?1 AND id != ?2)"
+    ))?;
+    for occurrence in 0.. {
+        let fingerprint = crate::util::dedupe::fingerprint(key, occurrence);
+        if !taken.query_row(params![fingerprint, id], |row| row.get::<_, bool>(0))? {
+            return Ok(fingerprint);
+        }
+    }
+    unreachable!("an unbounded occurrence range always yields a free fingerprint")
+}
+
 fn sha256_hex(s: &str) -> String {
     sha256_hex_bytes(s.as_bytes())
 }
@@ -6482,6 +6697,103 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE profiles ADD COLUMN utr TEXT")?;
     }
 
+    // ── 16. Re-key every stored fingerprint to the util::dedupe scheme ──
+    // The old fingerprint hashed the raw date and amount text, so a re-import
+    // with a different time of day or `"500"` for `"500.00"` read as new, and a
+    // second genuine same-key row was dropped. user_version marks it done.
+    let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if user_version < 1 {
+        let tx = conn.unchecked_transaction()?;
+        rekey_transaction_fingerprints(&tx)?;
+        rekey_investment_fingerprints(&tx)?;
+        tx.execute_batch("PRAGMA user_version = 1")?;
+        tx.commit()?;
+    }
+
+    Ok(())
+}
+
+/// Rewrite every transaction fingerprint, numbering the rows that share a key
+/// in date order. Every row keeps its own fingerprint, so nothing collapses.
+fn rekey_transaction_fingerprints(conn: &Connection) -> Result<()> {
+    let rows: Vec<(String, String, String, String)> = conn
+        .prepare(
+            "SELECT id, date, amount, account_id FROM transactions              ORDER BY date, created_at, rowid",
+        )?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut update = conn.prepare("UPDATE transactions SET fingerprint = ?1 WHERE id = ?2")?;
+    let mut occurrences = Occurrences::default();
+    let mut repeated = 0;
+    for (i, (id, date, amount, account_id)) in rows.iter().enumerate() {
+        let date = parse_transaction_datetime(date)
+            .ok_or_else(|| anyhow!("transaction {id}: stored date {date:?} is not a datetime"))?;
+        let amount: Decimal = amount
+            .parse()
+            .with_context(|| format!("transaction {id}: stored amount {amount:?}"))?;
+        let occurrence = occurrences.next(&transaction_key(date.date(), amount, account_id), i);
+        repeated += usize::from(occurrence.earlier_row.is_some());
+        update.execute(params![occurrence.fingerprint, id])?;
+    }
+    tracing::info!(
+        rows = rows.len(),
+        repeated,
+        "re-keyed transaction fingerprints; `repeated` rows share a date, amount and account with another"
+    );
+    Ok(())
+}
+
+/// [`rekey_transaction_fingerprints`] for investment events.
+fn rekey_investment_fingerprints(conn: &Connection) -> Result<()> {
+    type Row = (String, String, String, String, String, String, String);
+    let rows: Vec<Row> = conn
+        .prepare(
+            "SELECT id, account_id, symbol, date, quantity, price_per_share, event_type              FROM investments ORDER BY date, created_at, rowid",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut update = conn.prepare("UPDATE investments SET fingerprint = ?1 WHERE id = ?2")?;
+    let mut occurrences = Occurrences::default();
+    let mut repeated = 0;
+    for (i, (id, account_id, symbol, date, quantity, price, event_type)) in rows.iter().enumerate()
+    {
+        let date = parse_transaction_datetime(date)
+            .ok_or_else(|| anyhow!("investment {id}: stored date {date:?} is not a datetime"))?;
+        let quantity: Decimal = quantity
+            .parse()
+            .with_context(|| format!("investment {id}: stored quantity {quantity:?}"))?;
+        let price: Decimal = price
+            .parse()
+            .with_context(|| format!("investment {id}: stored price_per_share {price:?}"))?;
+        let event_type = InvestmentEventType::parse(event_type)
+            .ok_or_else(|| anyhow!("investment {id}: stored event_type {event_type:?}"))?;
+        let key = investment_key(
+            account_id,
+            symbol,
+            date.date(),
+            quantity,
+            price,
+            event_type.as_str(),
+        );
+        let occurrence = occurrences.next(&key, i);
+        repeated += usize::from(occurrence.earlier_row.is_some());
+        update.execute(params![occurrence.fingerprint, id])?;
+    }
+    tracing::info!(
+        rows = rows.len(),
+        repeated,
+        "re-keyed investment fingerprints; `repeated` events share every identity field with another"
+    );
     Ok(())
 }
 
@@ -8750,7 +9062,17 @@ mod investment_dedup_tests {
         assert_ne!(patched.fingerprint, created.fingerprint);
         assert_eq!(
             patched.fingerprint,
-            sha256_hex("acct-1|VUSA|2026-03-15T00:00:00|12|76.32|buy"),
+            crate::util::dedupe::fingerprint(
+                &investment_key(
+                    "acct-1",
+                    "VUSA",
+                    NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(),
+                    Decimal::from(12),
+                    Decimal::new(7632, 2),
+                    "buy",
+                ),
+                0,
+            ),
             "fingerprint must match what create_investment_event would compute"
         );
 
@@ -9453,7 +9775,12 @@ mod subunit_conversion_tests {
             category_confidence: None,
             source_file: None,
         };
-        let converted = crate::model::Transaction::from_unified(sub_unit_row, "acct-1");
+        let converted = crate::model::Transaction::from_unified(
+            sub_unit_row,
+            "acct-1",
+            &mut Occurrences::default(),
+            0,
+        );
         assert_eq!(converted.currency, "GBP");
         assert_eq!(converted.amount, Decimal::from_str("12.34").unwrap());
 
@@ -9477,7 +9804,12 @@ mod subunit_conversion_tests {
             category_confidence: None,
             source_file: None,
         };
-        let direct = crate::model::Transaction::from_unified(gbp_row, "acct-1");
+        let direct = crate::model::Transaction::from_unified(
+            gbp_row,
+            "acct-1",
+            &mut Occurrences::default(),
+            0,
+        );
         assert_eq!(converted.fingerprint, direct.fingerprint);
     }
 
@@ -9548,6 +9880,14 @@ mod subunit_conversion_tests {
         db.conn.last_insert_rowid()
     }
 
+    /// The fingerprint the first transaction with this date, amount and account
+    /// gets.
+    fn tx_fingerprint(date: &str, amount: &str, account_id: &str) -> String {
+        let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap();
+        let key = transaction_key(date, Decimal::from_str(amount).unwrap(), account_id);
+        crate::util::dedupe::fingerprint(&key, 0)
+    }
+
     /// Seed a transaction row denominated in a sub-unit, bypassing
     /// `Transaction::from_unified` (which now converts on the way in, so it can
     /// no longer express a stored GBX row). The fingerprint is deliberately
@@ -9556,7 +9896,7 @@ mod subunit_conversion_tests {
     fn seed_gbx_transaction(db: &Db, account_id: &str, amount_gbx: &str) -> (String, String) {
         let id = uuid::Uuid::new_v4().to_string();
         let date = "2026-02-05T00:00:00";
-        let legacy_fingerprint = crate::util::fingerprint(date, amount_gbx, account_id);
+        let legacy_fingerprint = tx_fingerprint("2026-02-05", amount_gbx, account_id);
         db.conn
             .execute(
                 "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
@@ -9587,7 +9927,7 @@ mod subunit_conversion_tests {
         // A transaction already in the parent currency: must be byte-for-byte
         // untouched, including its fingerprint.
         let gbp_id = uuid::Uuid::new_v4().to_string();
-        let gbp_fingerprint = crate::util::fingerprint("2026-02-06T00:00:00", "42.50", "acct-1");
+        let gbp_fingerprint = tx_fingerprint("2026-02-06", "42.50", "acct-1");
         db.conn
             .execute(
                 "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
@@ -9633,7 +9973,7 @@ mod subunit_conversion_tests {
         // were left keyed on "5000", the next statement import of this same
         // transaction — now correctly parsed as 50 GBP — would find no
         // matching fingerprint and silently create a duplicate.
-        let expected = crate::util::fingerprint("2026-02-05T00:00:00", "50", "acct-1");
+        let expected = tx_fingerprint("2026-02-05", "50", "acct-1");
         assert_eq!(
             migrated_fingerprint, expected,
             "migrated fingerprint must be recomputed from the converted amount"
@@ -9678,6 +10018,8 @@ mod subunit_conversion_tests {
                 source_file: None,
             },
             "acct-1",
+            &mut Occurrences::default(),
+            0,
         );
         assert_eq!(
             reimported.fingerprint, migrated_fingerprint,
@@ -9801,15 +10143,17 @@ mod subunit_conversion_tests {
         // What create_investment_event would compute for the equivalent
         // already-converted GBP row must match exactly, or a fresh import of
         // the same trade (now correctly priced in GBP) would duplicate it.
-        let expected_fingerprint = sha256_hex(&format!(
-            "{}|{}|{}|{}|{}|{}",
-            "acct-1",
-            "VUSA",
-            "2026-01-10T00:00:00",
-            Decimal::from(10),
-            Decimal::from_str("12.34").unwrap(),
-            "buy"
-        ));
+        let expected_fingerprint = crate::util::dedupe::fingerprint(
+            &investment_key(
+                "acct-1",
+                "VUSA",
+                NaiveDate::from_ymd_opt(2026, 1, 10).unwrap(),
+                Decimal::from(10),
+                Decimal::from_str("12.34").unwrap(),
+                "buy",
+            ),
+            0,
+        );
         assert_eq!(migrated_fingerprint, expected_fingerprint);
     }
 
@@ -10327,5 +10671,389 @@ mod tax_storage_tests {
             db.get_tax_inputs("alex", "2024-25").is_err(),
             "an unparseable stored decimal must not silently become zero"
         );
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_dedupe_tests {
+    use super::*;
+    use crate::importers::investments_parser::ParsedInvestmentRow;
+    use std::str::FromStr;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        db.create_account(&Account {
+            id: "amex".to_string(),
+            name: "Amex".to_string(),
+            institution: "American Express".to_string(),
+            account_type: AccountType::Credit,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+        (db, file)
+    }
+
+    fn dt(s: &str) -> NaiveDateTime {
+        parse_transaction_datetime(s).unwrap()
+    }
+
+    fn txn(date: &str, description: &str, amount: &str) -> ImportTransaction {
+        ImportTransaction {
+            date: dt(date),
+            description: description.to_string(),
+            amount: Decimal::from_str(amount).unwrap(),
+            currency: Some("GBP".to_string()),
+            category_id: None,
+            category_source: None,
+            notes: None,
+            is_recurring: None,
+            exclude_from_summary: None,
+            source_document_ids: Vec::new(),
+        }
+    }
+
+    fn transaction_count(db: &Db) -> i64 {
+        db.conn
+            .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn two_real_same_key_rows_both_land_and_a_reimport_skips_both() {
+        let (db, _file) = test_db();
+        let statement = [
+            txn("2026-07-03T00:00:00", "TfL Travel", "-15.50"),
+            txn("2026-07-03T00:00:00", "TfL Travel", "-15.50"),
+        ];
+
+        let first = db.insert_transactions_bulk("amex", &statement).unwrap();
+        assert_eq!(
+            first.rows_inserted, 2,
+            "the second fare must not be dropped"
+        );
+
+        let again = db.insert_transactions_bulk("amex", &statement).unwrap();
+        assert_eq!(again.rows_inserted, 0);
+        assert_eq!(again.rows_duplicate, 2);
+        assert_eq!(transaction_count(&db), 2);
+    }
+
+    #[test]
+    fn reimport_with_another_time_of_day_or_amount_format_is_a_duplicate() {
+        let (db, _file) = test_db();
+        db.insert_transactions_bulk(
+            "amex",
+            &[
+                txn("2026-07-03T00:00:00", "Rent", "500"),
+                txn("2026-07-04T12:00:00", "Pret", "-4.2"),
+            ],
+        )
+        .unwrap();
+
+        let reimport = db
+            .insert_transactions_bulk(
+                "amex",
+                &[
+                    txn("2026-07-03T09:41:07", "Rent", "500.00"),
+                    txn("2026-07-04T08:15:03", "Pret", "-4.20"),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(reimport.rows_inserted, 0);
+        assert_eq!(reimport.rows_duplicate, 2);
+    }
+
+    #[test]
+    fn a_statement_with_one_more_same_key_row_than_stored_adds_only_that_row() {
+        let (db, _file) = test_db();
+        db.insert_transactions_bulk("amex", &[txn("2026-07-03T00:00:00", "TfL", "-15.50")])
+            .unwrap();
+
+        let result = db
+            .insert_transactions_bulk(
+                "amex",
+                &[
+                    txn("2026-07-03T00:00:00", "TfL", "-15.50"),
+                    txn("2026-07-03T00:00:00", "TfL", "-15.50"),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(result.rows_duplicate, 1);
+        assert_eq!(result.rows_inserted, 1);
+        assert_eq!(transaction_count(&db), 2);
+    }
+
+    #[test]
+    fn preview_matches_what_the_commit_does_and_flags_repeated_keys() {
+        let (db, _file) = test_db();
+        db.insert_transactions_bulk("amex", &[txn("2026-07-03T00:00:00", "TfL", "-15.50")])
+            .unwrap();
+        let statement = [
+            txn("2026-07-03T08:00:00", "TfL", "-15.50"),
+            txn("2026-07-03T18:00:00", "TfL", "-15.50"),
+        ];
+
+        let preview = db.dry_run_transactions("amex", &statement).unwrap();
+
+        assert_eq!(preview[0].status, TransactionPreviewStatus::Duplicate);
+        assert_eq!(preview[0].same_key_as_row, None);
+        assert_eq!(preview[1].status, TransactionPreviewStatus::New);
+        assert_eq!(preview[1].same_key_as_row, Some(0));
+        assert_eq!(
+            preview[1].likely_duplicate_of, None,
+            "the stored fare is already matched exactly by row 0"
+        );
+
+        let committed = db.insert_transactions_bulk("amex", &statement).unwrap();
+        assert_eq!((committed.rows_duplicate, committed.rows_inserted), (1, 1));
+    }
+
+    #[test]
+    fn preview_flags_an_existing_row_a_day_out_with_a_similar_description() {
+        let (db, _file) = test_db();
+        db.insert_transactions_bulk(
+            "amex",
+            &[
+                txn("2026-07-02T00:00:00", "TFL TRAVEL CH", "-15.50"),
+                txn("2026-07-02T00:00:00", "Pret A Manger", "-4.20"),
+            ],
+        )
+        .unwrap();
+        let stored_tfl: String = db
+            .conn
+            .query_row(
+                "SELECT id FROM transactions WHERE description = 'TFL TRAVEL CH'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let preview = db
+            .dry_run_transactions(
+                "amex",
+                &[
+                    txn("2026-07-03T00:00:00", "TfL Travel Charge", "-15.50"),
+                    txn("2026-07-03T00:00:00", "Costa Coffee", "-4.20"),
+                    txn("2026-07-08T00:00:00", "TfL Travel Charge", "-15.50"),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(preview[0].status, TransactionPreviewStatus::New);
+        let flagged = preview[0].likely_duplicate_of.as_ref().expect("flagged");
+        assert_eq!(flagged.id, stored_tfl);
+        assert_eq!(flagged.description, "TFL TRAVEL CH");
+        assert_eq!(
+            preview[1].likely_duplicate_of, None,
+            "same amount and date but a different merchant"
+        );
+        assert_eq!(
+            preview[2].likely_duplicate_of, None,
+            "six days out is past the window"
+        );
+    }
+
+    #[test]
+    fn parsed_preview_numbers_only_rows_that_reach_the_payload() {
+        use crate::importers::unified::UnifiedStatementRow;
+        let (db, _file) = test_db();
+        let row = |confidence: f32| UnifiedStatementRow {
+            date: dt("2026-07-03T00:00:00"),
+            description: "TfL".to_string(),
+            amount: Decimal::from_str("-15.50").unwrap(),
+            currency: "GBP".to_string(),
+            fitid: None,
+            category: None,
+            merchant: None,
+            counterparty: None,
+            transaction_type: None,
+            balance_after: None,
+            notes: None,
+            reference: None,
+            row_confidence: confidence,
+            category_id: None,
+            category_confidence: None,
+            source_file: None,
+        };
+
+        let preview = db
+            .dry_run_transactions_from_parsed("amex", &[row(0.1), row(0.9), row(0.9)], 0.5)
+            .unwrap();
+
+        assert_eq!(preview[0].status, TransactionPreviewStatus::Error);
+        assert_eq!(preview[1].same_key_as_row, None);
+        assert_eq!(preview[2].same_key_as_row, Some(1));
+    }
+
+    #[test]
+    fn identical_investment_events_in_one_import_both_land() {
+        let (db, _file) = test_db();
+        let vest = CreateInvestmentEventBody {
+            account_id: "amex".to_string(),
+            event_type: "vest".to_string(),
+            symbol: "PLTR".to_string(),
+            date: "2026-05-20T00:00:00".to_string(),
+            quantity: "34".to_string(),
+            price_per_share: "135.26".to_string(),
+            fee: None,
+            currency: "USD".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: Vec::new(),
+        };
+        let reformatted = CreateInvestmentEventBody {
+            date: "2026-05-20T12:00:00".to_string(),
+            quantity: "34.000".to_string(),
+            price_per_share: "135.260".to_string(),
+            ..vest.clone()
+        };
+
+        let import = |bodies: &[&CreateInvestmentEventBody]| {
+            let mut occurrences = Occurrences::default();
+            bodies
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    db.create_investment_event_in_batch(b, &mut occurrences, i)
+                        .unwrap()
+                        .1
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            import(&[&vest, &vest]),
+            vec![InsertOutcome::Inserted, InsertOutcome::Inserted]
+        );
+        assert_eq!(
+            import(&[&reformatted, &reformatted]),
+            vec![InsertOutcome::Duplicate, InsertOutcome::Duplicate]
+        );
+
+        let parsed = |quantity: &str| ParsedInvestmentRow {
+            event_type: "vest".to_string(),
+            symbol: "PLTR".to_string(),
+            date: "2026-05-20".to_string(),
+            quantity: quantity.to_string(),
+            price_per_share: "135.26".to_string(),
+            total_value: None,
+            fee: "0".to_string(),
+            currency: "USD".to_string(),
+            fee_currency: None,
+            notes: None,
+            row_confidence: 0.95,
+            source_file: None,
+        };
+        let preview = db
+            .dry_run_investments("amex", &[parsed("34"), parsed("34"), parsed("34")], 0.5)
+            .unwrap();
+        let statuses: Vec<_> = preview.iter().map(|p| p.status.clone()).collect();
+        assert_eq!(
+            statuses,
+            vec![
+                TransactionPreviewStatus::Duplicate,
+                TransactionPreviewStatus::Duplicate,
+                TransactionPreviewStatus::New,
+            ]
+        );
+        assert_eq!(preview[2].same_key_as_row, Some(0));
+    }
+
+    #[test]
+    fn opening_an_old_database_rekeys_every_row_without_collapsing_any() {
+        let file = NamedTempFile::new().expect("temp file");
+        {
+            let db = Db::open(file.path()).unwrap();
+            db.create_account(&Account {
+                id: "monzo".to_string(),
+                name: "Monzo".to_string(),
+                institution: "Monzo".to_string(),
+                account_type: AccountType::Checking,
+                currency: "GBP".to_string(),
+                balance: None,
+                balance_date: None,
+                is_active: true,
+                notes: None,
+                profile_ids: vec!["default".to_string()],
+                is_stale: None,
+                is_available: true,
+            })
+            .unwrap();
+            // Rows as the old scheme stored them: raw-text fingerprints, one
+            // statement saved "500" at midnight, a later round "500.00" at 09:41.
+            for (id, date, amount) in [
+                ("a", "2026-07-03T00:00:00", "500"),
+                ("b", "2026-07-03T09:41:00", "500.00"),
+                ("c", "2026-07-04T00:00:00", "-4.20"),
+            ] {
+                db.conn
+                    .execute(
+                        "INSERT INTO transactions (id, date, description, normalized, amount, \
+                         currency, account_id, fingerprint) \
+                         VALUES (?1, ?2, 'x', 'x', ?3, 'GBP', 'monzo', ?4)",
+                        params![
+                            id,
+                            date,
+                            amount,
+                            sha256_hex(&format!("{date}|{amount}|monzo"))
+                        ],
+                    )
+                    .unwrap();
+            }
+            db.conn.execute_batch("PRAGMA user_version = 0").unwrap();
+        }
+
+        let db = Db::open(file.path()).unwrap();
+        let fingerprints: HashMap<String, String> = db
+            .conn
+            .prepare("SELECT id, fingerprint FROM transactions")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let rent = transaction_key(
+            NaiveDate::from_ymd_opt(2026, 7, 3).unwrap(),
+            Decimal::from(500),
+            "monzo",
+        );
+        assert_eq!(fingerprints.len(), 3, "no row may be merged or dropped");
+        assert_eq!(
+            fingerprints["a"],
+            crate::util::dedupe::fingerprint(&rent, 0)
+        );
+        assert_eq!(
+            fingerprints["b"],
+            crate::util::dedupe::fingerprint(&rent, 1)
+        );
+
+        let version: i64 = db
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 1);
+
+        // A fresh import of the same statement now recognises the rows.
+        let reimport = db
+            .insert_transactions_bulk(
+                "monzo",
+                &[
+                    txn("2026-07-03T00:00:00", "x", "500.00"),
+                    txn("2026-07-04T10:00:00", "x", "-4.2"),
+                ],
+            )
+            .unwrap();
+        assert_eq!(reimport.rows_inserted, 0);
     }
 }

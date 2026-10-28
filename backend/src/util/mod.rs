@@ -1,5 +1,6 @@
 //! Small pure helpers shared by the importer, storage, and CLI layers.
 
+pub mod dedupe;
 pub mod fx;
 pub mod subunits;
 
@@ -8,7 +9,6 @@ use chrono::{NaiveDate, NaiveDateTime};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use rust_decimal::Decimal;
-use sha2::{Digest, Sha256};
 
 /// Regex that collapses any run of whitespace into a single space. Used by
 /// `normalize_description` to produce a stable display string regardless of
@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 static WHITESPACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
 
 /// Noise tokens that banks tend to tack on to merchant descriptions and
-/// that we want stripped before computing fingerprints. The list is
+/// that we want stripped before comparing descriptions. The list is
 /// deliberately conservative: we'd rather keep a token than drop real
 /// information.
 static NOISE_TOKENS: &[&str] = &[
@@ -31,11 +31,11 @@ static NOISE_TOKENS: &[&str] = &[
     "VIS ",
 ];
 
-/// Clean a raw merchant description for display and fingerprinting.
+/// Clean a raw merchant description for display and duplicate matching.
 ///
 /// The goal is stability across re-imports, not linguistic perfection: two
-/// statements that show the same transaction must produce the same
-/// normalized string so that fingerprint dedup catches them.
+/// statements that show the same transaction should produce the same
+/// normalized string so the likely-duplicate check can pair them.
 pub fn normalize_description(raw: &str) -> String {
     let mut s = raw.trim().to_string();
 
@@ -52,23 +52,6 @@ pub fn normalize_description(raw: &str) -> String {
 
     let collapsed = WHITESPACE.replace_all(s.trim(), " ");
     collapsed.to_lowercase()
-}
-
-/// Stable dedup fingerprint for a transaction.
-///
-/// Hashes `(datetime, amount, account_id)` — the triple that uniquely
-/// identifies a real-world money movement. Description is intentionally
-/// excluded: the same transaction imported via CSV and via an external agent
-/// may have slightly different descriptions, and including it would cause
-/// false duplicates.
-pub fn fingerprint(date: &str, amount: &str, account_id: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(date.as_bytes());
-    hasher.update(b"|");
-    hasher.update(amount.as_bytes());
-    hasher.update(b"|");
-    hasher.update(account_id.as_bytes());
-    hex::encode(hasher.finalize())
 }
 
 /// Parse a datetime string that may be either `YYYY-MM-DDTHH:MM:SS` (stored
@@ -209,39 +192,6 @@ mod tests {
             normalize_description("Lidl GB London"),
             normalize_description("LIDL GB LONDON")
         );
-    }
-
-    #[test]
-    fn fingerprint_is_deterministic() {
-        let a = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
-        let b = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
-        assert_eq!(a, b);
-        assert_eq!(a.len(), 64);
-    }
-
-    #[test]
-    fn fingerprint_changes_with_any_field() {
-        let base = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
-        assert_ne!(
-            base,
-            fingerprint("2026-03-11T08:30:00", "-5.50", "monzo-current")
-        ); // different date
-        assert_ne!(
-            base,
-            fingerprint("2026-03-10T08:30:00", "-5.51", "monzo-current")
-        ); // different amount
-        assert_ne!(
-            base,
-            fingerprint("2026-03-10T08:30:00", "-5.50", "revolut-main")
-        ); // different account
-    }
-
-    #[test]
-    fn fingerprint_ignores_description() {
-        // Two different descriptions with the same datetime/amount/account must hash identically.
-        let a = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
-        let b = fingerprint("2026-03-10T08:30:00", "-5.50", "monzo-current");
-        assert_eq!(a, b);
     }
 
     #[test]

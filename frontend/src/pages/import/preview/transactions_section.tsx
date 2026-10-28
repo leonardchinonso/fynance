@@ -17,7 +17,7 @@ import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { ImportTransaction } from "@/bindings/ImportTransaction"
 import type { CategorySource } from "@/bindings/CategorySource"
 import type { Currency } from "@/types"
-import { StatusBadge } from "./status_badge"
+import { DuplicateHint, StatusBadge } from "./status_badge"
 import { DateCell, DecimalCell, SelectCell, TextCell, moneyDirectionClass } from "./editors"
 import { SectionShell, useSectionControls } from "./section_shell"
 import { SortHeader } from "./sort_header"
@@ -358,10 +358,18 @@ export function TransactionsSection({
                 )}
               >
                 <TableCell>
-                  <StatusBadge
-                    status={marked ? "removed" : row.status}
-                    errorMessage={row.error_reason}
-                  />
+                  <div className="flex items-center gap-1">
+                    <StatusBadge
+                      status={marked ? "removed" : row.status}
+                      errorMessage={row.error_reason}
+                    />
+                    {!marked && (
+                      <DuplicateHint
+                        sameKeyAsRow={row.same_key_as_row}
+                        likelyDuplicateOf={row.likely_duplicate_of}
+                      />
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>
                   {editable && tx && !marked ? (

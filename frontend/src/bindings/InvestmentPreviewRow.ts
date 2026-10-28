@@ -11,4 +11,10 @@ error_reason?: string, existing_id: string | null,
  * IDs of the source documents this row was extracted from (resolve names
  * via `IngestionPreview.documents`).
  */
-source_document_ids: Array<string>, };
+source_document_ids: Array<string>, 
+/**
+ * Index of an earlier row in this preview with the same account, symbol,
+ * date, quantity, price and type. Both are imported, so check they are
+ * two real events.
+ */
+same_key_as_row?: number, };

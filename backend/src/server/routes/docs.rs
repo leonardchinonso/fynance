@@ -100,7 +100,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         },
                         "fingerprint": {
                             "type": "string",
-                            "description": "Stable dedup hash: sha256(datetime, amount, account_id)."
+                            "description": "Stable dedup hash of the date (not the time), the canonical amount, the account and the row's occurrence number among identical rows in its import."
                         },
                         "fitid": {
                             "type": ["string", "null"],
