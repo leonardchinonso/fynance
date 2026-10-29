@@ -51,7 +51,15 @@ fn add_txn(db: &Db, id: &str, account_id: &str, date: &str, amount: &str, catego
         .execute(
             "INSERT INTO transactions (id, date, description, normalized, amount, currency, \
              account_id, category_id, fingerprint) VALUES (?1,?2,?3,?3,?4,'GBP',?5,?6,?7)",
-            rusqlite::params![id, date, format!("txn {id}"), amount, account_id, category, format!("fp-{id}")],
+            rusqlite::params![
+                id,
+                date,
+                format!("txn {id}"),
+                amount,
+                account_id,
+                category,
+                format!("fp-{id}")
+            ],
         )
         .expect("txn");
 }
@@ -89,10 +97,38 @@ fn spending_is_per_leg_outflow_not_signed_bucket() {
     let general = mk_cat(&db, "X General", None, CategoryType::Spending);
     let salary = mk_cat(&db, "X Salary", None, CategoryType::IncomeTaxable);
 
-    add_txn(&db, "t1", "acc1", "2025-03-01T10:00:00", "-100.00", Some(&groceries));
-    add_txn(&db, "t2", "acc1", "2025-03-02T10:00:00", "500.00", Some(&general));
-    add_txn(&db, "t3", "acc1", "2025-03-02T11:00:00", "-100.00", Some(&general));
-    add_txn(&db, "t4", "acc1", "2025-03-03T10:00:00", "400.00", Some(&salary));
+    add_txn(
+        &db,
+        "t1",
+        "acc1",
+        "2025-03-01T10:00:00",
+        "-100.00",
+        Some(&groceries),
+    );
+    add_txn(
+        &db,
+        "t2",
+        "acc1",
+        "2025-03-02T10:00:00",
+        "500.00",
+        Some(&general),
+    );
+    add_txn(
+        &db,
+        "t3",
+        "acc1",
+        "2025-03-02T11:00:00",
+        "-100.00",
+        Some(&general),
+    );
+    add_txn(
+        &db,
+        "t4",
+        "acc1",
+        "2025-03-03T10:00:00",
+        "400.00",
+        Some(&salary),
+    );
 
     let (income, spending) = db
         .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
@@ -107,12 +143,38 @@ fn transfer_family_legs_are_not_spending() {
     mk_account(&db, "acc1", AccountType::Checking);
     let moving = mk_cat(&db, "Moving money", None, CategoryType::Spending);
     let transfers = mk_cat(&db, "X Transfers", Some(&moving), CategoryType::Spending);
-    let investments = mk_cat(&db, "X Investments", Some(&moving), CategoryType::InterestTaxable);
+    let investments = mk_cat(
+        &db,
+        "X Investments",
+        Some(&moving),
+        CategoryType::InterestTaxable,
+    );
     let groceries = mk_cat(&db, "X Groceries", None, CategoryType::Spending);
 
-    add_txn(&db, "t1", "acc1", "2025-03-01T10:00:00", "-900.00", Some(&transfers));
-    add_txn(&db, "t2", "acc1", "2025-03-01T11:00:00", "-200.00", Some(&investments));
-    add_txn(&db, "t3", "acc1", "2025-03-01T12:00:00", "-50.00", Some(&groceries));
+    add_txn(
+        &db,
+        "t1",
+        "acc1",
+        "2025-03-01T10:00:00",
+        "-900.00",
+        Some(&transfers),
+    );
+    add_txn(
+        &db,
+        "t2",
+        "acc1",
+        "2025-03-01T11:00:00",
+        "-200.00",
+        Some(&investments),
+    );
+    add_txn(
+        &db,
+        "t3",
+        "acc1",
+        "2025-03-01T12:00:00",
+        "-50.00",
+        Some(&groceries),
+    );
 
     let (_, spending) = db
         .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
@@ -127,9 +189,30 @@ fn cross_account_same_day_transfer_is_not_spending() {
     mk_account(&db, "acc2", AccountType::Checking);
     let shopping = mk_cat(&db, "X Shopping", None, CategoryType::Spending);
 
-    add_txn(&db, "t1", "acc1", "2025-03-01T10:00:00", "-200.00", Some(&shopping));
-    add_txn(&db, "t2", "acc2", "2025-03-01T10:01:00", "200.00", Some(&shopping));
-    add_txn(&db, "t3", "acc1", "2025-03-01T14:00:00", "-60.00", Some(&shopping));
+    add_txn(
+        &db,
+        "t1",
+        "acc1",
+        "2025-03-01T10:00:00",
+        "-200.00",
+        Some(&shopping),
+    );
+    add_txn(
+        &db,
+        "t2",
+        "acc2",
+        "2025-03-01T10:01:00",
+        "200.00",
+        Some(&shopping),
+    );
+    add_txn(
+        &db,
+        "t3",
+        "acc1",
+        "2025-03-01T14:00:00",
+        "-60.00",
+        Some(&shopping),
+    );
 
     let (_, spending) = db
         .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
@@ -143,8 +226,22 @@ fn same_account_refund_cancels_outflow() {
     mk_account(&db, "acc1", AccountType::Checking);
     let cabs = mk_cat(&db, "X Cabs", None, CategoryType::Spending);
 
-    add_txn(&db, "t1", "acc1", "2025-03-01T12:00:00", "-50.00", Some(&cabs));
-    add_txn(&db, "t2", "acc1", "2025-03-01T12:05:00", "50.00", Some(&cabs));
+    add_txn(
+        &db,
+        "t1",
+        "acc1",
+        "2025-03-01T12:00:00",
+        "-50.00",
+        Some(&cabs),
+    );
+    add_txn(
+        &db,
+        "t2",
+        "acc1",
+        "2025-03-01T12:05:00",
+        "50.00",
+        Some(&cabs),
+    );
 
     let (_, spending) = db
         .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
@@ -161,14 +258,25 @@ fn cross_currency_conversion_wire_is_not_spending() {
     let expenses = mk_cat(&db, "X Expenses", None, CategoryType::Spending);
     let transfers = mk_cat(&db, "X Transfers", None, CategoryType::Spending);
 
-    add_txn(&db, "t1", "acc-usd", "2025-03-01T10:00:00", "-1000.00", Some(&expenses));
+    add_txn(
+        &db,
+        "t1",
+        "acc-usd",
+        "2025-03-01T10:00:00",
+        "-1000.00",
+        Some(&expenses),
+    );
     db.conn
-        .execute(
-            "UPDATE transactions SET currency='USD' WHERE id='t1'",
-            [],
-        )
+        .execute("UPDATE transactions SET currency='USD' WHERE id='t1'", [])
         .unwrap();
-    add_txn(&db, "t2", "acc-gbp", "2025-03-01T11:00:00", "750.00", Some(&transfers));
+    add_txn(
+        &db,
+        "t2",
+        "acc-gbp",
+        "2025-03-01T11:00:00",
+        "750.00",
+        Some(&transfers),
+    );
 
     let (_, spending) = db
         .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))

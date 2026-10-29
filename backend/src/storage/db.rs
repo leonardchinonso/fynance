@@ -5210,16 +5210,19 @@ impl Db {
         );
         let legs: Vec<Leg> = {
             let mut stmt = self.conn.prepare(&sql)?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())), |row| {
-                let amount_str: String = row.get(3)?;
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    parse_decimal_column(3, "transaction amount", &amount_str)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            })?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
+                |row| {
+                    let amount_str: String = row.get(3)?;
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        parse_decimal_column(3, "transaction amount", &amount_str)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )?;
             rows.map(|r| {
                 r.map(|(account_id, time, currency, amount, category_id)| Leg {
                     day: time.get(..10).unwrap_or(&time).to_string(),
@@ -5235,9 +5238,9 @@ impl Db {
 
         // Category metadata: name (for the transfer-family walk), parent, type.
         let cats: HashMap<String, (String, Option<String>, Option<CategoryType>)> = {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, name, parent_id, category_type FROM categories",
-            )?;
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, name, parent_id, category_type FROM categories")?;
             let rows = stmt.query_map([], |row| {
                 let id: String = row.get(0)?;
                 let name: String = row.get(1)?;
@@ -5245,14 +5248,21 @@ impl Db {
                 let ctype: Option<String> = row.get(3)?;
                 Ok((
                     id,
-                    (name, parent_id, ctype.as_deref().and_then(CategoryType::parse)),
+                    (
+                        name,
+                        parent_id,
+                        ctype.as_deref().and_then(CategoryType::parse),
+                    ),
                 ))
             })?;
             rows.collect::<rusqlite::Result<HashMap<_, _>>>()?
         };
 
         let leg_category_type = |leg: &Leg| -> Option<CategoryType> {
-            leg.category_id.as_deref().and_then(|id| cats.get(id)).and_then(|(_, _, ct)| *ct)
+            leg.category_id
+                .as_deref()
+                .and_then(|id| cats.get(id))
+                .and_then(|(_, _, ct)| *ct)
         };
         let in_family = |leg: &Leg| -> bool {
             let mut cur = leg
@@ -5304,8 +5314,16 @@ impl Db {
                 .push(i);
         }
         for idxs in groups.values() {
-            let mut outs: Vec<usize> = idxs.iter().copied().filter(|&i| legs[i].amount < Decimal::ZERO).collect();
-            let avail: Vec<usize> = idxs.iter().copied().filter(|&i| legs[i].amount > Decimal::ZERO).collect();
+            let mut outs: Vec<usize> = idxs
+                .iter()
+                .copied()
+                .filter(|&i| legs[i].amount < Decimal::ZERO)
+                .collect();
+            let avail: Vec<usize> = idxs
+                .iter()
+                .copied()
+                .filter(|&i| legs[i].amount > Decimal::ZERO)
+                .collect();
             outs.sort_by_key(|&i| legs[i].time.clone());
             for o in outs {
                 let mut best: Option<(i64, usize)> = None;
@@ -5343,7 +5361,9 @@ impl Db {
             if in_family(leg) {
                 continue;
             }
-            let Some(ctype) = leg_category_type(leg) else { continue };
+            let Some(ctype) = leg_category_type(leg) else {
+                continue;
+            };
             if !CategoryType::SPENDING.contains(&ctype) {
                 continue;
             }
