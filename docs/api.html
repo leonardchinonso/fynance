@@ -2391,7 +2391,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <span class="method-badge method-get">GET</span>
     <code class="endpoint-path">/api/budget/cash-summary</code>
   </div>
-  <p class="endpoint-summary">Category-type cash summary for the portfolio card: income, spending (outflow legs only; transfer-family and paired own-account transfers/cancellations excluded), net savings (income − spending), savings-account balance growth, new cash invested (scoped to investment + ISA accounts, matching investment_metrics), and range-aware investment metrics over the same account set.</p>
+  <p class="endpoint-summary">Category-type cash summary for the portfolio card: income, spending (outflow legs only; transfer-family legs excluded, and own-account transfer/cancellation legs excluded when paired with a transfer-shaped inflow, i.e. a same-day same-currency mirror leg, a same-category or transfer-family counterpart on another account, or a cross-currency conversion wire within 2%; income inflows never pair), net savings (income − spending), savings-account balance growth, new cash invested (scoped to active investment + ISA accounts, matching investment_metrics), and range-aware investment metrics over the same account set.</p>
   <h4>Parameters</h4>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>

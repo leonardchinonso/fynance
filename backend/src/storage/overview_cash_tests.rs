@@ -256,7 +256,8 @@ fn cross_currency_conversion_wire_is_not_spending() {
     mk_account(&db, "acc-usd", AccountType::Checking);
     mk_account(&db, "acc-gbp", AccountType::Checking);
     let expenses = mk_cat(&db, "X Expenses", None, CategoryType::Spending);
-    let transfers = mk_cat(&db, "X Transfers", None, CategoryType::Spending);
+    let moving = mk_cat(&db, "Moving money", None, CategoryType::Spending);
+    let transfers = mk_cat(&db, "X Transfers", Some(&moving), CategoryType::Spending);
 
     add_txn(
         &db,
@@ -372,4 +373,211 @@ fn net_worth_row_at_carries_holdings_from_before_the_range() {
     assert_eq!(opening.total_wealth, d("600"));
     assert_eq!(opening.available_wealth, d("100"));
     assert_eq!(opening.unavailable_wealth, d("500"));
+}
+
+#[test]
+fn net_worth_row_at_matches_monthly_history_sample() {
+    let (db, _f) = test_db();
+    mk_account(&db, "chk", AccountType::Checking);
+    mk_account(&db, "prop", AccountType::Property);
+
+    add_holding(&db, "chk", "bal", "100", "2025-01-15T00:00:00");
+    add_holding(&db, "prop", "home", "500", "2024-12-01T00:00:00");
+
+    let fx = fx_map(&db);
+    let rows = db
+        .get_monthly_net_worth(
+            ymd(2025, 1, 1),
+            ymd(2025, 6, 30),
+            &Granularity::Monthly,
+            None,
+            &fx,
+        )
+        .unwrap();
+    let last = rows.last().expect("monthly rows");
+    let at = db.net_worth_row_at(ymd(2025, 6, 30), None, &fx).unwrap();
+    assert_eq!(at.total_wealth, last.total_wealth);
+    assert_eq!(at.available_wealth, last.available_wealth);
+    assert_eq!(at.unavailable_wealth, last.unavailable_wealth);
+}
+
+#[test]
+fn pairing_key_normalizes_mixed_amount_scales() {
+    let (db, _f) = test_db();
+    mk_account(&db, "acc1", AccountType::Checking);
+    mk_account(&db, "acc2", AccountType::Checking);
+    let transfers = mk_cat(&db, "X Transfers", None, CategoryType::Spending);
+
+    add_txn(
+        &db,
+        "t1",
+        "acc1",
+        "2025-03-01T10:00:00",
+        "-1000",
+        Some(&transfers),
+    );
+    add_txn(
+        &db,
+        "t2",
+        "acc2",
+        "2025-03-01T10:01:00",
+        "1000.0000",
+        Some(&transfers),
+    );
+
+    let (_, spending) = db
+        .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
+        .unwrap();
+    assert_eq!(spending, d("0"));
+}
+
+#[test]
+fn income_credit_cannot_cancel_a_purchase() {
+    let (db, _f) = test_db();
+    mk_account(&db, "acc1", AccountType::Checking);
+    let shopping = mk_cat(&db, "X Shopping", None, CategoryType::Spending);
+    let salary = mk_cat(&db, "X Salary", None, CategoryType::IncomeTaxable);
+
+    add_txn(
+        &db,
+        "t1",
+        "acc1",
+        "2025-03-01T12:00:00",
+        "-500.00",
+        Some(&shopping),
+    );
+    add_txn(
+        &db,
+        "t2",
+        "acc1",
+        "2025-03-01T09:00:00",
+        "500.00",
+        Some(&salary),
+    );
+
+    let (income, spending) = db
+        .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
+        .unwrap();
+    assert_eq!(income, d("500"));
+    assert_eq!(spending, d("500"));
+}
+
+#[test]
+fn unrelated_same_amount_credit_cannot_cancel_a_purchase() {
+    let (db, _f) = test_db();
+    mk_account(&db, "acc1", AccountType::Checking);
+    mk_account(&db, "acc2", AccountType::Checking);
+    let shopping = mk_cat(&db, "X Shopping", None, CategoryType::Spending);
+    let family = mk_cat(&db, "X Family", None, CategoryType::Spending);
+
+    add_txn(
+        &db,
+        "t1",
+        "acc1",
+        "2025-03-01T10:00:00",
+        "-40.00",
+        Some(&shopping),
+    );
+    add_txn(
+        &db,
+        "t2",
+        "acc2",
+        "2025-03-01T10:05:00",
+        "40.00",
+        Some(&family),
+    );
+
+    let (_, spending) = db
+        .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
+        .unwrap();
+    assert_eq!(spending, d("40"));
+}
+
+#[test]
+fn same_account_refund_ranks_above_cross_account_credit() {
+    let (db, _f) = test_db();
+    mk_account(&db, "acc1", AccountType::Checking);
+    mk_account(&db, "acc2", AccountType::Checking);
+    let cabs = mk_cat(&db, "X Cabs", None, CategoryType::Spending);
+    let misc = mk_cat(&db, "X Misc Credit", None, CategoryType::Spending);
+
+    // Purchase, its same-account refund, an unrelated cross-account credit of
+    // the same amount, and a second purchase that only the refund could have
+    // matched. Correct ranking pairs purchase with its own refund and leaves
+    // the second purchase in spending.
+    add_txn(
+        &db,
+        "t1",
+        "acc1",
+        "2025-03-01T12:00:00",
+        "-50.00",
+        Some(&cabs),
+    );
+    add_txn(
+        &db,
+        "t2",
+        "acc1",
+        "2025-03-01T12:05:00",
+        "50.00",
+        Some(&cabs),
+    );
+    add_txn(
+        &db,
+        "t3",
+        "acc2",
+        "2025-03-01T12:06:00",
+        "50.00",
+        Some(&misc),
+    );
+    add_txn(
+        &db,
+        "t4",
+        "acc2",
+        "2025-03-01T13:00:00",
+        "-50.00",
+        Some(&cabs),
+    );
+
+    let (_, spending) = db
+        .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
+        .unwrap();
+    assert_eq!(spending, d("50"));
+}
+
+#[test]
+fn pass2_wire_outside_tolerance_is_spending() {
+    let (db, _f) = test_db();
+    db.create_currency("USD", d("0.75")).expect("currency");
+    mk_account(&db, "acc-usd", AccountType::Checking);
+    mk_account(&db, "acc-gbp", AccountType::Checking);
+    let expenses = mk_cat(&db, "X Expenses", None, CategoryType::Spending);
+    let moving = mk_cat(&db, "Moving money", None, CategoryType::Spending);
+    let transfers = mk_cat(&db, "X Transfers", Some(&moving), CategoryType::Spending);
+
+    // USD 1000 out (£750) against a GBP 700 credit (£525): the £225 gap is far
+    // beyond a conversion spread, so the outflow stands as spending.
+    add_txn(
+        &db,
+        "t1",
+        "acc-usd",
+        "2025-03-01T10:00:00",
+        "-1000.00",
+        Some(&expenses),
+    );
+    db.conn
+        .execute("UPDATE transactions SET currency='USD' WHERE id='t1'", [])
+        .unwrap();
+    add_txn(
+        &db,
+        "t2",
+        "acc-gbp",
+        "2025-03-01T11:00:00",
+        "700.00",
+        Some(&transfers),
+    );
+
+    let (_, spending) = db
+        .compute_category_type_cash(span().0, span().1, None, &fx_map(&db))
+        .unwrap();
+    assert_eq!(spending, d("750"));
 }

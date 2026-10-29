@@ -1496,7 +1496,8 @@ pub struct CashSummaryResponse {
     #[ts(type = "string")]
     pub net_savings: Decimal,
     /// Period-over-period growth of `savings` + `emergency_fund` account
-    /// balances. Kept for the cash-pots view; not the card's Net Savings.
+    /// balances. Not the card's Net Savings (see `net_savings`); no view
+    /// currently consumes it, kept for API consumers.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub savings_growth: Decimal,

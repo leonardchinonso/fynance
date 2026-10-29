@@ -642,7 +642,35 @@ export class MockApiService implements ApiService {
         total_wealth: (available + unavailable).toFixed(2),
         total_wealth_display: null,
       }))
-    return { preferred_currency: "GBP", rows }
+    // Opening net worth, mirroring the backend carry-forward rule: the latest
+    // snapshot per account at or before the range's first day.
+    const carryCutoff = `${start}T23:59:59`
+    const carried = new Map<string, (typeof MOCK_ACCOUNT_BALANCES)[number]>()
+    for (const snap of MOCK_ACCOUNT_BALANCES) {
+      if (snap.as_of > carryCutoff) continue
+      const cur = carried.get(snap.account_id)
+      if (!cur || snap.as_of > cur.as_of) carried.set(snap.account_id, snap)
+    }
+    let openAvailable = 0
+    let openUnavailable = 0
+    for (const snap of carried.values()) {
+      const account = MOCK_ACCOUNTS.find((a) => a.id === snap.account_id)
+      if (!account) continue
+      const split = classifyBalance(account.type, parseFloat(snap.balance))
+      openAvailable += split.available
+      openUnavailable += split.unavailable
+    }
+    const opening: HoldingsHistoryRow = {
+      month: start.substring(0, 10),
+      available_wealth: openAvailable.toFixed(2),
+      available_wealth_display: null,
+      unavailable_wealth: openUnavailable.toFixed(2),
+      unavailable_wealth_display: null,
+      total_wealth: (openAvailable + openUnavailable).toFixed(2),
+      total_wealth_display: null,
+    }
+
+    return { preferred_currency: "GBP", opening, rows }
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {

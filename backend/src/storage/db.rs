@@ -5070,6 +5070,7 @@ impl Db {
               FROM investments i
               JOIN accounts a ON a.id = i.account_id
               WHERE a.type IN ('investment', 'investment_isa')
+                AND a.is_active = 1
                 AND i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
                 AND i.date >= ?1 AND i.date <= ?2 {profile_filter}"
         );
@@ -5156,14 +5157,17 @@ impl Db {
     ///
     /// 1. legs under the "Moving money" category family — this dataset's
     ///    transfer family, typed `spending`/`interest_taxable` instead of
-    ///    `internal_transfer` (see [`Self::in_transfer_family`]);
-    /// 2. outflow legs that pair with an opposite inflow leg on their day:
-    ///    an equal (currency, cent-normalised amount) leg on another account
-    ///    is an unflagged internal transfer, a same-account pair is a
-    ///    refund/cancellation reversal, and a pass-2 match on `fx`-converted
-    ///    amounts within tolerance pairs cross-currency conversions (a USD
-    ///    brokerage wire against the GBP credit it bought). Each leg pairs at
-    ///    most once; pairing keys on time and amount, never descriptions.
+    ///    `internal_transfer` (walked by category name below);
+    /// 2. outflow legs that pair with an opposite inflow leg on their day. An
+    ///    inflow may only pair when it looks like the far end of the same
+    ///    movement (transfer family on either side, a transfer-typed inflow,
+    ///    or both legs sharing a category); income-typed inflows never pair.
+    ///    Same-account pairs (refund/cancellation reversals) rank above
+    ///    cross-account ones. Pass 2 pairs a spending outflow with an unused
+    ///    different-currency inflow whose converted amount lands within 2%
+    ///    (floor £2): the wire and the credit it bought. Each leg pairs at
+    ///    most once; pairing keys on day, amount, and time only, never
+    ///    descriptions.
     ///
     /// Summing signed amounts per (type, currency) and taking `abs` of the
     /// group hid both problems: an inflow-dominated bucket counted as
@@ -5202,11 +5206,14 @@ impl Db {
         };
 
         let sql = format!(
+            // Chronological, insertion-stable order: pairing outcomes must not
+            // depend on the order rows happen to come back in.
             r"SELECT t.account_id, t.date, t.currency, t.amount, t.category_id
               FROM transactions t
               {join}
               WHERE t.date >= ?1 AND t.date <= ?2
-                AND t.exclude_from_summary = 0 {profile_filter}"
+                AND t.exclude_from_summary = 0 {profile_filter}
+              ORDER BY t.date, t.rowid"
         );
         let legs: Vec<Leg> = {
             let mut stmt = self.conn.prepare(&sql)?;
@@ -5295,6 +5302,37 @@ impl Db {
             let ss: i64 = time.get(17..19).and_then(|s| s.parse().ok()).unwrap_or(0);
             hh * 3600 + mm * 60 + ss
         };
+        let leg_category_name = |leg: &Leg| -> Option<String> {
+            leg.category_id
+                .as_deref()
+                .and_then(|id| cats.get(id))
+                .map(|(name, _, _)| name.clone())
+        };
+        let is_income_leg = |leg: &Leg| -> bool {
+            leg_category_type(leg).is_some_and(|t| CategoryType::INCOME.contains(&t))
+        };
+        // A cross-account pairing is only credible when the inflow side looks
+        // like the far end of the same movement: transfer family on either
+        // end, an internal-transfer/interest-typed inflow, or both legs filed
+        // under the same category. Income inflows are never a movement's far
+        // end, so they cannot cancel a spending outflow.
+        let transfer_shaped_inflow = |out: &Leg, inflow: &Leg| -> bool {
+            !is_income_leg(inflow)
+                && (in_family(out)
+                    || in_family(inflow)
+                    || match (leg_category_name(out), leg_category_name(inflow)) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => false,
+                    }
+                    || leg_category_type(inflow).is_some_and(|t| {
+                        matches!(
+                            t,
+                            CategoryType::InternalTransfer
+                                | CategoryType::InterestTaxable
+                                | CategoryType::InterestNonTaxable
+                        )
+                    }))
+        };
 
         // Pass 1: exact (day, currency, cent-normalised amount) pairing.
         let mut in_used = vec![false; legs.len()];
@@ -5308,16 +5346,20 @@ impl Db {
                 .entry((
                     leg.day.clone(),
                     leg.currency.clone(),
-                    leg.amount.abs().round_dp(2).to_string(),
+                    // normalize() so "1000" / "1000.00" / "1000.0000" (mixed
+                    // scales across import sources) land in one group.
+                    leg.amount.abs().round_dp(2).normalize().to_string(),
                 ))
                 .or_default()
                 .push(i);
         }
         for idxs in groups.values() {
+            // Uncategorized outflows never count as spending, so they must not
+            // consume mirror inflows either.
             let mut outs: Vec<usize> = idxs
                 .iter()
                 .copied()
-                .filter(|&i| legs[i].amount < Decimal::ZERO)
+                .filter(|&i| legs[i].amount < Decimal::ZERO && legs[i].category_id.is_some())
                 .collect();
             let avail: Vec<usize> = idxs
                 .iter()
@@ -5326,15 +5368,21 @@ impl Db {
                 .collect();
             outs.sort_by_key(|&i| legs[i].time.clone());
             for o in outs {
-                let mut best: Option<(i64, usize)> = None;
+                let mut best: Option<((i64, i64), usize)> = None;
                 for &i in avail.iter() {
                     if in_used[i] {
                         continue;
                     }
-                    let same_account = i64::from(legs[i].account_id == legs[o].account_id) * 86_400;
-                    let score = same_account + (tod(&legs[o].time) - tod(&legs[i].time)).abs();
-                    if best.is_none_or(|(s, _)| score < s) {
-                        best = Some((score, i));
+                    let same_account = legs[i].account_id == legs[o].account_id;
+                    if !transfer_shaped_inflow(&legs[o], &legs[i]) {
+                        continue;
+                    }
+                    // Same-account reversals rank above any cross-account
+                    // match; within a rank, nearest in time wins.
+                    let rank = i64::from(!same_account);
+                    let dist = (tod(&legs[o].time) - tod(&legs[i].time)).abs();
+                    if best.is_none_or(|(k, _)| (rank, dist) < k) {
+                        best = Some(((rank, dist), i));
                     }
                 }
                 if let Some((_, i)) = best {
@@ -5368,10 +5416,18 @@ impl Db {
                 continue;
             }
             let out_conv = fx.convert(leg.amount.abs(), &leg.currency);
-            let tol = out_conv.max(Decimal::ONE + Decimal::ONE);
+            // 2% of the converted amount, floored at £2: covers spread and
+            // rounding on a conversion wire without letting any same-day
+            // credit within ±100% cancel real spending.
+            let tol = (out_conv * Decimal::new(2, 2)).max(Decimal::ONE + Decimal::ONE);
             let mut best: Option<((i64, Decimal), usize)> = None;
             for &i in ins_by_day.get(&leg.day).map(Vec::as_slice).unwrap_or(&[]) {
-                if in_used[i] {
+                // Distinct currencies: same-currency near-amounts belong to
+                // pass 1's exact match, not here.
+                if in_used[i] || legs[i].currency == leg.currency {
+                    continue;
+                }
+                if !transfer_shaped_inflow(leg, &legs[i]) {
                     continue;
                 }
                 let in_conv = fx.convert(legs[i].amount, &legs[i].currency);
