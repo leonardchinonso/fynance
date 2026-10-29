@@ -24,7 +24,8 @@ spending: string,
 net_savings: string, 
 /**
  * Period-over-period growth of `savings` + `emergency_fund` account
- * balances. Kept for the cash-pots view; not the card's Net Savings.
+ * balances. Not the card's Net Savings (see `net_savings`); no view
+ * currently consumes it, kept for API consumers.
  */
 savings_growth: string, 
 /**
