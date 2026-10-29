@@ -105,7 +105,7 @@ The `investments` table is an **immutable event ledger** — one row per share a
 | `fee` | TEXT\|null | Broker commission + stamp duty; same currency as instrument; `null` for splits/transfers |
 | `currency` | TEXT | Native currency of price and fee (`USD`, `GBP`, `GBX`) |
 | `notes` | TEXT\|null | Free text |
-| `fingerprint` | TEXT | Unique dedup key — safe to re-post the same event |
+| `fingerprint` | TEXT | Unique dedup key: account, symbol, type, calendar date (not the time), normalised quantity and price, and the event's occurrence number among identical events in its import. A single `POST /api/investments` of a stored event returns 409 `investment_exists` |
 
 **Event type semantics:**
 - `vest` — shares granted/released to you (RSU vest + release, or SAR share delivery)
@@ -136,7 +136,7 @@ Rules:
 - `currency`: instrument currency — `USD` for US stocks, `GBX` for LSE-listed ETFs, etc.
 - `fee`: exchange and government fees column. For USD-denominated trades, a fee is almost always present — if you've parsed `"0"`, double-check the statement. For GBP-denominated trades a blank/zero fee is normal. Use `null` only when the statement genuinely shows no fee.
 - `notes`: include enough context to identify the trade later (e.g. `"<Month> monthly buy"`)
-- The API deduplicates by fingerprint so re-posting the same trade is safe
+- The API deduplicates by fingerprint, so re-posting a stored trade creates nothing (a single POST returns 409 `investment_exists`). Two genuinely identical trades on one day must go together through `POST /api/investments/import`, which numbers them; the time of day is not in the key, so changing it does not separate them
 
 **Do not post:** interest on cash, dividends, deposits, transfers between accounts.
 
@@ -202,7 +202,7 @@ curl "http://localhost:7433/api/holdings?account_ids=<broker_isa_id>,<broker_inv
 Check that:
 - Investment event count matches the number of rows in the executed trades table
 - Holdings snapshot `as_of` date matches the month end
-- No duplicate entries (fingerprint dedup means re-runs are safe but worth confirming)
+- No duplicate entries (fingerprint dedup means re-sending the same whole import is safe, but worth confirming)
 
 ---
 
@@ -226,7 +226,7 @@ Rules:
 - One subagent = one month. Pass it the month name, the path to that month's PDF, the transactions statement PDF, and this CLAUDE.md as context.
 - Run subagents **sequentially**, not in parallel — each month's verify step should pass before the next starts.
 - For a single month you do not need a subagent; load directly in the main conversation.
-- The API's fingerprint dedup means a subagent re-running a month is safe, but check `rows_inserted` / investment count after each month to confirm clean inserts.
+- The API's fingerprint dedup means a subagent re-sending a month's whole import is safe, but check `rows_inserted` / investment count after each month to confirm clean inserts.
 
 ### Which parts of the transactions statement each subagent needs
 
@@ -291,7 +291,7 @@ Rules:
 - Include joint account transfers (both inbound and outbound)
 - Include zero-amount transactions (e.g. foreign card checks)
 - Round-up transfers to savings pots are their own transactions — include them
-- The API deduplicates by fingerprint (sha256 of date + amount + account_id) — safe to re-run
+- The API deduplicates by fingerprint: sha256 of the calendar date (not the time), the normalised amount (`"500"` = `"500.00"`), the account, and the row's occurrence number among same-key rows in the payload. Re-sending the same payload is safe. **Send the payload whole, in preview order, duplicates included:** remove a `duplicate` row and a genuine second same-key row moves up to occurrence 0, matches the stored row and is skipped
 - Response shape: `{"rows_total": N, "rows_inserted": N, "rows_duplicate": N, ...}` — check `rows_inserted` not `inserted`
 
 ## Step 4 — Post per-pot holdings snapshots
@@ -435,7 +435,7 @@ Rules:
 - `notes`: always include the grant name or reference number for traceability
 - Symbol is the employer's ticker; ask the user if it isn't obvious from the statement
 - Currency is typically `USD` for US-listed equity comp
-- The API deduplicates by fingerprint — safe to re-run
+- The API deduplicates by fingerprint (calendar date, not the time). Re-sending the same whole import is safe; a single POST of a stored event returns 409 `investment_exists`
 
 ## Step 3 — Post holdings snapshot
 
