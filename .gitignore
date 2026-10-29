@@ -21,8 +21,7 @@ frontend/.vite/
 #/target
 .playwright-mcp/
 .vercel
-.attachments/*
-!.attachments/CLAUDE.md
+.attachments/
 
 # Local Capital Gains real data verification test
 backend/tests/capital_gains_real_data.rs
