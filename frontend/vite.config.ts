@@ -20,7 +20,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://localhost:7433",
+        // Override when the backend isn't on the default port (FYNANCE_PROXY_TARGET=http://localhost:7441 npm run dev).
+        target: process.env.FYNANCE_PROXY_TARGET ?? "http://localhost:7433",
         changeOrigin: true,
       },
     },

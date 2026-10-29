@@ -85,6 +85,15 @@ export type CgtPeriod =
   | { kind: "range"; startDate: string; endDate: string }
   | { kind: "as-at"; asAt: string }
 
+/** Envelope for `GET /api/holdings/history`. `opening` is the net worth
+ * carried forward to the range's first day — the point period deltas measure
+ * from. `rows` remain period-end samples. */
+export interface PortfolioHistoryEnvelope {
+  preferred_currency: string
+  opening?: HoldingsHistoryRow
+  rows: HoldingsHistoryRow[]
+}
+
 export interface CgtFilters {
   period: CgtPeriod
   /** Exactly one profile — the report has no "all profiles" mode. */
@@ -153,7 +162,7 @@ export interface ApiService {
     end: string,
     granularity?: Granularity,
     profileId?: string
-  ): Promise<HoldingsHistoryRow[]>
+  ): Promise<PortfolioHistoryEnvelope>
   getHoldings(accountId: string): Promise<Holding[]>
   getHoldingsBatch(accountIds: string[]): Promise<Holding[]>
   /** Per-holding value history for a single account. Maps to `GET /api/holdings/account-history`. */

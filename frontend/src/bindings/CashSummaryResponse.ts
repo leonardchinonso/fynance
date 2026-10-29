@@ -7,22 +7,33 @@ import type { InvestmentMetrics } from "./InvestmentMetrics";
  */
 export type CashSummaryResponse = { preferred_currency: string, 
 /**
- * Sum of income_taxable + income_non_taxable transactions in range.
+ * Sum of positive `income_taxable` + `income_non_taxable` legs in range.
  */
 income: string, 
 /**
- * Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+ * Sum of outflow legs in `spending` / `donation_*` categories, with
+ * transfer-family legs and paired own-account transfers/cancellations
+ * removed (see `Db::compute_category_type_cash`).
  */
 spending: string, 
 /**
- * Period-over-period growth of `savings`-type holdings.
+ * `income - spending`: the card's "Net Savings". Money moved between the
+ * user's own accounts is in neither total, so amounts routed into
+ * investments/pensions appear under Investments instead.
+ */
+net_savings: string, 
+/**
+ * Period-over-period growth of `savings` + `emergency_fund` account
+ * balances. Kept for the cash-pots view; not the card's Net Savings.
  */
 savings_growth: string, 
 /**
- * Sum of `buy` investment events in range.
+ * Net new contributions (buy/vest/transfer-in minus sell/withhold) into
+ * the same account set `investment_metrics` values (investment + ISA).
  */
 new_cash_invested: string, 
 /**
- * Range-aware investment performance (total/market growth, start/end value).
+ * Range-aware investment performance (total/market growth, start/end
+ * value) over investment + ISA accounts.
  */
 investment_metrics: InvestmentMetrics, };

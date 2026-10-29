@@ -261,17 +261,19 @@ pub async fn get_holdings_history(
 
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
 
-    let (rows, preferred_currency) = {
+    let (rows, opening, preferred_currency) = {
         let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let rows = db.get_monthly_net_worth(start, end, &granularity, profile_id, &fx)?;
+        let opening = db.net_worth_row_at(start, profile_id, &fx)?;
         let preferred = fx.preferred().to_string();
-        (rows, preferred)
+        (rows, opening, preferred)
     };
 
     Ok(Json(serde_json::json!({
         "preferred_currency": preferred_currency,
+        "opening": opening,
         "rows": rows
     })))
 }

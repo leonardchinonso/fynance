@@ -334,6 +334,10 @@ async function runView(browser, view) {
   }
   console.log(`[${label}] demand-driven cache OK (summary=${summaryAfter}, balances=${bal}, history=${histAfter})`)
 
+  // Overview's cash-flow card: Net Savings must read the API's `net_savings`
+  // (32000.00 − 18450.20 in the mock summary), not `savings_growth`.
+  await page.getByText(/13,549\.80/).first().waitFor({ timeout: 5000 })
+
   // 13. Portfolio account drill-down → per-account holdings value-history chart.
   //     Investment account: Allocation/History toggle, then a line chart with a
   //     Total line + per-holding lines and a Monthly/Quarterly/Yearly toggle.

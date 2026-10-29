@@ -1479,23 +1479,34 @@ pub struct InvestmentMetrics {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct CashSummaryResponse {
     pub preferred_currency: String,
-    /// Sum of income_taxable + income_non_taxable transactions in range.
+    /// Sum of positive `income_taxable` + `income_non_taxable` legs in range.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub income: Decimal,
-    /// Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+    /// Sum of outflow legs in `spending` / `donation_*` categories, with
+    /// transfer-family legs and paired own-account transfers/cancellations
+    /// removed (see `Db::compute_category_type_cash`).
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub spending: Decimal,
-    /// Period-over-period growth of `savings`-type holdings.
+    /// `income - spending`: the card's "Net Savings". Money moved between the
+    /// user's own accounts is in neither total, so amounts routed into
+    /// investments/pensions appear under Investments instead.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub net_savings: Decimal,
+    /// Period-over-period growth of `savings` + `emergency_fund` account
+    /// balances. Kept for the cash-pots view; not the card's Net Savings.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub savings_growth: Decimal,
-    /// Sum of `buy` investment events in range.
+    /// Net new contributions (buy/vest/transfer-in minus sell/withhold) into
+    /// the same account set `investment_metrics` values (investment + ISA).
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub new_cash_invested: Decimal,
-    /// Range-aware investment performance (total/market growth, start/end value).
+    /// Range-aware investment performance (total/market growth, start/end
+    /// value) over investment + ISA accounts.
     pub investment_metrics: InvestmentMetrics,
 }
 

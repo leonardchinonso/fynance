@@ -2391,7 +2391,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <span class="method-badge method-get">GET</span>
     <code class="endpoint-path">/api/budget/cash-summary</code>
   </div>
-  <p class="endpoint-summary">Category-type cash summary for the portfolio card: income, spending, savings growth, new cash invested, and range-aware investment metrics.</p>
+  <p class="endpoint-summary">Category-type cash summary for the portfolio card: income, spending (outflow legs only; transfer-family and paired own-account transfers/cancellations excluded), net savings (income − spending), savings-account balance growth, new cash invested (scoped to investment + ISA accounts, matching investment_metrics), and range-aware investment metrics over the same account set.</p>
   <h4>Parameters</h4>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -2408,6 +2408,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   "preferred_currency": "GBP",
   "income": "32000.00",
   "spending": "18450.20",
+  "net_savings": "13549.80",
   "savings_growth": "5000.00",
   "new_cash_invested": "8000.00",
   "investment_metrics": {
@@ -2623,7 +2624,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <span class="method-badge method-get">GET</span>
     <code class="endpoint-path">/api/holdings/history</code>
   </div>
-  <p class="endpoint-summary">Net worth over time (monthly/quarterly/yearly).</p>
+  <p class="endpoint-summary">Net worth over time (monthly/quarterly/yearly). The envelope also carries an <code>opening</code> row: net worth carried forward to the range's first day, labelled with that date — the starting point period deltas should be measured from (rows are period-end samples).</p>
   <h4>Parameters</h4>
   <table class="params-table">
     <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -2639,6 +2640,12 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <h4>Example Response <span class="status-code">200</span></h4>
   <pre class="example-response"><code>{
   "preferred_currency": "GBP",
+  "opening": {
+    "month": "2026-01-01",
+    "available_wealth": "13800.00",
+    "unavailable_wealth": "17400.00",
+    "total_wealth": "31200.00"
+  },
   "rows": [
     {
       "month": "2026-01",

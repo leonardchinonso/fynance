@@ -4106,6 +4106,40 @@ impl Db {
         Ok(rows)
     }
 
+    /// Net worth carried forward to `as_of`, as a single row labelled with the
+    /// date itself — the opening point a period range measures *from*. Same
+    /// carry-forward rule as `get_holdings_for_summary`, so a range's opening
+    /// value and its summary agree.
+    pub fn net_worth_row_at(
+        &self,
+        as_of: NaiveDate,
+        profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<HoldingsHistoryRow> {
+        use crate::util::fx::CurrencyAggregator;
+
+        let mut available_agg: CurrencyAggregator = Default::default();
+        let mut unavailable_agg: CurrencyAggregator = Default::default();
+        for row in self.get_holdings_for_summary(as_of, profile_id)? {
+            if is_available_account(&row.account_type) {
+                available_agg.add(row.holding.value, &row.holding.currency, fx);
+            } else {
+                unavailable_agg.add(row.holding.value, &row.holding.currency, fx);
+            }
+        }
+        let available = available_agg.converted_sum();
+        let unavailable = unavailable_agg.converted_sum();
+        Ok(HoldingsHistoryRow {
+            month: as_of.format("%Y-%m-%d").to_string(),
+            available_wealth: available,
+            available_wealth_display: available_agg.display_currency(fx.preferred()),
+            unavailable_wealth: unavailable,
+            unavailable_wealth_display: unavailable_agg.display_currency(fx.preferred()),
+            total_wealth: available + unavailable,
+            total_wealth_display: None,
+        })
+    }
+
     /// Per-period series for the "Cumulative invested" chart: cumulative net
     /// contributions and the market value of investment + ISA holdings, both
     /// FX-converted to the preferred currency. Each is `None` for a period with
@@ -4967,7 +5001,7 @@ impl Db {
             start,
             end,
             profile_id,
-            Some(&[AccountType::Investment]),
+            Some(&[AccountType::Investment, AccountType::InvestmentIsa]),
             &[],
         )?);
         let sum_effective = |carry: &CarryForward| -> Decimal {
@@ -4994,14 +5028,21 @@ impl Db {
     }
 
     /// Net new contributions over `[start, end]` (cash AND equity added that is
-    /// not market movement), FX-converted to the preferred currency. So a fund
-    /// switch (sell A, buy B) nets to ~0, and RSU vests count as value in.
-    /// Sign by event: buy / vest = in (+), sell / withhold = out (-), transfer =
-    /// signed by quantity (negative quantity = shares out); split is excluded
-    /// (re-denomination, no value change). `quantity * price_per_share` is the
-    /// trade leg; fees are always a cost (+). Trade leg (`currency`) and fee
-    /// (`fee_currency`, falling back to `currency`) convert independently.
-    /// Profile-scoped via the owning account.
+    /// not market movement), FX-converted to the preferred currency. Scoped to
+    /// `investment` + `investment_isa` accounts — the same account set whose
+    /// values feed [`Self::compute_investment_metrics_with`], so
+    /// `total_growth - new_cash_invested = market_growth` is identity by
+    /// construction. Pension contributions are deliberately out (they live in
+    /// the Pension asset class).
+    /// So a fund switch (sell A, buy B) nets to ~0, and RSU vests count as value
+    /// in. Sign by event: buy / vest = in (+), sell / withhold = out (-),
+    /// transfer = signed by quantity (negative quantity = shares out); split is
+    /// excluded (re-denomination, no value change). `quantity * price_per_share`
+    /// is the trade leg; fees are always a cost (+). Trade leg (`currency`) and
+    /// fee (`fee_currency`, falling back to `currency`) convert independently at
+    /// the present-day rate — consistent with the holdings values, which also
+    /// convert at the present-day rate; per-date rates (`convert_as_of`) are a
+    /// CGT-only concern. Profile-scoped via the owning account.
     pub fn compute_new_cash_invested(
         &self,
         start: NaiveDate,
@@ -5015,12 +5056,9 @@ impl Db {
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(start_str), Box::new(end_str)];
-        let join = if let Some(pid) = profile_id {
+        if let Some(pid) = profile_id {
             args.push(Box::new(format!("%\"{pid}\"%")));
-            "JOIN accounts a ON a.id = i.account_id"
-        } else {
-            ""
-        };
+        }
         let profile_filter = if profile_id.is_some() {
             "AND a.profile_ids LIKE ?3"
         } else {
@@ -5029,8 +5067,10 @@ impl Db {
 
         let sql = format!(
             r"SELECT i.event_type, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
-              FROM investments i {join}
-              WHERE i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
+              FROM investments i
+              JOIN accounts a ON a.id = i.account_id
+              WHERE a.type IN ('investment', 'investment_isa')
+                AND i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
                 AND i.date >= ?1 AND i.date <= ?2 {profile_filter}"
         );
 
@@ -5108,11 +5148,26 @@ impl Db {
         Ok(sum_savings(end)? - sum_savings(start)?)
     }
 
-    /// `(income, spending)` over `[start, end]`, bucketed by category_type and
-    /// FX-converted. Income sums the income_taxable and income_non_taxable types
-    /// (signed, normally positive). Spending sums the absolute value of the
-    /// spending, donation_taxable and donation_non_taxable types. The
-    /// internal_transfer and interest_* types are excluded. Skips
+    /// `(income, spending)` over `[start, end]` for the portfolio cash card.
+    ///
+    /// Income sums positive legs whose category type is `income_*`. Spending
+    /// sums outflow legs (per-leg, absolute) whose category type is `spending`
+    /// or `donation_*`, minus two things that are not consumption:
+    ///
+    /// 1. legs under the "Moving money" category family — this dataset's
+    ///    transfer family, typed `spending`/`interest_taxable` instead of
+    ///    `internal_transfer` (see [`Self::in_transfer_family`]);
+    /// 2. outflow legs that pair with an opposite inflow leg on their day:
+    ///    an equal (currency, cent-normalised amount) leg on another account
+    ///    is an unflagged internal transfer, a same-account pair is a
+    ///    refund/cancellation reversal, and a pass-2 match on `fx`-converted
+    ///    amounts within tolerance pairs cross-currency conversions (a USD
+    ///    brokerage wire against the GBP credit it bought). Each leg pairs at
+    ///    most once; pairing keys on time and amount, never descriptions.
+    ///
+    /// Summing signed amounts per (type, currency) and taking `abs` of the
+    /// group hid both problems: an inflow-dominated bucket counted as
+    /// "spending", and transfer legs cancelled real outflows. Skips
     /// `exclude_from_summary` rows; profile-scoped via the owning account.
     pub fn compute_category_type_cash(
         &self,
@@ -5121,7 +5176,14 @@ impl Db {
         profile_id: Option<&str>,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<(Decimal, Decimal)> {
-        use crate::util::fx::CurrencyAggregator;
+        struct Leg {
+            account_id: String,
+            time: String,
+            day: String,
+            currency: String,
+            amount: Decimal,
+            category_id: Option<String>,
+        }
 
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
@@ -5140,45 +5202,192 @@ impl Db {
         };
 
         let sql = format!(
-            r"SELECT c.category_type, t.currency, SUM(CAST(t.amount AS REAL))
+            r"SELECT t.account_id, t.date, t.currency, t.amount, t.category_id
               FROM transactions t
-              JOIN categories c ON c.id = t.category_id
               {join}
               WHERE t.date >= ?1 AND t.date <= ?2
-                AND t.exclude_from_summary = 0 {profile_filter}
-              GROUP BY c.category_type, t.currency"
+                AND t.exclude_from_summary = 0 {profile_filter}"
         );
-
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(
-                rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, f64>(2)?,
-                    ))
-                },
-            )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        let mut income = CurrencyAggregator::default();
-        let mut spending = CurrencyAggregator::default();
-        for (ctype_str, currency, total_f64) in rows {
-            let Some(ctype) = CategoryType::parse(&ctype_str) else {
-                continue;
-            };
-            let amount = Decimal::try_from(total_f64).map_err(|e| {
-                anyhow!("cash total for category type {ctype_str} is not representable: {e}")
+        let legs: Vec<Leg> = {
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())), |row| {
+                let amount_str: String = row.get(3)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    parse_decimal_column(3, "transaction amount", &amount_str)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
             })?;
-            if CategoryType::INCOME.contains(&ctype) {
-                income.add(amount, &currency, fx);
-            } else if CategoryType::SPENDING.contains(&ctype) {
-                spending.add(amount.abs(), &currency, fx);
+            rows.map(|r| {
+                r.map(|(account_id, time, currency, amount, category_id)| Leg {
+                    day: time.get(..10).unwrap_or(&time).to_string(),
+                    account_id,
+                    time,
+                    currency,
+                    amount,
+                    category_id,
+                })
+            })
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        // Category metadata: name (for the transfer-family walk), parent, type.
+        let cats: HashMap<String, (String, Option<String>, Option<CategoryType>)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, name, parent_id, category_type FROM categories",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let id: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let parent_id: Option<String> = row.get(2)?;
+                let ctype: Option<String> = row.get(3)?;
+                Ok((
+                    id,
+                    (name, parent_id, ctype.as_deref().and_then(CategoryType::parse)),
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<HashMap<_, _>>>()?
+        };
+
+        let leg_category_type = |leg: &Leg| -> Option<CategoryType> {
+            leg.category_id.as_deref().and_then(|id| cats.get(id)).and_then(|(_, _, ct)| *ct)
+        };
+        let in_family = |leg: &Leg| -> bool {
+            let mut cur = leg
+                .category_id
+                .as_deref()
+                .and_then(|id| cats.get(id))
+                .and_then(|(_, parent, _)| parent.as_deref().map(str::to_string));
+            let mut hops = 0;
+            while let Some(id) = cur {
+                if hops > 8 {
+                    break;
+                }
+                hops += 1;
+                match cats.get(&id) {
+                    Some((name, parent, _)) => {
+                        if name.eq_ignore_ascii_case("moving money") {
+                            return true;
+                        }
+                        cur = parent.as_deref().map(str::to_string);
+                    }
+                    None => break,
+                }
+            }
+            false
+        };
+
+        let tod = |time: &str| -> i64 {
+            let hh: i64 = time.get(11..13).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let mm: i64 = time.get(14..16).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let ss: i64 = time.get(17..19).and_then(|s| s.parse().ok()).unwrap_or(0);
+            hh * 3600 + mm * 60 + ss
+        };
+
+        // Pass 1: exact (day, currency, cent-normalised amount) pairing.
+        let mut in_used = vec![false; legs.len()];
+        let mut out_paired = vec![false; legs.len()];
+        let mut groups: HashMap<(String, String, String), Vec<usize>> = HashMap::new();
+        for (i, leg) in legs.iter().enumerate() {
+            if leg.amount.is_zero() {
+                continue;
+            }
+            groups
+                .entry((
+                    leg.day.clone(),
+                    leg.currency.clone(),
+                    leg.amount.abs().round_dp(2).to_string(),
+                ))
+                .or_default()
+                .push(i);
+        }
+        for idxs in groups.values() {
+            let mut outs: Vec<usize> = idxs.iter().copied().filter(|&i| legs[i].amount < Decimal::ZERO).collect();
+            let avail: Vec<usize> = idxs.iter().copied().filter(|&i| legs[i].amount > Decimal::ZERO).collect();
+            outs.sort_by_key(|&i| legs[i].time.clone());
+            for o in outs {
+                let mut best: Option<(i64, usize)> = None;
+                for &i in avail.iter() {
+                    if in_used[i] {
+                        continue;
+                    }
+                    let same_account = i64::from(legs[i].account_id == legs[o].account_id) * 86_400;
+                    let score = same_account + (tod(&legs[o].time) - tod(&legs[i].time)).abs();
+                    if best.is_none_or(|(s, _)| score < s) {
+                        best = Some((score, i));
+                    }
+                }
+                if let Some((_, i)) = best {
+                    in_used[i] = true;
+                    out_paired[o] = true;
+                }
             }
         }
-        Ok((income.converted_sum(), spending.converted_sum()))
+
+        // Pass 2: cross-currency conversions on the same day, within a small
+        // tolerance of the fx-converted amount, for outflow legs that would
+        // otherwise count as spending.
+        let mut ins_by_day: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, leg) in legs.iter().enumerate() {
+            if leg.amount > Decimal::ZERO && !in_used[i] {
+                ins_by_day.entry(leg.day.clone()).or_default().push(i);
+            }
+        }
+        for o in 0..legs.len() {
+            let leg = &legs[o];
+            if leg.amount >= Decimal::ZERO || out_paired[o] {
+                continue;
+            }
+            if in_family(leg) {
+                continue;
+            }
+            let Some(ctype) = leg_category_type(leg) else { continue };
+            if !CategoryType::SPENDING.contains(&ctype) {
+                continue;
+            }
+            let out_conv = fx.convert(leg.amount.abs(), &leg.currency);
+            let tol = out_conv.max(Decimal::ONE + Decimal::ONE);
+            let mut best: Option<((i64, Decimal), usize)> = None;
+            for &i in ins_by_day.get(&leg.day).map(Vec::as_slice).unwrap_or(&[]) {
+                if in_used[i] {
+                    continue;
+                }
+                let in_conv = fx.convert(legs[i].amount, &legs[i].currency);
+                let cost = (in_conv - out_conv).abs();
+                if cost > tol {
+                    continue;
+                }
+                let score = (tod(&legs[o].time) - tod(&legs[i].time)).abs();
+                if best.is_none_or(|(s, _)| (score, cost) < s) {
+                    best = Some(((score, cost), i));
+                }
+            }
+            if let Some((_, i)) = best {
+                in_used[i] = true;
+                out_paired[o] = true;
+            }
+        }
+
+        let mut income = Decimal::ZERO;
+        let mut spending = Decimal::ZERO;
+        for (i, leg) in legs.iter().enumerate() {
+            let Some(ctype) = leg_category_type(leg) else {
+                continue;
+            };
+            if leg.amount > Decimal::ZERO {
+                if CategoryType::INCOME.contains(&ctype) {
+                    income += fx.convert(leg.amount, &leg.currency);
+                }
+            } else if leg.amount < Decimal::ZERO && CategoryType::SPENDING.contains(&ctype) {
+                if out_paired[i] || in_family(leg) {
+                    continue;
+                }
+                spending += fx.convert(leg.amount.abs(), &leg.currency);
+            }
+        }
+        Ok((income, spending))
     }
 
     // ── Holdings close / reopen / dry-run ──────────────────────────────────
@@ -11245,3 +11454,7 @@ mod fingerprint_dedupe_tests {
         assert_eq!(reimport.rows_inserted, 0);
     }
 }
+
+#[cfg(test)]
+#[path = "overview_cash_tests.rs"]
+mod overview_cash_tests;

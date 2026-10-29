@@ -2,6 +2,7 @@ import { api } from "@/api/client"
 import type { Granularity, HoldingsHistoryRow } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
+import { combineRemoteData } from "@/lib/remote_data"
 
 /**
  * Fetches portfolio history rows for the History view.
@@ -30,5 +31,5 @@ export function usePortfolioHistoryData(
     () => api.getPortfolioHistory(start, end, granularity, profileId),
     { tag: "holdings-history", hard: [profileId, granularity], soft: [start, end], enabled },
   )
-  return data
+  return combineRemoteData([data] as const, ([env]) => env.rows)
 }

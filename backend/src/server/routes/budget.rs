@@ -164,6 +164,7 @@ pub async fn get_cash_summary(
             preferred_currency: fx.preferred().to_string(),
             income,
             spending,
+            net_savings: income - spending,
             savings_growth,
             new_cash_invested,
             investment_metrics,
