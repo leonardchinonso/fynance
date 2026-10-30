@@ -802,7 +802,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             },
             "/api/holdings/history": {
                 "get": {
-                    "summary": "Net worth history over time (available/unavailable/total, plus period_start_wealth on the period's first day)",
+                    "summary": "Net worth history over time (available/unavailable/total, plus period_start_wealth as the value entering the period's first day)",
                     "parameters": [
                         { "name": "start", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
                         { "name": "end", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },

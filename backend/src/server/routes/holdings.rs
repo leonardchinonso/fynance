@@ -268,9 +268,10 @@ pub async fn get_holdings_history(
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let rows = db.get_monthly_net_worth(start, end, &granularity, profile_id, &fx)?;
-        // Opening value for period-over-period deltas: the first bucket is
-        // the first period *end*, which is not the start of the period.
-        let period_start_wealth = db.net_worth_as_of(start, profile_id, &fx)?;
+        // Opening value for period-over-period deltas: the state entering
+        // the period's first day, the same basis the account cards open
+        // with. The first bucket is the first period *end*, not the start.
+        let period_start_wealth = db.net_worth_entering(start, profile_id, &fx)?;
         let preferred = fx.preferred().to_string();
         (rows, preferred, period_start_wealth)
     };

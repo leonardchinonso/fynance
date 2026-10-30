@@ -217,6 +217,9 @@ fn spending_counts_outflows_only_income_counts_inflows_only() {
     );
 }
 
+// Pins the type-exclusion invariant (internal_transfer / interest belong to
+// neither bucket) against future refactors of the bucket sets. The signed-
+// netting regression itself is caught by the test above.
 #[test]
 fn internal_transfer_and_interest_types_excluded_from_both() {
     let (db, _f) = test_db();
@@ -298,26 +301,37 @@ fn investment_metrics_and_new_cash_cover_the_investments_asset_class() {
     db.create_account(&make_account("chk", AccountType::Checking))
         .unwrap();
 
+    // Both in-scope accounts are valued on 31 Dec, before the 1 Jan period
+    // start, so they open the period; a valuation dated 1 Jan itself would
+    // be period activity (pinned by the day-1 test below).
     db.upsert_holdings(
         "inv",
         &[
-            holding("inv", "AAPL", dec!(100), dt(2025, 1, 1)),
+            holding("inv", "AAPL", dec!(100), dt(2024, 12, 31)),
             holding("inv", "AAPL", dec!(150), dt(2025, 6, 1)),
         ],
     )
     .unwrap();
+    // ISA: 100 entering the period; a 20 buy on the first day shows up in
+    // the same-day 120 valuation.
     db.upsert_holdings(
         "isa",
         &[
-            holding("isa", "VWRP", dec!(100), dt(2025, 1, 1)),
-            holding("isa", "VWRP", dec!(100), dt(2025, 6, 1)),
+            holding("isa", "VWRP", dec!(100), dt(2024, 12, 31)),
+            holding("isa", "VWRP", dec!(120), dt(2025, 1, 1)),
         ],
     )
     .unwrap();
-    db.upsert_holdings("pen", &[holding("pen", "FUND", dec!(9000), dt(2025, 1, 1))])
-        .unwrap();
-    db.upsert_holdings("chk", &[holding("chk", "_CASH", dec!(777), dt(2025, 1, 1))])
-        .unwrap();
+    db.upsert_holdings(
+        "pen",
+        &[holding("pen", "FUND", dec!(9000), dt(2024, 12, 31))],
+    )
+    .unwrap();
+    db.upsert_holdings(
+        "chk",
+        &[holding("chk", "_CASH", dec!(777), dt(2024, 12, 31))],
+    )
+    .unwrap();
 
     for body in [
         event(
@@ -333,7 +347,7 @@ fn investment_metrics_and_new_cash_cover_the_investments_asset_class() {
             "isa",
             "buy",
             "VWRP",
-            "2025-02-01T00:00:00",
+            "2025-01-01T00:00:00",
             "1",
             "20",
             "GBP",
@@ -368,18 +382,20 @@ fn investment_metrics_and_new_cash_cover_the_investments_asset_class() {
             &gbp_fx(),
         )
         .unwrap();
-    // Value covers investment + ISA only.
+    // Value covers investment + ISA only, opening at the value held entering
+    // the period (a first-day valuation is activity, not the opening).
     assert_eq!(m.start_value, dec!(200));
-    assert_eq!(m.end_value, dec!(250));
-    assert_eq!(m.total_growth, dec!(50));
+    assert_eq!(m.end_value, dec!(270));
+    assert_eq!(m.total_growth, dec!(70));
     // And the cash covers exactly those accounts: pension and checking buys
     // must not leak in, or market_growth absorbs them as "performance".
+    // The day-1 ISA buy counts once, as new cash, not as a phantom loss.
     assert_eq!(m.new_cash_invested, dec!(70));
-    assert_eq!(m.market_growth, dec!(-20));
+    assert_eq!(m.market_growth, dec!(0));
 }
 
 #[test]
-fn transfers_between_scoped_accounts_cancel_out_of_scope_transfers_count() {
+fn transfers_between_in_scope_accounts_net_to_zero_and_out_of_scope_transfers_are_ignored() {
     let (db, _f) = test_db();
     db.create_account(&make_account("a", AccountType::Investment))
         .unwrap();
@@ -489,7 +505,7 @@ fn new_cash_invested_converts_at_event_date_rate() {
 // ── Problem 3: period change measured from the period's first day ───────────
 
 #[test]
-fn net_worth_as_of_is_the_period_first_day_not_the_first_bucket_end() {
+fn period_opening_is_the_first_day_not_the_first_bucket_end() {
     let (db, _f) = test_db();
     db.create_account(&make_account("inv", AccountType::Investment))
         .unwrap();
@@ -503,15 +519,15 @@ fn net_worth_as_of_is_the_period_first_day_not_the_first_bucket_end() {
     .unwrap();
 
     let fx = gbp_fx();
-    // Opening value = nothing on the period's first day; the first bucket
-    // (Jan 31) already includes the Jan 5 snapshot.
+    // Opening value = nothing entering the period's first day; the first
+    // bucket (Jan 31) already includes the Jan 5 snapshot.
     assert_eq!(
-        db.net_worth_as_of(dt(2025, 1, 1).date(), None, &fx)
+        db.net_worth_entering(dt(2025, 1, 1).date(), None, &fx)
             .unwrap(),
         dec!(0)
     );
     assert_eq!(
-        db.net_worth_as_of(dt(2025, 1, 10).date(), None, &fx)
+        db.net_worth_entering(dt(2025, 1, 10).date(), None, &fx)
             .unwrap(),
         dec!(500)
     );
@@ -530,7 +546,53 @@ fn net_worth_as_of_is_the_period_first_day_not_the_first_bucket_end() {
     // The delta from the period's first day is 800, not the 300 you get by
     // measuring from the first bucket's month-end.
     let opening = db
-        .net_worth_as_of(dt(2025, 1, 1).date(), None, &fx)
+        .net_worth_entering(dt(2025, 1, 1).date(), None, &fx)
         .unwrap();
     assert_eq!(history[1].total_wealth - opening, dec!(800));
+}
+
+#[test]
+fn first_day_valuation_is_period_activity_not_the_opening() {
+    let (db, _f) = test_db();
+    db.create_account(&make_account("inv", AccountType::Investment))
+        .unwrap();
+    // A valuation dated the period's first day (date-only rows store
+    // T00:00:00) belongs to the change over the period, and the opening
+    // excludes it exactly as the per-account cards' carry-forward does.
+    db.upsert_holdings(
+        "inv",
+        &[
+            holding("inv", "AAPL", dec!(250), dt(2025, 1, 1)),
+            holding("inv", "AAPL", dec!(500), dt(2025, 1, 15)),
+        ],
+    )
+    .unwrap();
+
+    let fx = gbp_fx();
+    assert_eq!(
+        db.net_worth_entering(dt(2025, 1, 1).date(), None, &fx)
+            .unwrap(),
+        dec!(0)
+    );
+    assert_eq!(
+        db.net_worth_entering(dt(2025, 1, 2).date(), None, &fx)
+            .unwrap(),
+        dec!(250)
+    );
+
+    let history = db
+        .get_monthly_net_worth(
+            dt(2025, 1, 1).date(),
+            dt(2025, 1, 31).date(),
+            &fynance::model::Granularity::Monthly,
+            None,
+            &fx,
+        )
+        .unwrap();
+    assert_eq!(history[0].total_wealth, dec!(500));
+    // The day-1 valuation counts in the period change, not the opening.
+    let opening = db
+        .net_worth_entering(dt(2025, 1, 1).date(), None, &fx)
+        .unwrap();
+    assert_eq!(history[0].total_wealth - opening, dec!(500));
 }

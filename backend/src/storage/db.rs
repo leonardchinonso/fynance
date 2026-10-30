@@ -4107,23 +4107,27 @@ impl Db {
     }
 
     /// Net worth (available + unavailable, converted to the preferred
-    /// currency) as of `date`, under the same carry-forward rule as
-    /// `get_holdings_for_summary`, so a period's opening value reconciles
-    /// with its first-day summary.
-    pub fn net_worth_as_of(
+    /// currency) entering `date`: the latest valuations dated before that
+    /// day, under the same carry-forward rule as `get_holdings_for_summary`.
+    /// This is exactly what the per-account balance cards open with
+    /// (`get_balances_in_range` carries `as_of < date 00:00`), so the
+    /// overview's period delta and the card deltas share one basis. A
+    /// valuation dated on `date` itself is period activity, not the opening.
+    pub fn net_worth_entering(
         &self,
         date: NaiveDate,
         profile_id: Option<&str>,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<Decimal> {
+        let day_before = date - chrono::Duration::days(1);
         let mut carry = CarryForward::new(self.holding_snapshots_in_range(
-            date,
-            date,
+            day_before,
+            day_before,
             profile_id,
             None,
             &[],
         )?);
-        carry.advance_to(date);
+        carry.advance_to(day_before);
         Ok(carry
             .effective()
             .map(|s| fx.convert(s.value, &s.currency))
@@ -4960,8 +4964,9 @@ impl Db {
     /// Investments asset class (Investment + InvestmentIsa accounts, matching
     /// the overview donut's "Investments" slice and
     /// `account_type_to_asset_class`), FX-converted via `fx` per holding
-    /// currency, so they stay consistent with net worth. `new_cash_invested`
-    /// covers the same account set (see
+    /// currency, so they stay consistent with net worth. `start_value` is the
+    /// state entering `start`, so first-day flows and valuations count as
+    /// period activity. `new_cash_invested` covers the same account set (see
     /// [`Self::compute_new_cash_invested`]). `market_growth` strips that out
     /// of the total value change to isolate price movement.
     pub fn compute_investment_metrics(
@@ -4986,14 +4991,20 @@ impl Db {
         fx: &crate::util::fx::FxRateMap,
         new_cash_invested: Decimal,
     ) -> Result<InvestmentMetrics> {
-        // One windowed fetch instead of two full carry-forward scans: advance
-        // to start for the opening sum, then on to end for the closing sum.
-        // Closed holdings are invariant-zeroed, so no is_closed filter.
-        // Investment + ISA accounts, the Investments asset class, the same
-        // set `compute_new_cash_invested` sums over and the overview donut
-        // draws, so growth and cash cover the same accounts.
+        // One windowed fetch instead of two full carry-forward scans. The
+        // opening value is what was held entering `start` (latest valuation
+        // dated before the first day, the same basis as the account cards),
+        // so a valuation or flow dated on the first day counts as period
+        // activity: the flow lands in new_cash_invested exactly once instead
+        // of sitting in both the opening value and new cash, which would
+        // cancel out inside market_growth as a phantom loss. Closed holdings
+        // are invariant-zeroed, so no is_closed filter. Investment + ISA
+        // accounts, the Investments asset class, the same set
+        // `compute_new_cash_invested` sums over and the overview donut draws,
+        // so growth and cash cover the same accounts.
+        let day_before_start = start - chrono::Duration::days(1);
         let mut carry = CarryForward::new(self.holding_snapshots_in_range(
-            start,
+            day_before_start,
             end,
             profile_id,
             Some(&[AccountType::Investment, AccountType::InvestmentIsa]),
@@ -5005,7 +5016,7 @@ impl Db {
                 .map(|s| fx.convert(s.value, &s.currency))
                 .sum()
         };
-        carry.advance_to(start);
+        carry.advance_to(day_before_start);
         let start_value = sum_effective(&carry);
         carry.advance_to(end);
         let end_value = sum_effective(&carry);
