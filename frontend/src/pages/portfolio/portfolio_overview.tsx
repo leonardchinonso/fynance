@@ -174,7 +174,11 @@ function PortfolioOverviewInternal({
 
   const totalIncome = cashSummary ? parseFloat(cashSummary.income) : 0
   const totalSpending = cashSummary ? parseFloat(cashSummary.spending) : 0
-  const netSavings = cashSummary ? parseFloat(cashSummary.savings_growth) : 0
+  // Net Savings sits between Total Income and Total Spending, so it has to BE
+  // their difference. It previously showed savings_growth (the change in
+  // savings-account balances), a different quantity that read as income minus
+  // spending but never equalled it.
+  const netSavings = totalIncome - totalSpending
   const newCashInvested = cashSummary ? parseFloat(cashSummary.new_cash_invested) : 0
   const totalGrowth = cashSummary ? parseFloat(cashSummary.investment_metrics.total_growth) : 0
   const marketGrowth = cashSummary ? parseFloat(cashSummary.investment_metrics.market_growth) : 0
@@ -394,7 +398,7 @@ function PortfolioOverviewInternal({
                             <span className="font-semibold text-sm text-white">Net Savings</span>
                           </div>
                           <p className="text-xs text-white/70 leading-relaxed">
-                            The change in your savings and emergency-fund account balances over this period (end balance minus start balance).
+                            Total income minus total spending over this period: what was left after the money that came in paid for the money that went out.
                           </p>
                         </RichTooltipContent>
                       </Tooltip>

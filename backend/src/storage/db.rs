@@ -4071,7 +4071,20 @@ impl Db {
     ) -> Result<Vec<HoldingsHistoryRow>> {
         use crate::util::fx::CurrencyAggregator;
 
-        let periods = generate_period_end_dates(from, to, granularity);
+        let mut periods = generate_period_end_dates(from, to, granularity);
+        // Anchor the first point at the period's first day rather than the first
+        // month-end. generate_period_end_dates clamps the LAST point to `to` but
+        // leaves the first at its month-end, so the Overview's "over selected
+        // period" change opened a month late: for a "Last 12 months" range it
+        // measured from end-of-first-month net worth instead of the range start,
+        // disagreeing with the per-account balance deltas (which already open at
+        // `from`). With a single period the sole point stays at the range end, so
+        // a sub-month range still reports its closing value.
+        if periods.len() > 1 {
+            if let Some(first) = periods.first_mut() {
+                first.1 = from;
+            }
+        }
         let mut carry =
             CarryForward::new(self.holding_snapshots_in_range(from, to, profile_id, None, &[])?);
         let mut rows = Vec::with_capacity(periods.len());
@@ -4963,11 +4976,18 @@ impl Db {
         // One windowed fetch instead of two full carry-forward scans: advance
         // to start for the opening sum, then on to end for the closing sum.
         // Closed holdings are invariant-zeroed, so no is_closed filter.
+        //
+        // The account set must match `compute_new_cash_invested`: both cover the
+        // Investments asset class (investment + ISA), so `market_growth =
+        // total_growth - new_cash_invested` subtracts contributions from the
+        // same accounts whose value change it measures. Excluding ISA here while
+        // its contributions landed in new_cash made the two describe different
+        // portfolios.
         let mut carry = CarryForward::new(self.holding_snapshots_in_range(
             start,
             end,
             profile_id,
-            Some(&[AccountType::Investment]),
+            Some(&[AccountType::Investment, AccountType::InvestmentIsa]),
             &[],
         )?);
         let sum_effective = |carry: &CarryForward| -> Decimal {
@@ -5015,13 +5035,14 @@ impl Db {
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(start_str), Box::new(end_str)];
-        let join = if let Some(pid) = profile_id {
+        // Always join accounts: new cash invested covers the Investments asset
+        // class (investment + ISA) so it matches the start/end value set in
+        // `compute_investment_metrics_with`. Without this, pension contributions
+        // and stray investment events booked against non-investment accounts
+        // (e.g. a checking account) leaked into the figure, so it no longer
+        // described the same portfolio as total_growth.
+        let profile_filter = if let Some(pid) = profile_id {
             args.push(Box::new(format!("%\"{pid}\"%")));
-            "JOIN accounts a ON a.id = i.account_id"
-        } else {
-            ""
-        };
-        let profile_filter = if profile_id.is_some() {
             "AND a.profile_ids LIKE ?3"
         } else {
             ""
@@ -5029,8 +5050,10 @@ impl Db {
 
         let sql = format!(
             r"SELECT i.event_type, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
-              FROM investments i {join}
+              FROM investments i
+              JOIN accounts a ON a.id = i.account_id
               WHERE i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
+                AND a.type IN ('investment', 'investment_isa')
                 AND i.date >= ?1 AND i.date <= ?2 {profile_filter}"
         );
 
@@ -5109,11 +5132,21 @@ impl Db {
     }
 
     /// `(income, spending)` over `[start, end]`, bucketed by category_type and
-    /// FX-converted. Income sums the income_taxable and income_non_taxable types
-    /// (signed, normally positive). Spending sums the absolute value of the
-    /// spending, donation_taxable and donation_non_taxable types. The
-    /// internal_transfer and interest_* types are excluded. Skips
-    /// `exclude_from_summary` rows; profile-scoped via the owning account.
+    /// FX-converted. Income sums the gross inflows (amount > 0) of the
+    /// income_taxable and income_non_taxable types. Spending sums the gross
+    /// outflows (amount < 0) of the spending, donation_taxable and
+    /// donation_non_taxable types. The internal_transfer and interest_* types
+    /// are excluded. Skips `exclude_from_summary` rows; profile-scoped via the
+    /// owning account.
+    ///
+    /// Signs are resolved per transaction, not per category bucket: summing a
+    /// category's signed amounts first and taking the absolute value nets
+    /// refunds, transfers-in and misfiled income against real spending, so a
+    /// year of genuine outgoings collapses to the small residual between the
+    /// two directions. Worse, because it aggregated per currency, a
+    /// foreign-currency account whose transactions net to a large negative had
+    /// that magnitude counted as spending. "Spent" means money that actually
+    /// went out, so only the outflow leg of each transaction counts.
     pub fn compute_category_type_cash(
         &self,
         start: NaiveDate,
@@ -5139,14 +5172,15 @@ impl Db {
             ""
         };
 
+        // Amounts stay TEXT and are parsed as Decimal in Rust: summing in SQL
+        // would force a lossy CAST to REAL, against the money-as-Decimal rule.
         let sql = format!(
-            r"SELECT c.category_type, t.currency, SUM(CAST(t.amount AS REAL))
+            r"SELECT c.category_type, t.currency, t.amount
               FROM transactions t
               JOIN categories c ON c.id = t.category_id
               {join}
               WHERE t.date >= ?1 AND t.date <= ?2
-                AND t.exclude_from_summary = 0 {profile_filter}
-              GROUP BY c.category_type, t.currency"
+                AND t.exclude_from_summary = 0 {profile_filter}"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -5157,7 +5191,7 @@ impl Db {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, f64>(2)?,
+                        row.get::<_, String>(2)?,
                     ))
                 },
             )?
@@ -5165,17 +5199,19 @@ impl Db {
 
         let mut income = CurrencyAggregator::default();
         let mut spending = CurrencyAggregator::default();
-        for (ctype_str, currency, total_f64) in rows {
+        for (ctype_str, currency, amount_str) in rows {
             let Some(ctype) = CategoryType::parse(&ctype_str) else {
                 continue;
             };
-            let amount = Decimal::try_from(total_f64).map_err(|e| {
-                anyhow!("cash total for category type {ctype_str} is not representable: {e}")
-            })?;
+            let amount = amount_str
+                .parse::<Decimal>()
+                .map_err(|_| anyhow!("invalid transaction amount {amount_str:?}"))?;
             if CategoryType::INCOME.contains(&ctype) {
-                income.add(amount, &currency, fx);
-            } else if CategoryType::SPENDING.contains(&ctype) {
-                spending.add(amount.abs(), &currency, fx);
+                if amount > Decimal::ZERO {
+                    income.add(amount, &currency, fx);
+                }
+            } else if CategoryType::SPENDING.contains(&ctype) && amount < Decimal::ZERO {
+                spending.add(-amount, &currency, fx);
             }
         }
         Ok((income.converted_sum(), spending.converted_sum()))
@@ -8268,7 +8304,10 @@ mod consolidation_tests {
         assert_eq!(
             totals,
             vec![
-                ("2025-01".to_string(), dec!(100)),
+                // First point now anchors at the range start (2025-01-01); the
+                // first holding is snapshotted on 2025-01-15, so net worth is 0
+                // at the very start of the period.
+                ("2025-01".to_string(), dec!(0)),
                 ("2025-02".to_string(), dec!(150)),
                 ("2025-03".to_string(), dec!(1170)),
                 ("2025-04".to_string(), dec!(1120)),
@@ -8350,7 +8389,10 @@ mod consolidation_tests {
             .get_monthly_net_worth(from, to, &Granularity::Monthly, None, &fx)
             .unwrap();
         let totals: Vec<Decimal> = history.iter().map(|r| r.total_wealth).collect();
-        assert_eq!(totals, vec![dec!(170), dec!(170)]);
+        // First point anchors at the range start (2025-03-01): AAPL is still at
+        // its 2025-01-15 value of 100 and MSFT carries its 2025-02-05 value of
+        // 50, so 150 before the 2025-03-10 AAPL re-snapshot lifts it to 170.
+        assert_eq!(totals, vec![dec!(150), dec!(170)]);
         assert_eq!(
             history.last().unwrap().total_wealth,
             summary_net_worth(&db, to, &fx)
@@ -8368,6 +8410,136 @@ mod consolidation_tests {
             .unwrap();
         assert_eq!(m.start_value, dec!(150));
         assert_eq!(m.end_value, dec!(170));
+    }
+
+    // The net-worth delta must open at the period's first day. The series used
+    // to start at the first month-end, so a range opening mid-month measured its
+    // change from a month late.
+    #[test]
+    fn history_first_point_anchors_at_range_start() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("t212", AccountType::Investment))
+            .unwrap();
+        // One snapshot before the range, one inside the first month.
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(100),
+                naive_dt(2024, 12, 1),
+            )],
+        )
+        .unwrap();
+        db.upsert_holdings(
+            "t212",
+            &[make_holding(
+                "t212",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(200),
+                naive_dt(2025, 1, 20),
+            )],
+        )
+        .unwrap();
+
+        let fx = gbp_fx();
+        let history = db
+            .get_monthly_net_worth(
+                naive_date(2025, 1, 1),
+                naive_date(2025, 2, 28),
+                &Granularity::Monthly,
+                None,
+                &fx,
+            )
+            .unwrap();
+        let totals: Vec<Decimal> = history.iter().map(|r| r.total_wealth).collect();
+        // First point = range start (2025-01-01 -> 100 carried from December),
+        // not the first month-end (2025-01-31 -> 200 after the mid-month snapshot).
+        assert_eq!(totals, vec![dec!(100), dec!(200)]);
+    }
+
+    // All three investment figures must describe one account set: the
+    // Investments asset class (investment + ISA). Start/end value used to cover
+    // investment-only while new_cash_invested swept in pension and stray
+    // non-investment accounts, so market_growth subtracted contributions from
+    // accounts whose value change it never measured.
+    #[test]
+    fn investment_metrics_cover_investment_and_isa_only() {
+        let (db, _file) = test_db();
+        db.create_account(&make_account("inv", AccountType::Investment))
+            .unwrap();
+        db.create_account(&make_account("isa", AccountType::InvestmentIsa))
+            .unwrap();
+        db.create_account(&make_account("pen", AccountType::Pension))
+            .unwrap();
+        db.create_account(&make_account("chk", AccountType::Checking))
+            .unwrap();
+
+        for (acct, sym, v0, v1) in [
+            ("inv", "INV", 1000i64, 1500i64),
+            ("isa", "ISA", 500, 800),
+            ("pen", "PEN", 2000, 2600),
+        ] {
+            db.upsert_holdings(
+                acct,
+                &[make_holding(
+                    acct,
+                    sym,
+                    HoldingType::Fund,
+                    Decimal::from(v0),
+                    naive_dt(2025, 1, 1),
+                )],
+            )
+            .unwrap();
+            db.upsert_holdings(
+                acct,
+                &[make_holding(
+                    acct,
+                    sym,
+                    HoldingType::Fund,
+                    Decimal::from(v1),
+                    naive_dt(2025, 6, 15),
+                )],
+            )
+            .unwrap();
+        }
+
+        for (acct, sym, qty, price) in [
+            ("inv", "INV", "10", "10"),
+            ("isa", "ISA", "5", "20"),
+            ("pen", "PEN", "50", "10"),
+            ("chk", "C", "1", "50"),
+        ] {
+            db.create_investment_event(&crate::model::CreateInvestmentEventBody {
+                account_id: acct.to_string(),
+                event_type: "buy".to_string(),
+                symbol: sym.to_string(),
+                date: "2025-03-01T00:00:00".to_string(),
+                quantity: qty.to_string(),
+                price_per_share: price.to_string(),
+                fee: None,
+                currency: "GBP".to_string(),
+                fee_currency: None,
+                notes: None,
+                source_document_ids: Vec::new(),
+            })
+            .unwrap();
+        }
+
+        let fx = gbp_fx();
+        let m = db
+            .compute_investment_metrics(naive_date(2025, 1, 1), naive_date(2025, 6, 30), None, &fx)
+            .unwrap();
+
+        // Start/end cover investment + ISA (pension excluded): 1500 -> 2300.
+        assert_eq!(m.start_value, dec!(1500));
+        assert_eq!(m.end_value, dec!(2300));
+        assert_eq!(m.total_growth, dec!(800));
+        // New cash = inv 100 + isa 100; pension 500 and checking 50 excluded.
+        assert_eq!(m.new_cash_invested, dec!(200));
+        assert_eq!(m.market_growth, dec!(600));
     }
 
     #[test]
@@ -8730,6 +8902,103 @@ mod transaction_dryrun_tests {
             updated_at: None,
         }])
         .unwrap()
+    }
+
+    fn typed_leaf(db: &Db, name: &str, parent_id: &str, category_type: CategoryType) -> String {
+        db.create_category(&CreateCategoryPayload {
+            name: name.to_string(),
+            parent_id: Some(parent_id.to_string()),
+            display_order: None,
+            description: None,
+            category_type,
+        })
+        .unwrap()
+        .id
+    }
+
+    fn categorised_txn(
+        date: (i32, u32, u32),
+        amount: &str,
+        currency: &str,
+        category_id: &str,
+    ) -> ImportTransaction {
+        ImportTransaction {
+            date: NaiveDate::from_ymd_opt(date.0, date.1, date.2)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            description: "txn".to_string(),
+            amount: amount.parse().unwrap(),
+            currency: Some(currency.to_string()),
+            category_id: Some(category_id.to_string()),
+            ..Default::default()
+        }
+    }
+
+    // Total Spending must be the gross outflow of genuine spending categories,
+    // not the absolute value of each category_type's signed, per-currency net.
+    // The old aggregation let refunds and inflows cancel real spending, counted
+    // a foreign-currency account's net magnitude as spend, and swept
+    // internal-transfer and interest rows into the figure.
+    #[test]
+    fn cash_summary_spending_is_gross_outflow_by_direction() {
+        let (db, _file) = test_db();
+        setup_test_account(&db, "acc1");
+
+        let root = new_category(&db, "ZZRoot", None);
+        let groceries = typed_leaf(&db, "ZZSpend", &root, CategoryType::Spending);
+        let transfer = typed_leaf(&db, "ZZTransfer", &root, CategoryType::InternalTransfer);
+        let interest = typed_leaf(&db, "ZZInterest", &root, CategoryType::InterestTaxable);
+        let salary = typed_leaf(&db, "ZZIncome", &root, CategoryType::IncomeTaxable);
+
+        let txns = vec![
+            // Genuine GBP spending, plus a refund that must NOT net against it.
+            categorised_txn((2025, 2, 1), "-100.00", "GBP", &groceries),
+            categorised_txn((2025, 2, 2), "30.00", "GBP", &groceries),
+            // A USD spending account whose rows net negative: only the outflow
+            // leg counts, and the inflow leg must not shrink it.
+            categorised_txn((2025, 2, 3), "-100.00", "USD", &groceries),
+            categorised_txn((2025, 2, 4), "80.00", "USD", &groceries),
+            // Internal transfers in and out: excluded entirely.
+            categorised_txn((2025, 2, 5), "-500.00", "GBP", &transfer),
+            categorised_txn((2025, 2, 6), "500.00", "GBP", &transfer),
+            // Interest: excluded from both income and spending.
+            categorised_txn((2025, 2, 7), "40.00", "GBP", &interest),
+            // Income counts only its inflow leg; the clawback is ignored.
+            categorised_txn((2025, 2, 8), "200.00", "GBP", &salary),
+            categorised_txn((2025, 2, 9), "-10.00", "GBP", &salary),
+        ];
+        db.insert_transactions_bulk("acc1", &txns).unwrap();
+
+        let fx = crate::util::fx::FxRateMap::new(vec![
+            crate::model::Currency {
+                code: "GBP".to_string(),
+                is_preferred: true,
+                fx_rate: Decimal::ONE,
+                updated_at: None,
+            },
+            crate::model::Currency {
+                code: "USD".to_string(),
+                is_preferred: false,
+                fx_rate: Decimal::new(5, 1),
+                updated_at: None,
+            },
+        ])
+        .unwrap();
+
+        let (income, spending) = db
+            .compute_category_type_cash(
+                NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2025, 12, 31).unwrap(),
+                None,
+                &fx,
+            )
+            .unwrap();
+
+        // 100 GBP + 100 USD * 0.5; the 30 GBP and 80 USD refunds do not net.
+        assert_eq!(spending, Decimal::from(150));
+        // Only the 200 inflow; the 10 clawback and the 40 interest are excluded.
+        assert_eq!(income, Decimal::from(200));
     }
 
     #[test]
