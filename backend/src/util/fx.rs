@@ -172,17 +172,18 @@ impl FxRateMap {
 
     /// Convert an amount from `source_currency` to the preferred currency at the
     /// stored rate closest to `date`: the most recent one on or before `date`,
-    /// else the earliest one after it, else the flat `currencies.fx_rate` with a
-    /// warning.
+    /// else the earliest one after it. If the currency has no historical rows at
+    /// all, fall back to the flat `currencies.fx_rate` and log a warning (which
+    /// also covers a currency missing from the flat table, via `convert`).
     ///
     /// For date-scoped aggregates (cash-flow cards, investment performance) a
     /// cash flow is worth what it converted to *then*, not at today's rate.
     /// Unlike the CGT engine's `convert_as_of` this tolerates gaps: history for
     /// an aggregate figure is user-suggested rates, not HMRC records, and the
     /// alternative — dropping the flow or failing the card — loses information.
-    /// A flow dated before the earliest stored rate for its currency is the one
-    /// case where the answer is genuinely unknowable; that gets the flat-rate
-    /// fallback and a warning, same as a missing currency in `convert`.
+    /// A currency with no historical table at all is the case where the date
+    /// cannot be honored at all; the card stays visible rather than failing, so
+    /// the flat-rate use is logged rather than silent.
     pub fn convert_as_of_nearest(
         &self,
         amount: Decimal,
@@ -206,7 +207,13 @@ impl FxRateMap {
         });
         match rate {
             Some(rate) => amount * rate,
-            None => self.convert(amount, source_currency),
+            None => {
+                tracing::warn!(
+                    source_currency,
+                    "no historical FX rates stored for this currency; date-aware flows convert at the flat current rate"
+                );
+                self.convert(amount, source_currency)
+            }
         }
     }
 

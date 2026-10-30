@@ -237,6 +237,8 @@ export function periodKeyToRange(
       return { start: `${m[1]}-${pad(startMonth)}-01`, end: `${m[1]}-${pad(endMonth)}-${pad(lastDay(year, endMonth))}` }
     }
   }
+  // A full-date key (the opening point at the range start) spans just itself.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(key)) return { start: key, end: key }
   // monthly "YYYY-MM"
   const [y, mo] = key.split("-")
   return { start: `${y}-${mo}-01`, end: `${y}-${mo}-${pad(lastDay(Number(y), Number(mo)))}` }

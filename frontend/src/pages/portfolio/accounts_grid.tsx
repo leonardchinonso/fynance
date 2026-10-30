@@ -88,8 +88,10 @@ function AccountsGridInternal({
   // carries an opening point at the period start for accounts that held
   // anything beforehand; an account whose first snapshot is later than the
   // period start was worth nothing at the period start, so its base is 0.
-  // This is the same basis the Net Worth headline uses, so the card deltas
-  // reconcile with it.
+  // This is the Net Worth headline's basis (value carried into the period)
+  // except that a snapshot dated exactly on the period's first day counts as
+  // growth here but as opening in the headline, so cards and headline can
+  // differ by that one snapshot.
   const deltas = new Map<string, { value: number; currency: string }>()
   if (balances && balances.length > 0) {
     const byAccount = new Map<string, AccountSnapshot[]>()

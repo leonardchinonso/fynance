@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/empty_state"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import { formatCurrency, formatMonth, getQuarter, getYear, periodKeyToRange } from "@/lib/utils"
+import { formatCurrency, formatDate, formatMonth, getQuarter, getYear, periodKeyToRange } from "@/lib/utils"
 import { DualAmount } from "@/components/currency"
 import { cn } from "@/lib/utils"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
@@ -54,7 +54,10 @@ interface PortfolioHistoryProps {
 }
 
 function formatPeriodLabel(key: string, granularity: Granularity): string {
-  if (granularity === "monthly") return formatMonth(key)
+  if (granularity === "monthly") {
+    // The opening point at the period start is labeled with a full date.
+    return /^\d{4}-\d{2}-\d{2}$/.test(key) ? formatDate(key) : formatMonth(key)
+  }
   // Backend quarterly labels are "YYYY-Qn"; render as "Qn YYYY". Yearly ("YYYY")
   // and already-formatted "Qn YYYY" keys pass through unchanged.
   const q = key.match(/^(\d{4})-Q(\d)$/)

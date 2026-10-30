@@ -745,6 +745,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/budget/cash-summary": {
                 "get": {
                     "summary": "Category-type cash summary (income, spending, savings growth, new cash invested, investment metrics)",
+                    "description": "spending is the signed net outflow of spending/donation types (internal transfers and interest excluded); savings_growth = income - spending; new cash invested and the value pair cover the investment + ISA account set, converted at the stored FX rate nearest each event date.",
                     "parameters": [
                         { "name": "start", "in": "query", "schema": { "type": "string", "example": "2026-01-01" } },
                         { "name": "end", "in": "query", "schema": { "type": "string", "example": "2026-06-30" } },
@@ -803,6 +804,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/holdings/history": {
                 "get": {
                     "summary": "Net worth history over time (available/unavailable/total)",
+                    "description": "One point per period end, plus an opening point labeled with the start date carrying the value at the range start (unless the start coincides with the first period end).",
                     "parameters": [
                         { "name": "start", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "Start date (YYYY-MM-DD)." },
                         { "name": "end", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "End date (YYYY-MM-DD)." },

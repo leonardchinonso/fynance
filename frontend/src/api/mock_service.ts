@@ -459,7 +459,7 @@ export class MockApiService implements ApiService {
       preferred_currency: "GBP",
       income: "32000.00",
       spending: "18450.20",
-      savings_growth: "5000.00",
+      savings_growth: "13549.80",
       new_cash_invested: "8000.00",
       investment_metrics: {
         start_value: "100000.00",
@@ -630,7 +630,7 @@ export class MockApiService implements ApiService {
       entry.unavailable += split.unavailable
     }
 
-    return Array.from(months.entries())
+    const rows: HoldingsHistoryRow[] = Array.from(months.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, { available, unavailable }]) => ({
         month,
@@ -641,6 +641,40 @@ export class MockApiService implements ApiService {
         total_wealth: (available + unavailable).toFixed(2),
         total_wealth_display: null,
       }))
+
+    // Mirror the real endpoint: an opening point at the range start carrying
+    // the latest snapshot before it for each account, so the headline delta
+    // spans the full range instead of folding in the first period's movement.
+    const startMonth = start ? start.substring(0, 7) : ""
+    if (startMonth && rows.length > 0 && rows[0].month > startMonth) {
+      const carried = new Map<string, (typeof MOCK_ACCOUNT_BALANCES)[number]>()
+      for (const snap of MOCK_ACCOUNT_BALANCES) {
+        if (getMonthFromDate(snap.as_of) >= startMonth) continue
+        const prev = carried.get(snap.account_id)
+        if (!prev || prev.as_of < snap.as_of) carried.set(snap.account_id, snap)
+      }
+      let available = 0
+      let unavailable = 0
+      for (const snap of carried.values()) {
+        const account = MOCK_ACCOUNTS.find((a) => a.id === snap.account_id)
+        if (!account) continue
+        const split = classifyBalance(account.type, parseFloat(snap.balance))
+        available += split.available
+        unavailable += split.unavailable
+      }
+      if (available !== 0 || unavailable !== 0) {
+        rows.unshift({
+          month: start,
+          available_wealth: available.toFixed(2),
+          available_wealth_display: null,
+          unavailable_wealth: unavailable.toFixed(2),
+          unavailable_wealth_display: null,
+          total_wealth: (available + unavailable).toFixed(2),
+          total_wealth_display: null,
+        })
+      }
+    }
+    return rows
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {
