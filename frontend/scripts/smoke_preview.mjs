@@ -314,6 +314,16 @@ async function runView(browser, view) {
   // Overview -> Accounts -> History -> Overview, client-side.
   await page.getByRole("button", { name: /^accounts$/i }).click()
   await page.waitForTimeout(700)
+  // Each account card carries a period-delta chip (change since the period
+  // start, on the same basis as the Overview headline delta).
+  try {
+    await page
+      .locator('main span[class*="text-green-500"], main span[class*="text-red-500"]')
+      .first()
+      .waitFor({ timeout: 8000 })
+  } catch {
+    throw new Error("No period-delta chips on account cards in Accounts view")
+  }
   await page.getByRole("button", { name: /^history$/i }).click()
   await page.waitForTimeout(700)
   await page.getByRole("button", { name: /^overview$/i }).click()

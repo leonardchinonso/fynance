@@ -66,7 +66,7 @@ export function PortfolioPage() {
         />
       )}
       {activeView === "accounts" && (
-        <AccountsGrid data={accountsData} profilesData={profilesData} onAccountClick={id => setSearchParams(p => { p.set("account", id); return p })} />
+        <AccountsGrid data={accountsData} profilesData={profilesData} startDate={start} onAccountClick={id => setSearchParams(p => { p.set("account", id); return p })} />
       )}
       {activeView === "history" && (
         <PortfolioHistory start={start} end={end} granularity={granularity} profileId={profileId} />

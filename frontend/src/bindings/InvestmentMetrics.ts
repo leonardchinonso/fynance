@@ -9,7 +9,8 @@ export type InvestmentMetrics = { start_value: string, end_value: string,
  */
 total_growth: string, 
 /**
- * Net cash moved into investment accounts over the period (positive = in).
+ * Net cash/equity moved into the investment + ISA account set over the
+ * period (positive = in), at event-date FX.
  */
 new_cash_invested: string, 
 /**

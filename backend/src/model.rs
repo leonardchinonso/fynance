@@ -1463,7 +1463,8 @@ pub struct InvestmentMetrics {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub total_growth: Decimal,
-    /// Net cash moved into investment accounts over the period (positive = in).
+    /// Net cash/equity moved into the investment + ISA account set over the
+    /// period (positive = in), at event-date FX.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub new_cash_invested: Decimal,
@@ -1483,19 +1484,22 @@ pub struct CashSummaryResponse {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub income: Decimal,
-    /// Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+    /// Net outflow of spending + donation_taxable + donation_non_taxable
+    /// transactions in range (refunds reduce it); internal transfers excluded.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub spending: Decimal,
-    /// Period-over-period growth of `savings`-type holdings.
+    /// `income - spending` (the cash kept over the period).
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub savings_growth: Decimal,
-    /// Sum of `buy` investment events in range.
+    /// Net contributions into investment + ISA accounts in range, at
+    /// event-date FX (see `Db::compute_new_cash_invested`).
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub new_cash_invested: Decimal,
-    /// Range-aware investment performance (total/market growth, start/end value).
+    /// Range-aware investment performance (total/market growth, start/end
+    /// value) over the same investment + ISA account set.
     pub investment_metrics: InvestmentMetrics,
 }
 

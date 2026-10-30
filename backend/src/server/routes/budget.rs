@@ -154,9 +154,18 @@ pub async fn get_cash_summary(
     let resp = {
         let db = state.db();
         let currencies = db.get_currencies()?;
-        let fx = FxRateMap::new(currencies)?;
+        let preferred = currencies
+            .iter()
+            .find(|c| c.is_preferred)
+            .map(|c| c.code.clone())
+            .unwrap_or_default();
+        let fx = FxRateMap::new(currencies)?
+            .with_historical(db.get_exchange_rates_for_quote(&preferred)?);
         let (income, spending) = db.compute_category_type_cash(start, end, profile_id, &fx)?;
-        let savings_growth = db.compute_savings_growth(start, end, profile_id, &fx)?;
+        // "Net Savings" is read as income minus spending (the card's position
+        // says so); it must actually be that, not the balance growth of a
+        // subset of accounts.
+        let savings_growth = income - spending;
         let new_cash_invested = db.compute_new_cash_invested(start, end, profile_id, &fx)?;
         let investment_metrics =
             db.compute_investment_metrics_with(start, end, profile_id, &fx, new_cash_invested)?;
@@ -183,6 +192,118 @@ pub struct SetStandingBudgetBody {
     /// FK to categories.id (leaf)
     pub category_id: String,
     pub amount: String,
+}
+
+#[cfg(test)]
+mod cash_summary_tests {
+    use crate::model::{Account, AccountType, CategoryType, CreateCategoryPayload, ImportTransaction};
+    use crate::storage::db::Db;
+    use axum::body::Body;
+    use axum::http::Request;
+    use chrono::NaiveDate;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+    use tempfile::NamedTempFile;
+    use tower::ServiceExt;
+
+    // "Net Savings" sits beside income and spending and must be exactly
+    // income - spending. Old code returned the balance growth of savings-type
+    // accounts, which matched neither. Regression guard for the card name.
+    #[tokio::test]
+    async fn cash_summary_savings_growth_is_income_minus_spending() {
+        let file = NamedTempFile::new().unwrap();
+        let db = Db::open(file.path()).unwrap();
+        db.create_account(&Account {
+            id: "checking".to_string(),
+            name: "Checking".to_string(),
+            institution: "Bank".to_string(),
+            account_type: AccountType::Checking,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+        let parent = db
+            .create_category(&CreateCategoryPayload {
+                name: "Test Money".to_string(),
+                parent_id: None,
+                display_order: None,
+                description: None,
+                category_type: CategoryType::Spending,
+            })
+            .unwrap()
+            .id;
+        let salary = db
+            .create_category(&CreateCategoryPayload {
+                name: "Payroll".to_string(),
+                parent_id: Some(parent.clone()),
+                display_order: None,
+                description: None,
+                category_type: CategoryType::IncomeTaxable,
+            })
+            .unwrap()
+            .id;
+        let food = db
+            .create_category(&CreateCategoryPayload {
+                name: "Supermarket".to_string(),
+                parent_id: Some(parent.clone()),
+                display_order: None,
+                description: None,
+                category_type: CategoryType::Spending,
+            })
+            .unwrap()
+            .id;
+        for (desc, amount, category) in [
+            ("Pay", "700.00", &salary),
+            ("Shop", "-200.00", &food),
+            ("Coffee", "-50.00", &food),
+        ] {
+            db.insert_transactions_bulk(
+                "checking",
+                &[ImportTransaction {
+                    date: NaiveDate::from_ymd_opt(2025, 1, 15)
+                        .unwrap()
+                        .and_hms_opt(12, 0, 0)
+                        .unwrap(),
+                    description: desc.to_string(),
+                    amount: Decimal::from_str(amount).unwrap(),
+                    currency: None,
+                    category_id: Some(category.clone()),
+                    category_source: None,
+                    notes: None,
+                    is_recurring: None,
+                    exclude_from_summary: None,
+                    source_document_ids: Vec::new(),
+                }],
+            )
+            .unwrap();
+        }
+
+        let app = crate::server::build_router(std::sync::Arc::new(std::sync::Mutex::new(db)), true);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/budget/cash-summary?start=2025-01-01&end=2025-01-31")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let dec = |key: &str| Decimal::from_str(json[key].as_str().unwrap()).unwrap();
+        assert_eq!(dec("income"), Decimal::from(700));
+        assert_eq!(dec("spending"), Decimal::from(250));
+        assert_eq!(dec("savings_growth"), Decimal::from(450));
+    }
 }
 
 pub async fn set_standing_budget(

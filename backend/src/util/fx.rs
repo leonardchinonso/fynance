@@ -32,7 +32,9 @@ impl std::fmt::Display for MissingRate {
 pub struct FxRateMap {
     preferred: String,
     rates: HashMap<String, Decimal>,
-    historical: HashMap<(String, NaiveDate), Decimal>,
+    // BTreeMap keyed (currency, date) so `convert_as_of_nearest` can find the
+    // closest stored rate to a date without scanning every row.
+    historical: std::collections::BTreeMap<(String, NaiveDate), Decimal>,
 }
 
 impl FxRateMap {
@@ -58,7 +60,7 @@ impl FxRateMap {
         Ok(FxRateMap {
             preferred,
             rates,
-            historical: HashMap::new(),
+            historical: Default::default(),
         })
     }
 
@@ -166,6 +168,46 @@ impl FxRateMap {
             || self
                 .historical
                 .contains_key(&(source_currency.to_string(), date))
+    }
+
+    /// Convert an amount from `source_currency` to the preferred currency at the
+    /// stored rate closest to `date`: the most recent one on or before `date`,
+    /// else the earliest one after it, else the flat `currencies.fx_rate` with a
+    /// warning.
+    ///
+    /// For date-scoped aggregates (cash-flow cards, investment performance) a
+    /// cash flow is worth what it converted to *then*, not at today's rate.
+    /// Unlike the CGT engine's `convert_as_of` this tolerates gaps: history for
+    /// an aggregate figure is user-suggested rates, not HMRC records, and the
+    /// alternative — dropping the flow or failing the card — loses information.
+    /// A flow dated before the earliest stored rate for its currency is the one
+    /// case where the answer is genuinely unknowable; that gets the flat-rate
+    /// fallback and a warning, same as a missing currency in `convert`.
+    pub fn convert_as_of_nearest(
+        &self,
+        amount: Decimal,
+        source_currency: &str,
+        date: NaiveDate,
+    ) -> Decimal {
+        if source_currency == self.preferred {
+            return amount;
+        }
+        let from = (source_currency.to_string(), NaiveDate::MIN);
+        let to = (source_currency.to_string(), NaiveDate::MAX);
+        let at_or_before = self
+            .historical
+            .range(from..=(source_currency.to_string(), date))
+            .next_back();
+        let rate = at_or_before.map(|(_, r)| *r).or_else(|| {
+            self.historical
+                .range((source_currency.to_string(), date)..=to)
+                .next()
+                .map(|(_, r)| *r)
+        });
+        match rate {
+            Some(rate) => amount * rate,
+            None => self.convert(amount, source_currency),
+        }
     }
 
     pub fn preferred(&self) -> &str {

@@ -11,18 +11,21 @@ export type CashSummaryResponse = { preferred_currency: string,
  */
 income: string, 
 /**
- * Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+ * Net outflow of spending + donation_taxable + donation_non_taxable
+ * transactions in range (refunds reduce it); internal transfers excluded.
  */
 spending: string, 
 /**
- * Period-over-period growth of `savings`-type holdings.
+ * `income - spending` (the cash kept over the period).
  */
 savings_growth: string, 
 /**
- * Sum of `buy` investment events in range.
+ * Net contributions into investment + ISA accounts in range, at
+ * event-date FX (see `Db::compute_new_cash_invested`).
  */
 new_cash_invested: string, 
 /**
- * Range-aware investment performance (total/market growth, start/end value).
+ * Range-aware investment performance (total/market growth, start/end
+ * value) over the same investment + ISA account set.
  */
 investment_metrics: InvestmentMetrics, };

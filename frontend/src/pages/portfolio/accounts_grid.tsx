@@ -15,10 +15,11 @@ import { EmptyState } from "@/components/empty_state"
 import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
 
 export function AccountsGrid({
-  data, profilesData, onAccountClick,
+  data, profilesData, startDate, onAccountClick,
 }: {
   data: RemoteData<PortfolioAccountsData>
   profilesData: RemoteData<Profile[]>
+  startDate?: string
   onAccountClick: (accountId: string) => void
 }) {
   return visitRemoteData(data, {
@@ -35,6 +36,7 @@ export function AccountsGrid({
             profiles={profiles}
             balances={accountBalances}
             currencies={currencies}
+            startDate={startDate}
           />
           <ReloadingOverlay active={data.status === "reloading"} />
         </div>
@@ -58,6 +60,7 @@ function AccountsGridInternal({
   profiles,
   balances,
   currencies = [],
+  startDate,
 }: AccountsGridProps) {
   // Group by profile, with joint accounts in their own section
   const byProfile = new Map<string, Account[]>()
@@ -81,7 +84,12 @@ function AccountsGridInternal({
   const toPreferred = (value: number, currency: string) =>
     value * (fxRates.get(currency) ?? 1)
 
-  // Compute delta (in account's own currency) from earliest snapshot
+  // Delta over the period, in the account's own currency. The balance series
+  // carries an opening point at the period start for accounts that held
+  // anything beforehand; an account whose first snapshot is later than the
+  // period start was worth nothing at the period start, so its base is 0.
+  // This is the same basis the Net Worth headline uses, so the card deltas
+  // reconcile with it.
   const deltas = new Map<string, { value: number; currency: string }>()
   if (balances && balances.length > 0) {
     const byAccount = new Map<string, AccountSnapshot[]>()
@@ -92,9 +100,11 @@ function AccountsGridInternal({
     }
     for (const [accId, snaps] of byAccount) {
       const sorted = [...snaps].sort((a, b) => a.as_of.localeCompare(b.as_of))
-      if (sorted.length >= 2) {
-        const first = parseFloat(sorted[0].balance)
-        const last = parseFloat(sorted[sorted.length - 1].balance)
+      const last = parseFloat(sorted[sorted.length - 1].balance)
+      const hasOpening =
+        sorted[0].as_of.slice(0, 10) === startDate?.slice(0, 10)
+      const first = hasOpening ? parseFloat(sorted[0].balance) : 0
+      if (last !== first) {
         deltas.set(accId, { value: last - first, currency: sorted[0].currency })
       }
     }

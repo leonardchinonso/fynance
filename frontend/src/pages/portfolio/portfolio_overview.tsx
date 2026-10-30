@@ -394,7 +394,10 @@ function PortfolioOverviewInternal({
                             <span className="font-semibold text-sm text-white">Net Savings</span>
                           </div>
                           <p className="text-xs text-white/70 leading-relaxed">
-                            The change in your savings and emergency-fund account balances over this period (end balance minus start balance).
+                            Total Income minus Total Spending over this period: the money you took in that you did not spend.
+                          </p>
+                          <p className="text-xs text-white/60 leading-relaxed">
+                            Money moved between your own accounts is not spending and does not affect this figure.
                           </p>
                         </RichTooltipContent>
                       </Tooltip>

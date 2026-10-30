@@ -124,7 +124,13 @@ pub async fn get_holdings_summary(
     let (accounts, holding_rows, investment_metrics, fx) = {
         let db = state.db();
         let currencies = db.get_currencies()?;
-        let fx = FxRateMap::new(currencies)?;
+        let preferred = currencies
+            .iter()
+            .find(|c| c.is_preferred)
+            .map(|c| c.code.clone())
+            .unwrap_or_default();
+        let fx = FxRateMap::new(currencies)?
+            .with_historical(db.get_exchange_rates_for_quote(&preferred)?);
         let accounts = db.accounts_as_of(as_of, profile_id, &fx)?;
         let holding_rows = db.get_holdings_for_summary(as_of, profile_id)?;
         let metrics = db.compute_investment_metrics(metrics_start, as_of, profile_id, &fx)?;
