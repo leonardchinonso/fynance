@@ -5192,14 +5192,10 @@ impl Db {
                 continue;
             };
             let amount = parse_decimal_column(2, "transaction amount", &amount_str)?;
-            if CategoryType::INCOME.contains(&ctype) {
-                if amount > Decimal::ZERO {
-                    income.add(amount, &currency, fx);
-                }
-            } else if CategoryType::SPENDING.contains(&ctype) {
-                if amount < Decimal::ZERO {
-                    spending.add(-amount, &currency, fx);
-                }
+            if CategoryType::INCOME.contains(&ctype) && amount > Decimal::ZERO {
+                income.add(amount, &currency, fx);
+            } else if CategoryType::SPENDING.contains(&ctype) && amount < Decimal::ZERO {
+                spending.add(-amount, &currency, fx);
             }
         }
         Ok((income.converted_sum(), spending.converted_sum()))
