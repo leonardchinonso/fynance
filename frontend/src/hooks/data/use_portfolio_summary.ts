@@ -7,8 +7,10 @@ import { useQuery } from "@/hooks/use_query"
 /** Data needed by the Overview and Charts views. */
 export interface PortfolioSummaryData {
   portfolio: HoldingsSummaryResponse
-  /** Used in Overview for start/end net worth delta over the selected period. */
+  /** Period buckets (first row is the first period *end*, not the start). */
   history: HoldingsHistoryRow[]
+  /** Net worth on the first day of the period; the baseline for the period delta. */
+  period_start_wealth: string
   /** Holdings for all accounts (empty array for accounts with no positions). */
   allHoldings: Holding[]
   /** FX rates keyed by currency code, for converting holding values. */
@@ -62,6 +64,12 @@ export function usePortfolioSummary(
 
   return combineRemoteData(
     [portfolio, history, holdings, currencies] as const,
-    ([p, h, hold, c]) => ({ portfolio: p, history: h, allHoldings: hold, currencies: c }),
+    ([p, h, hold, c]) => ({
+      portfolio: p,
+      history: h.rows,
+      period_start_wealth: h.period_start_wealth,
+      allHoldings: hold,
+      currencies: c,
+    }),
   )
 }

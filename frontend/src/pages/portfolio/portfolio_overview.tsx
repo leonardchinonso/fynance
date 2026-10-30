@@ -103,8 +103,11 @@ export function PortfolioOverview({
   return visitRemoteData(data, {
     notLoaded: () => <PortfolioOverviewSkeleton />,
     failed: (error) => <AuthAwareError error={error} />,
-    hasValue: ({ portfolio, history, allHoldings, currencies }) => {
-      const startNetWorth = history.length >= 1 ? history[0].total_wealth : undefined
+    hasValue: ({ portfolio, history, period_start_wealth, allHoldings, currencies }) => {
+      // The delta runs from the period's first day to its last. The first
+      // history row is the first period *end*, so the opening value comes
+      // from the response's dedicated field instead.
+      const startNetWorth = period_start_wealth
       const endNetWorth = history.length >= 1 ? history[history.length - 1].total_wealth : undefined
       return (
         <div className="relative">
@@ -174,7 +177,7 @@ function PortfolioOverviewInternal({
 
   const totalIncome = cashSummary ? parseFloat(cashSummary.income) : 0
   const totalSpending = cashSummary ? parseFloat(cashSummary.spending) : 0
-  const netSavings = cashSummary ? parseFloat(cashSummary.savings_growth) : 0
+  const netSavings = cashSummary ? parseFloat(cashSummary.net_savings) : 0
   const newCashInvested = cashSummary ? parseFloat(cashSummary.new_cash_invested) : 0
   const totalGrowth = cashSummary ? parseFloat(cashSummary.investment_metrics.total_growth) : 0
   const marketGrowth = cashSummary ? parseFloat(cashSummary.investment_metrics.market_growth) : 0
@@ -394,7 +397,7 @@ function PortfolioOverviewInternal({
                             <span className="font-semibold text-sm text-white">Net Savings</span>
                           </div>
                           <p className="text-xs text-white/70 leading-relaxed">
-                            The change in your savings and emergency-fund account balances over this period (end balance minus start balance).
+                            Total income minus total spending over this period. Money moved between your own accounts is excluded from both.
                           </p>
                         </RichTooltipContent>
                       </Tooltip>

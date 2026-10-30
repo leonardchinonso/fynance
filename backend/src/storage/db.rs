@@ -4106,6 +4106,25 @@ impl Db {
         Ok(rows)
     }
 
+    /// Net worth (available + unavailable, converted to the preferred
+    /// currency) as of `date`, under the same carry-forward rule as
+    /// `get_holdings_for_summary`, so a period's opening value reconciles
+    /// with its first-day summary.
+    pub fn net_worth_as_of(
+        &self,
+        date: NaiveDate,
+        profile_id: Option<&str>,
+        fx: &crate::util::fx::FxRateMap,
+    ) -> Result<Decimal> {
+        let mut carry =
+            CarryForward::new(self.holding_snapshots_in_range(date, date, profile_id, None, &[])?);
+        carry.advance_to(date);
+        Ok(carry
+            .effective()
+            .map(|s| fx.convert(s.value, &s.currency))
+            .sum())
+    }
+
     /// Per-period series for the "Cumulative invested" chart: cumulative net
     /// contributions and the market value of investment + ISA holdings, both
     /// FX-converted to the preferred currency. Each is `None` for a period with
@@ -4932,12 +4951,14 @@ impl Db {
     }
 
     /// Investment performance for `[start, end]`. Start/end values apply the
-    /// same carry-forward rule as `get_holdings_for_summary` (Investment
-    /// accounts only), FX-converted via `fx` per holding/transaction currency,
-    /// so they stay consistent with net worth. `new_cash_invested` = net buys
-    /// minus sells in range (see [`Self::compute_new_cash_invested`]).
-    /// `market_growth` strips that out of the total value change to isolate
-    /// price movement.
+    /// same carry-forward rule as `get_holdings_for_summary` over the
+    /// Investments asset class (Investment + InvestmentIsa accounts, matching
+    /// the overview donut's "Investments" slice and
+    /// `account_type_to_asset_class`), FX-converted via `fx` per holding
+    /// currency, so they stay consistent with net worth. `new_cash_invested`
+    /// covers the same account set (see
+    /// [`Self::compute_new_cash_invested`]). `market_growth` strips that out
+    /// of the total value change to isolate price movement.
     pub fn compute_investment_metrics(
         &self,
         start: NaiveDate,
@@ -4963,11 +4984,14 @@ impl Db {
         // One windowed fetch instead of two full carry-forward scans: advance
         // to start for the opening sum, then on to end for the closing sum.
         // Closed holdings are invariant-zeroed, so no is_closed filter.
+        // Investment + ISA accounts, the Investments asset class, the same
+        // set `compute_new_cash_invested` sums over and the overview donut
+        // draws, so growth and cash cover the same accounts.
         let mut carry = CarryForward::new(self.holding_snapshots_in_range(
             start,
             end,
             profile_id,
-            Some(&[AccountType::Investment]),
+            Some(&[AccountType::Investment, AccountType::InvestmentIsa]),
             &[],
         )?);
         let sum_effective = |carry: &CarryForward| -> Decimal {
@@ -4993,14 +5017,20 @@ impl Db {
         })
     }
 
-    /// Net new contributions over `[start, end]` (cash AND equity added that is
-    /// not market movement), FX-converted to the preferred currency. So a fund
-    /// switch (sell A, buy B) nets to ~0, and RSU vests count as value in.
-    /// Sign by event: buy / vest = in (+), sell / withhold = out (-), transfer =
-    /// signed by quantity (negative quantity = shares out); split is excluded
-    /// (re-denomination, no value change). `quantity * price_per_share` is the
-    /// trade leg; fees are always a cost (+). Trade leg (`currency`) and fee
-    /// (`fee_currency`, falling back to `currency`) convert independently.
+    /// Net new contributions over `[start, end]` into the Investments asset
+    /// class (Investment + InvestmentIsa accounts, the same set the growth
+    /// metrics are computed over), FX-converted to the preferred currency.
+    /// So a fund switch (sell A, buy B) nets to ~0, and RSU vests count as
+    /// value in. Sign by event: buy / vest = in (+), sell / withhold = out (-),
+    /// transfer = signed by quantity (negative quantity = shares out); split
+    /// is excluded (re-denomination, no value change). `quantity *
+    /// price_per_share` is the trade leg; fees are always a cost (+). Trade
+    /// leg (`currency`) and fee (`fee_currency`, falling back to `currency`)
+    /// convert independently, each at the event-date exchange rate (most
+    /// recent stored rate before it if that exact date is missing), so the
+    /// figure answers "how much did this actually cost in the preferred
+    /// currency". A transfer between two in-scope accounts nets to zero; one
+    /// crossing the scope boundary counts as money in/out.
     /// Profile-scoped via the owning account.
     pub fn compute_new_cash_invested(
         &self,
@@ -5009,29 +5039,32 @@ impl Db {
         profile_id: Option<&str>,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<Decimal> {
-        use crate::util::fx::CurrencyAggregator;
-
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
-        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(start_str), Box::new(end_str)];
-        let join = if let Some(pid) = profile_id {
+        // The account-type filter must match `compute_investment_metrics_with`
+        // exactly, or `market_growth = total_growth - new_cash_invested`
+        // subtracts flows from accounts whose value change it never counted.
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![
+            Box::new(start_str),
+            Box::new(end_str),
+            Box::new(AccountType::Investment.as_str().to_string()),
+            Box::new(AccountType::InvestmentIsa.as_str().to_string()),
+        ];
+        let profile_filter = if let Some(pid) = profile_id {
             args.push(Box::new(format!("%\"{pid}\"%")));
-            "JOIN accounts a ON a.id = i.account_id"
-        } else {
-            ""
-        };
-        let profile_filter = if profile_id.is_some() {
-            "AND a.profile_ids LIKE ?3"
+            "AND a.profile_ids LIKE ?5"
         } else {
             ""
         };
 
         let sql = format!(
-            r"SELECT i.event_type, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
-              FROM investments i {join}
+            r"SELECT i.event_type, i.date, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
+              FROM investments i
+              JOIN accounts a ON a.id = i.account_id
               WHERE i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
-                AND i.date >= ?1 AND i.date <= ?2 {profile_filter}"
+                AND i.date >= ?1 AND i.date <= ?2
+                AND a.type IN (?3, ?4) {profile_filter}"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -5043,16 +5076,20 @@ impl Db {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, Option<String>>(6)?,
                     ))
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let mut agg = CurrencyAggregator::default();
-        for (event_type, qty, price, fee, currency, fee_currency) in rows {
+        let mut total = Decimal::ZERO;
+        for (event_type, date_str, qty, price, fee, currency, fee_currency) in rows {
+            let date = chrono::NaiveDateTime::parse_from_str(&date_str, "%Y-%m-%dT%H:%M:%S")
+                .map_err(|e| anyhow!("invalid date {date_str:?} on {event_type} event: {e}"))?
+                .date();
             let q = qty
                 .parse::<Decimal>()
                 .map_err(|_| anyhow!("invalid quantity {qty:?} on {event_type} event"))?;
@@ -5068,51 +5105,32 @@ impl Db {
             } else {
                 principal
             };
-            agg.add(signed, &currency, fx);
+            total += fx.convert_as_of_stored(signed, &currency, date);
             if let Some(fee) = fee {
                 let f = fee
                     .parse::<Decimal>()
                     .map_err(|_| anyhow!("invalid fee {fee:?} on {event_type} event"))?;
                 if !f.is_zero() {
-                    agg.add(f, fee_currency.as_deref().unwrap_or(&currency), fx);
+                    total += fx.convert_as_of_stored(
+                        f,
+                        fee_currency.as_deref().unwrap_or(&currency),
+                        date,
+                    );
                 }
             }
         }
-        Ok(agg.converted_sum())
-    }
-
-    /// Net savings growth over `[start, end]`: the FX-converted carry-forward
-    /// balance of all `savings` and `emergency_fund` accounts as of `end` minus
-    /// the same as of `start`. Derived from account type, not holding type
-    /// (savings accounts store their balance as a `cash` holding).
-    pub fn compute_savings_growth(
-        &self,
-        start: NaiveDate,
-        end: NaiveDate,
-        profile_id: Option<&str>,
-        fx: &crate::util::fx::FxRateMap,
-    ) -> Result<Decimal> {
-        let sum_savings = |date: NaiveDate| -> Result<Decimal> {
-            Ok(self
-                .get_holdings_for_summary(date, profile_id)?
-                .iter()
-                .filter(|r| {
-                    matches!(
-                        r.account_type,
-                        AccountType::Savings | AccountType::EmergencyFund
-                    )
-                })
-                .map(|r| fx.convert(r.holding.value, &r.holding.currency))
-                .sum())
-        };
-        Ok(sum_savings(end)? - sum_savings(start)?)
+        Ok(total)
     }
 
     /// `(income, spending)` over `[start, end]`, bucketed by category_type and
-    /// FX-converted. Income sums the income_taxable and income_non_taxable types
-    /// (signed, normally positive). Spending sums the absolute value of the
-    /// spending, donation_taxable and donation_non_taxable types. The
-    /// internal_transfer and interest_* types are excluded. Skips
+    /// FX-converted. Income sums the positive amounts in the income_taxable and
+    /// income_non_taxable types; spending sums the absolute value of the
+    /// negative amounts in the spending, donation_taxable and
+    /// donation_non_taxable types. Direction is per row, not netted per
+    /// bucket: a refund landing in a spending category (or an overpayment
+    /// reversal in an income category) must not silently cancel other rows.
+    /// The internal_transfer and interest_* types are excluded — money moved
+    /// between the owner's own accounts is neither income nor spending. Skips
     /// `exclude_from_summary` rows; profile-scoped via the owning account.
     pub fn compute_category_type_cash(
         &self,
@@ -5140,13 +5158,12 @@ impl Db {
         };
 
         let sql = format!(
-            r"SELECT c.category_type, t.currency, SUM(CAST(t.amount AS REAL))
+            r"SELECT c.category_type, t.currency, t.amount
               FROM transactions t
               JOIN categories c ON c.id = t.category_id
               {join}
               WHERE t.date >= ?1 AND t.date <= ?2
-                AND t.exclude_from_summary = 0 {profile_filter}
-              GROUP BY c.category_type, t.currency"
+                AND t.exclude_from_summary = 0 {profile_filter}"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -5157,7 +5174,7 @@ impl Db {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, f64>(2)?,
+                        row.get::<_, String>(2)?,
                     ))
                 },
             )?
@@ -5165,17 +5182,19 @@ impl Db {
 
         let mut income = CurrencyAggregator::default();
         let mut spending = CurrencyAggregator::default();
-        for (ctype_str, currency, total_f64) in rows {
+        for (ctype_str, currency, amount_str) in rows {
             let Some(ctype) = CategoryType::parse(&ctype_str) else {
                 continue;
             };
-            let amount = Decimal::try_from(total_f64).map_err(|e| {
-                anyhow!("cash total for category type {ctype_str} is not representable: {e}")
-            })?;
+            let amount = parse_decimal_column(2, "transaction amount", &amount_str)?;
             if CategoryType::INCOME.contains(&ctype) {
-                income.add(amount, &currency, fx);
+                if amount > Decimal::ZERO {
+                    income.add(amount, &currency, fx);
+                }
             } else if CategoryType::SPENDING.contains(&ctype) {
-                spending.add(amount.abs(), &currency, fx);
+                if amount < Decimal::ZERO {
+                    spending.add(-amount, &currency, fx);
+                }
             }
         }
         Ok((income.converted_sum(), spending.converted_sum()))

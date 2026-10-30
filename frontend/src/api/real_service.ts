@@ -72,7 +72,6 @@ import type {
   Holding,
   ImportResult,
   Paginated,
-  HoldingsHistoryRow,
   HoldingsSummaryResponse,
   Profile,
   SetBudgetOverrideBody,
@@ -107,7 +106,7 @@ import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
-import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent } from "./service"
+import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent, PortfolioHistoryResponse } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
 
@@ -364,11 +363,10 @@ export class RealApiService implements ApiService {
     end: string,
     granularity: Granularity = "monthly",
     profileId?: string
-  ): Promise<HoldingsHistoryRow[]> {
+  ): Promise<PortfolioHistoryResponse> {
     const params: Record<string, string> = { start, end, granularity }
     if (profileId) params.profile_id = profileId
-    const res = await get<{ preferred_currency: string; rows: HoldingsHistoryRow[] }>(`${BASE}/holdings/history`, params)
-    return res.rows
+    return get<PortfolioHistoryResponse>(`${BASE}/holdings/history`, params)
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {

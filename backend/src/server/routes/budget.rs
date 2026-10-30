@@ -155,8 +155,10 @@ pub async fn get_cash_summary(
         let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
+        // Date-keyed rates so investment cash flows convert at their event date.
+        let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
+        let fx = fx.with_historical(historical);
         let (income, spending) = db.compute_category_type_cash(start, end, profile_id, &fx)?;
-        let savings_growth = db.compute_savings_growth(start, end, profile_id, &fx)?;
         let new_cash_invested = db.compute_new_cash_invested(start, end, profile_id, &fx)?;
         let investment_metrics =
             db.compute_investment_metrics_with(start, end, profile_id, &fx, new_cash_invested)?;
@@ -164,7 +166,7 @@ pub async fn get_cash_summary(
             preferred_currency: fx.preferred().to_string(),
             income,
             spending,
-            savings_growth,
+            net_savings: income - spending,
             new_cash_invested,
             investment_metrics,
         }

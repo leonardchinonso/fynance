@@ -125,6 +125,8 @@ pub async fn get_holdings_summary(
         let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
+        let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
+        let fx = fx.with_historical(historical);
         let accounts = db.accounts_as_of(as_of, profile_id, &fx)?;
         let holding_rows = db.get_holdings_for_summary(as_of, profile_id)?;
         let metrics = db.compute_investment_metrics(metrics_start, as_of, profile_id, &fx)?;
@@ -261,17 +263,21 @@ pub async fn get_holdings_history(
 
     let profile_id = q.profile_id.as_deref().filter(|s| !s.is_empty());
 
-    let (rows, preferred_currency) = {
+    let (rows, preferred_currency, period_start_wealth) = {
         let db = state.db();
         let currencies = db.get_currencies()?;
         let fx = FxRateMap::new(currencies)?;
         let rows = db.get_monthly_net_worth(start, end, &granularity, profile_id, &fx)?;
+        // Opening value for period-over-period deltas: the first bucket is
+        // the first period *end*, which is not the start of the period.
+        let period_start_wealth = db.net_worth_as_of(start, profile_id, &fx)?;
         let preferred = fx.preferred().to_string();
-        (rows, preferred)
+        (rows, preferred, period_start_wealth)
     };
 
     Ok(Json(serde_json::json!({
         "preferred_currency": preferred_currency,
+        "period_start_wealth": period_start_wealth.to_string(),
         "rows": rows
     })))
 }

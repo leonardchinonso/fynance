@@ -158,6 +158,50 @@ impl FxRateMap {
         }
     }
 
+    /// Convert at the rate stored for `date`, degrading in tiers: exact date,
+    /// then the most recent stored date before it, then the flat present-day
+    /// rate. Each fallback tier logs a warning so gaps stay findable.
+    ///
+    /// For display aggregates only (investment cash-flow metrics); tax paths
+    /// must use [`FxRateMap::convert_as_of`], where a missing rate is an error.
+    pub fn convert_as_of_stored(
+        &self,
+        amount: Decimal,
+        source_currency: &str,
+        date: NaiveDate,
+    ) -> Decimal {
+        if source_currency == self.preferred {
+            return amount;
+        }
+        if let Some(rate) = self.historical.get(&(source_currency.to_string(), date)) {
+            return amount * *rate;
+        }
+        let prior = self
+            .historical
+            .iter()
+            .filter(|((c, d), _)| c == source_currency && *d < date)
+            .max_by_key(|((_, d), _)| *d);
+        match prior {
+            Some(((_, rate_date), rate)) => {
+                tracing::warn!(
+                    source_currency,
+                    %date,
+                    rate_date = %rate_date,
+                    "no exchange rate stored for event date; using most recent prior rate"
+                );
+                amount * *rate
+            }
+            None => {
+                tracing::warn!(
+                    source_currency,
+                    %date,
+                    "no historical exchange rate stored; using current rate"
+                );
+                self.convert(amount, source_currency)
+            }
+        }
+    }
+
     /// True when a rate is stored for this `(currency, date)` pair, or when the currency is
     /// the preferred one (which never needs a rate). Used by the precheck to enumerate what
     /// is missing without performing a conversion.
