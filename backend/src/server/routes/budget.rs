@@ -196,7 +196,9 @@ pub struct SetStandingBudgetBody {
 
 #[cfg(test)]
 mod cash_summary_tests {
-    use crate::model::{Account, AccountType, CategoryType, CreateCategoryPayload, ImportTransaction};
+    use crate::model::{
+        Account, AccountType, CategoryType, CreateCategoryPayload, ImportTransaction,
+    };
     use crate::storage::db::Db;
     use axum::body::Body;
     use axum::http::Request;

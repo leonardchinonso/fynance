@@ -4946,10 +4946,8 @@ impl Db {
     /// donut (`account_type_to_asset_class`). Pension accounts get their own
     /// slice and stay out, so growth and new cash describe the same account
     /// set the donut draws.
-    const INVESTMENT_METRIC_ACCOUNT_TYPES: &'static [AccountType] = &[
-        AccountType::Investment,
-        AccountType::InvestmentIsa,
-    ];
+    const INVESTMENT_METRIC_ACCOUNT_TYPES: &'static [AccountType] =
+        &[AccountType::Investment, AccountType::InvestmentIsa];
 
     /// Investment performance for `[start, end]` over
     /// [`Self::INVESTMENT_METRIC_ACCOUNT_TYPES`]. Start/end values apply the
@@ -5084,8 +5082,9 @@ impl Db {
 
         let mut total = Decimal::ZERO;
         for (event_type, qty, price, fee, currency, fee_currency, date_str) in rows {
-            let date = NaiveDate::parse_from_str(date_str.get(..10).unwrap_or_default(), "%Y-%m-%d")
-                .map_err(|_| anyhow!("invalid date {date_str:?} on {event_type} event"))?;
+            let date =
+                NaiveDate::parse_from_str(date_str.get(..10).unwrap_or_default(), "%Y-%m-%d")
+                    .map_err(|_| anyhow!("invalid date {date_str:?} on {event_type} event"))?;
             let q = qty
                 .parse::<Decimal>()
                 .map_err(|_| anyhow!("invalid quantity {qty:?} on {event_type} event"))?;
@@ -8751,17 +8750,35 @@ mod consolidation_tests {
         let start = naive_dt(2025, 1, 1);
         db.upsert_holdings(
             "inv",
-            &[make_holding("inv", "AAPL", HoldingType::Stock, dec!(1000), start)],
+            &[make_holding(
+                "inv",
+                "AAPL",
+                HoldingType::Stock,
+                dec!(1000),
+                start,
+            )],
         )
         .unwrap();
         db.upsert_holdings(
             "isa",
-            &[make_holding("isa", "VWRP", HoldingType::Stock, dec!(400), start)],
+            &[make_holding(
+                "isa",
+                "VWRP",
+                HoldingType::Stock,
+                dec!(400),
+                start,
+            )],
         )
         .unwrap();
         db.upsert_holdings(
             "pen",
-            &[make_holding("pen", "PEN", HoldingType::Stock, dec!(900), start)],
+            &[make_holding(
+                "pen",
+                "PEN",
+                HoldingType::Stock,
+                dec!(900),
+                start,
+            )],
         )
         .unwrap();
         for (account, amount) in [("inv", "100"), ("isa", "40"), ("pen", "90")] {
@@ -8846,12 +8863,7 @@ mod consolidation_tests {
         .with_historical(db.get_exchange_rates_for_quote("GBP").unwrap());
 
         let nci = db
-            .compute_new_cash_invested(
-                naive_date(2025, 3, 1),
-                naive_date(2025, 3, 31),
-                None,
-                &fx,
-            )
+            .compute_new_cash_invested(naive_date(2025, 3, 1), naive_date(2025, 3, 31), None, &fx)
             .unwrap();
         // 1000 USD at the 2025-03-15 rate of 0.5 (the nearest on or before the
         // 2025-03-16 event), not the flat 0.25. Old code: 250.
