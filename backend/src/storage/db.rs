@@ -11416,7 +11416,8 @@ mod overview_figure_tests {
     fn more_arriving_than_leaving_never_raises_spending() {
         let (db, _file) = test_db();
         add_account(&db, "main", AccountType::Checking);
-        let shop = add_category(&db, "T Shop", None, CategoryType::Spending);
+        let shops = add_category(&db, "T Shops", None, CategoryType::Spending);
+        let shop = add_category(&db, "T Shop", Some(&shops), CategoryType::Spending);
         add_txn(&db, "main", &shop, 1, Decimal::new(-10000, 2));
         add_txn(&db, "main", &shop, 2, Decimal::new(15000, 2));
         let (_, spend) = db
