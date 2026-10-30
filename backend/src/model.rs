@@ -1483,15 +1483,17 @@ pub struct CashSummaryResponse {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub income: Decimal,
-    /// Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+    /// Net outflow of spending + donation_taxable + donation_non_taxable
+    /// categories (transfers and interest excluded).
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub spending: Decimal,
-    /// Period-over-period growth of `savings`-type holdings.
+    /// `income - spending` for the range.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
-    pub savings_growth: Decimal,
-    /// Sum of `buy` investment events in range.
+    pub net_savings: Decimal,
+    /// Net new money into `investment` and `investment_isa` accounts in range
+    /// (buys, vests and transfers in, less sells and withholdings).
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub new_cash_invested: Decimal,

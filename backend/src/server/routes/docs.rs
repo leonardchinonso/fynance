@@ -744,7 +744,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             },
             "/api/budget/cash-summary": {
                 "get": {
-                    "summary": "Category-type cash summary (income, spending, savings growth, new cash invested, investment metrics)",
+                    "summary": "Category-type cash summary (income, spending, net savings (income minus spending), new cash invested, investment metrics)",
                     "parameters": [
                         { "name": "start", "in": "query", "schema": { "type": "string", "example": "2026-01-01" } },
                         { "name": "end", "in": "query", "schema": { "type": "string", "example": "2026-06-30" } },

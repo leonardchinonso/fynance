@@ -3,12 +3,19 @@ import type { Currency, Granularity, Holding, HoldingsHistoryRow, HoldingsSummar
 import type { RemoteData } from "@/lib/remote_data"
 import { RemoteData as RD, combineRemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
+import { format, parseISO, subDays } from "date-fns"
 
 /** Data needed by the Overview and Charts views. */
 export interface PortfolioSummaryData {
   portfolio: HoldingsSummaryResponse
-  /** Used in Overview for start/end net worth delta over the selected period. */
+  /** Chart series over the selected period (one point per period end). */
   history: HoldingsHistoryRow[]
+  /**
+   * Net worth when the period opens: the close of the day before `start`, so
+   * everything dated inside the range counts as change. `history[0]` is the
+   * END of the first period, which for a monthly series is not the start.
+   */
+  startNetWorth: string
   /** Holdings for all accounts (empty array for accounts with no positions). */
   allHoldings: Holding[]
   /** FX rates keyed by currency code, for converting holding values. */
@@ -39,6 +46,11 @@ export function usePortfolioSummary(
     () => api.getPortfolioHistory(start, end, granularity, profileId),
     { tag: "holdings-history", hard: [profileId], soft: [start, end, granularity], enabled },
   )
+  const dayBeforeStart = format(subDays(parseISO(start), 1), "yyyy-MM-dd")
+  const [startSummary] = useQuery(
+    () => api.getPortfolio(profileId, dayBeforeStart),
+    { tag: "holdings-summary-start", hard: [profileId], soft: [dayBeforeStart], enabled },
+  )
   const [currencies] = useQuery(
     () => api.getCurrencies(),
     { tag: "currencies", hard: [], soft: [], static: true, enabled },
@@ -61,7 +73,13 @@ export function usePortfolioSummary(
     accountIds !== null && accountIds.length === 0 ? RD.succeeded([]) : holdingsBatch
 
   return combineRemoteData(
-    [portfolio, history, holdings, currencies] as const,
-    ([p, h, hold, c]) => ({ portfolio: p, history: h, allHoldings: hold, currencies: c }),
+    [portfolio, history, startSummary, holdings, currencies] as const,
+    ([p, h, s, hold, c]) => ({
+      portfolio: p,
+      history: h,
+      startNetWorth: s.net_worth,
+      allHoldings: hold,
+      currencies: c,
+    }),
   )
 }

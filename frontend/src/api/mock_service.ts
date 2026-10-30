@@ -459,7 +459,7 @@ export class MockApiService implements ApiService {
       preferred_currency: "GBP",
       income: "32000.00",
       spending: "18450.20",
-      savings_growth: "5000.00",
+      net_savings: "13549.80",
       new_cash_invested: "8000.00",
       investment_metrics: {
         start_value: "100000.00",

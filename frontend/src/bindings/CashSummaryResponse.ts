@@ -11,15 +11,17 @@ export type CashSummaryResponse = { preferred_currency: string,
  */
 income: string, 
 /**
- * Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+ * Net outflow of spending + donation_taxable + donation_non_taxable
+ * categories (transfers and interest excluded).
  */
 spending: string, 
 /**
- * Period-over-period growth of `savings`-type holdings.
+ * `income - spending` for the range.
  */
-savings_growth: string, 
+net_savings: string, 
 /**
- * Sum of `buy` investment events in range.
+ * Net new money into `investment` and `investment_isa` accounts in range
+ * (buys, vests and transfers in, less sells and withholdings).
  */
 new_cash_invested: string, 
 /**

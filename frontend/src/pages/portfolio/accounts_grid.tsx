@@ -15,10 +15,11 @@ import { EmptyState } from "@/components/empty_state"
 import { AlertTriangle, TrendingUp, TrendingDown } from "lucide-react"
 
 export function AccountsGrid({
-  data, profilesData, onAccountClick,
+  data, profilesData, start, onAccountClick,
 }: {
   data: RemoteData<PortfolioAccountsData>
   profilesData: RemoteData<Profile[]>
+  start: string
   onAccountClick: (accountId: string) => void
 }) {
   return visitRemoteData(data, {
@@ -33,6 +34,7 @@ export function AccountsGrid({
             accounts={accounts}
             onAccountClick={onAccountClick}
             profiles={profiles}
+            startDate={start}
             balances={accountBalances}
             currencies={currencies}
           />
@@ -56,6 +58,7 @@ function AccountsGridInternal({
   accounts,
   onAccountClick,
   profiles,
+  startDate,
   balances,
   currencies = [],
 }: AccountsGridProps) {
@@ -81,7 +84,11 @@ function AccountsGridInternal({
   const toPreferred = (value: number, currency: string) =>
     value * (fxRates.get(currency) ?? 1)
 
-  // Compute delta (in account's own currency) from earliest snapshot
+  // Delta (in the account's own currency) from the balance carried into the
+  // start of the range (the backend's opening point at start 00:00, same
+  // starting point as the net-worth change) to the latest balance. An account
+  // with no balance before the range started from nothing, so its whole
+  // balance is the change.
   const deltas = new Map<string, { value: number; currency: string }>()
   if (balances && balances.length > 0) {
     const byAccount = new Map<string, AccountSnapshot[]>()
@@ -90,13 +97,14 @@ function AccountsGridInternal({
       arr.push(s)
       byAccount.set(s.account_id, arr)
     }
+    const openingAt = startDate ? `${startDate}T00:00:00` : undefined
     for (const [accId, snaps] of byAccount) {
       const sorted = [...snaps].sort((a, b) => a.as_of.localeCompare(b.as_of))
-      if (sorted.length >= 2) {
-        const first = parseFloat(sorted[0].balance)
-        const last = parseFloat(sorted[sorted.length - 1].balance)
-        deltas.set(accId, { value: last - first, currency: sorted[0].currency })
-      }
+      const hasOpening = openingAt !== undefined && sorted[0].as_of === openingAt
+      if (hasOpening && sorted.length < 2) continue
+      const base = hasOpening ? parseFloat(sorted[0].balance) : 0
+      const last = parseFloat(sorted[sorted.length - 1].balance)
+      deltas.set(accId, { value: last - base, currency: sorted[0].currency })
     }
   }
 

@@ -4931,10 +4931,13 @@ impl Db {
         Ok(inserted)
     }
 
-    /// Investment performance for `[start, end]`. Start/end values apply the
-    /// same carry-forward rule as `get_holdings_for_summary` (Investment
-    /// accounts only), FX-converted via `fx` per holding/transaction currency,
-    /// so they stay consistent with net worth. `new_cash_invested` = net buys
+    /// Investment performance for `[start, end]` over `investment` and
+    /// `investment_isa` accounts (the overview donut's "Investments" slice);
+    /// pensions are excluded from values and flows alike. Start/end values
+    /// apply the same carry-forward rule as `get_holdings_for_summary`,
+    /// FX-converted via `fx` at the same flat rate as the flows (so FX drift
+    /// cancels), so they stay consistent with net worth. The start value is
+    /// the close of the day before `start`. `new_cash_invested` = net buys
     /// minus sells in range (see [`Self::compute_new_cash_invested`]).
     /// `market_growth` strips that out of the total value change to isolate
     /// price movement.
@@ -4961,13 +4964,16 @@ impl Db {
         new_cash_invested: Decimal,
     ) -> Result<InvestmentMetrics> {
         // One windowed fetch instead of two full carry-forward scans: advance
-        // to start for the opening sum, then on to end for the closing sum.
-        // Closed holdings are invariant-zeroed, so no is_closed filter.
+        // to the close of the day before `start` for the opening sum (flows
+        // dated on `start` are in the range, so its own snapshots must be
+        // too), then on to end for the closing sum. Closed holdings are
+        // invariant-zeroed, so no is_closed filter.
+        let opening = start.pred_opt().unwrap_or(start);
         let mut carry = CarryForward::new(self.holding_snapshots_in_range(
-            start,
+            opening,
             end,
             profile_id,
-            Some(&[AccountType::Investment]),
+            Some(&[AccountType::Investment, AccountType::InvestmentIsa]),
             &[],
         )?);
         let sum_effective = |carry: &CarryForward| -> Decimal {
@@ -4976,7 +4982,7 @@ impl Db {
                 .map(|s| fx.convert(s.value, &s.currency))
                 .sum()
         };
-        carry.advance_to(start);
+        carry.advance_to(opening);
         let start_value = sum_effective(&carry);
         carry.advance_to(end);
         let end_value = sum_effective(&carry);
@@ -5015,13 +5021,8 @@ impl Db {
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
 
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(start_str), Box::new(end_str)];
-        let join = if let Some(pid) = profile_id {
+        let profile_filter = if let Some(pid) = profile_id {
             args.push(Box::new(format!("%\"{pid}\"%")));
-            "JOIN accounts a ON a.id = i.account_id"
-        } else {
-            ""
-        };
-        let profile_filter = if profile_id.is_some() {
             "AND a.profile_ids LIKE ?3"
         } else {
             ""
@@ -5029,8 +5030,10 @@ impl Db {
 
         let sql = format!(
             r"SELECT i.event_type, i.quantity, i.price_per_share, i.fee, i.currency, i.fee_currency
-              FROM investments i {join}
-              WHERE i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
+              FROM investments i
+              JOIN accounts a ON a.id = i.account_id
+              WHERE a.type IN ('investment', 'investment_isa')
+                AND i.event_type IN ('buy', 'sell', 'vest', 'withhold', 'transfer')
                 AND i.date >= ?1 AND i.date <= ?2 {profile_filter}"
         );
 
@@ -5081,38 +5084,13 @@ impl Db {
         Ok(agg.converted_sum())
     }
 
-    /// Net savings growth over `[start, end]`: the FX-converted carry-forward
-    /// balance of all `savings` and `emergency_fund` accounts as of `end` minus
-    /// the same as of `start`. Derived from account type, not holding type
-    /// (savings accounts store their balance as a `cash` holding).
-    pub fn compute_savings_growth(
-        &self,
-        start: NaiveDate,
-        end: NaiveDate,
-        profile_id: Option<&str>,
-        fx: &crate::util::fx::FxRateMap,
-    ) -> Result<Decimal> {
-        let sum_savings = |date: NaiveDate| -> Result<Decimal> {
-            Ok(self
-                .get_holdings_for_summary(date, profile_id)?
-                .iter()
-                .filter(|r| {
-                    matches!(
-                        r.account_type,
-                        AccountType::Savings | AccountType::EmergencyFund
-                    )
-                })
-                .map(|r| fx.convert(r.holding.value, &r.holding.currency))
-                .sum())
-        };
-        Ok(sum_savings(end)? - sum_savings(start)?)
-    }
-
     /// `(income, spending)` over `[start, end]`, bucketed by category_type and
     /// FX-converted. Income sums the income_taxable and income_non_taxable types
-    /// (signed, normally positive). Spending sums the absolute value of the
-    /// spending, donation_taxable and donation_non_taxable types. The
-    /// internal_transfer and interest_* types are excluded. Skips
+    /// (signed, normally positive). Spending is the net outflow of the
+    /// spending, donation_taxable and donation_non_taxable types (money out
+    /// minus refunds back in). The internal_transfer and interest_* types are
+    /// excluded, so money moving between the household's own accounts counts
+    /// as neither. Skips
     /// `exclude_from_summary` rows; profile-scoped via the owning account.
     pub fn compute_category_type_cash(
         &self,
@@ -5140,13 +5118,12 @@ impl Db {
         };
 
         let sql = format!(
-            r"SELECT c.category_type, t.currency, SUM(CAST(t.amount AS REAL))
+            r"SELECT c.category_type, t.currency, t.amount
               FROM transactions t
               JOIN categories c ON c.id = t.category_id
               {join}
               WHERE t.date >= ?1 AND t.date <= ?2
-                AND t.exclude_from_summary = 0 {profile_filter}
-              GROUP BY c.category_type, t.currency"
+                AND t.exclude_from_summary = 0 {profile_filter}"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -5154,10 +5131,11 @@ impl Db {
             .query_map(
                 rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())),
                 |row| {
+                    let amount: String = row.get(2)?;
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, f64>(2)?,
+                        parse_decimal_column(2, "transaction amount", &amount)?,
                     ))
                 },
             )?
@@ -5165,17 +5143,14 @@ impl Db {
 
         let mut income = CurrencyAggregator::default();
         let mut spending = CurrencyAggregator::default();
-        for (ctype_str, currency, total_f64) in rows {
+        for (ctype_str, currency, amount) in rows {
             let Some(ctype) = CategoryType::parse(&ctype_str) else {
                 continue;
             };
-            let amount = Decimal::try_from(total_f64).map_err(|e| {
-                anyhow!("cash total for category type {ctype_str} is not representable: {e}")
-            })?;
             if CategoryType::INCOME.contains(&ctype) {
                 income.add(amount, &currency, fx);
             } else if CategoryType::SPENDING.contains(&ctype) {
-                spending.add(amount.abs(), &currency, fx);
+                spending.add(-amount, &currency, fx);
             }
         }
         Ok((income.converted_sum(), spending.converted_sum()))
@@ -6851,6 +6826,40 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE profiles ADD COLUMN spouse_id TEXT")?;
     }
 
+    // ── 18. Type the money-movement and interest categories correctly ──
+    // Households that built their own taxonomy left every "Moving money" child
+    // typed `spending` (Investments as taxable interest) and "Income > Interest"
+    // as `spending`, so transfers and interest leaked into the overview's
+    // income/spending totals. Retype them once; user_version marks it done so a
+    // later deliberate change is never overwritten.
+    if user_version < 2 {
+        let tx = conn.unchecked_transaction()?;
+        retype_money_movement_categories(&tx)?;
+        tx.execute_batch("PRAGMA user_version = 2")?;
+        tx.commit()?;
+    }
+
+    Ok(())
+}
+
+/// Children of a "Moving money" parent become `internal_transfer`; an
+/// "Interest" child of "Income" that is still `spending` becomes
+/// `interest_taxable`. Matching is by parent name, so a default taxonomy
+/// (which has neither parent) is untouched.
+fn retype_money_movement_categories(conn: &Connection) -> Result<()> {
+    let transfers = conn.execute(
+        "UPDATE categories SET category_type = 'internal_transfer'
+         WHERE parent_id IN (SELECT id FROM categories WHERE LOWER(name) = 'moving money')
+           AND category_type IN ('spending', 'interest_taxable')",
+        [],
+    )?;
+    let interest = conn.execute(
+        "UPDATE categories SET category_type = 'interest_taxable'
+         WHERE LOWER(name) = 'interest' AND category_type = 'spending'
+           AND parent_id IN (SELECT id FROM categories WHERE LOWER(name) = 'income')",
+        [],
+    )?;
+    tracing::info!(transfers, interest, "retyped money-movement categories");
     Ok(())
 }
 
@@ -11230,7 +11239,7 @@ mod fingerprint_dedupe_tests {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
 
         // A fresh import of the same statement now recognises the rows.
         let reimport = db
@@ -11243,5 +11252,220 @@ mod fingerprint_dedupe_tests {
             )
             .unwrap();
         assert_eq!(reimport.rows_inserted, 0);
+    }
+}
+
+#[cfg(test)]
+mod overview_figure_tests {
+    use super::*;
+    use crate::model::CreateInvestmentEventBody;
+    use rust_decimal::Decimal;
+    use tempfile::NamedTempFile;
+
+    fn test_db() -> (Db, NamedTempFile) {
+        let file = NamedTempFile::new().expect("temp file");
+        let db = Db::open(file.path()).expect("test db");
+        (db, file)
+    }
+
+    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn gbp_fx() -> crate::util::fx::FxRateMap {
+        crate::util::fx::FxRateMap::new(vec![crate::model::Currency {
+            code: "GBP".to_string(),
+            is_preferred: true,
+            fx_rate: Decimal::ONE,
+            updated_at: None,
+        }])
+        .unwrap()
+    }
+
+    fn add_account(db: &Db, id: &str, account_type: AccountType) {
+        db.create_account(&Account {
+            id: id.to_string(),
+            name: id.to_string(),
+            institution: "TestBank".to_string(),
+            account_type,
+            currency: "GBP".to_string(),
+            balance: None,
+            balance_date: None,
+            is_active: true,
+            notes: None,
+            profile_ids: vec!["default".to_string()],
+            is_stale: None,
+            is_available: true,
+        })
+        .unwrap();
+    }
+
+    fn add_category(
+        db: &Db,
+        name: &str,
+        parent_id: Option<&str>,
+        category_type: CategoryType,
+    ) -> String {
+        db.create_category(&CreateCategoryPayload {
+            name: name.to_string(),
+            parent_id: parent_id.map(str::to_string),
+            display_order: None,
+            description: None,
+            category_type,
+        })
+        .unwrap()
+        .id
+    }
+
+    fn category_type_of(db: &Db, id: &str) -> String {
+        db.conn
+            .query_row(
+                "SELECT category_type FROM categories WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn add_txn(db: &Db, account: &str, category_id: &str, day: u32, amount: Decimal) {
+        db.insert_transactions_bulk(
+            account,
+            &[ImportTransaction {
+                date: date(2026, 3, day).and_hms_opt(0, 0, 0).unwrap(),
+                description: format!("t{day}"),
+                amount,
+                currency: Some("GBP".to_string()),
+                category_id: Some(category_id.to_string()),
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+    }
+
+    fn snapshot(db: &Db, account: &str, value: Decimal, as_of: NaiveDate) {
+        db.upsert_holdings(
+            account,
+            &[Holding {
+                account_id: account.to_string(),
+                symbol: "FUND".to_string(),
+                name: "FUND".to_string(),
+                holding_type: HoldingType::Stock,
+                quantity: Decimal::ONE,
+                price_per_unit: None,
+                value,
+                currency: "GBP".to_string(),
+                as_of: as_of.and_hms_opt(0, 0, 0).unwrap(),
+                short_name: None,
+                sub_account: None,
+                is_closed: false,
+                derived: false,
+                source_document_ids: Vec::new(),
+                source_file: None,
+            }],
+        )
+        .unwrap();
+    }
+
+    fn event(db: &Db, account: &str, event_type: &str, day: (u32, u32), amount: &str) {
+        db.create_investment_event(&CreateInvestmentEventBody {
+            account_id: account.to_string(),
+            event_type: event_type.to_string(),
+            symbol: "FUND".to_string(),
+            date: format!("2026-{:02}-{:02}T00:00:00", day.0, day.1),
+            quantity: "1".to_string(),
+            price_per_share: amount.to_string(),
+            fee: None,
+            currency: "GBP".to_string(),
+            fee_currency: None,
+            notes: None,
+            source_document_ids: Vec::new(),
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn spending_counts_only_real_spending_net_of_refunds() {
+        let (db, _file) = test_db();
+        add_account(&db, "main", AccountType::Checking);
+        let food = add_category(&db, "T Food", None, CategoryType::Spending);
+        let moving = add_category(&db, "T Moving", None, CategoryType::Spending);
+        let income = add_category(&db, "T Income", None, CategoryType::Spending);
+        let groceries = add_category(&db, "T Groceries", Some(&food), CategoryType::Spending);
+        let transfer =
+            add_category(&db, "T Transfer", Some(&moving), CategoryType::InternalTransfer);
+        let salary = add_category(&db, "T Salary", Some(&income), CategoryType::IncomeTaxable);
+        let interest =
+            add_category(&db, "T Interest", Some(&income), CategoryType::InterestTaxable);
+
+        add_txn(&db, "main", &groceries, 1, Decimal::new(-10000, 2));
+        add_txn(&db, "main", &groceries, 2, Decimal::new(2000, 2));
+        // More arrives from own accounts than leaves: must not register as spending.
+        add_txn(&db, "main", &transfer, 3, Decimal::new(50000, 2));
+        add_txn(&db, "main", &transfer, 4, Decimal::new(-30000, 2));
+        add_txn(&db, "main", &interest, 5, Decimal::new(500, 2));
+        add_txn(&db, "main", &salary, 6, Decimal::new(300000, 2));
+
+        let (inc, spend) = db
+            .compute_category_type_cash(date(2026, 3, 1), date(2026, 3, 31), None, &gbp_fx())
+            .unwrap();
+        assert_eq!(spend, Decimal::new(8000, 2));
+        assert_eq!(inc, Decimal::new(300000, 2));
+    }
+
+    #[test]
+    fn migration_retypes_moving_money_children_and_interest_once() {
+        let (db, file) = test_db();
+        let moving = add_category(&db, "Moving money", None, CategoryType::Spending);
+        let income: String = db
+            .conn
+            .query_row("SELECT id FROM categories WHERE name = 'Income'", [], |r| r.get(0))
+            .unwrap();
+        let savings = add_category(&db, "Put aside", Some(&moving), CategoryType::Spending);
+        let investments =
+            add_category(&db, "Brokerage", Some(&moving), CategoryType::InterestTaxable);
+        let interest = add_category(&db, "Interest", Some(&income), CategoryType::Spending);
+        let dividends = add_category(&db, "Dividends", Some(&income), CategoryType::InterestTaxable);
+        db.conn.execute_batch("PRAGMA user_version = 1").unwrap();
+        drop(db);
+
+        let db = Db::open(file.path()).unwrap();
+        assert_eq!(category_type_of(&db, &savings), "internal_transfer");
+        assert_eq!(category_type_of(&db, &investments), "internal_transfer");
+        assert_eq!(category_type_of(&db, &interest), "interest_taxable");
+        assert_eq!(category_type_of(&db, &dividends), "interest_taxable");
+
+        db.conn
+            .execute(
+                "UPDATE categories SET category_type = 'spending' WHERE id = ?1",
+                [&savings],
+            )
+            .unwrap();
+        drop(db);
+        let db = Db::open(file.path()).unwrap();
+        assert_eq!(category_type_of(&db, &savings), "spending");
+    }
+
+    #[test]
+    fn investment_metrics_cover_isa_not_pension_and_open_at_the_day_before_start() {
+        let (db, _file) = test_db();
+        add_account(&db, "isa", AccountType::InvestmentIsa);
+        add_account(&db, "sipp", AccountType::Pension);
+
+        snapshot(&db, "isa", Decimal::new(1000, 0), date(2026, 1, 31));
+        snapshot(&db, "sipp", Decimal::new(5000, 0), date(2026, 1, 31));
+        // Contribution dated on the first day of the range, valued the same day.
+        event(&db, "isa", "buy", (2, 1), "200");
+        event(&db, "sipp", "buy", (2, 1), "700");
+        snapshot(&db, "isa", Decimal::new(1250, 0), date(2026, 2, 1));
+        snapshot(&db, "sipp", Decimal::new(5800, 0), date(2026, 2, 1));
+
+        let m = db
+            .compute_investment_metrics(date(2026, 2, 1), date(2026, 2, 28), None, &gbp_fx())
+            .unwrap();
+        assert_eq!(m.start_value, Decimal::new(1000, 0));
+        assert_eq!(m.end_value, Decimal::new(1250, 0));
+        assert_eq!(m.new_cash_invested, Decimal::new(200, 0));
+        assert_eq!(m.total_growth, Decimal::new(250, 0));
+        assert_eq!(m.market_growth, Decimal::new(50, 0));
     }
 }
