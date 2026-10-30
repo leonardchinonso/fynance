@@ -4116,8 +4116,13 @@ impl Db {
         profile_id: Option<&str>,
         fx: &crate::util::fx::FxRateMap,
     ) -> Result<Decimal> {
-        let mut carry =
-            CarryForward::new(self.holding_snapshots_in_range(date, date, profile_id, None, &[])?);
+        let mut carry = CarryForward::new(self.holding_snapshots_in_range(
+            date,
+            date,
+            profile_id,
+            None,
+            &[],
+        )?);
         carry.advance_to(date);
         Ok(carry
             .effective()

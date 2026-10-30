@@ -173,7 +173,12 @@ fn spending_counts_outflows_only_income_counts_inflows_only() {
     let (db, _f) = test_db();
     db.create_account(&make_account("chk", AccountType::Checking))
         .unwrap();
-    let food = leaf(&db, "T-Group Food", "T Food", fynance::model::CategoryType::Spending);
+    let food = leaf(
+        &db,
+        "T-Group Food",
+        "T Food",
+        fynance::model::CategoryType::Spending,
+    );
     let salary = leaf(
         &db,
         "T-Group Pay",
@@ -193,10 +198,23 @@ fn spending_counts_outflows_only_income_counts_inflows_only() {
     .unwrap();
 
     let (income, spending) = db
-        .compute_category_type_cash(dt(2025, 1, 1).date(), dt(2025, 1, 31).date(), None, &gbp_fx())
+        .compute_category_type_cash(
+            dt(2025, 1, 1).date(),
+            dt(2025, 1, 31).date(),
+            None,
+            &gbp_fx(),
+        )
         .unwrap();
-    assert_eq!(income, dec!(1000), "income = inflows only, not netted with the reversal");
-    assert_eq!(spending, dec!(400), "spending = outflows only, not netted with the refund");
+    assert_eq!(
+        income,
+        dec!(1000),
+        "income = inflows only, not netted with the reversal"
+    );
+    assert_eq!(
+        spending,
+        dec!(400),
+        "spending = outflows only, not netted with the refund"
+    );
 }
 
 #[test]
@@ -218,7 +236,12 @@ fn internal_transfer_and_interest_types_excluded_from_both() {
         "Interest",
         fynance::model::CategoryType::InterestNonTaxable,
     );
-    let bills = leaf(&db, "T-Group Home", "T Bills", fynance::model::CategoryType::Spending);
+    let bills = leaf(
+        &db,
+        "T-Group Home",
+        "T Bills",
+        fynance::model::CategoryType::Spending,
+    );
 
     db.insert_transactions_bulk(
         "chk",
@@ -232,15 +255,33 @@ fn internal_transfer_and_interest_types_excluded_from_both() {
     .unwrap();
     db.insert_transactions_bulk(
         "sav",
-        &[txn(dt(2025, 1, 5), "from checking", dec!(1000), &transfer.id)],
+        &[txn(
+            dt(2025, 1, 5),
+            "from checking",
+            dec!(1000),
+            &transfer.id,
+        )],
     )
     .unwrap();
 
     let (income, spending) = db
-        .compute_category_type_cash(dt(2025, 1, 1).date(), dt(2025, 1, 31).date(), None, &gbp_fx())
+        .compute_category_type_cash(
+            dt(2025, 1, 1).date(),
+            dt(2025, 1, 31).date(),
+            None,
+            &gbp_fx(),
+        )
         .unwrap();
-    assert_eq!(income, dec!(0), "interest inflow is not income-taxable income");
-    assert_eq!(spending, dec!(250), "own-account transfers are not spending");
+    assert_eq!(
+        income,
+        dec!(0),
+        "interest inflow is not income-taxable income"
+    );
+    assert_eq!(
+        spending,
+        dec!(250),
+        "own-account transfers are not spending"
+    );
 }
 
 // ── Problem 2: growth metrics and cash cover one account set ────────────────
@@ -279,16 +320,53 @@ fn investment_metrics_and_new_cash_cover_the_investments_asset_class() {
         .unwrap();
 
     for body in [
-        event("inv", "buy", "AAPL", "2025-02-01T00:00:00", "1", "50", "GBP"),
-        event("isa", "buy", "VWRP", "2025-02-01T00:00:00", "1", "20", "GBP"),
-        event("pen", "buy", "FUND", "2025-02-01T00:00:00", "1", "5000", "GBP"),
-        event("chk", "buy", "BTC", "2025-02-01T00:00:00", "1", "999", "GBP"),
+        event(
+            "inv",
+            "buy",
+            "AAPL",
+            "2025-02-01T00:00:00",
+            "1",
+            "50",
+            "GBP",
+        ),
+        event(
+            "isa",
+            "buy",
+            "VWRP",
+            "2025-02-01T00:00:00",
+            "1",
+            "20",
+            "GBP",
+        ),
+        event(
+            "pen",
+            "buy",
+            "FUND",
+            "2025-02-01T00:00:00",
+            "1",
+            "5000",
+            "GBP",
+        ),
+        event(
+            "chk",
+            "buy",
+            "BTC",
+            "2025-02-01T00:00:00",
+            "1",
+            "999",
+            "GBP",
+        ),
     ] {
         db.create_investment_event(&body).unwrap();
     }
 
     let m = db
-        .compute_investment_metrics(dt(2025, 1, 1).date(), dt(2025, 6, 30).date(), None, &gbp_fx())
+        .compute_investment_metrics(
+            dt(2025, 1, 1).date(),
+            dt(2025, 6, 30).date(),
+            None,
+            &gbp_fx(),
+        )
         .unwrap();
     // Value covers investment + ISA only.
     assert_eq!(m.start_value, dec!(200));
@@ -311,17 +389,50 @@ fn transfers_between_scoped_accounts_cancel_out_of_scope_transfers_count() {
         .unwrap();
 
     for body in [
-        event("a", "transfer", "VWRP", "2025-02-01T00:00:00", "-1", "100", "GBP"),
-        event("b", "transfer", "VWRP", "2025-02-01T00:00:00", "1", "100", "GBP"),
-        event("ext", "transfer", "VWRP", "2025-02-01T00:00:00", "-1", "40", "GBP"),
+        event(
+            "a",
+            "transfer",
+            "VWRP",
+            "2025-02-01T00:00:00",
+            "-1",
+            "100",
+            "GBP",
+        ),
+        event(
+            "b",
+            "transfer",
+            "VWRP",
+            "2025-02-01T00:00:00",
+            "1",
+            "100",
+            "GBP",
+        ),
+        event(
+            "ext",
+            "transfer",
+            "VWRP",
+            "2025-02-01T00:00:00",
+            "-1",
+            "40",
+            "GBP",
+        ),
     ] {
         db.create_investment_event(&body).unwrap();
     }
 
     let total = db
-        .compute_new_cash_invested(dt(2025, 1, 1).date(), dt(2025, 6, 30).date(), None, &gbp_fx())
+        .compute_new_cash_invested(
+            dt(2025, 1, 1).date(),
+            dt(2025, 6, 30).date(),
+            None,
+            &gbp_fx(),
+        )
         .unwrap();
-    assert_eq!(total, dec!(0), "a transfer between two in-scope accounts nets to zero");
+    assert_eq!(
+        total,
+        dec!(0),
+        "a transfer between two in-scope accounts nets to zero"
+    );
 }
 
 #[test]
@@ -368,7 +479,11 @@ fn new_cash_invested_converts_at_event_date_rate() {
     let total = db
         .compute_new_cash_invested(dt(2025, 1, 1).date(), dt(2025, 6, 30).date(), None, &fx)
         .unwrap();
-    assert_eq!(total, dec!(750), "1000 USD at the 0.75 rate stored nearest the event date");
+    assert_eq!(
+        total,
+        dec!(750),
+        "1000 USD at the 0.75 rate stored nearest the event date"
+    );
 }
 
 // ── Problem 3: period change measured from the period's first day ───────────
@@ -390,8 +505,16 @@ fn net_worth_as_of_is_the_period_first_day_not_the_first_bucket_end() {
     let fx = gbp_fx();
     // Opening value = nothing on the period's first day; the first bucket
     // (Jan 31) already includes the Jan 5 snapshot.
-    assert_eq!(db.net_worth_as_of(dt(2025, 1, 1).date(), None, &fx).unwrap(), dec!(0));
-    assert_eq!(db.net_worth_as_of(dt(2025, 1, 10).date(), None, &fx).unwrap(), dec!(500));
+    assert_eq!(
+        db.net_worth_as_of(dt(2025, 1, 1).date(), None, &fx)
+            .unwrap(),
+        dec!(0)
+    );
+    assert_eq!(
+        db.net_worth_as_of(dt(2025, 1, 10).date(), None, &fx)
+            .unwrap(),
+        dec!(500)
+    );
 
     let history = db
         .get_monthly_net_worth(
@@ -406,6 +529,8 @@ fn net_worth_as_of_is_the_period_first_day_not_the_first_bucket_end() {
     assert_eq!(history[1].total_wealth, dec!(800));
     // The delta from the period's first day is 800, not the 300 you get by
     // measuring from the first bucket's month-end.
-    let opening = db.net_worth_as_of(dt(2025, 1, 1).date(), None, &fx).unwrap();
+    let opening = db
+        .net_worth_as_of(dt(2025, 1, 1).date(), None, &fx)
+        .unwrap();
     assert_eq!(history[1].total_wealth - opening, dec!(800));
 }
