@@ -11413,6 +11413,19 @@ mod overview_figure_tests {
     }
 
     #[test]
+    fn more_arriving_than_leaving_never_raises_spending() {
+        let (db, _file) = test_db();
+        add_account(&db, "main", AccountType::Checking);
+        let shop = add_category(&db, "T Shop", None, CategoryType::Spending);
+        add_txn(&db, "main", &shop, 1, Decimal::new(-10000, 2));
+        add_txn(&db, "main", &shop, 2, Decimal::new(15000, 2));
+        let (_, spend) = db
+            .compute_category_type_cash(date(2026, 3, 1), date(2026, 3, 31), None, &gbp_fx())
+            .unwrap();
+        assert_eq!(spend, Decimal::new(-5000, 2));
+    }
+
+    #[test]
     fn migration_retypes_moving_money_children_and_interest_once() {
         let (db, file) = test_db();
         let moving = add_category(&db, "Moving money", None, CategoryType::Spending);
