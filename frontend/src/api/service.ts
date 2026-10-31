@@ -62,8 +62,11 @@ export interface AccountHoldingsHistory {
 /** Response of `GET /api/holdings/history`: period buckets plus the opening value. */
 export interface PortfolioHistoryResponse {
   preferred_currency: string
-  /** Net worth on the first day of the period, for period-over-period deltas. */
-  period_start_wealth: string
+  /**
+   * Net worth on the first day of the period, for period-over-period deltas.
+   * Absent from backends older than this field; readers must cope.
+   */
+  period_start_wealth?: string
   rows: HoldingsHistoryRow[]
 }
 

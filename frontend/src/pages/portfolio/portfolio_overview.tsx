@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils"
 import type { AssetClass } from "@/bindings/AssetClass"
 import { ASSET_CLASSES, type AssetClassSettings } from "@/hooks/use_url_filters"
 import { accountTypeToAssetClass } from "@/lib/account_type_utils"
+import { cashSummaryNetSavings, openingNetWorth } from "./overview_compat"
 
 
 const ASSET_CLASS_COLORS: Record<AssetClass, string> = {
@@ -106,8 +107,9 @@ export function PortfolioOverview({
     hasValue: ({ portfolio, history, period_start_wealth, allHoldings, currencies }) => {
       // The delta runs from the period's first day to its last. The first
       // history row is the first period *end*, so the opening value comes
-      // from the response's dedicated field instead.
-      const startNetWorth = period_start_wealth
+      // from the response's dedicated field instead (older backends lack
+      // it; see overview_compat).
+      const startNetWorth = openingNetWorth(period_start_wealth, history)
       const endNetWorth = history.length >= 1 ? history[history.length - 1].total_wealth : undefined
       return (
         <div className="relative">
@@ -177,7 +179,7 @@ function PortfolioOverviewInternal({
 
   const totalIncome = cashSummary ? parseFloat(cashSummary.income) : 0
   const totalSpending = cashSummary ? parseFloat(cashSummary.spending) : 0
-  const netSavings = cashSummary ? parseFloat(cashSummary.net_savings) : 0
+  const netSavings = cashSummary ? parseFloat(cashSummaryNetSavings(cashSummary)) : 0
   const newCashInvested = cashSummary ? parseFloat(cashSummary.new_cash_invested) : 0
   const totalGrowth = cashSummary ? parseFloat(cashSummary.investment_metrics.total_growth) : 0
   const marketGrowth = cashSummary ? parseFloat(cashSummary.investment_metrics.market_growth) : 0

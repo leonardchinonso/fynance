@@ -9,8 +9,9 @@ export interface PortfolioSummaryData {
   portfolio: HoldingsSummaryResponse
   /** Period buckets (first row is the first period *end*, not the start). */
   history: HoldingsHistoryRow[]
-  /** Net worth on the first day of the period; the baseline for the period delta. */
-  period_start_wealth: string
+  /** Net worth on the first day of the period; the baseline for the period
+   * delta. Undefined for backends older than the field (see overview_compat). */
+  period_start_wealth?: string
   /** Holdings for all accounts (empty array for accounts with no positions). */
   allHoldings: Holding[]
   /** FX rates keyed by currency code, for converting holding values. */
