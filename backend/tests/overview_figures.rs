@@ -596,3 +596,108 @@ fn first_day_valuation_is_period_activity_not_the_opening() {
         .unwrap();
     assert_eq!(history[0].total_wealth - opening, dec!(500));
 }
+
+// ── Problem 4: Net Savings = income - spending ──────────────────────────────
+
+// Drives `GET /api/budget/cash-summary` in-process (the way server_smoke
+// does) so the test pins the response contract itself, not just the
+// arithmetic: the field is named net_savings, and it is income minus
+// spending with transfers and interest in neither term.
+#[tokio::test]
+async fn cash_summary_net_savings_is_income_minus_spending_ignoring_transfers_and_interest() {
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Method, Request, StatusCode};
+    use fynance::server::build_router;
+    use std::sync::{Arc, Mutex};
+    use tower::ServiceExt;
+
+    let (db, _f) = test_db();
+    db.create_account(&make_account("chk", AccountType::Checking))
+        .unwrap();
+    db.create_account(&make_account("sav", AccountType::Savings))
+        .unwrap();
+    let salary = leaf(
+        &db,
+        "T-Group Pay",
+        "Pay",
+        fynance::model::CategoryType::IncomeTaxable,
+    );
+    let bills = leaf(
+        &db,
+        "T-Group Home",
+        "T Bills",
+        fynance::model::CategoryType::Spending,
+    );
+    let transfer = leaf(
+        &db,
+        "T-Group Moving",
+        "Transfers",
+        fynance::model::CategoryType::InternalTransfer,
+    );
+    let interest = leaf(
+        &db,
+        "T-Group Earn",
+        "Interest",
+        fynance::model::CategoryType::InterestTaxable,
+    );
+
+    db.insert_transactions_bulk(
+        "chk",
+        &[
+            txn(dt(2025, 1, 10), "pay", dec!(2000), &salary.id),
+            txn(dt(2025, 1, 8), "energy", dec!(-250), &bills.id),
+            txn(dt(2025, 1, 5), "to savings", dec!(-1000), &transfer.id),
+            txn(dt(2025, 1, 20), "card repayment", dec!(-400), &transfer.id),
+            txn(dt(2025, 1, 7), "bank interest", dec!(30), &interest.id),
+        ],
+    )
+    .unwrap();
+    db.insert_transactions_bulk(
+        "sav",
+        &[txn(
+            dt(2025, 1, 5),
+            "from checking",
+            dec!(1000),
+            &transfer.id,
+        )],
+    )
+    .unwrap();
+
+    let app = build_router(Arc::new(Mutex::new(db)), true);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/budget/cash-summary?start=2025-01-01&end=2025-01-31")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Money fields serialize as strings; reparse for exact comparison.
+    let field = |name: &str| {
+        Decimal::from_str(body[name].as_str().unwrap_or_else(|| {
+            panic!("cash-summary response missing string field `{name}`: {body}")
+        }))
+        .unwrap()
+    };
+    let (income, spending, net_savings) =
+        (field("income"), field("spending"), field("net_savings"));
+    assert_eq!(
+        net_savings,
+        income - spending,
+        "net_savings is income - spending"
+    );
+    assert_eq!(
+        net_savings,
+        dec!(1750),
+        "the £1,400 of own-account transfers and the £30 of interest stay \
+         out of both terms: 2000 - 250, not the £1,680 you'd get by netting \
+         transfers in, the £3,400 by counting them as spending, or the £1,780 \
+         by counting interest as income"
+    );
+}
