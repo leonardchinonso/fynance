@@ -15,7 +15,6 @@ import type {
   Holding,
   ImportResult,
   Paginated,
-  HoldingsHistoryRow,
   HoldingsSummaryResponse,
   Profile,
   SetBudgetOverrideBody,
@@ -54,7 +53,7 @@ import type { S104PoolState } from "@/bindings/S104PoolState"
 import type { SymbolSummary } from "@/bindings/SymbolSummary"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
-import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions } from "./service"
+import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, PortfolioHistoryResponse } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
 import {
@@ -459,7 +458,7 @@ export class MockApiService implements ApiService {
       preferred_currency: "GBP",
       income: "32000.00",
       spending: "18450.20",
-      savings_growth: "5000.00",
+      net_savings: "13549.80",
       new_cash_invested: "8000.00",
       investment_metrics: {
         start_value: "100000.00",
@@ -604,7 +603,7 @@ export class MockApiService implements ApiService {
     end: string,
     _granularity?: Granularity,
     _profileId?: string
-  ): Promise<HoldingsHistoryRow[]> {
+  ): Promise<PortfolioHistoryResponse> {
     await delay(DELAY_MS)
 
     // Aggregate snapshots by month, split by available/unavailable
@@ -630,7 +629,7 @@ export class MockApiService implements ApiService {
       entry.unavailable += split.unavailable
     }
 
-    return Array.from(months.entries())
+    const rows = Array.from(months.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, { available, unavailable }]) => ({
         month,
@@ -641,6 +640,11 @@ export class MockApiService implements ApiService {
         total_wealth: (available + unavailable).toFixed(2),
         total_wealth_display: null,
       }))
+    return {
+      preferred_currency: "GBP",
+      period_start_wealth: rows[0]?.total_wealth ?? "0.00",
+      rows,
+    }
   }
 
   async getHoldings(accountId: string): Promise<Holding[]> {

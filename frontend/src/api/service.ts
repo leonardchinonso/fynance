@@ -59,6 +59,17 @@ export interface AccountHoldingsHistory {
   rows: AccountHoldingHistoryRow[]
 }
 
+/** Response of `GET /api/holdings/history`: period buckets plus the opening value. */
+export interface PortfolioHistoryResponse {
+  preferred_currency: string
+  /**
+   * Net worth on the first day of the period, for period-over-period deltas.
+   * Absent from backends older than this field; readers must cope.
+   */
+  period_start_wealth?: string
+  rows: HoldingsHistoryRow[]
+}
+
 export type { ParseProgressEvent }
 export type ParseProgressHandler = (event: ParseProgressEvent) => void
 /** Optional streaming-progress wiring for `parseDocuments`. */
@@ -153,7 +164,7 @@ export interface ApiService {
     end: string,
     granularity?: Granularity,
     profileId?: string
-  ): Promise<HoldingsHistoryRow[]>
+  ): Promise<PortfolioHistoryResponse>
   getHoldings(accountId: string): Promise<Holding[]>
   getHoldingsBatch(accountIds: string[]): Promise<Holding[]>
   /** Per-holding value history for a single account. Maps to `GET /api/holdings/account-history`. */

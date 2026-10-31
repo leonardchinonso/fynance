@@ -1479,19 +1479,20 @@ pub struct InvestmentMetrics {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 pub struct CashSummaryResponse {
     pub preferred_currency: String,
-    /// Sum of income_taxable + income_non_taxable transactions in range.
+    /// Positive amounts in income_taxable + income_non_taxable transactions in range.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub income: Decimal,
-    /// Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+    /// Absolute value of negative amounts in spending + donation_taxable +
+    /// donation_non_taxable transactions in range (internal transfers excluded).
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub spending: Decimal,
-    /// Period-over-period growth of `savings`-type holdings.
+    /// `income - spending`: what the people in view earned minus what they spent.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
-    pub savings_growth: Decimal,
-    /// Sum of `buy` investment events in range.
+    pub net_savings: Decimal,
+    /// Net new contributions into Investment + InvestmentIsa accounts in range.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub new_cash_invested: Decimal,

@@ -7,19 +7,20 @@ import type { InvestmentMetrics } from "./InvestmentMetrics";
  */
 export type CashSummaryResponse = { preferred_currency: string, 
 /**
- * Sum of income_taxable + income_non_taxable transactions in range.
+ * Positive amounts in income_taxable + income_non_taxable transactions in range.
  */
 income: string, 
 /**
- * Sum of |amount| for spending + donation_taxable + donation_non_taxable.
+ * Absolute value of negative amounts in spending + donation_taxable +
+ * donation_non_taxable transactions in range (internal transfers excluded).
  */
 spending: string, 
 /**
- * Period-over-period growth of `savings`-type holdings.
+ * `income - spending`: what the people in view earned minus what they spent.
  */
-savings_growth: string, 
+net_savings: string, 
 /**
- * Sum of `buy` investment events in range.
+ * Net new contributions into Investment + InvestmentIsa accounts in range.
  */
 new_cash_invested: string, 
 /**

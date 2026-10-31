@@ -1,6 +1,7 @@
 import { api } from "@/api/client"
 import type { Granularity, HoldingsHistoryRow } from "@/types"
 import type { RemoteData } from "@/lib/remote_data"
+import { RemoteData as RD } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
 
 /**
@@ -30,5 +31,16 @@ export function usePortfolioHistoryData(
     () => api.getPortfolioHistory(start, end, granularity, profileId),
     { tag: "holdings-history", hard: [profileId, granularity], soft: [start, end], enabled },
   )
-  return data
+  switch (data.status) {
+    case "idle":
+      return RD.idle()
+    case "loading":
+      return RD.loading()
+    case "reloading":
+      return RD.reloading(data.value.rows)
+    case "failed":
+      return RD.failed(data.error)
+    case "succeeded":
+      return RD.succeeded(data.value.rows)
+  }
 }
