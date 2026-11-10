@@ -353,6 +353,13 @@ td code { font-size: 12px; }
     <a href="#get-api-tax-inputs-profile-id-tax-year" class="nav-endpoint"><span class="method-badge method-get">GET</span>/tax-inputs/:profile_id/:tax_year</a>
     <a href="#put-api-tax-inputs-profile-id-tax-year" class="nav-endpoint"><span class="method-badge method-put">PUT</span>/tax-inputs/:profile_id/:tax_year</a>
 
+    <div class="nav-section">Employment &amp; Tax Summary</div>
+    <a href="#get-api-employment-pay" class="nav-endpoint"><span class="method-badge method-get">GET</span>/employment-pay</a>
+    <a href="#post-api-employment-pay" class="nav-endpoint"><span class="method-badge method-post">POST</span>/employment-pay</a>
+    <a href="#patch-api-employment-pay-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/employment-pay/:id</a>
+    <a href="#delete-api-employment-pay-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/employment-pay/:id</a>
+    <a href="#get-api-tax-summary-tax-year" class="nav-endpoint"><span class="method-badge method-get">GET</span>/tax/summary/:tax_year</a>
+
     <a href="#changelog" class="nav-section-link" style="margin-top:16px;">Changelog</a>
   </div>
 </nav>
@@ -3848,6 +3855,237 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   </table>
 </section>
 
+<!-- ==================================================================== -->
+<!-- EMPLOYMENT PAY & TAX-YEAR SUMMARY (plan 28)                          -->
+<!-- ==================================================================== -->
+
+<section class="endpoint" id="get-api-employment-pay" data-method="GET" data-path="/api/employment-pay">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/employment-pay</code>
+  </div>
+  <p class="endpoint-summary">One row per PAYE pay record: a payslip line or a P60/annual summary row. Gross pay and tax deducted under PAYE are never bank movements, so they are recorded here rather than as transactions. Sorted <code>period_end</code> ascending, with period-less annual rows last.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>tax_year</code></td><td>query</td><td>string</td><td>No</td><td>Restrict to one tax year, as <code>YYYY-YY</code>. Omit for every year held.</td></tr>
+    </tbody>
+  </table>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/employment-pay?tax_year=2025-26"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "items": [
+    {
+      "id": "7d1c8e05-93a2-4b21-9a1c-2f6a2b2b2b2b",
+      "tax_year": "2025-26",
+      "period_start": "2025-04-01",
+      "period_end": "2025-04-30",
+      "employer": "Employer A",
+      "is_p60": false,
+      "gross_pay": "1000.00",
+      "tax_deducted": "200.00",
+      "employees_ni": "110.00",
+      "student_loan": "30.00",
+      "net_pay": "660.00",
+      "currency": "GBP",
+      "transaction_id": "4b1d2e3f-5a6b-7c8d-9e0f-1a2b3c4d5e6f",
+      "document_ids": [],
+      "notes": "April payslip",
+      "created_at": "2026-11-01T09:00:00Z",
+      "updated_at": "2026-11-01T09:00:00Z"
+    },
+    {
+      "id": "2a9f8e7d-6c5b-4a39-8172-635445362718",
+      "tax_year": "2025-26",
+      "employer": "Employer A",
+      "is_p60": true,
+      "gross_pay": "12000.00",
+      "tax_deducted": "2400.00",
+      "currency": "GBP",
+      "document_ids": [],
+      "created_at": "2026-11-01T09:05:00Z",
+      "updated_at": "2026-11-01T09:05:00Z"
+    }
+  ]
+}</code></pre>
+  <p>A figure absent from a row means it was <strong>not recorded</strong>, which is deliberately distinct from <code>"0"</code>: a payslip under the NI threshold genuinely deducted zero, while a P60 that never mentioned the student loan deducted something unknown. The P60 row above carries no period for the same reason.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td><code>tax_year</code> is not in <code>YYYY-YY</code> form</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="post-api-employment-pay" data-method="POST" data-path="/api/employment-pay">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/employment-pay</code>
+  </div>
+  <p class="endpoint-summary">Create a PAYE pay record. Requires <code>tax_year</code>, <code>employer</code>, <code>gross_pay</code> and <code>tax_deducted</code>; the money fields are decimal strings and must not be negative.</p>
+  <h4>Request Body</h4>
+  <pre class="example-request"><code>{
+  "tax_year": "2025-26",
+  "period_start": "2025-04-01",
+  "period_end": "2025-04-30",
+  "employer": "Employer A",
+  "is_p60": false,
+  "gross_pay": "1000.00",
+  "tax_deducted": "200.00",
+  "employees_ni": "110.00",
+  "student_loan": "30.00",
+  "net_pay": "660.00",
+  "currency": "GBP",
+  "transaction_id": "4b1d2e3f-5a6b-7c8d-9e0f-1a2b3c4d5e6f",
+  "notes": "April payslip"
+}</code></pre>
+  <p><code>transaction_id</code> optionally links the net-pay credit that did land in a bank account; it must reference an existing transaction. Deleting that later transaction clears the link rather than the pay record.</p>
+  <h4>Example Response <span class="status-code">201</span></h4>
+  <pre class="example-response"><code>{
+  "id": "7d1c8e05-93a2-4b21-9a1c-2f6a2b2b2b2b",
+  "tax_year": "2025-26",
+  "period_start": "2025-04-01",
+  "period_end": "2025-04-30",
+  "employer": "Employer A",
+  "is_p60": false,
+  "gross_pay": "1000.00",
+  "tax_deducted": "200.00",
+  "employees_ni": "110.00",
+  "student_loan": "30.00",
+  "net_pay": "660.00",
+  "currency": "GBP",
+  "transaction_id": "4b1d2e3f-5a6b-7c8d-9e0f-1a2b3c4d5e6f",
+  "document_ids": [],
+  "notes": "April payslip",
+  "created_at": "2026-11-01T09:00:00Z",
+  "updated_at": "2026-11-01T09:00:00Z"
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td><code>tax_year</code> is not in <code>YYYY-YY</code> form (the second half must be the year following the first)</td></tr>
+      <tr><td>400</td><td><code>invalid_employer</code></td><td><code>employer</code> is empty</td></tr>
+      <tr><td>400</td><td><code>invalid_date</code></td><td><code>period_start</code> or <code>period_end</code> is not a <code>YYYY-MM-DD</code> date</td></tr>
+      <tr><td>400</td><td><code>negative_amount</code></td><td>A money field is negative</td></tr>
+      <tr><td>400</td><td><code>transaction_not_found</code></td><td><code>transaction_id</code> does not reference an existing transaction</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="patch-api-employment-pay-id" data-method="PATCH" data-path="/api/employment-pay/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-patch">PATCH</span>
+    <code class="endpoint-path">/api/employment-pay/:id</code>
+  </div>
+  <p class="endpoint-summary">Partial update. A present key changes the row, an explicit <code>null</code> clears a nullable field, an absent key leaves it alone, and unknown keys are ignored. Validation is the same as on POST, applied only to the fields actually sent.</p>
+  <h4>Request Body</h4>
+  <pre class="example-request"><code>{
+  "net_pay": null,
+  "is_p60": true,
+  "notes": "Corrected to the annual figure"
+}</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "id": "7d1c8e05-93a2-4b21-9a1c-2f6a2b2b2b2b",
+  "tax_year": "2025-26",
+  "period_start": "2025-04-01",
+  "period_end": "2025-04-30",
+  "employer": "Employer A",
+  "is_p60": true,
+  "gross_pay": "1000.00",
+  "tax_deducted": "200.00",
+  "employees_ni": "110.00",
+  "student_loan": "30.00",
+  "currency": "GBP",
+  "document_ids": [],
+  "notes": "Corrected to the annual figure",
+  "created_at": "2026-11-01T09:00:00Z",
+  "updated_at": "2026-11-01T10:15:00Z"
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>empty_body</code></td><td>No recognized field was provided</td></tr>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td><code>tax_year</code> is not in <code>YYYY-YY</code> form</td></tr>
+      <tr><td>400</td><td><code>invalid_employer</code></td><td><code>employer</code> is empty</td></tr>
+      <tr><td>400</td><td><code>invalid_date</code></td><td><code>period_start</code> or <code>period_end</code> is not a <code>YYYY-MM-DD</code> date</td></tr>
+      <tr><td>400</td><td><code>negative_amount</code></td><td>A money field is negative</td></tr>
+      <tr><td>400</td><td><code>transaction_not_found</code></td><td><code>transaction_id</code> does not reference an existing transaction</td></tr>
+      <tr><td>404</td><td><code>not_found</code></td><td>No employment-pay record with that id</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="delete-api-employment-pay-id" data-method="DELETE" data-path="/api/employment-pay/:id">
+  <div class="endpoint-header">
+    <span class="method-badge method-delete">DELETE</span>
+    <code class="endpoint-path">/api/employment-pay/:id</code>
+  </div>
+  <p class="endpoint-summary">Delete a pay record. The linked transaction (if any) is untouched.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl -X DELETE http://localhost:7433/api/employment-pay/7d1c8e05-93a2-4b21-9a1c-2f6a2b2b2b2b</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>404</td><td><code>not_found</code></td><td>No employment-pay record with that id</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="endpoint" id="get-api-tax-summary-tax-year" data-method="GET" data-path="/api/tax/summary/:tax_year">
+  <div class="endpoint-header">
+    <span class="method-badge method-get">GET</span>
+    <code class="endpoint-path">/api/tax/summary/:tax_year</code>
+  </div>
+  <p class="endpoint-summary">One tax year&#39;s bottom-line figures: PAYE employment sums from <code>/api/employment-pay</code>, untaxed interest per account, and Gift Aid donations. The UK tax year runs 6 April to 5 April.</p>
+  <h4>Example Request</h4>
+  <pre class="example-request"><code>curl "http://localhost:7433/api/tax/summary/2025-26"</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "tax_year": "2025-26",
+  "start_date": "2025-04-06",
+  "end_date": "2026-04-05",
+  "employment": {
+    "gross_pay": "12000.00",
+    "tax_deducted": "2400.00",
+    "employees_ni": "1100.00",
+    "student_loan": "360.00",
+    "net_pay": "0",
+    "payslip_count": 13,
+    "has_p60": true,
+    "has_unknown_employees_ni": false,
+    "has_unknown_student_loan": false,
+    "has_unknown_net_pay": true
+  },
+  "interest": {
+    "taxable_total": "120.50",
+    "non_taxable_total": "85.00",
+    "by_account": [
+      { "account_id": "savings-uk", "account_name": "Savings", "taxable": "120.50", "non_taxable": "0" },
+      { "account_id": "isa-cash", "account_name": "Cash ISA", "taxable": "0", "non_taxable": "85.00" }
+    ]
+  },
+  "donations": {
+    "gift_aid_total": "100.00",
+    "non_gift_aid_total": "20.00"
+  }
+}</code></pre>
+  <p>The interest and donation legs are transactions bucketed by their category type &mdash; <code>interest_taxable</code>/<code>interest_non_taxable</code> and <code>donation_taxable</code>/<code>donation_non_taxable</code> &mdash; in the 6 April to 5 April window, converted into the preferred currency. Rows with <code>exclude_from_summary</code> are left out; only accounts with interest in range appear under <code>by_account</code>. A NULL employment leg is summed as 0 but raises its <code>has_unknown_*</code> flag, because &quot;not recorded&quot; must not silently read as &quot;deducted nothing&quot; on a return. The Gift Aid flag is the <code>donation_taxable</code> category type.</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_tax_year</code></td><td><code>tax_year</code> is not in <code>YYYY-YY</code> form</td></tr>
+    </tbody>
+  </table>
+</section>
+
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════════ -->
@@ -3861,6 +4099,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tr><td>2026-05-30</td><td>Initial API reference: 45 endpoints across 13 groups, 39 models documented.</td></tr>
     <tr><td>2026-06-07</td><td>Added Capital Gains endpoints: <code>GET /api/investments/pools</code> (S104 pools) and <code>GET /api/investments/capital-gains</code> (UK CGT report).</td></tr>
     <tr><td>2026-08-15</td><td><strong>BREAKING:</strong> Capital Gains endpoints drop <code>tax_year</code> and <code>as_at</code> in favour of <code>start_date</code>/<code>end_date</code> alone (plan 23 §0.2 decision 7.3). Added <code>disposal_groups</code> to <code>CapitalGainsResponse</code>, rolling <code>realized_events</code> up by <code>(symbol, disposal_date)</code>.</td></tr>
+    <tr><td>2026-11-10</td><td>Added employment-pay endpoints: <code>GET/POST /api/employment-pay</code>, <code>PATCH/DELETE /api/employment-pay/:id</code> (PAYE payslip/P60 records, plan 28) and <code>GET /api/tax/summary/:tax_year</code> (employment sums, per-account interest split, Gift Aid totals for a 6 April to 5 April tax year).</td></tr>
     <tr><td>2026-09-03</td><td>Added tax endpoints: <code>GET/PUT /api/tax-config</code> (statutory AEA and rate bands) and <code>GET/PUT /api/tax-inputs/:profile_id/:tax_year</code> (the taxpayer&#39;s own figures). <code>GET /api/investments/capital-gains</code> gains an optional <code>tax_year</code> param that adds a computed <code>tax</code> object to the response, including the pre/post-30-Oct-2024 rate split. Added <code>GET /api/investments/brought-forward-losses</code>, which derives a <em>suggested</em> (upper-bound) carried-loss figure from prior years.</td></tr>
   </tbody>
 </table>

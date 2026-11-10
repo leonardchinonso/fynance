@@ -412,3 +412,7 @@ INSERT OR IGNORE INTO tax_config (tax_year, kind, rate_kind, valid_from, valid_t
 
     ('2026-27', 'rate', 'basic',  '2026-04-06', '2027-04-05', NULL, '0.18'),
     ('2026-27', 'rate', 'higher', '2026-04-06', '2027-04-05', NULL, '0.24');
+
+-- The `employment_pay` table (plan 28: PAYE records, tax-year summary) is
+-- created by the probe-based migration in migrate_schema(), which runs right
+-- after this file, so one DDL covers fresh and pre-existing databases alike.

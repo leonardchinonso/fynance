@@ -234,6 +234,27 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/investments/brought-forward-losses",
             get(routes::capital_gains::get_brought_forward_losses),
         )
+        // ── Employment pay (PAYE) and tax-year summary ───────────────────────
+        .route(
+            "/employment-pay",
+            get(routes::employment_pay::list_employment_pay),
+        )
+        .route(
+            "/employment-pay",
+            post(routes::employment_pay::create_employment_pay),
+        )
+        .route(
+            "/employment-pay/:id",
+            patch(routes::employment_pay::update_employment_pay),
+        )
+        .route(
+            "/employment-pay/:id",
+            delete(routes::employment_pay::delete_employment_pay),
+        )
+        .route(
+            "/tax/summary/:tax_year",
+            get(routes::employment_pay::get_tax_year_summary),
+        )
         .route("/tax-config", get(routes::tax::get_tax_config))
         .route("/tax-config", put(routes::tax::put_tax_config))
         .route(
