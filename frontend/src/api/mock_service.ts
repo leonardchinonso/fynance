@@ -55,7 +55,9 @@ import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, PortfolioHistoryResponse } from "./service"
 import { DocumentReferencedError } from "./service"
-import { cgtFiltersToParams } from "./cgt_filter_params"
+import { cgtFiltersToParams, ukTaxYearForDate, ukTaxYearToDates } from "./cgt_filter_params"
+import type { EmploymentPay, EmploymentPayPayload, TaxYearSummary } from "@/types/tax_v1"
+import { sumMoney } from "@/lib/money"
 import {
   MOCK_PROFILES,
   MOCK_ACCOUNTS,
@@ -99,7 +101,54 @@ function classifyBalance(
   return { available: 0, unavailable: bal }
 }
 
+// Synthetic employment-pay rows for the current tax year so the Tax page
+// renders a full table in mock mode. Generic figures only.
+function mockEmploymentPaySeed(): EmploymentPay[] {
+  const taxYear = ukTaxYearForDate(new Date())
+  const [yearStart] = ukTaxYearToDates(taxYear)
+  const now = new Date().toISOString()
+  const row = (partial: Partial<EmploymentPay> & { id: string; employer: string }): EmploymentPay => ({
+    tax_year: taxYear,
+    period_start: yearStart,
+    period_end: yearStart,
+    is_p60: false,
+    gross_pay: "0.00",
+    tax_deducted: "0.00",
+    employees_ni: null,
+    student_loan: null,
+    net_pay: null,
+    currency: "GBP",
+    transaction_id: null,
+    document_ids: [],
+    notes: null,
+    created_at: now,
+    updated_at: now,
+    ...partial,
+  })
+  return [
+    row({
+      id: "mock_ep_payslip_1", employer: "Employer A",
+      gross_pay: "2500.00", tax_deducted: "500.00",
+      employees_ni: "180.00", student_loan: "100.00", net_pay: "2000.00",
+    }),
+    row({
+      id: "mock_ep_payslip_2", employer: "Employer B",
+      gross_pay: "1500.00", tax_deducted: "300.00",
+      employees_ni: null, student_loan: null, net_pay: "1200.00",
+      notes: "NI and student loan unknown on this payslip",
+    }),
+    row({
+      id: "mock_ep_p60", employer: "Employer A", is_p60: true,
+      period_start: null, period_end: null,
+      gross_pay: "30000.00", tax_deducted: "6000.00",
+      employees_ni: "3600.00", student_loan: "1200.00", net_pay: "24000.00",
+    }),
+  ]
+}
+
 export class MockApiService implements ApiService {
+  private employmentPay: EmploymentPay[] = mockEmploymentPaySeed()
+
   // In-memory document store so the Documents page renders in mock mode. One
   // referenced (orphaned = false) and one orphaned entry to exercise the badge.
   // `reference_count` is null in the list (matching the real backend), so the
@@ -1297,6 +1346,104 @@ export class MockApiService implements ApiService {
     }
     this.taxInputs.set(`${profileId}/${taxYear}`, next)
     return next
+  }
+
+  // ── Employment pay / tax-year summary ─────────────────────────────
+
+  async listEmploymentPay(taxYear?: string): Promise<EmploymentPay[]> {
+    await delay(DELAY_MS)
+    return this.employmentPay
+      .filter((r) => !taxYear || r.tax_year === taxYear)
+      .slice()
+      .sort((a, b) => {
+        // period_end asc, NULLs last (matching the real endpoint).
+        const ae = a.period_end ?? ""
+        const be = b.period_end ?? ""
+        if (ae === be) return 0
+        if (ae === "") return 1
+        if (be === "") return -1
+        return ae.localeCompare(be)
+      })
+  }
+
+  async createEmploymentPay(body: EmploymentPayPayload): Promise<EmploymentPay> {
+    await delay(DELAY_MS)
+    if (!/^\d{4}-\d{2}$/.test(body.tax_year)) throw new Error("invalid tax_year (expected YYYY-YY)")
+    if (!body.employer.trim()) throw new Error("employer is required")
+    for (const [field, value] of [["gross_pay", body.gross_pay], ["tax_deducted", body.tax_deducted]] as const) {
+      const n = Number(value)
+      if (!Number.isFinite(n) || n < 0) throw new Error(`${field} must be a non-negative decimal`)
+    }
+    const now = new Date().toISOString()
+    const record: EmploymentPay = {
+      id: `mock_ep_${Math.random().toString(36).slice(2, 10)}`,
+      tax_year: body.tax_year,
+      period_start: body.period_start ?? null,
+      period_end: body.period_end ?? null,
+      employer: body.employer.trim(),
+      is_p60: body.is_p60,
+      gross_pay: body.gross_pay,
+      tax_deducted: body.tax_deducted,
+      employees_ni: body.employees_ni ?? null,
+      student_loan: body.student_loan ?? null,
+      net_pay: body.net_pay ?? null,
+      currency: body.currency,
+      transaction_id: body.transaction_id ?? null,
+      document_ids: body.document_ids ?? [],
+      notes: body.notes ?? null,
+      created_at: now,
+      updated_at: now,
+    }
+    this.employmentPay.unshift(record)
+    return record
+  }
+
+  async updateEmploymentPay(
+    id: string,
+    body: Partial<EmploymentPayPayload>,
+  ): Promise<EmploymentPay> {
+    await delay(DELAY_MS)
+    const idx = this.employmentPay.findIndex((r) => r.id === id)
+    if (idx === -1) throw new Error(`employment pay row ${id} not found`)
+    const next = { ...this.employmentPay[idx] }
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== undefined) (next as unknown as Record<string, unknown>)[k] = v
+    }
+    next.updated_at = new Date().toISOString()
+    this.employmentPay[idx] = next
+    return next
+  }
+
+  async deleteEmploymentPay(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    this.employmentPay = this.employmentPay.filter((r) => r.id !== id)
+  }
+
+  async getTaxSummary(taxYear: string): Promise<TaxYearSummary> {
+    await delay(DELAY_MS)
+    const rows = this.employmentPay.filter((r) => r.tax_year === taxYear)
+    const [start, end] = ukTaxYearToDates(taxYear)
+    return {
+      tax_year: taxYear,
+      start_date: start,
+      end_date: end,
+      employment: {
+        gross_pay: sumMoney(rows.map((r) => r.gross_pay)),
+        tax_deducted: sumMoney(rows.map((r) => r.tax_deducted)),
+        employees_ni: sumMoney(rows.map((r) => r.employees_ni)),
+        student_loan: sumMoney(rows.map((r) => r.student_loan)),
+        net_pay: sumMoney(rows.map((r) => r.net_pay)),
+        payslip_count: rows.filter((r) => !r.is_p60).length,
+        has_p60: rows.some((r) => r.is_p60),
+        has_unknown: rows.some(
+          (r) => r.employees_ni == null || r.student_loan == null || r.net_pay == null,
+        ),
+      },
+      // Mock fixtures carry no interest or donation transactions, so these
+      // legs always render their zero/empty state in mock mode.
+      interest: { taxable_total: "0.00", non_taxable_total: "0.00", by_account: [] },
+      donations: { gift_aid_total: "0.00", non_gift_aid_total: "0.00" },
+    }
   }
 
   // ── Investments ───────────────────────────────────────────────────

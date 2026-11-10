@@ -39,6 +39,7 @@ const NAV_ITEMS = [
   { to: "/portfolio", label: "Portfolio", shortLabel: "Portfolio" },
   { to: "/budget", label: "Budget", shortLabel: "Budget" },
   { to: "/investments", label: "Investments", shortLabel: "Invest" },
+  { to: "/tax", label: "Tax", shortLabel: "Tax" },
   { to: "/reports", label: "Reports", shortLabel: "Reports" },
 ]
 

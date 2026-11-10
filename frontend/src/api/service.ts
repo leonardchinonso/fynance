@@ -45,6 +45,11 @@ import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwa
 import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
+import type {
+  EmploymentPay,
+  EmploymentPayPayload,
+  TaxYearSummary,
+} from "@/types/tax_v1"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingSeries } from "@/bindings/AccountHoldingSeries"
@@ -290,6 +295,24 @@ export interface ApiService {
     taxYear: string,
     body: PutTaxInputsPayload
   ): Promise<TaxInputs>
+
+  // ── Employment pay / tax-year summary ─────────────────────────────
+
+  /** List employment-pay rows. `taxYear` ("YYYY-YY") is an optional filter.
+   *  Server sorts period_end asc, NULLs last. Maps to `GET /api/employment-pay`. */
+  listEmploymentPay(taxYear?: string): Promise<EmploymentPay[]>
+  /** Create one row. Maps to `POST /api/employment-pay` (201). */
+  createEmploymentPay(body: EmploymentPayPayload): Promise<EmploymentPay>
+  /** Partial update; absent keys are left untouched. Maps to `PATCH /api/employment-pay/:id`. */
+  updateEmploymentPay(
+    id: string,
+    body: Partial<EmploymentPayPayload>
+  ): Promise<EmploymentPay>
+  /** Delete one row. Maps to `DELETE /api/employment-pay/:id` (204). */
+  deleteEmploymentPay(id: string): Promise<void>
+  /** The tax-year summary for the readiness checklist, interest and gift-aid cards.
+   *  Maps to `GET /api/tax/summary/:tax_year`. */
+  getTaxSummary(taxYear: string): Promise<TaxYearSummary>
 
   // ── Investments ───────────────────────────────────────────────────
   /** List investment events. Maps to `GET /api/investments`. */

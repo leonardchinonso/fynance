@@ -24,6 +24,7 @@ import {
   SettingsAuthPage,
 } from "@/pages/settings"
 import { ImportPage } from "@/pages/import"
+import { TaxPage } from "@/pages/Tax"
 
 // CGT report page pulls in @react-pdf/renderer (~250 KB gzipped); code-split
 // so users who never open Reports don't pay for it.
@@ -57,6 +58,7 @@ function Layout() {
           <Route path="/budget" element={<BudgetPage />} />
           {/* Transactions merged into the Budget tab as a view. */}
           <Route path="/transactions" element={<Navigate to="/budget?view=table" replace />} />
+          <Route path="/tax" element={<TaxPage />} />
           <Route path="/reports" element={<ReportsLanding />} />
           <Route path="/reports/documents" element={<DocumentsPage />} />
           <Route
