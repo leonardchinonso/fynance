@@ -147,7 +147,7 @@ fn rate(base: &str, date: &str, rate: Decimal) -> ExchangeRate {
     }
 }
 
-// ── Problem 1: spending is outflows only; income is inflows only ────────────
+// ── Problem 1: spending nets refunds per category; income is inflows only ───
 
 fn leaf(
     db: &Db,
@@ -169,7 +169,7 @@ fn leaf(
 }
 
 #[test]
-fn spending_counts_outflows_only_income_counts_inflows_only() {
+fn spending_nets_refunds_per_category_income_stays_inflows_only() {
     let (db, _f) = test_db();
     db.create_account(&make_account("chk", AccountType::Checking))
         .unwrap();
@@ -212,8 +212,8 @@ fn spending_counts_outflows_only_income_counts_inflows_only() {
     );
     assert_eq!(
         spending,
-        dec!(400),
-        "spending = outflows only, not netted with the refund"
+        dec!(350),
+        "spending = the food category's outflow netted with its refund: 400 - 50"
     );
 }
 
@@ -285,6 +285,136 @@ fn internal_transfer_and_interest_types_excluded_from_both() {
         dec!(250),
         "own-account transfers are not spending"
     );
+}
+
+// ── Refund netting: spending nets per leaf category, floored at zero ─────────
+
+#[test]
+fn refund_in_a_spending_category_reduces_only_that_category() {
+    let (db, _f) = test_db();
+    db.create_account(&make_account("chk", AccountType::Checking))
+        .unwrap();
+    let food = leaf(
+        &db,
+        "T-Group Food",
+        "T Food",
+        fynance::model::CategoryType::Spending,
+    );
+    let bills = leaf(
+        &db,
+        "T-Group Home",
+        "T Bills",
+        fynance::model::CategoryType::Spending,
+    );
+    let misc = leaf(
+        &db,
+        "T-Group Misc",
+        "T Misc",
+        fynance::model::CategoryType::Spending,
+    );
+
+    db.insert_transactions_bulk(
+        "chk",
+        &[
+            txn(dt(2025, 1, 5), "shop", dec!(-400), &food.id),
+            txn(dt(2025, 1, 6), "refund", dec!(50), &food.id),
+            txn(dt(2025, 1, 7), "energy", dec!(-100), &bills.id),
+            txn(dt(2025, 1, 8), "windfall", dec!(20), &misc.id),
+        ],
+    )
+    .unwrap();
+
+    let (income, spending) = db
+        .compute_category_type_cash(
+            dt(2025, 1, 1).date(),
+            dt(2025, 1, 31).date(),
+            None,
+            &gbp_fx(),
+        )
+        .unwrap();
+    assert_eq!(income, dec!(0));
+    assert_eq!(
+        spending,
+        dec!(450),
+        "food nets to 350, bills stays 100, the inflow-only category contributes 0 \
+         without offsetting the others"
+    );
+}
+
+#[test]
+fn inflow_excess_in_a_category_floors_at_zero_not_subsidising_others() {
+    let (db, _f) = test_db();
+    db.create_account(&make_account("chk", AccountType::Checking))
+        .unwrap();
+    let food = leaf(
+        &db,
+        "T-Group Food",
+        "T Food",
+        fynance::model::CategoryType::Spending,
+    );
+    let bills = leaf(
+        &db,
+        "T-Group Home",
+        "T Bills",
+        fynance::model::CategoryType::Spending,
+    );
+
+    db.insert_transactions_bulk(
+        "chk",
+        &[
+            txn(dt(2025, 1, 5), "shop", dec!(-80), &food.id),
+            txn(dt(2025, 1, 6), "refund", dec!(200), &food.id),
+            txn(dt(2025, 1, 7), "energy", dec!(-100), &bills.id),
+        ],
+    )
+    .unwrap();
+
+    let (_income, spending) = db
+        .compute_category_type_cash(
+            dt(2025, 1, 1).date(),
+            dt(2025, 1, 31).date(),
+            None,
+            &gbp_fx(),
+        )
+        .unwrap();
+    assert_eq!(
+        spending,
+        dec!(100),
+        "the over-refunded category contributes 0; its +120 excess is dropped, \
+         not carried into bills"
+    );
+}
+
+#[test]
+fn donation_category_nets_refunds_like_spending() {
+    let (db, _f) = test_db();
+    db.create_account(&make_account("chk", AccountType::Checking))
+        .unwrap();
+    let give = leaf(
+        &db,
+        "T-Group Give",
+        "T Donation",
+        fynance::model::CategoryType::DonationTaxable,
+    );
+
+    db.insert_transactions_bulk(
+        "chk",
+        &[
+            txn(dt(2025, 1, 5), "gift aid", dec!(-50), &give.id),
+            txn(dt(2025, 1, 9), "refund", dec!(30), &give.id),
+        ],
+    )
+    .unwrap();
+
+    let (_income, spending) = db
+        .compute_category_type_cash(
+            dt(2025, 1, 1).date(),
+            dt(2025, 1, 31).date(),
+            None,
+            &gbp_fx(),
+        )
+        .unwrap();
+    assert_eq!(spending, dec!(20), "donation nets its refund to 20");
 }
 
 // ── Problem 2: growth metrics and cash cover one account set ────────────────
