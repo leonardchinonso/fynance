@@ -1722,6 +1722,325 @@ pub struct TransactionImportPreview {
     pub payload: ImportPayload,
 }
 
+// ── Employment pay (PAYE) and the tax-year summary (plan 28) ────────────────
+
+/// One PAYE pay record: a payslip line or a P60/annual summary row. Gross pay
+/// and tax deducted are not bank movements, so they live here rather than in
+/// `transactions`; `transaction_id` optionally links the net-pay credit that
+/// did hit a bank account. Money is Decimal-as-string like every other type.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct EmploymentPay {
+    pub id: String,
+    /// `YYYY-YY`, e.g. `2025-26`.
+    pub tax_year: String,
+    /// ISO `YYYY-MM-DD`. Null for annual (P60) rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub period_start: Option<String>,
+    /// ISO `YYYY-MM-DD`. Null for annual (P60) rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub period_end: Option<String>,
+    pub employer: String,
+    /// True for the annual summary row of a tax year (a P60).
+    pub is_p60: bool,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub gross_pay: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub tax_deducted: Decimal,
+    /// NULL means "not recorded", which is distinct from 0 (a row under the NI
+    /// threshold genuinely deducted 0).
+    #[serde(
+        with = "rust_decimal::serde::str_option",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional, type = "string")]
+    pub employees_ni: Option<Decimal>,
+    #[serde(
+        with = "rust_decimal::serde::str_option",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional, type = "string")]
+    pub student_loan: Option<Decimal>,
+    #[serde(
+        with = "rust_decimal::serde::str_option",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional, type = "string")]
+    pub net_pay: Option<Decimal>,
+    pub currency: String,
+    /// Optional FK to `transactions.id`: the net-pay credit in a bank account.
+    /// Cleared (SET NULL) when the transaction is deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub transaction_id: Option<String>,
+    /// IDs of the source documents this row was extracted from (`documents.id`).
+    /// Empty for manual / API entries with no document.
+    #[serde(default)]
+    pub document_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Request body for `POST /api/employment-pay`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct EmploymentPayPayload {
+    pub tax_year: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub period_start: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub period_end: Option<String>,
+    pub employer: String,
+    #[serde(default)]
+    pub is_p60: bool,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub gross_pay: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub tax_deducted: Decimal,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(optional, type = "string")]
+    pub employees_ni: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(optional, type = "string")]
+    pub student_loan: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str_option", default)]
+    #[ts(optional, type = "string")]
+    pub net_pay: Option<Decimal>,
+    /// ISO 4217 code; defaults to GBP.
+    #[serde(default = "default_employment_currency")]
+    pub currency: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub transaction_id: Option<String>,
+    #[serde(default)]
+    pub document_ids: Vec<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub notes: Option<String>,
+}
+
+fn default_employment_currency() -> String {
+    "GBP".to_string()
+}
+
+/// Request body for `PATCH /api/employment-pay/:id`. An absent key leaves the
+/// stored value alone; an explicit `null` clears a nullable field; anything
+/// else sets it.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PatchEmploymentPayBody {
+    #[serde(default)]
+    #[ts(optional)]
+    pub tax_year: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub employer: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub period_start: Option<Option<String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub period_end: Option<Option<String>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub is_p60: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_required_decimal_field")]
+    #[ts(optional, type = "string")]
+    pub gross_pay: Option<Decimal>,
+    #[serde(default, deserialize_with = "deserialize_required_decimal_field")]
+    #[ts(optional, type = "string")]
+    pub tax_deducted: Option<Decimal>,
+    #[serde(default, deserialize_with = "deserialize_nullable_decimal_field")]
+    #[ts(optional, type = "string | null")]
+    pub employees_ni: Option<Option<Decimal>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_decimal_field")]
+    #[ts(optional, type = "string | null")]
+    pub student_loan: Option<Option<Decimal>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_decimal_field")]
+    #[ts(optional, type = "string | null")]
+    pub net_pay: Option<Option<Decimal>>,
+    #[serde(default, deserialize_with = "deserialize_required_string_field")]
+    #[ts(optional, type = "string")]
+    pub currency: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub transaction_id: Option<Option<String>>,
+    #[serde(default)]
+    #[ts(optional, type = "string[]")]
+    pub document_ids: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub notes: Option<Option<String>>,
+}
+
+/// Decimal legs in a PATCH body arrive as strings, like every other money
+/// field on the wire. NOT NULL columns reject `null` (the value cannot be
+/// cleared, so a request sending one is a mistake, not a no-op).
+fn deserialize_required_decimal_field<'de, D>(deserializer: D) -> Result<Option<Decimal>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: String = serde::Deserialize::deserialize(deserializer)?;
+    raw.parse::<Decimal>()
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
+/// Distinguishes "not mentioned" (absent key) from "clear it" (explicit
+/// null) from "set it" (a decimal string) for a nullable decimal column.
+/// A bare `Option<Option<String>>` cannot do this: serde answers JSON null
+/// as the outer `None`, indistinguishable from an absent key. `deserialize_with`
+/// only runs when the key is present, so the key's presence itself carries
+/// the "clear" signal: null in, `Some(None)` out.
+fn deserialize_nullable_decimal_field<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<Decimal>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    match raw {
+        None => Ok(Some(None)),
+        Some(s) => s
+            .parse::<Decimal>()
+            .map(|v| Some(Some(v)))
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+/// The same present/absent split for nullable string columns.
+fn deserialize_present_nullable_string_field<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(Some(raw))
+}
+
+/// NOT NULL string column in a PATCH body: an explicit null is a mistake,
+/// so reject it instead of silently ignoring the key.
+fn deserialize_required_string_field<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: String = serde::Deserialize::deserialize(deserializer)?;
+    Ok(Some(raw))
+}
+
+/// One tax year's PAYE figures: the sums over that year's `employment_pay`
+/// rows, converted into the preferred currency. A NULL leg is summed as 0 but
+/// also raises its `has_unknown_*` flag, because "not recorded" must not
+/// silently read as "deducted nothing" on a return.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct EmploymentSummary {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub gross_pay: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub tax_deducted: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub employees_ni: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub student_loan: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub net_pay: Decimal,
+    pub payslip_count: u32,
+    pub has_p60: bool,
+    pub has_unknown_employees_ni: bool,
+    pub has_unknown_student_loan: bool,
+    pub has_unknown_net_pay: bool,
+}
+
+/// Interest in range, bucketed by the `interest_taxable` /
+/// `interest_non_taxable` category types of the transaction's category.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InterestSummary {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub taxable_total: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub non_taxable_total: Decimal,
+    /// Only accounts that have interest transactions in range.
+    pub by_account: Vec<InterestAccountTotal>,
+}
+
+/// Per-account interest totals for `InterestSummary`.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InterestAccountTotal {
+    pub account_id: String,
+    pub account_name: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub taxable: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub non_taxable: Decimal,
+}
+
+/// Gift Aid totals: the `donation_taxable` / `donation_non_taxable` category
+/// types are the Gift Aid flag, and only outflow legs count.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct DonationSummary {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub gift_aid_total: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub non_gift_aid_total: Decimal,
+}
+
+/// The bottom-line figures for one UK tax year (plan 28): PAYE employment,
+/// untaxed interest per account, and Gift Aid donations.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxYearSummary {
+    pub tax_year: String,
+    /// ISO `YYYY-MM-DD`, the 6 April opening day.
+    pub start_date: String,
+    /// ISO `YYYY-MM-DD`, the 5 April closing day.
+    pub end_date: String,
+    pub employment: EmploymentSummary,
+    pub interest: InterestSummary,
+    pub donations: DonationSummary,
+}
+
 // ── Parse cost / agent selection ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]

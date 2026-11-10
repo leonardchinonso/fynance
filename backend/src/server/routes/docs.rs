@@ -278,6 +278,129 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             "items": { "$ref": "#/components/schemas/S104PoolState" }
                         }
                     }
+                },
+                "EmploymentPay": {
+                    "type": "object",
+                    "description": concat!(
+                        "One PAYE pay record: a payslip line or a P60/annual summary row. Gross pay and ",
+                        "tax deducted never appear as bank movements, so they live here rather than in ",
+                        "transactions; `transaction_id` optionally links the net-pay credit that did. ",
+                        "A nullable figure that is absent from the response means NOT RECORDED, which is ",
+                        "deliberately distinct from `\"0\"` (a row under the threshold genuinely deducted 0)."
+                    ),
+                    "required": ["id", "tax_year", "employer", "is_p60", "gross_pay", "tax_deducted", "currency", "document_ids", "created_at", "updated_at"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "tax_year": { "type": "string", "example": "2025-26", "description": "`YYYY-YY`; the second half is (first + 1) mod 100. The UK tax year runs 6 April to 5 April." },
+                        "period_start": { "type": "string", "format": "date", "description": "ISO date. Omitted for annual (P60) rows, which have no period." },
+                        "period_end": { "type": "string", "format": "date", "description": "ISO date. Omitted for annual (P60) rows." },
+                        "employer": { "type": "string" },
+                        "is_p60": { "type": "boolean", "description": "True for the annual summary row of a tax year (a P60)." },
+                        "gross_pay": { "type": "string", "description": "Decimal string, >= 0." },
+                        "tax_deducted": { "type": "string", "description": "Decimal string, >= 0." },
+                        "employees_ni": { "type": "string", "description": "Decimal string. Absent = not recorded, distinct from \"0\"." },
+                        "student_loan": { "type": "string", "description": "Decimal string. Absent = not recorded, distinct from \"0\"." },
+                        "net_pay": { "type": "string", "description": "Decimal string. Absent = not recorded, distinct from \"0\"." },
+                        "currency": { "type": "string", "example": "GBP" },
+                        "transaction_id": { "type": "string", "description": "Optional FK to transactions.id: the net-pay credit in a bank account. Cleared (not cascaded) when the transaction is deleted." },
+                        "document_ids": { "type": "array", "items": { "type": "string" }, "description": "IDs of the source documents this row was extracted from (`documents.id`). Empty for manual entries with no document." },
+                        "notes": { "type": "string" },
+                        "created_at": { "type": "string", "format": "date-time" },
+                        "updated_at": { "type": "string", "format": "date-time" }
+                    }
+                },
+                "EmploymentPayPayload": {
+                    "type": "object",
+                    "description": "Request body for POST /api/employment-pay.",
+                    "required": ["tax_year", "employer", "gross_pay", "tax_deducted"],
+                    "properties": {
+                        "tax_year": { "type": "string", "example": "2025-26" },
+                        "period_start": { "type": "string", "format": "date" },
+                        "period_end": { "type": "string", "format": "date" },
+                        "employer": { "type": "string" },
+                        "is_p60": { "type": "boolean", "default": false },
+                        "gross_pay": { "type": "string", "description": "Decimal string, >= 0." },
+                        "tax_deducted": { "type": "string", "description": "Decimal string, >= 0." },
+                        "employees_ni": { "type": "string" },
+                        "student_loan": { "type": "string" },
+                        "net_pay": { "type": "string" },
+                        "currency": { "type": "string", "default": "GBP" },
+                        "transaction_id": { "type": "string", "description": "Must reference an existing transaction, or 400." },
+                        "document_ids": { "type": "array", "items": { "type": "string" } },
+                        "notes": { "type": "string" }
+                    }
+                },
+                "TaxYearSummary": {
+                    "type": "object",
+                    "description": concat!(
+                        "One UK tax year's bottom-line figures (plan 28): PAYE employment, untaxed ",
+                        "interest per account, and Gift Aid donations. Interest and donation legs come ",
+                        "from transactions bucketed by category type (`interest_taxable` / ",
+                        "`interest_non_taxable`, `donation_taxable` / `donation_non_taxable`), converted ",
+                        "into the preferred currency; rows with `exclude_from_summary` are left out."
+                    ),
+                    "required": ["tax_year", "start_date", "end_date", "employment", "interest", "donations"],
+                    "properties": {
+                        "tax_year": { "type": "string", "example": "2025-26" },
+                        "start_date": { "type": "string", "format": "date", "description": "6 April opening day." },
+                        "end_date": { "type": "string", "format": "date", "description": "5 April closing day." },
+                        "employment": { "$ref": "#/components/schemas/EmploymentSummary" },
+                        "interest": { "$ref": "#/components/schemas/InterestSummary" },
+                        "donations": { "$ref": "#/components/schemas/DonationSummary" }
+                    }
+                },
+                "EmploymentSummary": {
+                    "type": "object",
+                    "description": concat!(
+                        "Sums over the tax year's employment_pay rows, in the preferred currency. A NULL ",
+                        "leg is summed as 0 but also raises its `has_unknown_*` flag, because \"not ",
+                        "recorded\" must not silently read as \"deducted nothing\" on a return."
+                    ),
+                    "required": ["gross_pay", "tax_deducted", "employees_ni", "student_loan", "net_pay", "payslip_count", "has_p60", "has_unknown_employees_ni", "has_unknown_student_loan", "has_unknown_net_pay"],
+                    "properties": {
+                        "gross_pay": { "type": "string" },
+                        "tax_deducted": { "type": "string" },
+                        "employees_ni": { "type": "string" },
+                        "student_loan": { "type": "string" },
+                        "net_pay": { "type": "string" },
+                        "payslip_count": { "type": "integer" },
+                        "has_p60": { "type": "boolean" },
+                        "has_unknown_employees_ni": { "type": "boolean" },
+                        "has_unknown_student_loan": { "type": "boolean" },
+                        "has_unknown_net_pay": { "type": "boolean" }
+                    }
+                },
+                "InterestSummary": {
+                    "type": "object",
+                    "required": ["taxable_total", "non_taxable_total", "by_account"],
+                    "properties": {
+                        "taxable_total": { "type": "string" },
+                        "non_taxable_total": { "type": "string" },
+                        "by_account": {
+                            "type": "array",
+                            "description": "Only accounts with interest transactions in the range.",
+                            "items": { "$ref": "#/components/schemas/InterestAccountTotal" }
+                        }
+                    }
+                },
+                "InterestAccountTotal": {
+                    "type": "object",
+                    "required": ["account_id", "account_name", "taxable", "non_taxable"],
+                    "properties": {
+                        "account_id": { "type": "string" },
+                        "account_name": { "type": "string" },
+                        "taxable": { "type": "string" },
+                        "non_taxable": { "type": "string" }
+                    }
+                },
+                "DonationSummary": {
+                    "type": "object",
+                    "description": "Gift Aid is the `donation_taxable` category type; only outflow legs count.",
+                    "required": ["gift_aid_total", "non_gift_aid_total"],
+                    "properties": {
+                        "gift_aid_total": { "type": "string" },
+                        "non_gift_aid_total": { "type": "string" }
+                    }
                 }
             }
         },
@@ -1217,6 +1340,166 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                                 "schema": { "$ref": "#/components/schemas/Error" }
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/api/employment-pay": {
+            "get": {
+                "summary": "List PAYE pay records",
+                "description": concat!(
+                    "One row per payslip or P60/annual record, sorted period_end ascending with the ",
+                    "period-less annual rows last. Gross pay and tax deducted under PAYE are never ",
+                    "bank movements, so they are recorded here rather than as transactions."
+                ),
+                "parameters": [
+                    {
+                        "name": "tax_year",
+                        "in": "query",
+                        "schema": { "type": "string", "example": "2025-26" },
+                        "description": "Restrict to one tax year, as `YYYY-YY`. Omit for every year held."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The records, as `{ \"items\": [EmploymentPay] }`.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "items": { "type": "array", "items": { "$ref": "#/components/schemas/EmploymentPay" } }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "tax_year is not in YYYY-YY form.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create a PAYE pay record",
+                "security": [{ "bearerAuth": [] }],
+                "description": concat!(
+                    "Requires tax_year, employer, gross_pay and tax_deducted (decimal strings, >= 0). ",
+                    "period_start/period_end must be valid YYYY-MM-DD dates when present. A supplied ",
+                    "transaction_id must reference an existing transaction or the request is refused."
+                ),
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/EmploymentPayPayload" }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "The created record.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmploymentPay" } } }
+                    },
+                    "400": {
+                        "description": "Bad tax_year format, empty employer, invalid date, negative amount, or unknown transaction_id.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+                    }
+                }
+            }
+        },
+        "/api/employment-pay/{id}": {
+            "patch": {
+                "summary": "Update a PAYE pay record",
+                "security": [{ "bearerAuth": [] }],
+                "description": concat!(
+                    "Partial update: a present key changes the row, an explicit null clears a nullable ",
+                    "field, an absent key leaves it alone, and unknown keys are ignored. Validation is ",
+                    "the same as on POST, applied only to the fields actually sent."
+                ),
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" },
+                        "description": "Employment-pay record id."
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "description": "Any subset of the POST body fields (see EmploymentPayPayload); at least one is required.",
+                                "additionalProperties": false
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "The record after the update.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmploymentPay" } } }
+                    },
+                    "400": {
+                        "description": "Empty body, bad tax_year format, invalid date, negative amount, or unknown transaction_id.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+                    },
+                    "404": {
+                        "description": "No employment-pay record with that id.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Delete a PAYE pay record",
+                "security": [{ "bearerAuth": [] }],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" },
+                        "description": "Employment-pay record id."
+                    }
+                ],
+                "responses": {
+                    "204": { "description": "Record deleted." },
+                    "404": {
+                        "description": "No employment-pay record with that id.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+                    }
+                }
+            }
+        },
+        "/api/tax/summary/{tax_year}": {
+            "get": {
+                "summary": "Tax-year summary: employment, interest, Gift Aid",
+                "description": concat!(
+                    "Employment sums come from this table's employment_pay rows for the year. Interest ",
+                    "and donations come from transactions bucketed by category type in the 6 April to ",
+                    "5 April window, FX-converted to the preferred currency, with exclude_from_summary ",
+                    "rows left out. The Gift Aid flag is the `donation_taxable` category type."
+                ),
+                "parameters": [
+                    {
+                        "name": "tax_year",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string", "example": "2025-26" },
+                        "description": "UK tax year as `YYYY-YY`."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The year's figures.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaxYearSummary" } } }
+                    },
+                    "400": {
+                        "description": "tax_year is not in YYYY-YY form.",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
                     }
                 }
             }
