@@ -188,25 +188,15 @@ pub async fn put_tax_inputs(
 
 // ── Validation helpers ────────────────────────────────────────────────────────
 
-/// A tax year is `YYYY-YY`, where the second half is the year after the first.
-/// Validated at entry so a typo becomes a 400 rather than an empty config set
-/// that silently computes no tax at all.
+/// A tax year is `YYYY-YY`, where the second half is the year after the first
+/// (`util::tax_year`). Validated at entry so a typo becomes a 400 rather than
+/// an empty config set that silently computes no tax at all.
 pub fn validate_tax_year(s: &str) -> Result<(), AppError> {
-    let invalid = || {
-        AppError::bad_request(
+    if crate::util::tax_year::TaxYear::parse(s).is_none() {
+        return Err(AppError::bad_request(
             format!("tax_year must look like '2024-25', got {s:?}"),
             "invalid_tax_year",
-        )
-    };
-
-    let (start, end) = s.split_once('-').ok_or_else(invalid)?;
-    if start.len() != 4 || end.len() != 2 {
-        return Err(invalid());
-    }
-    let start_year: i32 = start.parse().map_err(|_| invalid())?;
-    let end_year: i32 = end.parse().map_err(|_| invalid())?;
-    if (start_year + 1) % 100 != end_year {
-        return Err(invalid());
+        ));
     }
     Ok(())
 }

@@ -3,6 +3,7 @@
 pub mod dedupe;
 pub mod fx;
 pub mod subunits;
+pub mod tax_year;
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{NaiveDate, NaiveDateTime};
