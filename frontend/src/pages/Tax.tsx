@@ -2,11 +2,10 @@ import { useMemo, useState, type ReactElement, type ReactNode } from "react"
 import { api } from "@/api/client"
 import { ApiError } from "@/api/real_service"
 import { ukTaxYearForDate, ukTaxYearToDates } from "@/api/cgt_filter_params"
-import type {
-  EmploymentPay,
-  EmploymentPayPayload,
-  TaxYearSummary,
-} from "@/types/tax_v1"
+import type { EmploymentPay } from "@/bindings/EmploymentPay"
+import type { EmploymentPayPayload } from "@/bindings/EmploymentPayPayload"
+import type { PatchEmploymentPayBody } from "@/bindings/PatchEmploymentPayBody"
+import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
 import { useEmploymentPay, useTaxSummary } from "@/hooks/data"
 import type { RemoteData } from "@/lib/remote_data"
 import { visitRemoteData } from "@/lib/remote_data"
@@ -215,7 +214,7 @@ function ReadinessChecklist({
                     <StatusChip ok={row.ok} />
                   </div>
                 ))}
-                {emp.has_unknown && (
+                {(emp.has_unknown_employees_ni || emp.has_unknown_student_loan || emp.has_unknown_net_pay) && (
                   <p className="text-xs text-muted-foreground">
                     Some records have unknown amounts; unknown legs are summed as 0.
                   </p>
@@ -388,7 +387,7 @@ function totalsByCurrency(rows: EmploymentPay[]): CurrencyTotals[] {
     list.push(r)
     groups.set(r.currency, list)
   }
-  const sumOrNull = (list: EmploymentPay[], pick: (r: EmploymentPay) => string | null): string | null =>
+  const sumOrNull = (list: EmploymentPay[], pick: (r: EmploymentPay) => string | null | undefined): string | null =>
     list.some((r) => pick(r) != null) ? sumMoney(list.map(pick)) : null
   return [...groups.entries()].map(([currency, list]) => ({
     currency,
@@ -668,11 +667,11 @@ function EmploymentPayDialog({
     }
     setSaving(true)
     setError(null)
-    const payload: EmploymentPayPayload = {
+    const body: PatchEmploymentPayBody = {
       tax_year: form.taxYear.trim(),
       employer: form.employer.trim(),
-      period_start: form.periodStart.trim() === "" ? null : form.periodStart.trim(),
-      period_end: form.periodEnd.trim() === "" ? null : form.periodEnd.trim(),
+      period_start: optionalMoney(form.periodStart),
+      period_end: optionalMoney(form.periodEnd),
       is_p60: form.isP60,
       gross_pay: form.grossPay.trim(),
       tax_deducted: form.taxDeducted.trim(),
@@ -680,15 +679,19 @@ function EmploymentPayDialog({
       student_loan: optionalMoney(form.studentLoan),
       net_pay: optionalMoney(form.netPay),
       currency: form.currency.trim().toUpperCase(),
-      transaction_id: form.transactionId.trim() === "" ? null : form.transactionId.trim(),
+      transaction_id: optionalMoney(form.transactionId),
       document_ids: row?.document_ids ?? [],
-      notes: form.notes.trim() === "" ? null : form.notes.trim(),
+      notes: optionalMoney(form.notes),
     }
     try {
       if (isEdit && row) {
-        await api.updateEmploymentPay(row.id, payload)
+        await api.updateEmploymentPay(row.id, body)
       } else {
-        await api.createEmploymentPay(payload)
+        // POST takes the create payload: absent means default, so drop the
+        // explicit nulls that PATCH needs for clearing.
+        const create: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(body)) if (v !== null) create[k] = v
+        await api.createEmploymentPay(create as EmploymentPayPayload)
       }
       onSaved()
     } catch (err) {

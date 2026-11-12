@@ -104,11 +104,10 @@ import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwa
 import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
-import type {
-  EmploymentPay,
-  EmploymentPayPayload,
-  TaxYearSummary,
-} from "@/types/tax_v1"
+import type { EmploymentPay } from "@/bindings/EmploymentPay"
+import type { EmploymentPayPayload } from "@/bindings/EmploymentPayPayload"
+import type { PatchEmploymentPayBody } from "@/bindings/PatchEmploymentPayBody"
+import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent, PortfolioHistoryResponse } from "./service"
@@ -588,7 +587,7 @@ export class RealApiService implements ApiService {
 
   async updateEmploymentPay(
     id: string,
-    body: Partial<EmploymentPayPayload>,
+    body: PatchEmploymentPayBody,
   ): Promise<EmploymentPay> {
     return patch<EmploymentPay>(`${BASE}/employment-pay/${encodeURIComponent(id)}`, body)
   }

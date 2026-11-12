@@ -1,5 +1,6 @@
 import { api } from "@/api/client"
-import type { EmploymentPay, TaxYearSummary } from "@/types/tax_v1"
+import type { EmploymentPay } from "@/bindings/EmploymentPay"
+import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
 import type { RemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
 

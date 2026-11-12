@@ -56,7 +56,10 @@ import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, PortfolioHistoryResponse } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams, ukTaxYearForDate, ukTaxYearToDates } from "./cgt_filter_params"
-import type { EmploymentPay, EmploymentPayPayload, TaxYearSummary } from "@/types/tax_v1"
+import type { EmploymentPay } from "@/bindings/EmploymentPay"
+import type { EmploymentPayPayload } from "@/bindings/EmploymentPayPayload"
+import type { PatchEmploymentPayBody } from "@/bindings/PatchEmploymentPayBody"
+import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
 import { sumMoney } from "@/lib/money"
 import {
   MOCK_PROFILES,
@@ -114,13 +117,8 @@ function mockEmploymentPaySeed(): EmploymentPay[] {
     is_p60: false,
     gross_pay: "0.00",
     tax_deducted: "0.00",
-    employees_ni: null,
-    student_loan: null,
-    net_pay: null,
     currency: "GBP",
-    transaction_id: null,
     document_ids: [],
-    notes: null,
     created_at: now,
     updated_at: now,
     ...partial,
@@ -134,12 +132,12 @@ function mockEmploymentPaySeed(): EmploymentPay[] {
     row({
       id: "mock_ep_payslip_2", employer: "Employer B",
       gross_pay: "1500.00", tax_deducted: "300.00",
-      employees_ni: null, student_loan: null, net_pay: "1200.00",
+      net_pay: "1200.00",
       notes: "NI and student loan unknown on this payslip",
     }),
     row({
       id: "mock_ep_p60", employer: "Employer A", is_p60: true,
-      period_start: null, period_end: null,
+      period_start: undefined, period_end: undefined,
       gross_pay: "30000.00", tax_deducted: "6000.00",
       employees_ni: "3600.00", student_loan: "1200.00", net_pay: "24000.00",
     }),
@@ -1378,19 +1376,19 @@ export class MockApiService implements ApiService {
     const record: EmploymentPay = {
       id: `mock_ep_${Math.random().toString(36).slice(2, 10)}`,
       tax_year: body.tax_year,
-      period_start: body.period_start ?? null,
-      period_end: body.period_end ?? null,
+      period_start: body.period_start,
+      period_end: body.period_end,
       employer: body.employer.trim(),
       is_p60: body.is_p60,
       gross_pay: body.gross_pay,
       tax_deducted: body.tax_deducted,
-      employees_ni: body.employees_ni ?? null,
-      student_loan: body.student_loan ?? null,
-      net_pay: body.net_pay ?? null,
+      employees_ni: body.employees_ni,
+      student_loan: body.student_loan,
+      net_pay: body.net_pay,
       currency: body.currency,
-      transaction_id: body.transaction_id ?? null,
+      transaction_id: body.transaction_id,
       document_ids: body.document_ids ?? [],
-      notes: body.notes ?? null,
+      notes: body.notes,
       created_at: now,
       updated_at: now,
     }
@@ -1400,7 +1398,7 @@ export class MockApiService implements ApiService {
 
   async updateEmploymentPay(
     id: string,
-    body: Partial<EmploymentPayPayload>,
+    body: PatchEmploymentPayBody,
   ): Promise<EmploymentPay> {
     await delay(DELAY_MS)
     const idx = this.employmentPay.findIndex((r) => r.id === id)
@@ -1435,9 +1433,9 @@ export class MockApiService implements ApiService {
         net_pay: sumMoney(rows.map((r) => r.net_pay)),
         payslip_count: rows.filter((r) => !r.is_p60).length,
         has_p60: rows.some((r) => r.is_p60),
-        has_unknown: rows.some(
-          (r) => r.employees_ni == null || r.student_loan == null || r.net_pay == null,
-        ),
+        has_unknown_employees_ni: rows.some((r) => r.employees_ni == null),
+        has_unknown_student_loan: rows.some((r) => r.student_loan == null),
+        has_unknown_net_pay: rows.some((r) => r.net_pay == null),
       },
       // Mock fixtures carry no interest or donation transactions, so these
       // legs always render their zero/empty state in mock mode.
