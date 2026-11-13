@@ -1,6 +1,6 @@
 # 28 - Tax Reporting V1: PAYE employment records, Gift Aid, tax-year summary
 
-Status: active. Branch: `feat/tax-return-v1` (integration). Feature branches: `feat/employment-pay-api` (backend), `feat/tax-year-view` (frontend).
+Status: superseded by plan 30 (storage model, routes, summary). Kept for history. Branch: `feat/tax-return-v1` (integration). Feature branches: `feat/employment-pay-api` (backend), `feat/tax-year-view` (frontend).
 
 ## Why
 
