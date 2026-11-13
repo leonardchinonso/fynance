@@ -5201,9 +5201,6 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut income = CurrencyAggregator::default();
-        // Net signed converted amount per leaf category, so a refund (positive
-        // amount in a spending category) reduces that category's outflow and
-        // nothing else. Keyed by category_id, not category_type.
         let mut spending_net: HashMap<String, Decimal> = HashMap::new();
         for (category_id, ctype_str, currency, amount_str) in rows {
             let Some(ctype) = CategoryType::parse(&ctype_str) else {

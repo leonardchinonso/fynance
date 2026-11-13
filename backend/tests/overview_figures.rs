@@ -218,8 +218,8 @@ fn spending_nets_refunds_per_category_income_stays_inflows_only() {
 }
 
 // Pins the type-exclusion invariant (internal_transfer / interest belong to
-// neither bucket) against future refactors of the bucket sets. The signed-
-// netting regression itself is caught by the test above.
+// neither bucket) against future refactors of the bucket sets. The test above
+// pins per-category netting for spending and no netting for income.
 #[test]
 fn internal_transfer_and_interest_types_excluded_from_both() {
     let (db, _f) = test_db();
@@ -415,6 +415,90 @@ fn donation_category_nets_refunds_like_spending() {
         )
         .unwrap();
     assert_eq!(spending, dec!(20), "donation nets its refund to 20");
+}
+
+#[test]
+fn fx_converts_each_row_before_netting_within_a_category() {
+    let (db, _f) = test_db();
+    db.create_account(&make_account("chk", AccountType::Checking))
+        .unwrap();
+    let food = leaf(
+        &db,
+        "T-Group Food",
+        "T Food",
+        fynance::model::CategoryType::Spending,
+    );
+
+    let mut usd_shop = txn(dt(2025, 1, 5), "shop", dec!(-100), &food.id);
+    usd_shop.currency = Some("USD".to_string());
+    db.insert_transactions_bulk(
+        "chk",
+        &[usd_shop, txn(dt(2025, 1, 6), "refund", dec!(40), &food.id)],
+    )
+    .unwrap();
+
+    let fx = fynance::util::fx::FxRateMap::new(vec![
+        fynance::model::Currency {
+            code: "GBP".to_string(),
+            is_preferred: true,
+            fx_rate: dec!(1),
+            updated_at: None,
+        },
+        fynance::model::Currency {
+            code: "USD".to_string(),
+            is_preferred: false,
+            fx_rate: dec!(0.5),
+            updated_at: None,
+        },
+    ])
+    .unwrap();
+
+    let (_income, spending) = db
+        .compute_category_type_cash(dt(2025, 1, 1).date(), dt(2025, 1, 31).date(), None, &fx)
+        .unwrap();
+    assert_eq!(
+        spending,
+        dec!(10),
+        "-100 USD converts to -50 GBP before the +40 GBP refund nets against it"
+    );
+}
+
+#[test]
+fn refund_excluded_from_summary_does_not_net() {
+    let (db, _f) = test_db();
+    db.create_account(&make_account("chk", AccountType::Checking))
+        .unwrap();
+    let food = leaf(
+        &db,
+        "T-Group Food",
+        "T Food",
+        fynance::model::CategoryType::Spending,
+    );
+
+    let mut excluded_refund = txn(dt(2025, 1, 6), "refund", dec!(60), &food.id);
+    excluded_refund.exclude_from_summary = Some(true);
+    db.insert_transactions_bulk(
+        "chk",
+        &[
+            txn(dt(2025, 1, 5), "shop", dec!(-100), &food.id),
+            excluded_refund,
+        ],
+    )
+    .unwrap();
+
+    let (_income, spending) = db
+        .compute_category_type_cash(
+            dt(2025, 1, 1).date(),
+            dt(2025, 1, 31).date(),
+            None,
+            &gbp_fx(),
+        )
+        .unwrap();
+    assert_eq!(
+        spending,
+        dec!(100),
+        "a refund excluded from the summary leaves the category's outflow whole"
+    );
 }
 
 // ── Problem 2: growth metrics and cash cover one account set ────────────────
