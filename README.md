@@ -221,7 +221,9 @@ The variables below can be set any of the three ways described in [Configuring t
 | `FYNANCE_IMPORT_MIN_ROW_CONF` | `0.70` | No | Row-level confidence threshold (0.0 to 1.0). Rows below this are skipped with a warning |
 | `FYNANCE_PARSE_PDF_MODEL` | `claude-sonnet-4-6` | No | More capable model used for PDF/visual document parsing |
 | `FYNANCE_PARSE_PROVIDER` | `anthropic` | No | LLM provider for `/api/parse` and import: `anthropic` (default), `openai`, or `gemini` |
-| `FYNANCE_OPENAI_API_KEY` / `_TEXT_MODEL` / `_PDF_MODEL` | (none) | No | OpenAI credentials and models, used only when `FYNANCE_PARSE_PROVIDER=openai`. See `.env.example` |
+| `FYNANCE_OPENAI_API_KEY` / `_TEXT_MODEL` / `_PDF_MODEL` | (none) | No | OpenAI credentials and models, used only when `FYNANCE_PARSE_PROVIDER=openai`. The key is required for OpenAI itself and optional when `FYNANCE_OPENAI_BASE_URL` is set. See `.env.example` |
+| `FYNANCE_OPENAI_BASE_URL` | `https://api.openai.com/v1` | No | Base URL for the `openai` provider. Point it at any OpenAI-compatible server, e.g. a local llama.cpp server at `http://127.0.0.1:8080/v1`. Must be a full `http`/`https` URL with no query or fragment |
+| `FYNANCE_OPENAI_TIMEOUT_SECS` | `300` | No | Per-request timeout in seconds for the `openai` provider. Raise it for slow local models |
 | `FYNANCE_GEMINI_API_KEY` | (none) | No | Google Gemini API key (`AIzaSy...`) from [Google AI Studio](https://aistudio.google.com/), used when `FYNANCE_PARSE_PROVIDER=gemini` |
 | `FYNANCE_GEMINI_TEXT_MODEL` | `gemini-3.8-flash` | No | Gemini model used by the CSV/statement parser |
 | `FYNANCE_GEMINI_PDF_MODEL` | `gemini-3.8-flash` | No | Gemini model for PDF/visual document parsing |
