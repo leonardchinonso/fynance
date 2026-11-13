@@ -2642,16 +2642,19 @@ impl Db {
         }
 
         // Direction filter (sign-based).
+        // The aggregates are required, not decoration: SQLite answers a GROUP BY
+        // query with bare column expressions by returning one arbitrary row per
+        // group (see tests/by_category_totals.rs).
         let sum_expr = match direction {
             Some(TransactionDirection::Outflow) => {
                 conditions.push("CAST(t.amount AS REAL) < 0".to_string());
-                "ABS(CAST(t.amount AS REAL))"
+                "SUM(ABS(CAST(t.amount AS REAL)))"
             }
             Some(TransactionDirection::Income) => {
                 conditions.push("CAST(t.amount AS REAL) > 0".to_string());
-                "CAST(t.amount AS REAL)"
+                "SUM(CAST(t.amount AS REAL))"
             }
-            None => "CAST(t.amount AS REAL)",
+            None => "SUM(CAST(t.amount AS REAL))",
         };
 
         let join = if need_account_join {
