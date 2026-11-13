@@ -100,6 +100,8 @@ All runtime configuration is done via environment variables. The binary loads `.
 | `FYNANCE_IMPORT_MIN_ROW_CONF`    | `0.70`                      | Row-level confidence threshold. Rows below this are skipped with a warning              |
 | `FYNANCE_PARSE_PDF_MODEL`        | `claude-sonnet-4-6`         | More capable model for PDF/visual document parsing in `/api/parse`                     |
 | `FYNANCE_PARSE_PROVIDER`         | `anthropic`                 | LLM provider for `/api/parse` and import: `anthropic` (default), `openai`, or `gemini` (OpenAI/Gemini keys live in `.env.example`) |
+| `FYNANCE_OPENAI_BASE_URL`        | `https://api.openai.com/v1` | Base URL for the `openai` provider. Point it at any OpenAI-compatible server (e.g. a local llama.cpp server at `http://127.0.0.1:8080/v1`). When set, `FYNANCE_OPENAI_API_KEY` is optional and no Authorization header is sent without it |
+| `FYNANCE_OPENAI_TIMEOUT_SECS`    | `300`                       | Per-request timeout for the `openai` provider. Raise it for slow local models          |
 
 ### Default database path
 
