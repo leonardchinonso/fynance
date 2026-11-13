@@ -1027,10 +1027,15 @@ fn extract_anthropic_stop_reason(body: &str) -> Option<String> {
 
 // ── OpenAIProvider ────────────────────────────────────────────────────────────
 
+const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+const OPENAI_DEFAULT_TIMEOUT_SECS: u64 = 300;
+
 #[derive(Debug)]
 pub struct OpenAIProvider {
     client: Client,
-    api_key: String,
+    base_url: String,
+    api_key: Option<String>,
+    timeout: std::time::Duration,
     standard_model: String,
     #[allow(dead_code)]
     advanced_model: String,
@@ -1039,15 +1044,35 @@ pub struct OpenAIProvider {
 impl OpenAIProvider {
     /// Build from environment variables.
     ///
-    /// Required: `FYNANCE_OPENAI_API_KEY`
-    /// Optional: `FYNANCE_OPENAI_TEXT_MODEL`, `FYNANCE_OPENAI_PDF_MODEL`
+    /// Required: `FYNANCE_OPENAI_API_KEY`, unless `FYNANCE_OPENAI_BASE_URL`
+    /// points at an OpenAI-compatible server that needs no key.
+    /// Optional: `FYNANCE_OPENAI_BASE_URL`, `FYNANCE_OPENAI_TIMEOUT_SECS`,
+    /// `FYNANCE_OPENAI_TEXT_MODEL`, `FYNANCE_OPENAI_PDF_MODEL`
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("FYNANCE_OPENAI_API_KEY").map_err(|_| {
-            anyhow!(
+        let custom_base_url = std::env::var("FYNANCE_OPENAI_BASE_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
+        let api_key = std::env::var("FYNANCE_OPENAI_API_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
+        if api_key.is_none() && custom_base_url.is_none() {
+            return Err(anyhow!(
                 "FYNANCE_OPENAI_API_KEY is not set. \
                  Set it in your .env file to use the OpenAI provider."
-            )
-        })?;
+            ));
+        }
+        let base_url = custom_base_url
+            .as_deref()
+            .unwrap_or(OPENAI_DEFAULT_BASE_URL)
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        let timeout_secs = match std::env::var("FYNANCE_OPENAI_TIMEOUT_SECS") {
+            Ok(v) => v.trim().parse::<u64>().map_err(|_| {
+                anyhow!("FYNANCE_OPENAI_TIMEOUT_SECS must be a whole number of seconds, got '{v}'")
+            })?,
+            Err(_) => OPENAI_DEFAULT_TIMEOUT_SECS,
+        };
         let standard_model = std::env::var("FYNANCE_OPENAI_TEXT_MODEL")
             .unwrap_or_else(|_| "gpt-4o-mini".to_string());
         let advanced_model =
@@ -1055,13 +1080,14 @@ impl OpenAIProvider {
 
         let client = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(300))
             .build()
             .map_err(|e| anyhow!("failed to build HTTP client: {e}"))?;
 
         Ok(Self {
             client,
+            base_url,
             api_key,
+            timeout: std::time::Duration::from_secs(timeout_secs),
             standard_model,
             advanced_model,
         })
@@ -1123,11 +1149,15 @@ impl LlmProvider for OpenAIProvider {
         );
 
         let started = Instant::now();
-        let response = self
+        let mut request = self
             .client
-            .post("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
+            .post(format!("{}/chat/completions", self.base_url))
+            .timeout(self.timeout)
+            .header("Content-Type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            request = request.header("Authorization", format!("Bearer {api_key}"));
+        }
+        let response = request
             .json(&request_body)
             .send()
             .await
@@ -1966,7 +1996,7 @@ pub fn create_provider() -> Result<Arc<dyn LlmProvider>> {
 ///
 /// # Valid values for FYNANCE_PARSE_PROVIDER
 /// - `"anthropic"` (default): credential chosen per `auth` (see below)
-/// - `"openai"`: requires `FYNANCE_OPENAI_API_KEY`
+/// - `"openai"`: requires `FYNANCE_OPENAI_API_KEY` unless `FYNANCE_OPENAI_BASE_URL` is set
 /// - `"gemini"`: requires `FYNANCE_GEMINI_API_KEY` or `GEMINI_API_KEY`
 ///
 /// # Anthropic credential selection
@@ -2161,18 +2191,197 @@ mod tests {
         assert_eq!(result.unwrap().name(), "gemini");
     }
 
+    fn clear_openai_env() {
+        unsafe {
+            std::env::remove_var("FYNANCE_PARSE_PROVIDER");
+            std::env::remove_var("FYNANCE_OPENAI_API_KEY");
+            std::env::remove_var("FYNANCE_OPENAI_BASE_URL");
+            std::env::remove_var("FYNANCE_OPENAI_TIMEOUT_SECS");
+        }
+    }
+
+    /// One-shot HTTP server on an ephemeral loopback port. Answers the first
+    /// request with `body` as JSON and returns the raw request it received.
+    fn serve_once(body: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !http_request_complete(&raw) {
+                let n = stream.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buf[..n]);
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            String::from_utf8_lossy(&raw).into_owned()
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    fn http_request_complete(raw: &[u8]) -> bool {
+        let Some(header_end) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
+            return false;
+        };
+        let content_length = String::from_utf8_lossy(&raw[..header_end])
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())?
+            })
+            .unwrap_or(0);
+        raw.len() >= header_end + 4 + content_length
+    }
+
+    const OPENAI_TOOL_CALL_RESPONSE: &str = r#"{
+        "choices": [{
+            "message": {
+                "tool_calls": [{
+                    "function": {
+                        "name": "parse_bank_statement",
+                        "arguments": "{\"detected_bank\":\"monzo\",\"rows\":[]}"
+                    }
+                }]
+            }
+        }],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 22}
+    }"#;
+
+    fn call_openai(provider: &OpenAIProvider) -> Result<ProviderCallResult, ProviderError> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(provider.chat_with_tools(
+            "system",
+            "user",
+            "parse_bank_statement",
+            json!({"type": "object"}),
+            ModelTier::Standard,
+            None,
+        ))
+    }
+
     #[test]
     fn test_create_provider_openai_requires_key() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            std::env::set_var("FYNANCE_PARSE_PROVIDER", "openai");
-            std::env::remove_var("FYNANCE_OPENAI_API_KEY");
-        }
+        clear_openai_env();
+        unsafe { std::env::set_var("FYNANCE_PARSE_PROVIDER", "openai") };
         let result = create_provider();
-        unsafe { std::env::remove_var("FYNANCE_PARSE_PROVIDER") };
+        clear_openai_env();
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("FYNANCE_OPENAI_API_KEY"), "got: {msg}");
+    }
+
+    #[test]
+    fn test_create_provider_openai_custom_base_url_needs_no_key() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_openai_env();
+        unsafe {
+            std::env::set_var("FYNANCE_PARSE_PROVIDER", "openai");
+            std::env::set_var("FYNANCE_OPENAI_BASE_URL", "http://127.0.0.1:8080/v1");
+        }
+        let result = create_provider();
+        clear_openai_env();
+        assert_eq!(result.unwrap().name(), "openai");
+    }
+
+    #[test]
+    fn test_openai_custom_base_url_without_key_sends_no_auth_header() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (server_url, server) = serve_once(OPENAI_TOOL_CALL_RESPONSE);
+        clear_openai_env();
+        unsafe { std::env::set_var("FYNANCE_OPENAI_BASE_URL", format!("{server_url}/v1/")) };
+        let provider = OpenAIProvider::from_env();
+        clear_openai_env();
+
+        let result = call_openai(&provider.unwrap()).unwrap();
+        let request = server.join().unwrap();
+
+        assert!(
+            request.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"),
+            "got: {request}"
+        );
+        assert!(
+            !request.to_ascii_lowercase().contains("\r\nauthorization:"),
+            "got: {request}"
+        );
+        assert_eq!(result.value["detected_bank"], "monzo");
+        assert_eq!(result.usage.input_tokens, 11);
+        assert_eq!(result.usage.output_tokens, 22);
+    }
+
+    #[test]
+    fn test_openai_custom_base_url_with_key_sends_bearer() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (server_url, server) = serve_once(OPENAI_TOOL_CALL_RESPONSE);
+        clear_openai_env();
+        unsafe {
+            std::env::set_var("FYNANCE_OPENAI_BASE_URL", format!("{server_url}/v1"));
+            std::env::set_var("FYNANCE_OPENAI_API_KEY", "local-key");
+        }
+        let provider = OpenAIProvider::from_env().unwrap();
+        clear_openai_env();
+
+        call_openai(&provider).unwrap();
+        let request = server.join().unwrap().to_ascii_lowercase();
+
+        assert!(
+            request.contains("\r\nauthorization: bearer local-key\r\n"),
+            "got: {request}"
+        );
+    }
+
+    #[test]
+    fn test_openai_defaults_to_openai_host() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_openai_env();
+        unsafe { std::env::set_var("FYNANCE_OPENAI_API_KEY", "test-key") };
+        let provider = OpenAIProvider::from_env().unwrap();
+        clear_openai_env();
+
+        assert_eq!(provider.base_url, "https://api.openai.com/v1");
+        assert_eq!(provider.api_key.as_deref(), Some("test-key"));
+        assert_eq!(provider.timeout, std::time::Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_openai_custom_base_url_and_timeout() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_openai_env();
+        unsafe {
+            std::env::set_var("FYNANCE_OPENAI_BASE_URL", "http://localhost:8080/v1/");
+            std::env::set_var("FYNANCE_OPENAI_TIMEOUT_SECS", "900");
+        }
+        let provider = OpenAIProvider::from_env().unwrap();
+        clear_openai_env();
+
+        assert_eq!(provider.base_url, "http://localhost:8080/v1");
+        assert_eq!(provider.api_key, None);
+        assert_eq!(provider.timeout, std::time::Duration::from_secs(900));
+    }
+
+    #[test]
+    fn test_openai_rejects_invalid_timeout() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_openai_env();
+        unsafe {
+            std::env::set_var("FYNANCE_OPENAI_API_KEY", "test-key");
+            std::env::set_var("FYNANCE_OPENAI_TIMEOUT_SECS", "soon");
+        }
+        let result = OpenAIProvider::from_env();
+        clear_openai_env();
+
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("FYNANCE_OPENAI_TIMEOUT_SECS"), "got: {msg}");
     }
 
     #[test]
