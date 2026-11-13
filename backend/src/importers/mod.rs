@@ -10,6 +10,7 @@ pub mod format_detection;
 pub mod holdings_parser;
 pub mod investments_parser;
 pub mod llm_parser;
+pub mod pdf_extract;
 pub mod pdf_parser;
 pub mod periodic_holdings_parser;
 pub mod pricing;

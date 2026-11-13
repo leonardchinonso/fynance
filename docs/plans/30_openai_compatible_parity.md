@@ -186,12 +186,17 @@ Ground rules for tests and manual runs:
 - Docker and CI changes
 - docs (that is Part 5)
 
-**Assumed tool contract** *(to confirm from the Helm tool)*. It is captured in one place in the module: the constants `OUTPUT_FILE`, the arg builder, and the `ToolOutput` serde structs.
+**Tool contract** *(FINAL, confirmed from the Helm tool 2026-11-13; supersedes the earlier assumed shape)*. It is captured in one place in the module: the constants `OUTPUT_FILE`, the arg builder, and the `ToolOutput` serde structs.
 
 ```
 invocation:  <FYNANCE_PDF_EXTRACT_CMD> <input.pdf> --out <dir> [FYNANCE_PDF_EXTRACT_ARGS...]
-exit code:   0 = success; non-zero = failure, reason on stderr
-output:      <dir>/extract.json  plus PNGs in <dir>
+output:      <dir>/extract.json  plus page-NNN.png (NNN = REAL page number, zero-padded)
+exit codes:  0 ok; 10 finished with some pages failed (extract.json IS written);
+             1 unexpected error, 2 usage, 3 file not found,
+             4 password-protected with no password, 5 wrong password,
+             6 not a readable PDF, 7 cannot write the output folder.
+             Every non-zero code other than 10 writes no extract.json; the
+             reason is on stderr as "pdf-extract: error: <reason>".
 ```
 
 ```json
@@ -201,31 +206,37 @@ output:      <dir>/extract.json  plus PNGs in <dir>
   "pages": [
     {
       "page": 1,
-      "text": "…text layer, may be empty…",
+      "text": "…text layer, always a string, may be empty…",
       "has_text_layer": true,
       "image": { "path": "page-001.png", "width_px": 1240, "height_px": 1754 },
-      "numbers": [ { "raw": "£1,234.50", "value": "1234.50" } ]
+      "numbers": [ { "raw": "£1,234.50", "value": "1234.50", "currency": "GBP" } ],
+      "dates": [ { "raw": "2026-11-02", "iso": "2026-11-02" } ],
+      "width_pt": 595.0,
+      "height_pt": 842.0,
+      "error": null
     }
-  ]
+  ],
+  "tool": {}, "source": "…", "document": {}, "options": {}
 }
 ```
 
-Fynance relies only on four fields:
+Fynance relies only on:
 
-- `pages[].page`
-- `pages[].text` (a missing value or null is treated as empty)
-- `pages[].image.path` (relative to `--out`)
-- `pages[].has_text_layer`, which is optional. When it is missing, the adapter treats a page as having a text layer if its text has at least 20 non-whitespace characters.
+- `pages[].page`: the REAL page number. Pages are in strictly ascending order, but need NOT be 1..n: the tool's `--pages` flag skips pages, and `page_count` is the document total, not `pages.len()`. The adapter requires strictly ascending numbers, not contiguity.
+- `pages[].text` (always a string; a missing value or null is treated as empty)
+- `pages[].image.path` (relative to `--out`, `..`-free by contract; still validated defensively). `image` can be `null` (`--no-images`): the adapter returns empty png bytes for that page.
+- `pages[].has_text_layer`, which the tool always sets. The adapter keeps the fallback: when it is missing, a page has a text layer if its text has at least 20 non-whitespace characters.
+- `pages[].error`: null/absent on success; a non-null string or object means that page failed.
 
-Unknown fields are ignored. `numbers` is parsed into an optional field, and no Fynance code reads it.
+Exit 10 is a **partial success**: the adapter returns the good pages plus their errors (`ExtractedPdf::page_errors: Vec<(u32, String)>`); every page failed is `BadOutput`. Exit codes 4/5 get a `Failed` message that says the PDF is password protected. Unknown fields are ignored (within schema_version 1 the tool only adds fields). `numbers` and `dates` are heuristics; no Fynance code reads them.
 
 **Public API:**
 
 - `PdfExtractConfig { cmd: Option<PathBuf>, extra_args: Vec<String>, timeout: Duration }`
   - `PdfExtractConfig::from_env() -> anyhow::Result<Self>` validates that `FYNANCE_PDF_EXTRACT_ARGS` is a JSON array of strings and that the timeout is a whole number.
 - `pub async fn extract_pdf(bytes: &[u8], filename: &str, cfg: &PdfExtractConfig) -> Result<ExtractedPdf, PdfExtractError>`
-  - `ExtractedPdf { pages: Vec<ExtractedPage> }`
-  - `ExtractedPage { page: u32, text: String, has_text_layer: bool, png: Vec<u8> }`
+  - `ExtractedPdf { pages: Vec<ExtractedPage>, page_errors: Vec<(u32, String)> }`, `page_errors` non-empty only on an exit-10 partial success
+  - `ExtractedPage { page: u32, text: String, has_text_layer: bool, png: Vec<u8> }` (`png` empty when `image` is null)
 
 **Steps (tests first):**
 
@@ -234,7 +245,7 @@ Unknown fields are ignored. `numbers` is parsed into an optional field, and no F
    - `NotFound { cmd }` (spawn failed with not-found or permission errors)
    - `Failed { status, stderr_tail }`
    - `TimedOut { secs }`
-   - `BadOutput(String)` (missing or invalid JSON, schema mismatch, a missing or unreadable PNG, a PNG without the PNG signature, a path that is absolute or contains `..`, or pages not numbered 1..n in order)
+   - `BadOutput(String)` (missing or invalid JSON, schema mismatch, a missing or unreadable PNG, a PNG without the PNG signature, a path that is absolute or contains `..`, page numbers not strictly ascending, or an exit-10 run where every page failed)
 
    Messages are user-facing:
    - `NotConfigured` / `NotFound` name `FYNANCE_PDF_EXTRACT_CMD` and the `FYNANCE_OPENAI_PDF_MODE=native` alternative.
@@ -264,6 +275,7 @@ Unknown fields are ignored. `numbers` is parsed into an optional field, and no F
    - `EscapingPath`: write the JSON with `"path": "../x.png"`.
    - `Slow`: sleep 30 s.
    - `EchoArgs`: write its argv to a file, then behave like `Ok`.
+   - `PartialFail`: write the JSON with one page's `error` set, exit 10.
 
    Scripts get their fixture directory as a literal path baked in when they are written. They do not depend on env vars, so tests stay parallel-safe.
 
@@ -280,7 +292,9 @@ Unknown fields are ignored. `numbers` is parsed into an optional field, and no F
 - `Garbage` and `MissingPng` give `BadOutput`.
 - `EscapingPath` gives `BadOutput` and never reads outside `out/`.
 - `Slow` with a 1 s timeout gives `TimedOut` within about 3 s.
-- Missing `has_text_layer`: derived from the text length (20-character threshold, tested at the boundary).
+- Missing `has_text_layer`: derived from the text length (20-character threshold, tested at the boundary, spaces not counted).
+- `PartialFail`: exit 10 returns `Ok` with the two good pages and one recorded `page_errors` entry.
+- Page numbers not starting at 1 (simulating `--pages`) are accepted; duplicate or out-of-order numbers give `BadOutput`.
 - `from_env`: `FYNANCE_PDF_EXTRACT_ARGS='{"a":1}'` is an error, and a bad timeout is an error.
 - The fixture drift guard passes.
 
