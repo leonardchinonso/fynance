@@ -9,8 +9,10 @@ import { useQuery } from "@/hooks/use_query"
  * picker from the years present in this list and filters client-side.
  * Returns `[data, reload]`.
  */
-export function useEmploymentPay(): [RemoteData<EmploymentPay[]>, () => void] {
-  return useQuery(() => api.listEmploymentPay(), { tag: "employment-pay", hard: [], soft: [] })
+export function useEmploymentPay(
+  { enabled = true }: { enabled?: boolean } = {},
+): [RemoteData<EmploymentPay[]>, () => void] {
+  return useQuery(() => api.listEmploymentPay(), { tag: "employment-pay", hard: [], soft: [], enabled })
 }
 
 /** The tax-year summary (readiness checklist, interest, gift aid).

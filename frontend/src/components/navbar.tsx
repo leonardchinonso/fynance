@@ -5,6 +5,7 @@ import { useProfiles } from "@/context/profile_context"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { usePinnedViews } from "@/hooks/use_pinned_views"
 import { useHomepage } from "@/hooks/use_homepage"
+import { useTaxTabVisible } from "@/hooks/use_tax_tab"
 import {
   Select,
   SelectContent,
@@ -44,6 +45,8 @@ const NAV_ITEMS = [
 ]
 
 export function Navbar() {
+  const taxTabVisible = useTaxTabVisible()
+  const navItems = taxTabVisible ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.to !== "/tax")
   const { profilesData } = useProfiles()
   const profiles = profilesData.status === "succeeded" || profilesData.status === "reloading"
     ? profilesData.value : []
@@ -80,7 +83,7 @@ export function Navbar() {
 
           {/* Desktop nav tabs */}
           <div className="hidden md:flex items-center gap-0.5 min-w-0 overflow-hidden">
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <div key={item.to} className="group relative flex items-center">
                 <NavLink
                   to={item.to}
@@ -126,7 +129,7 @@ export function Navbar() {
 
           {/* Mobile nav tabs */}
           <div className="flex md:hidden items-center gap-0.5 flex-1 min-w-0">
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

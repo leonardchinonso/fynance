@@ -245,6 +245,13 @@ async function runView(browser, view) {
   await page.getByText(/\d+ documents?/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_10_documents`)
 
+  // 11a. Tax tab is opt-in: it shows once employment-pay records exist. The mock
+  //      seeds rows, so it must be in the nav here; Settings carries the manual switch.
+  await page.goto(`${BASE}/settings/general`, { waitUntil: "domcontentloaded" })
+  await page.getByText(/^show tax tab$/i).waitFor({ timeout: 10000 })
+  await page.getByRole("link", { name: /^tax$/i }).first().waitFor({ timeout: 10000 })
+  await shot(page, `preview_${label}_10a_tax_tab_setting`)
+
   // 12. Budget grid — verify the "Show empty categories" toggle and the
   //     per-period spending-trend tooltip on the Average cell (V0 cleanup).
   await page.goto(`${BASE}/budget?view=overview`, { waitUntil: "domcontentloaded" })
