@@ -5,7 +5,8 @@
 //! sync writers; every payload problem is a 400 with a specific code.
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, Path, Query, Request, State};
 use axum::http::StatusCode;
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -27,6 +28,40 @@ use crate::server::state::AppState;
 use crate::storage::db::Db;
 use crate::util::fx::FxRateMap;
 use crate::util::tax_year::TaxYear;
+
+/// `Json` with a body that does not deserialise (an unknown `basis`, line type,
+/// source type or check type, a missing field) answered as a 400 `invalid_body`
+/// instead of axum's default 422, matching the handlers' own validation errors.
+pub struct BodyJson<T>(pub T);
+
+#[axum::async_trait]
+impl<T, S> FromRequest<S> for BodyJson<T>
+where
+    Json<T>: FromRequest<S, Rejection = JsonRejection>,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(req, state).await {
+            Ok(Json(value)) => Ok(Self(value)),
+            Err(rejection) => Err(AppError::bad_request(rejection.body_text(), "invalid_body")),
+        }
+    }
+}
+
+/// A 400 `document_not_found` for the first id that is not a stored document.
+fn require_documents(db: &Db, ids: &[String]) -> Result<(), AppError> {
+    for id in ids {
+        if db.get_document(id)?.is_none() {
+            return Err(AppError::bad_request(
+                format!("document {id} not found"),
+                "document_not_found",
+            ));
+        }
+    }
+    Ok(())
+}
 
 const SYNC_KIND_SHOP_APP: &str = "shop_app";
 
@@ -163,7 +198,7 @@ fn validate_source_fields(
 
 pub async fn create_source(
     State(state): State<AppState>,
-    Json(body): Json<IncomeSourcePayload>,
+    BodyJson(body): BodyJson<IncomeSourcePayload>,
 ) -> Result<(StatusCode, Json<IncomeSource>), AppError> {
     if body.name.trim().is_empty() {
         return Err(AppError::bad_request(
@@ -187,7 +222,7 @@ pub async fn create_source(
 pub async fn update_source(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<PatchIncomeSourceBody>,
+    BodyJson(body): BodyJson<PatchIncomeSourceBody>,
 ) -> Result<Json<IncomeSource>, AppError> {
     if body.name.is_none()
         && body.identifiers.is_none()
@@ -250,7 +285,7 @@ pub async fn delete_source(
 pub async fn create_year_end_adjustment(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<YearEndAdjustmentBody>,
+    BodyJson(body): BodyJson<YearEndAdjustmentBody>,
 ) -> Result<(StatusCode, Json<IncomeRecord>), AppError> {
     validate_tax_year(&body.tax_year)?;
     let year = TaxYear::parse(&body.tax_year).expect("validated above");
@@ -267,7 +302,7 @@ pub async fn create_year_end_adjustment(
     };
     if db.year_end_adjustment_exists(&id, &year.label())? {
         return Err(AppError::conflict(
-            "a year-end adjustment already exists for that tax year",
+            "a year-end adjustment already exists for that tax year; delete it, then create it again to recalculate it",
             "adjustment_exists",
         ));
     }
@@ -325,10 +360,11 @@ pub async fn list_records(
 
 pub async fn create_record(
     State(state): State<AppState>,
-    Json(body): Json<IncomeRecordPayload>,
+    BodyJson(body): BodyJson<IncomeRecordPayload>,
 ) -> Result<(StatusCode, Json<IncomeRecord>), AppError> {
     let db = state.db();
     let source = require_source(&db, &body.source_id)?;
+    require_documents(&db, &body.document_ids)?;
     let insert = IncomeRecordInsert {
         source_id: body.source_id,
         kind: IncomeRecordKind::Period,
@@ -362,7 +398,7 @@ pub async fn get_record(
 pub async fn update_record(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<PatchIncomeRecordBody>,
+    BodyJson(body): BodyJson<PatchIncomeRecordBody>,
 ) -> Result<Json<IncomeRecord>, AppError> {
     if body.period_start.is_none()
         && body.period_end.is_none()
@@ -383,6 +419,9 @@ pub async fn update_record(
         .get_income_record(&id)?
         .ok_or_else(|| AppError::NotFound(format!("income record {id} not found")))?;
     let source = require_source(&db, &current.source_id)?;
+    if let Some(ids) = &body.document_ids {
+        require_documents(&db, ids)?;
+    }
     let replace_lines = body.line_items.is_some();
     let insert = IncomeRecordInsert {
         source_id: current.source_id.clone(),
@@ -467,7 +506,7 @@ fn validate_check_figures(
 
 pub async fn create_check(
     State(state): State<AppState>,
-    Json(body): Json<IncomeCheckPayload>,
+    BodyJson(body): BodyJson<IncomeCheckPayload>,
 ) -> Result<(StatusCode, Json<IncomeCheck>), AppError> {
     validate_tax_year(&body.tax_year)?;
     let db = state.db();
@@ -484,6 +523,7 @@ pub async fn create_check(
         ));
     }
     validate_check_figures(&db, &source, &body.figures)?;
+    require_documents(&db, &body.document_ids)?;
     if db
         .find_income_check(&body.source_id, &body.tax_year, body.check_type)?
         .is_some()
@@ -507,7 +547,7 @@ pub async fn create_check(
 pub async fn update_check(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<PatchIncomeCheckBody>,
+    BodyJson(body): BodyJson<PatchIncomeCheckBody>,
 ) -> Result<Json<IncomeCheck>, AppError> {
     if body.figures.is_none() && body.document_ids.is_none() && body.notes.is_none() {
         return Err(AppError::bad_request(
@@ -522,6 +562,9 @@ pub async fn update_check(
     let source = require_source(&db, &current.source_id)?;
     if let Some(figures) = &body.figures {
         validate_check_figures(&db, &source, figures)?;
+    }
+    if let Some(ids) = &body.document_ids {
+        require_documents(&db, ids)?;
     }
     let notes = match &body.notes {
         Some(n) => n.as_deref(),

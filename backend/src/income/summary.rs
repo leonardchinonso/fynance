@@ -123,7 +123,11 @@ fn months(records: &[&IncomeRecord]) -> Vec<String> {
     let set: BTreeSet<String> = records
         .iter()
         .filter(|r| r.kind == IncomeRecordKind::Period)
-        .filter_map(|r| r.period_end.get(..7).map(str::to_string))
+        .filter_map(|r| {
+            // Employment months follow the pay date, like the tax year does.
+            let date = record_date(r)?;
+            Some(date.format("%Y-%m").to_string())
+        })
         .collect();
     set.into_iter().collect()
 }
@@ -345,13 +349,13 @@ fn bank_expenses(
     db: &Db,
     source: &IncomeSource,
     year: &TaxYear,
-    fx: &FxRateMap,
+    conv: &mut Converter,
 ) -> Result<BankFigures> {
     let rows = db.bank_outflows(&source.account_ids, year.start, year.end)?;
     let mut mapped_by_type: BTreeMap<IncomeLineType, Decimal> = BTreeMap::new();
     let mut unmapped: BTreeMap<String, (String, Decimal)> = BTreeMap::new();
     for row in rows {
-        let amount = fx.convert(row.amount, &row.currency);
+        let amount = conv.in_preferred(row.amount, &row.currency, Some(row.date));
         let category = row
             .category_id
             .clone()
@@ -391,7 +395,6 @@ fn self_employment_summary(
     year: &TaxYear,
     records: &[IncomeRecord],
     check: Option<&IncomeCheck>,
-    fx: &FxRateMap,
     conv: &mut Converter,
 ) -> Result<SelfEmploymentSummary> {
     let all: Vec<&IncomeRecord> = records.iter().collect();
@@ -401,7 +404,7 @@ fn self_employment_summary(
         .collect();
     let rec_all = se_figures(&all, conv);
     let rec_period = se_figures(&period, conv);
-    let bank = bank_expenses(db, source, year, fx)?;
+    let bank = bank_expenses(db, source, year, conv)?;
 
     let mut by_type = rec_all.by_type.clone();
     for (lt, v) in &bank.by_type {
@@ -508,7 +511,7 @@ pub fn adjustment_lines(
         }
         (IncomeSourceType::SelfEmployment, IncomeCheckType::AnnualAccounts) => {
             let rec = se_figures(&period, &mut conv);
-            let bank = bank_expenses(db, source, year, fx)?;
+            let bank = bank_expenses(db, source, year, &mut conv)?;
             let sales = check_figure(check, &[IncomeLineType::Sales], &mut conv, year.end)
                 .unwrap_or(Decimal::ZERO)
                 - check_figure(check, &[IncomeLineType::Refunds], &mut conv, year.end)
@@ -664,7 +667,7 @@ pub fn compute_tax_year_summary(
                 db, source, &year, &own, check, fx, &mut conv,
             )?),
             IncomeSourceType::SelfEmployment => self_employment.push(self_employment_summary(
-                db, source, &year, &own, check, fx, &mut conv,
+                db, source, &year, &own, check, &mut conv,
             )?),
             IncomeSourceType::Property | IncomeSourceType::Other => {}
         }

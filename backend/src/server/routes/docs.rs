@@ -1577,7 +1577,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "post": {
                 "summary": "Create a year-end adjustment",
                 "security": [{ "bearerAuth": [] }],
-                "description": "Compares the source check (P60 or annual accounts) for the tax year with its summed period records and, when they differ, creates one `year_end_adjustment` record spanning the tax year whose line items are the signed differences. Negative amounts are allowed on these records only.",
+                "description": "Compares the source check (P60 or annual accounts) for the tax year with its summed period records and, when they differ, creates one `year_end_adjustment` record spanning the tax year whose line items are the signed differences. Negative amounts are allowed on these records only. For a self-employment source the whole expense gap is written to the `other_expenses` line, whatever the expense types in the annual accounts. To refresh a stale adjustment, delete the adjustment record and create it again.",
                 "parameters": [
                     { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income source id." }
                 ],
@@ -1611,7 +1611,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecordPayload" } } } },
                 "responses": {
                     "201": { "description": "The created record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecord" } } } },
-                    "400": { "description": "Validation failure; the error code names the rule.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                    "400": { "description": "Validation failure; the error code names the rule. A body that does not deserialise (unknown basis or line type, missing field) is `invalid_body`; an unknown document id is `document_not_found`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
                 }
             }
         },
@@ -1686,7 +1686,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["source_id", "tax_year", "check_type", "figures"], "properties": { "source_id": { "type": "string" }, "tax_year": { "type": "string", "example": "2025-26" }, "check_type": { "type": "string", "enum": ["p60", "annual_accounts"] }, "figures": { "type": "array", "items": { "type": "object" } }, "document_ids": { "type": "array", "items": { "type": "string" } }, "notes": { "type": "string" } } } } } },
                 "responses": {
                     "201": { "description": "The created check.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeCheck" } } } },
-                    "400": { "description": "Bad tax_year, unknown source, wrong check type, invalid figure.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "400": { "description": "Bad tax_year, unknown source, wrong check type, invalid figure, unknown document id (`document_not_found`), malformed body (`invalid_body`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
                     "409": { "description": "check_exists.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
                 }
             }

@@ -2863,10 +2863,12 @@ impl Db {
     /// (0 when the id does not exist). The row's fingerprint is freed, so
     /// re-importing the same statement will re-insert the transaction.
     pub fn delete_transaction(&self, id: &str) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
         self.strip_transactions_from_income_records("id = ?1", params![id])?;
         let n = self
             .conn
             .execute("DELETE FROM transactions WHERE id = ?1", params![id])?;
+        tx.commit()?;
         Ok(n)
     }
 
@@ -2904,6 +2906,7 @@ impl Db {
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!("DELETE FROM transactions WHERE id IN ({placeholders})");
+        let tx = self.conn.unchecked_transaction()?;
         self.strip_transactions_from_income_records(
             &format!("id IN ({placeholders})"),
             rusqlite::params_from_iter(ids.iter()),
@@ -2911,17 +2914,20 @@ impl Db {
         let n = self
             .conn
             .execute(&sql, rusqlite::params_from_iter(ids.iter()))?;
+        tx.commit()?;
         Ok(n)
     }
 
     /// Hard-delete every transaction for an account. Returns the number of rows
     /// removed. Used to clear an account before deleting it.
     pub fn delete_transactions_for_account(&self, account_id: &str) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
         self.strip_transactions_from_income_records("account_id = ?1", params![account_id])?;
         let n = self.conn.execute(
             "DELETE FROM transactions WHERE account_id = ?1",
             params![account_id],
         )?;
+        tx.commit()?;
         Ok(n)
     }
 

@@ -1113,3 +1113,130 @@ fn migration_drops_an_empty_employment_pay_table_and_keeps_a_used_one() {
         assert_eq!(employment_pay_exists(&path), kept, "rows = {rows}");
     }
 }
+
+#[tokio::test]
+async fn unknown_enum_values_and_missing_documents_are_400s() {
+    let (app, _db) = test_router();
+    let id = make_source(&app, "alex", "employment", "Employer A").await;
+
+    // A basis outside period / year_to_date fails deserialisation: 400, not 422.
+    let (status, body) = post_record(
+        &app,
+        payslip(
+            &id,
+            "2025-04-01",
+            "2025-04-30",
+            "2025-04-28",
+            json!([{ "line_type": "taxable_pay", "amount": "1", "basis": "weekly" }]),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "invalid_body");
+
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        "/api/income-sources",
+        Some(json!({ "profile_id": "alex", "source_type": "lottery", "name": "X" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "invalid_body");
+
+    // Document ids must exist on records and checks.
+    let (status, body) = post_record(
+        &app,
+        json!({ "source_id": id, "period_start": "2025-04-01", "period_end": "2025-04-30",
+                "pay_date": "2025-04-28", "document_ids": ["no-such-doc"],
+                "line_items": [{ "line_type": "taxable_pay", "amount": "1" }] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "document_not_found");
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        "/api/income-checks",
+        Some(
+            json!({ "source_id": id, "tax_year": "2025-26", "check_type": "p60",
+                     "figures": [], "document_ids": ["no-such-doc"] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "document_not_found");
+}
+
+#[tokio::test]
+async fn employment_months_follow_the_pay_date() {
+    let (app, _db) = test_router();
+    let id = make_source(&app, "alex", "employment", "Employer A").await;
+    // Period ends in April but was paid in March: it counts as March.
+    let (status, body) = post_record(
+        &app,
+        payslip(
+            &id,
+            "2025-03-06",
+            "2025-04-05",
+            "2025-03-28",
+            json!([{ "line_type": "taxable_pay", "amount": "100" }]),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["tax_year"], "2024-25");
+    let s = summary(&app, "alex", "2024-25").await;
+    assert_eq!(s["employment"][0]["months_covered"], json!(["2025-03"]));
+}
+
+#[tokio::test]
+async fn bulk_and_account_deletes_strip_transactions_from_income_records() {
+    let (app, db_shared) = test_router();
+    let ids = {
+        let db = db_shared.lock().unwrap();
+        make_account(&db, "acct", "Current", &["alex"]);
+        let salary = leaf(&db, "Xt Pay", "Xt Salary", CategoryType::IncomeTaxable);
+        db.insert_transactions_bulk(
+            "acct",
+            &[
+                txn("2025-04-28T09:00:00", "Net pay", dec!(660), &salary.id),
+                txn("2025-05-28T09:00:00", "Net pay", dec!(670), &salary.id),
+            ],
+        )
+        .unwrap();
+        let (rows, _) = db.get_transactions(&TransactionFilters::default()).unwrap();
+        rows.iter().map(|r| r.id.clone()).collect::<Vec<_>>()
+    };
+    let source = make_source(&app, "alex", "employment", "Employer A").await;
+    let mut rids = Vec::new();
+    for (tid, start, end) in [
+        (&ids[0], "2025-04-01", "2025-04-30"),
+        (&ids[1], "2025-05-01", "2025-05-31"),
+    ] {
+        let (status, rec) = post_record(
+            &app,
+            json!({ "source_id": source, "period_start": start, "period_end": end,
+                    "transaction_ids": [tid],
+                    "line_items": [{ "line_type": "net_pay", "amount": "660" }] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{rec}");
+        rids.push(rec["id"].as_str().unwrap().to_string());
+    }
+    {
+        let db = db_shared.lock().unwrap();
+        assert_eq!(db.delete_transactions(&ids[..1]).unwrap(), 1);
+        assert_eq!(db.delete_transactions_for_account("acct").unwrap(), 1);
+    }
+    for rid in rids {
+        let (_, rec) = call(
+            &app,
+            Method::GET,
+            &format!("/api/income-records/{rid}"),
+            None,
+        )
+        .await;
+        assert_eq!(rec["transaction_ids"], json!([]));
+    }
+}

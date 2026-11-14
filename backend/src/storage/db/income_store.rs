@@ -20,6 +20,7 @@ use crate::model::{
 /// Money legs of the rows `Db::income_period_rows` returns, kept as Decimal.
 #[derive(Debug, Clone)]
 pub struct BankOutflow {
+    pub date: NaiveDate,
     pub category_id: Option<String>,
     pub category_name: Option<String>,
     pub currency: String,
@@ -663,7 +664,7 @@ impl Db {
         let start_str = start.format("%Y-%m-%dT00:00:00").to_string();
         let end_str = end.format("%Y-%m-%dT23:59:59").to_string();
         let mut stmt = self.conn.prepare(
-            "SELECT t.category_id, c.name, t.currency, t.amount
+            "SELECT t.category_id, c.name, t.currency, t.amount, t.date
              FROM transactions t
              LEFT JOIN categories c ON c.id = t.category_id
              WHERE t.date >= ?1 AND t.date <= ?2
@@ -679,14 +680,18 @@ impl Db {
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut out = Vec::new();
-        for (category_id, category_name, currency, amount) in raw {
+        for (category_id, category_name, currency, amount, date) in raw {
             let amount = parse_decimal_column(3, "transactions.amount", &amount)?;
             if amount < Decimal::ZERO {
+                let date = NaiveDate::parse_from_str(date.get(..10).unwrap_or(&date), "%Y-%m-%d")
+                    .map_err(|e| anyhow!("transactions.date {date:?}: {e}"))?;
                 out.push(BankOutflow {
+                    date,
                     category_id,
                     category_name,
                     currency,
