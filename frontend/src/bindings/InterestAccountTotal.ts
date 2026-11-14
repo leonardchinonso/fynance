@@ -3,4 +3,8 @@
 /**
  * Per-account interest totals for `InterestSummary`.
  */
-export type InterestAccountTotal = { account_id: string, account_name: string, taxable: string, non_taxable: string, };
+export type InterestAccountTotal = { account_id: string, account_name: string, taxable: string, non_taxable: string, 
+/**
+ * Number of profiles sharing the account; the figures are 1/N of it.
+ */
+joint_share_of: number, };

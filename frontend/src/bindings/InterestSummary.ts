@@ -4,6 +4,7 @@ import type { InterestAccountTotal } from "./InterestAccountTotal";
 /**
  * Interest in range, bucketed by the `interest_taxable` /
  * `interest_non_taxable` category types of the transaction's category.
+ * Joint accounts contribute an equal share per profile.
  */
 export type InterestSummary = { taxable_total: string, non_taxable_total: string, 
 /**

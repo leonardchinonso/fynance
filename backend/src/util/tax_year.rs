@@ -1,6 +1,6 @@
 //! UK tax-year arithmetic: the `YYYY-YY` label and the 6 April .. 5 April
-//! window it names (plan 28). Shared by the employment-pay routes, the
-//! summary endpoint and the CGT lookback.
+//! window it names (plan 28). Shared by the income routes, the summary
+//! endpoint and the CGT lookback.
 
 use chrono::NaiveDate;
 
@@ -44,6 +44,19 @@ impl TaxYear {
             start,
             end,
         })
+    }
+
+    /// The tax year containing `date`: 6 April starts a year, 5 April ends one.
+    pub fn for_date(date: NaiveDate) -> Self {
+        use chrono::Datelike;
+        let on_or_after_six_april = (date.month(), date.day()) >= (4, 6);
+        let start_year = if on_or_after_six_april {
+            date.year()
+        } else {
+            date.year() - 1
+        };
+        Self::from_start_year(start_year)
+            .expect("a tax year around an existing date is constructible")
     }
 
     /// Canonical `YYYY-YY` label for this year.
@@ -120,6 +133,15 @@ mod tests {
                 .unwrap()
                 .contains(date(2024, 2, 29))
         );
+    }
+
+    #[test]
+    fn for_date_splits_at_six_april() {
+        assert_eq!(TaxYear::for_date(date(2026, 4, 5)).label(), "2025-26");
+        assert_eq!(TaxYear::for_date(date(2026, 4, 6)).label(), "2026-27");
+        assert_eq!(TaxYear::for_date(date(2025, 12, 31)).label(), "2025-26");
+        assert_eq!(TaxYear::for_date(date(2026, 1, 1)).label(), "2025-26");
+        assert_eq!(TaxYear::for_date(date(2024, 2, 29)).label(), "2023-24");
     }
 
     #[test]
