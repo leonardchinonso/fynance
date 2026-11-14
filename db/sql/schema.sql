@@ -413,6 +413,70 @@ INSERT OR IGNORE INTO tax_config (tax_year, kind, rate_kind, valid_from, valid_t
     ('2026-27', 'rate', 'basic',  '2026-04-06', '2027-04-05', NULL, '0.18'),
     ('2026-27', 'rate', 'higher', '2026-04-06', '2027-04-05', NULL, '0.24');
 
--- The `employment_pay` table (plan 28: PAYE records, tax-year summary) is
--- created by the probe-based migration in migrate_schema(), which runs right
--- after this file, so one DDL covers fresh and pre-existing databases alike.
+-- ── income model (plan 30) ───────────────────────────────────────────────────
+-- Per-profile income: sources (an employer or a business), one record per
+-- period with its line items, and annual figures (P60, annual accounts) kept
+-- as checks that are compared with the summed records and never added to them.
+-- Money is TEXT Decimal; id arrays are JSON TEXT. This file runs on every open,
+-- so existing databases pick the tables up too.
+CREATE TABLE IF NOT EXISTS income_sources (
+    id                   TEXT PRIMARY KEY,
+    profile_id           TEXT NOT NULL REFERENCES profiles(id),
+    source_type          TEXT NOT NULL,                -- employment | self_employment | property | other
+    name                 TEXT NOT NULL,
+    identifiers          TEXT NOT NULL DEFAULT '{}',   -- JSON: paye_reference, payroll_id, description, accounting_basis
+    account_ids          TEXT NOT NULL DEFAULT '[]',   -- self_employment: business bank accounts
+    expense_category_map TEXT NOT NULL DEFAULT '{}',   -- self_employment: {category_id: line_type}
+    sync_kind            TEXT,                         -- NULL | 'shop_app'
+    active               INTEGER NOT NULL DEFAULT 1,
+    notes                TEXT,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_income_sources_profile ON income_sources(profile_id);
+
+CREATE TABLE IF NOT EXISTS income_records (
+    id              TEXT PRIMARY KEY,
+    source_id       TEXT NOT NULL REFERENCES income_sources(id),
+    kind            TEXT NOT NULL DEFAULT 'period',   -- period | year_end_adjustment
+    period_start    TEXT NOT NULL,
+    period_end      TEXT NOT NULL,
+    pay_date        TEXT,                             -- employment: PAYE is by payment date
+    tax_year        TEXT NOT NULL,                    -- derived server-side
+    currency        TEXT NOT NULL DEFAULT 'GBP',
+    transaction_ids TEXT NOT NULL DEFAULT '[]',       -- optional links to bank credits
+    document_ids    TEXT NOT NULL DEFAULT '[]',
+    origin          TEXT NOT NULL DEFAULT 'manual',   -- manual | parse | shop_sync | adjustment
+    external_ref    TEXT,                             -- shop_sync: "YYYY-MM-DD..YYYY-MM-DD"
+    notes           TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_income_records_source_year ON income_records(source_id, tax_year);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_income_records_ext ON income_records(source_id, origin, external_ref)
+    WHERE external_ref IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS income_line_items (
+    id                  TEXT PRIMARY KEY,
+    record_id           TEXT NOT NULL REFERENCES income_records(id) ON DELETE CASCADE,
+    line_type           TEXT NOT NULL,                -- see backend/src/income/line_types.rs
+    amount              TEXT NOT NULL,                -- non-negative except on year_end_adjustment records
+    currency            TEXT NOT NULL,
+    basis               TEXT NOT NULL DEFAULT 'period',  -- period | year_to_date (YTD is never summed)
+    label               TEXT,
+    investment_event_id TEXT REFERENCES investments(id) ON DELETE SET NULL  -- rsu_vest_value only
+);
+CREATE INDEX IF NOT EXISTS idx_income_line_items_record ON income_line_items(record_id);
+
+CREATE TABLE IF NOT EXISTS income_checks (
+    id           TEXT PRIMARY KEY,
+    source_id    TEXT NOT NULL REFERENCES income_sources(id),
+    tax_year     TEXT NOT NULL,
+    check_type   TEXT NOT NULL,                       -- p60 | annual_accounts
+    figures      TEXT NOT NULL,                       -- JSON [{line_type, amount, currency}]
+    document_ids TEXT NOT NULL DEFAULT '[]',
+    notes        TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    UNIQUE(source_id, tax_year, check_type)
+);

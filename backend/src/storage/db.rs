@@ -18,14 +18,12 @@ use crate::model::{
     AccountType, AssetClass, BalanceDelta, BudgetRow, Category, CategoryNode, CategorySource,
     CategoryTotal, CategoryType, ChecklistItem, ChecklistStatus, CreateCategoryPayload,
     CreateInvestmentEventBody, Currency, DerivedBroughtForwardLosses, DerivedLossYear, Document,
-    DocumentReferences, DocumentSummary, DonationSummary, EmploymentPay, EmploymentPayPayload,
-    EmploymentSummary, ExchangeRate, Granularity, Holding, HoldingPreview, HoldingSummaryRow,
-    HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow, ImportLog, ImportResult,
-    ImportRowError, ImportTransaction, InsertOutcome, InterestAccountTotal, InterestSummary,
-    InvestmentEvent, InvestmentEventType, InvestmentHistoryRow, InvestmentMetrics, LikelyDuplicate,
-    PatchCategoryPayload, PatchEmploymentPayBody, PatchInvestmentEventBody, Profile,
-    SpendingGridRow, SpendingGroupBy, TaxConfigEntry, TaxInputs, TaxYearSummary, Transaction,
-    TransactionPreviewRow, TransactionPreviewStatus,
+    DocumentReferences, DocumentSummary, ExchangeRate, Granularity, Holding, HoldingPreview,
+    HoldingSummaryRow, HoldingType, HoldingsCashFlowMonth, HoldingsHistoryRow, ImportLog,
+    ImportResult, ImportRowError, ImportTransaction, InsertOutcome, InvestmentEvent,
+    InvestmentEventType, InvestmentHistoryRow, InvestmentMetrics, LikelyDuplicate,
+    PatchCategoryPayload, PatchInvestmentEventBody, Profile, SpendingGridRow, SpendingGroupBy,
+    TaxConfigEntry, TaxInputs, Transaction, TransactionPreviewRow, TransactionPreviewStatus,
 };
 use crate::util::dedupe::{
     NEAR_MATCH_DAYS, Occurrences, descriptions_similar, investment_key, transaction_key,
@@ -1900,176 +1898,6 @@ impl Db {
         Ok(rows > 0)
     }
 
-    // ── Employment pay (PAYE records, plan 28) ────────────────────────────────
-
-    const EMPLOYMENT_PAY_COLUMNS: &'static str = "id, tax_year, period_start, period_end, employer, is_p60, gross_pay, tax_deducted, employees_ni, student_loan, net_pay, currency, transaction_id, document_ids, notes, created_at, updated_at";
-
-    pub fn create_employment_pay(&self, p: &EmploymentPayPayload) -> Result<EmploymentPay> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let document_ids_json =
-            serde_json::to_string(&p.document_ids).unwrap_or_else(|_| "[]".to_string());
-        self.conn.execute(
-            "INSERT INTO employment_pay
-             (id, tax_year, period_start, period_end, employer, is_p60,
-              gross_pay, tax_deducted, employees_ni, student_loan, net_pay,
-              currency, transaction_id, document_ids, notes, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-            params![
-                id,
-                p.tax_year,
-                p.period_start,
-                p.period_end,
-                p.employer,
-                p.is_p60 as i64,
-                p.gross_pay.to_string(),
-                p.tax_deducted.to_string(),
-                p.employees_ni.map(|d| d.to_string()),
-                p.student_loan.map(|d| d.to_string()),
-                p.net_pay.map(|d| d.to_string()),
-                p.currency,
-                p.transaction_id,
-                document_ids_json,
-                p.notes,
-                now,
-                now,
-            ],
-        )?;
-        self.get_employment_pay(&id)?
-            .ok_or_else(|| anyhow!("employment_pay row {id} vanished after insert"))
-    }
-
-    /// Rows for one tax year, or every year when `tax_year` is `None`.
-    /// Period end ascending with annual (period-less) rows last.
-    pub fn list_employment_pay(&self, tax_year: Option<&str>) -> Result<Vec<EmploymentPay>> {
-        let sql = match tax_year {
-            Some(_) => format!(
-                "SELECT {} FROM employment_pay WHERE tax_year = ?1 ORDER BY (period_end IS NULL), period_end ASC, id",
-                Self::EMPLOYMENT_PAY_COLUMNS
-            ),
-            None => format!(
-                "SELECT {} FROM employment_pay ORDER BY (period_end IS NULL), period_end ASC, id",
-                Self::EMPLOYMENT_PAY_COLUMNS
-            ),
-        };
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = match tax_year {
-            Some(year) => stmt
-                .query_map(params![year], row_to_employment_pay)?
-                .collect::<rusqlite::Result<Vec<_>>>()?,
-            None => stmt
-                .query_map([], row_to_employment_pay)?
-                .collect::<rusqlite::Result<Vec<_>>>()?,
-        };
-        Ok(rows)
-    }
-
-    pub fn get_employment_pay(&self, id: &str) -> Result<Option<EmploymentPay>> {
-        let sql = format!(
-            "SELECT {} FROM employment_pay WHERE id = ?1",
-            Self::EMPLOYMENT_PAY_COLUMNS
-        );
-        let row = self
-            .conn
-            .prepare(&sql)?
-            .query_row(params![id], row_to_employment_pay)
-            .optional()?;
-        Ok(row)
-    }
-
-    /// Partial update: present keys change the row, explicit nulls clear
-    /// nullable fields, absent keys leave values untouched. Unknown keys were
-    /// already dropped by serde.
-    pub fn update_employment_pay(
-        &self,
-        id: &str,
-        body: &PatchEmploymentPayBody,
-    ) -> Result<Option<EmploymentPay>> {
-        let Some(mut row) = self.get_employment_pay(id)? else {
-            return Ok(None);
-        };
-        if let Some(v) = &body.tax_year {
-            row.tax_year = v.clone();
-        }
-        if let Some(v) = &body.employer {
-            row.employer = v.clone();
-        }
-        if let Some(v) = &body.period_start {
-            row.period_start = v.clone();
-        }
-        if let Some(v) = &body.period_end {
-            row.period_end = v.clone();
-        }
-        if let Some(v) = body.is_p60 {
-            row.is_p60 = v;
-        }
-        if let Some(v) = body.gross_pay {
-            row.gross_pay = v;
-        }
-        if let Some(v) = body.tax_deducted {
-            row.tax_deducted = v;
-        }
-        if let Some(v) = &body.employees_ni {
-            row.employees_ni = *v;
-        }
-        if let Some(v) = &body.student_loan {
-            row.student_loan = *v;
-        }
-        if let Some(v) = &body.net_pay {
-            row.net_pay = *v;
-        }
-        if let Some(v) = &body.currency {
-            row.currency = v.clone();
-        }
-        if let Some(v) = &body.transaction_id {
-            row.transaction_id = v.clone();
-        }
-        if let Some(v) = &body.document_ids {
-            row.document_ids = v.clone();
-        }
-        if let Some(v) = &body.notes {
-            row.notes = v.clone();
-        }
-
-        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let document_ids_json =
-            serde_json::to_string(&row.document_ids).unwrap_or_else(|_| "[]".to_string());
-        self.conn.execute(
-            "UPDATE employment_pay SET
-               tax_year = ?2, period_start = ?3, period_end = ?4, employer = ?5,
-               is_p60 = ?6, gross_pay = ?7, tax_deducted = ?8, employees_ni = ?9,
-               student_loan = ?10, net_pay = ?11, currency = ?12, transaction_id = ?13,
-               document_ids = ?14, notes = ?15, updated_at = ?16
-             WHERE id = ?1",
-            params![
-                id,
-                row.tax_year,
-                row.period_start,
-                row.period_end,
-                row.employer,
-                row.is_p60 as i64,
-                row.gross_pay.to_string(),
-                row.tax_deducted.to_string(),
-                row.employees_ni.map(|d| d.to_string()),
-                row.student_loan.map(|d| d.to_string()),
-                row.net_pay.map(|d| d.to_string()),
-                row.currency,
-                row.transaction_id,
-                document_ids_json,
-                row.notes,
-                now,
-            ],
-        )?;
-        self.get_employment_pay(id)
-    }
-
-    pub fn delete_employment_pay(&self, id: &str) -> Result<bool> {
-        let rows = self
-            .conn
-            .execute("DELETE FROM employment_pay WHERE id = ?1", params![id])?;
-        Ok(rows > 0)
-    }
-
     pub fn transaction_exists(&self, id: &str) -> Result<bool> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM transactions WHERE id = ?1",
@@ -2077,229 +1905,6 @@ impl Db {
             |row| row.get(0),
         )?;
         Ok(count > 0)
-    }
-
-    /// The whole `GET /api/tax/summary/:tax_year` payload (plan 28). Each leg
-    /// is its own dedicated aggregate query with an explicit SUM; the shared
-    /// `get_transactions_by_category` is deliberately not reused because its
-    /// grouped expression is not aggregated on live branches (fixed only in
-    /// PR #134). Interest totals are summed per (account, currency) leg in SQL
-    /// and converted through `fx` in Rust; employment legs are exact Decimals
-    /// from the TEXT columns, so they never pass through the REAL cast.
-    pub fn compute_tax_year_summary(
-        &self,
-        tax_year: &str,
-        fx: &crate::util::fx::FxRateMap,
-    ) -> Result<TaxYearSummary> {
-        use crate::util::fx::CurrencyAggregator;
-        use crate::util::tax_year::TaxYear;
-
-        let year = TaxYear::parse(tax_year)
-            .ok_or_else(|| anyhow!("tax_year must look like '2024-25', got {tax_year:?}"))?;
-
-        // ── Employment: Decimal legs summed in Rust, never via a REAL cast ──
-        let mut gross = Decimal::ZERO;
-        let mut deducted = Decimal::ZERO;
-        let mut ni = Decimal::ZERO;
-        let mut loan = Decimal::ZERO;
-        let mut net = Decimal::ZERO;
-        let mut payslip_count: u32 = 0;
-        let mut has_p60 = false;
-        let mut has_unknown_employees_ni = false;
-        let mut has_unknown_student_loan = false;
-        let mut has_unknown_net_pay = false;
-        {
-            let mut stmt = self.conn.prepare(
-                "SELECT currency, gross_pay, tax_deducted, employees_ni, student_loan, net_pay, is_p60
-                 FROM employment_pay WHERE tax_year = ?1",
-            )?;
-            let rows = stmt
-                .query_map(params![tax_year], |row| {
-                    let currency: String = row.get(0)?;
-                    let gross: String = row.get(1)?;
-                    let deducted: String = row.get(2)?;
-                    let ni: Option<String> = row.get(3)?;
-                    let loan: Option<String> = row.get(4)?;
-                    let net: Option<String> = row.get(5)?;
-                    Ok((
-                        currency,
-                        gross,
-                        deducted,
-                        ni,
-                        loan,
-                        net,
-                        row.get::<_, i64>(6)? != 0,
-                    ))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            for (currency, gross_str, deducted_str, ni_str, loan_str, net_str, is_p60) in rows {
-                payslip_count += 1;
-                has_p60 |= is_p60;
-                gross += fx.convert(
-                    parse_decimal_column(1, "employment_pay.gross_pay", &gross_str)?,
-                    &currency,
-                );
-                deducted += fx.convert(
-                    parse_decimal_column(2, "employment_pay.tax_deducted", &deducted_str)?,
-                    &currency,
-                );
-                match ni_str {
-                    Some(s) => {
-                        ni += fx.convert(
-                            parse_decimal_column(3, "employment_pay.employees_ni", &s)?,
-                            &currency,
-                        )
-                    }
-                    None => has_unknown_employees_ni = true,
-                }
-                match loan_str {
-                    Some(s) => {
-                        loan += fx.convert(
-                            parse_decimal_column(4, "employment_pay.student_loan", &s)?,
-                            &currency,
-                        )
-                    }
-                    None => has_unknown_student_loan = true,
-                }
-                match net_str {
-                    Some(s) => {
-                        net += fx.convert(
-                            parse_decimal_column(5, "employment_pay.net_pay", &s)?,
-                            &currency,
-                        )
-                    }
-                    None => has_unknown_net_pay = true,
-                }
-            }
-        }
-        let employment = EmploymentSummary {
-            gross_pay: gross,
-            tax_deducted: deducted,
-            employees_ni: ni,
-            student_loan: loan,
-            net_pay: net,
-            payslip_count,
-            has_p60,
-            has_unknown_employees_ni,
-            has_unknown_student_loan,
-            has_unknown_net_pay,
-        };
-
-        let start_str = year.start.format("%Y-%m-%dT00:00:00").to_string();
-        let end_str = year.end.format("%Y-%m-%dT23:59:59").to_string();
-
-        // ── Interest: one row per (account, currency, category type) leg ──
-        let mut by_account: Vec<InterestAccountTotal> = Vec::new();
-        let mut taxable_total = CurrencyAggregator::default();
-        let mut non_taxable_total = CurrencyAggregator::default();
-        {
-            let mut stmt = self.conn.prepare(
-                "SELECT t.account_id, a.name, t.currency, c.category_type,
-                        SUM(CAST(t.amount AS REAL)) AS total
-                 FROM transactions t
-                 JOIN categories c ON c.id = t.category_id
-                 JOIN accounts a ON a.id = t.account_id
-                 WHERE t.date >= ?1 AND t.date <= ?2
-                   AND t.exclude_from_summary = 0
-                   AND c.category_type IN ('interest_taxable', 'interest_non_taxable')
-                 GROUP BY t.account_id, a.name, t.currency, c.category_type
-                 ORDER BY a.name, t.account_id, t.currency",
-            )?;
-            let rows = stmt
-                .query_map(params![start_str, end_str], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, f64>(4)?,
-                    ))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            for (account_id, account_name, currency, category_type, total_f) in rows {
-                // Each SQL leg is single-currency, so the REAL sum is exact
-                // for money magnitudes; it re-enters Decimal before FX.
-                let total = Decimal::try_from(total_f).map_err(|e| {
-                    anyhow!("interest total for account {account_id} ({currency}) is not representable: {e}")
-                })?;
-                let taxable = category_type == "interest_taxable";
-                let (grand, leg_total) = if taxable {
-                    (&mut taxable_total, &mut by_account)
-                } else {
-                    (&mut non_taxable_total, &mut by_account)
-                };
-                grand.add(total, &currency, fx);
-                if let Some(entry) = leg_total.iter_mut().find(|e| e.account_id == account_id) {
-                    if taxable {
-                        entry.taxable += fx.convert(total, &currency);
-                    } else {
-                        entry.non_taxable += fx.convert(total, &currency);
-                    }
-                } else {
-                    let converted = fx.convert(total, &currency);
-                    leg_total.push(InterestAccountTotal {
-                        account_id: account_id.clone(),
-                        account_name,
-                        taxable: if taxable { converted } else { Decimal::ZERO },
-                        non_taxable: if taxable { Decimal::ZERO } else { converted },
-                    });
-                }
-            }
-        }
-        let interest = InterestSummary {
-            taxable_total: taxable_total.converted_sum(),
-            non_taxable_total: non_taxable_total.converted_sum(),
-            by_account,
-        };
-
-        // ── Donations: Gift Aid is the donation_* category type; outflows ──
-        let mut gift_aid_total = CurrencyAggregator::default();
-        let mut non_gift_aid_total = CurrencyAggregator::default();
-        {
-            let mut stmt = self.conn.prepare(
-                "SELECT t.currency, c.category_type,
-                        SUM(CASE WHEN CAST(t.amount AS REAL) < 0
-                                 THEN ABS(CAST(t.amount AS REAL)) ELSE 0 END) AS outflow
-                 FROM transactions t
-                 JOIN categories c ON c.id = t.category_id
-                 WHERE t.date >= ?1 AND t.date <= ?2
-                   AND t.exclude_from_summary = 0
-                   AND c.category_type IN ('donation_taxable', 'donation_non_taxable')
-                 GROUP BY t.currency, c.category_type",
-            )?;
-            let rows = stmt
-                .query_map(params![start_str, end_str], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, f64>(2)?,
-                    ))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            for (currency, category_type, outflow_f) in rows {
-                let outflow = Decimal::try_from(outflow_f).map_err(|e| {
-                    anyhow!("donation total ({currency}) is not representable: {e}")
-                })?;
-                if category_type == "donation_taxable" {
-                    gift_aid_total.add(outflow, &currency, fx);
-                } else {
-                    non_gift_aid_total.add(outflow, &currency, fx);
-                }
-            }
-        }
-        let donations = DonationSummary {
-            gift_aid_total: gift_aid_total.converted_sum(),
-            non_gift_aid_total: non_gift_aid_total.converted_sum(),
-        };
-
-        Ok(TaxYearSummary {
-            tax_year: year.label(),
-            start_date: year.start.format("%Y-%m-%d").to_string(),
-            end_date: year.end.format("%Y-%m-%d").to_string(),
-            employment,
-            interest,
-            donations,
-        })
     }
 
     // ── Transactions ──────────────────────────────────────────────────────────
@@ -3254,10 +2859,35 @@ impl Db {
     /// (0 when the id does not exist). The row's fingerprint is freed, so
     /// re-importing the same statement will re-insert the transaction.
     pub fn delete_transaction(&self, id: &str) -> Result<usize> {
+        self.strip_transactions_from_income_records("id = ?1", params![id])?;
         let n = self
             .conn
             .execute("DELETE FROM transactions WHERE id = ?1", params![id])?;
         Ok(n)
+    }
+
+    /// Remove the ids of the transactions matching `where_clause` from every
+    /// `income_records.transaction_ids` array, before those transactions go.
+    fn strip_transactions_from_income_records(
+        &self,
+        where_clause: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<()> {
+        self.conn.execute(
+            &format!(
+                "UPDATE income_records SET transaction_ids = (
+                    SELECT COALESCE(json_group_array(value), '[]')
+                    FROM json_each(income_records.transaction_ids)
+                    WHERE value NOT IN (SELECT id FROM transactions WHERE {where_clause})
+                 )
+                 WHERE EXISTS (
+                    SELECT 1 FROM json_each(income_records.transaction_ids) j
+                    WHERE j.value IN (SELECT id FROM transactions WHERE {where_clause})
+                 )"
+            ),
+            params,
+        )?;
+        Ok(())
     }
 
     /// Hard-delete transactions by id. Returns the number of rows removed.
@@ -3270,6 +2900,10 @@ impl Db {
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!("DELETE FROM transactions WHERE id IN ({placeholders})");
+        self.strip_transactions_from_income_records(
+            &format!("id IN ({placeholders})"),
+            rusqlite::params_from_iter(ids.iter()),
+        )?;
         let n = self
             .conn
             .execute(&sql, rusqlite::params_from_iter(ids.iter()))?;
@@ -3279,6 +2913,7 @@ impl Db {
     /// Hard-delete every transaction for an account. Returns the number of rows
     /// removed. Used to clear an account before deleting it.
     pub fn delete_transactions_for_account(&self, account_id: &str) -> Result<usize> {
+        self.strip_transactions_from_income_records("account_id = ?1", params![account_id])?;
         let n = self.conn.execute(
             "DELETE FROM transactions WHERE account_id = ?1",
             params![account_id],
@@ -4155,7 +3790,7 @@ impl Db {
     /// List every stored document with its orphan flag. `reference_count` is
     /// left `None` by default (clients fetch it lazily per row via
     /// `get_document`); with `include_refs` it is populated for every row via
-    /// one grouped scan over the three referencing link sources, matching
+    /// one grouped scan over the referencing link sources, matching
     /// `document_references(id).total()` per document.
     pub fn list_documents(&self, include_refs: bool) -> Result<Vec<DocumentSummary>> {
         // Single pass per table over the source_document_ids JSON arrays.
@@ -4170,6 +3805,10 @@ impl Db {
                     SELECT j.value FROM holdings h, json_each(h.source_document_ids) j
                     UNION ALL
                     SELECT j.value FROM investments i, json_each(i.source_document_ids) j
+                    UNION ALL
+                    SELECT j.value FROM income_records r, json_each(r.document_ids) j
+                    UNION ALL
+                    SELECT j.value FROM income_checks c, json_each(c.document_ids) j
                   ) GROUP BY value",
             )?;
             let rows = stmt.query_map([], |row| {
@@ -4182,7 +3821,11 @@ impl Db {
                   UNION
                   SELECT j.value FROM holdings h, json_each(h.source_document_ids) j
                   UNION
-                  SELECT j.value FROM investments i, json_each(i.source_document_ids) j",
+                  SELECT j.value FROM investments i, json_each(i.source_document_ids) j
+                  UNION
+                  SELECT j.value FROM income_records r, json_each(r.document_ids) j
+                  UNION
+                  SELECT j.value FROM income_checks c, json_each(c.document_ids) j",
             )?;
             let ids = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, 0usize)))?;
             ids.collect::<rusqlite::Result<_>>()?
@@ -4224,13 +3867,17 @@ impl Db {
                 r"SELECT
                     (SELECT COUNT(*) FROM transactions t, json_each(t.source_document_ids) j WHERE j.value = ?1),
                     (SELECT COUNT(*) FROM holdings h, json_each(h.source_document_ids) j WHERE j.value = ?1),
-                    (SELECT COUNT(*) FROM investments i, json_each(i.source_document_ids) j WHERE j.value = ?1)",
+                    (SELECT COUNT(*) FROM investments i, json_each(i.source_document_ids) j WHERE j.value = ?1),
+                    (SELECT COUNT(*) FROM income_records r, json_each(r.document_ids) j WHERE j.value = ?1),
+                    (SELECT COUNT(*) FROM income_checks c, json_each(c.document_ids) j WHERE j.value = ?1)",
                 params![id],
                 |row| {
                     Ok(DocumentReferences {
                         transactions: row.get::<_, i64>(0)? as usize,
                         holdings: row.get::<_, i64>(1)? as usize,
                         investments: row.get::<_, i64>(2)? as usize,
+                        income_records: row.get::<_, i64>(3)? as usize,
+                        income_checks: row.get::<_, i64>(4)? as usize,
                     })
                 },
             )
@@ -4255,15 +3902,22 @@ impl Db {
         let tx = self.conn.unchecked_transaction()?;
         let unlinked = if refs.total() > 0 {
             let mut counts = DocumentReferences::default();
-            for table in ["transactions", "holdings", "investments"] {
+            let tables = [
+                ("transactions", "source_document_ids"),
+                ("holdings", "source_document_ids"),
+                ("investments", "source_document_ids"),
+                ("income_records", "document_ids"),
+                ("income_checks", "document_ids"),
+            ];
+            for (table, col) in tables {
                 let n = tx.execute(
                     &format!(
-                        "UPDATE {table} SET source_document_ids = (
+                        "UPDATE {table} SET {col} = (
                             SELECT COALESCE(json_group_array(value), '[]')
-                            FROM json_each({table}.source_document_ids) WHERE value <> ?1
+                            FROM json_each({table}.{col}) WHERE value <> ?1
                          )
                          WHERE id IN (
-                            SELECT x.id FROM {table} x, json_each(x.source_document_ids) j
+                            SELECT x.id FROM {table} x, json_each(x.{col}) j
                             WHERE j.value = ?1
                          )"
                     ),
@@ -4272,7 +3926,9 @@ impl Db {
                 match table {
                     "transactions" => counts.transactions = n,
                     "holdings" => counts.holdings = n,
-                    _ => counts.investments = n,
+                    "investments" => counts.investments = n,
+                    "income_records" => counts.income_records = n,
+                    _ => counts.income_checks = n,
                 }
             }
             counts
@@ -6392,43 +6048,6 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
     })
 }
 
-/// Column order must match `Db::EMPLOYMENT_PAY_COLUMNS`.
-fn row_to_employment_pay(row: &rusqlite::Row<'_>) -> rusqlite::Result<EmploymentPay> {
-    let gross_str: String = row.get(6)?;
-    let deducted_str: String = row.get(7)?;
-    let ni_str: Option<String> = row.get(8)?;
-    let loan_str: Option<String> = row.get(9)?;
-    let net_str: Option<String> = row.get(10)?;
-    Ok(EmploymentPay {
-        id: row.get(0)?,
-        tax_year: row.get(1)?,
-        period_start: row.get(2)?,
-        period_end: row.get(3)?,
-        employer: row.get(4)?,
-        is_p60: row.get::<_, i64>(5)? != 0,
-        gross_pay: parse_decimal_column(6, "employment_pay.gross_pay", &gross_str)?,
-        tax_deducted: parse_decimal_column(7, "employment_pay.tax_deducted", &deducted_str)?,
-        employees_ni: ni_str
-            .as_deref()
-            .map(|s| parse_decimal_column(8, "employment_pay.employees_ni", s))
-            .transpose()?,
-        student_loan: loan_str
-            .as_deref()
-            .map(|s| parse_decimal_column(9, "employment_pay.student_loan", s))
-            .transpose()?,
-        net_pay: net_str
-            .as_deref()
-            .map(|s| parse_decimal_column(10, "employment_pay.net_pay", s))
-            .transpose()?,
-        currency: row.get(11)?,
-        transaction_id: row.get(12)?,
-        document_ids: parse_id_array(&row.get::<_, String>(13)?),
-        notes: row.get(14)?,
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
-    })
-}
-
 fn row_to_investment_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<InvestmentEvent> {
     let event_type_str: String = row.get(2)?;
     let date_str: String = row.get(4)?;
@@ -7323,37 +6942,23 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE profiles ADD COLUMN spouse_id TEXT")?;
     }
 
-    // ── 18. Add employment_pay (plan 28) ──
-    // Gross PAYE pay and tax deducted are never bank movements, so they live
-    // in a table of their own, optionally linked to the net-pay credit that
-    // did hit a bank account. Deleting that transaction unlinks rather than
-    // deletes the pay record (SET NULL).
+    // ── 19. Income model replaces employment_pay (plan 30) ──
+    // The income tables come from schema.sql (IF NOT EXISTS, run on every open).
+    // Only dev databases ever held an employment_pay table: drop it when empty,
+    // keep it and warn when it has rows.
     if conn
         .prepare("SELECT id FROM employment_pay LIMIT 0")
-        .is_err()
+        .is_ok()
     {
-        conn.execute_batch(
-            "CREATE TABLE employment_pay (
-  id TEXT PRIMARY KEY,
-  tax_year TEXT NOT NULL,
-  period_start TEXT,
-  period_end TEXT,
-  employer TEXT NOT NULL,
-  is_p60 INTEGER NOT NULL DEFAULT 0,
-  gross_pay TEXT NOT NULL,
-  tax_deducted TEXT NOT NULL,
-  employees_ni TEXT,
-  student_loan TEXT,
-  net_pay TEXT,
-  currency TEXT NOT NULL DEFAULT 'GBP',
-  transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL,
-  document_ids TEXT NOT NULL DEFAULT '[]',
-  notes TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_employment_pay_tax_year ON employment_pay(tax_year);",
-        )?;
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM employment_pay", [], |r| r.get(0))?;
+        if rows == 0 {
+            conn.execute_batch("DROP TABLE employment_pay")?;
+        } else {
+            tracing::warn!(
+                rows,
+                "employment_pay still holds rows and is no longer used; re-enter them as income records"
+            );
+        }
     }
 
     Ok(())
