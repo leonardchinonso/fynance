@@ -422,6 +422,7 @@ mod tests {
     fn make_hints(tx: bool, holdings: bool, inv: bool) -> ParseHints {
         ParseHints {
             return_type: ReturnType {
+                tax_documents: None,
                 transactions: tx,
                 holdings: HoldingsReturnConfig {
                     enabled: holdings,

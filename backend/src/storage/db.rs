@@ -31,6 +31,7 @@ use crate::util::dedupe::{
 use crate::util::normalize_description;
 
 mod income_store;
+mod tax_import_store;
 pub use income_store::{AccountLeg, BankOutflow};
 
 /// The full schema DDL. Embedded at compile time so a release binary can

@@ -250,6 +250,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         )
         .route("/income-records", get(routes::income::list_records))
         .route("/income-records", post(routes::income::create_record))
+        .route(
+            "/income-records/import",
+            post(routes::income_import::import_income_records),
+        )
         .route("/income-records/:id", get(routes::income::get_record))
         .route("/income-records/:id", patch(routes::income::update_record))
         .route("/income-records/:id", delete(routes::income::delete_record))

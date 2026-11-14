@@ -363,6 +363,7 @@ td code { font-size: 12px; }
     <a href="#post-api-income-sources-id-year-end-adjustment" class="nav-endpoint"><span class="method-badge method-post">POST</span>/income-sources/:id/year-end-adjustment</a>
     <a href="#get-api-income-records" class="nav-endpoint"><span class="method-badge method-get">GET</span>/income-records</a>
     <a href="#post-api-income-records" class="nav-endpoint"><span class="method-badge method-post">POST</span>/income-records</a>
+    <a href="#post-api-income-records-import" class="nav-endpoint"><span class="method-badge method-post">POST</span>/income-records/import</a>
     <a href="#get-api-income-records-id" class="nav-endpoint"><span class="method-badge method-get">GET</span>/income-records/:id</a>
     <a href="#patch-api-income-records-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/income-records/:id</a>
     <a href="#delete-api-income-records-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/income-records/:id</a>
@@ -2070,20 +2071,22 @@ td code { font-size: 12px; }
     <span class="method-badge method-post">POST</span>
     <code class="endpoint-path">/api/parse</code>
   </div>
-  <p class="endpoint-summary">Upload documents for LLM-powered extraction (transactions, holdings, investments). Returns an IngestionPreview.</p>
+  <p class="endpoint-summary">Upload documents for LLM-powered extraction (transactions, holdings, investments, or payslips and P60s). Returns an IngestionPreview.</p>
   <h4>Rate Limits</h4>
-  <p>Max 5 files, 10 MB per file, 50 MB total. Axum body limit overridden to 50 MB for this endpoint.</p>
+  <p>Max 5 files for statements, 15 for tax documents; 10 MB per file, 50 MB total. Axum body limit overridden to 50 MB for this endpoint.</p>
   <h4>Request Body <span class="content-type">multipart/form-data</span></h4>
   <table class="params-table">
     <thead><tr><th>Field</th><th>Kind</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>files[]</code></td><td>file</td><td>binary</td><td>Yes</td><td>1-5 files (CSV, PDF, Excel). Max 10 MB each, 50 MB total.</td></tr>
-      <tr><td><code>account_id</code></td><td>text</td><td>string</td><td>Yes</td><td>Account to associate with parsed data</td></tr>
+      <tr><td><code>account_id</code></td><td>text</td><td>string</td><td>Yes (statements)</td><td>Account to associate with parsed data. Ignored for tax documents</td></tr>
+      <tr><td><code>profile_id</code></td><td>text</td><td>string</td><td>Yes (tax documents)</td><td>Taxpayer profile the payslips and P60s belong to. Ignored for statements</td></tr>
       <tr><td><code>hints</code></td><td>text</td><td>JSON string</td><td>Yes</td><td>ParseHints JSON: <code>return_type</code> (which entity types to extract) and an optional free-text <code>hint</code> passed to the model as additional user context</td></tr>
       <tr><td><code>parse_id</code></td><td>text</td><td>string</td><td>No</td><td>Client-generated ID for SSE progress tracking</td></tr>
     </tbody>
   </table>
   <p><strong>Experimental (testing only):</strong> ParseHints also accepts an optional <code>experimental</code> object (<code>{ "mode": "split" | "unified", "agent": "haiku" | "sonnet" | "opus", "auth": "auto" | "subscription" | "api_key" }</code>) to force the legacy split pipeline, pin a specific model agent, or select the Anthropic credential. <code>auth</code> defaults to <code>auto</code>, which prefers the Claude subscription OAuth token (<code>FYNANCE_CLAUDE_CODE_OAUTH_TOKEN</code>) and falls back to the Console API key (<code>FYNANCE_ANTHROPIC_API_KEY</code>); <code>subscription</code> and <code>api_key</code> force one credential. The model, prompts, and output are identical regardless. It is not used by the web UI and is not intended for production; omit it to run the default unified pipeline.</p>
+  <p><strong>Tax documents:</strong> set <code>hints.return_type.tax_documents</code> to <code>true</code> (and nothing else) to parse payslips and P60s. Files must be PDF or images (<code>.pdf</code>, <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.webp</code>, <code>.gif</code>), one LLM call is made per file, and <code>profile_id</code> replaces <code>account_id</code>. <code>transactions</code>, <code>holdings</code> and <code>investments</code> come back empty; the result is in <code>tax_documents</code>: <code>rows</code> (each with an editable <code>draft</code>, a <code>status</code> of <code>new</code>, <code>duplicate</code> or <code>error</code>, warnings, and up to 3 <code>net_pay_candidates</code> bank credits, the only one pre-filled in <code>draft.transaction_id</code>), <code>reconciliation</code> (payslip totals against the P60 per employer and tax year) and <code>known_sources</code> (the profile's employer names). Tax years are derived in Rust (payslips by pay date); the draft is exactly what <a href="#post-api-income-records-import"><code>POST /api/income-records/import</code></a> takes.</p>
   <h4>Example Request</h4>
   <pre class="example-request"><code>curl -X POST http://localhost:7433/api/parse \
   -F "files[]=@statement.csv" \
@@ -2145,13 +2148,16 @@ td code { font-size: 12px; }
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
       <tr><td>400</td><td><code>no_files</code></td><td>No files uploaded</td></tr>
-      <tr><td>400</td><td><code>too_many_files</code></td><td>More than 5 files</td></tr>
+      <tr><td>400</td><td><code>too_many_files</code></td><td>More than 5 files (15 for tax documents)</td></tr>
+      <tr><td>400</td><td><code>missing_profile_id</code></td><td>Tax documents requested without <code>profile_id</code></td></tr>
+      <tr><td>400</td><td><code>profile_not_found</code></td><td><code>profile_id</code> does not exist</td></tr>
+      <tr><td>400</td><td><code>unsupported_tax_document_format</code></td><td>A tax-document upload is not a PDF or image</td></tr>
       <tr><td>400</td><td><code>file_too_large</code></td><td>Single file exceeds 10 MB</td></tr>
       <tr><td>400</td><td><code>total_too_large</code></td><td>Total upload exceeds 50 MB</td></tr>
       <tr><td>400</td><td><code>empty_file</code></td><td>File has zero bytes</td></tr>
       <tr><td>400</td><td><code>missing_account_id</code></td><td>account_id not provided</td></tr>
       <tr><td>400</td><td><code>missing_hints</code></td><td>hints not provided</td></tr>
-      <tr><td>400</td><td><code>invalid_return_type</code></td><td>No extraction type enabled</td></tr>
+      <tr><td>400</td><td><code>invalid_return_type</code></td><td>No extraction type enabled, or <code>tax_documents</code> combined with another type</td></tr>
       <tr><td>400</td><td><code>account_not_found</code></td><td>Account does not exist</td></tr>
       <tr><td>400</td><td><code>provider_config</code></td><td>LLM provider not configured (missing API key)</td></tr>
       <tr><td>400</td><td><code>response_truncated</code></td><td>Model hit its output limit and returned a truncated result; split the upload into smaller batches</td></tr>
@@ -4196,6 +4202,47 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   </table>
 </section>
 
+<section class="endpoint" id="post-api-income-records-import" data-method="POST" data-path="/api/income-records/import">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/income-records/import</code>
+  </div>
+  <p class="endpoint-summary">Commit the reviewed drafts of a tax-document parse. Each draft finds or creates the profile's employment source by normalised employer name (storing the PAYE reference when given). A payslip becomes a <code>period</code> income record with <code>origin = parse</code>; a P60 becomes a <code>p60</code> income check, never summed with the payslips. Rows already saved (same source, tax year and period end) are skipped and counted in <code>duplicates</code>. A row that fails validation, or a P60 whose check already exists, is reported in <code>errors</code> by index and does not fail the batch. Valid rows are written in one SQLite transaction.</p>
+  <h4>Request Body</h4>
+  <pre class="example-request"><code>{
+  "profile_id": "alex",
+  "documents": [
+    {
+      "document_type": "payslip",
+      "source_name": "Example Widgets Ltd",
+      "paye_reference": "123/AB456",
+      "tax_year": "2025-26",
+      "pay_date": "2025-06-27",
+      "period_start": "2025-06-01",
+      "period_end": "2025-06-30",
+      "currency": "GBP",
+      "line_items": [
+        { "line_type": "taxable_pay", "amount": "3000.00", "basis": "period" },
+        { "line_type": "paye_tax", "amount": "400.00", "basis": "period" },
+        { "line_type": "taxable_pay", "amount": "9000.00", "basis": "year_to_date" }
+      ],
+      "transaction_id": "7e1c4b9a-0d2f-4c3e-8a5b-6f7d8e9a0b1c",
+      "document_ids": ["3f2e1d0c-9b8a-4766-8554-433221100ffe"]
+    }
+  ]
+}</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{ "inserted": 1, "duplicates": 0, "errors": [] }</code></pre>
+  <p><code>errors</code> is always present: <code>[{ "index": 2, "reason": "a P60 for Example Widgets Ltd in 2025-26 is already saved" }]</code>. The tax year is derived server-side from the dates (payslips by pay date), not taken from the draft, except for a P60, which uses the draft's <code>tax_year</code>. <code>document_type</code> is <code>payslip</code> or <code>annual_certificate</code> (a P60).</p>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>profile_not_found</code></td><td>Unknown <code>profile_id</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
 <section class="endpoint" id="get-api-income-records-id" data-method="GET" data-path="/api/income-records/:id">
   <div class="endpoint-header">
     <span class="method-badge method-get">GET</span>
@@ -4511,6 +4558,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tr><td>2026-06-07</td><td>Added Capital Gains endpoints: <code>GET /api/investments/pools</code> (S104 pools) and <code>GET /api/investments/capital-gains</code> (UK CGT report).</td></tr>
     <tr><td>2026-08-15</td><td><strong>BREAKING:</strong> Capital Gains endpoints drop <code>tax_year</code> and <code>as_at</code> in favour of <code>start_date</code>/<code>end_date</code> alone (plan 23 §0.2 decision 7.3). Added <code>disposal_groups</code> to <code>CapitalGainsResponse</code>, rolling <code>realized_events</code> up by <code>(symbol, disposal_date)</code>.</td></tr>
     <tr><td>2026-11-14</td><td><strong>BREAKING:</strong> the employment-pay endpoints are gone, replaced by the income model (plan 30): <code>/api/income-sources</code>, <code>/api/income-records</code>, <code>/api/income-checks</code>, <code>GET /api/income/line-types</code>, <code>GET /api/income/vest-candidates</code> and <code>POST /api/income-sources/:id/year-end-adjustment</code>. <code>GET /api/tax/summary/:tax_year</code> now requires <code>profile_id</code> and returns per-source employment and self-employment figures.</td></tr>
+    <tr><td>2026-11-14</td><td><code>POST /api/parse</code> accepts <code>return_type.tax_documents</code> and a <code>profile_id</code> field for payslips and P60s, and returns a <code>tax_documents</code> object. New <code>POST /api/income-records/import</code> commits the reviewed drafts.</td></tr>
     <tr><td>2026-09-03</td><td>Added tax endpoints: <code>GET/PUT /api/tax-config</code> (statutory AEA and rate bands) and <code>GET/PUT /api/tax-inputs/:profile_id/:tax_year</code> (the taxpayer&#39;s own figures). <code>GET /api/investments/capital-gains</code> gains an optional <code>tax_year</code> param that adds a computed <code>tax</code> object to the response, including the pre/post-30-Oct-2024 rate split. Added <code>GET /api/investments/brought-forward-losses</code>, which derives a <em>suggested</em> (upper-bound) carried-loss figure from prior years.</td></tr>
   </tbody>
 </table>
