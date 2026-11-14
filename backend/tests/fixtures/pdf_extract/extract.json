@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "page_count": 3,
+  "tool": { "name": "pdf-extract", "version": "0.0.0-test" },
+  "source": "synthetic_statement.pdf",
+  "document": { "page_count": 3 },
+  "options": { "dpi": 150, "pages": null },
+  "pages": [
+    {
+      "page": 1,
+      "text": "Example Bank - Monthly Statement - November 2026\nDate Description Amount\n2026-11-02 Corner Shop (12.00)\n2026-11-03 Coffee Cart (3.75)\n2026-11-05 Salary ACME Ltd 2,450.00\n2026-11-07 Corner Shop (8.00)\n2026-11-08 Utility Bill (60.00)\n2026-11-09 Coffee Cart (4.25)",
+      "has_text_layer": true,
+      "image": { "path": "page-001.png", "width_px": 1240, "height_px": 1754 },
+      "numbers": [
+        { "raw": "(12.00)", "value": "-12.00" },
+        { "raw": "£1,234.50", "value": "1234.50", "currency": "GBP" }
+      ],
+      "dates": [ { "raw": "2026-11-02", "iso": "2026-11-02" } ],
+      "width_pt": 595.0,
+      "height_pt": 842.0,
+      "error": null
+    },
+    {
+      "page": 2,
+      "text": "2026-11-02 Bus Top Up (5.00)\n2026-11-05 Corner Shop (14.20)\n2026-11-09 Bus Top Up (5.00)\n2026-11-10 Coffee Cart (3.10)\n2026-11-11 Book Shop (19.99)\n2026-11-12 Salary ACME Ltd 2,450.00",
+      "has_text_layer": true,
+      "image": { "path": "page-002.png", "width_px": 1240, "height_px": 1754 },
+      "numbers": [ { "raw": "(14.20)", "value": "-14.20" } ],
+      "dates": [],
+      "width_pt": 595.0,
+      "height_pt": 842.0,
+      "error": null
+    },
+    {
+      "page": 3,
+      "text": "",
+      "has_text_layer": false,
+      "image": { "path": "page-003.png", "width_px": 1240, "height_px": 1754 },
+      "numbers": [],
+      "dates": [],
+      "width_pt": 595.0,
+      "height_pt": 842.0,
+      "error": null
+    }
+  ]
+}

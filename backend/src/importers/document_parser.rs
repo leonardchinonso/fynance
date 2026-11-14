@@ -26,7 +26,9 @@ use crate::model::{
 };
 use crate::storage::Db;
 
-use super::holdings_parser::{HoldingsExtractor, LlmHoldingsParser, ParsedHoldings};
+use super::holdings_parser::{
+    HoldingsExtractor, LlmHoldingsParser, ParsedHoldingRow, ParsedHoldings,
+};
 use super::investments_parser::{LlmInvestmentsParser, ParsedInvestmentRow};
 use super::periodic_holdings_parser::LlmPeriodicHoldingsParser;
 
@@ -881,67 +883,106 @@ fn load_known_holdings(db: &Db, account_id: &str) -> Vec<KnownHolding> {
 pub(crate) fn convert_parsed_holdings(parsed: &ParsedHoldings) -> Result<Vec<Holding>> {
     let now = Local::now().naive_local();
     let mut holdings = Vec::new();
-
     for row in &parsed.rows {
-        if row.row_confidence < 0.70 {
-            continue;
+        if let Some(holding) = convert_holding_row(row, now)? {
+            holdings.push(holding);
         }
+    }
+    Ok(holdings)
+}
 
-        let holding_type = parse_holding_type_fuzzy(&row.holding_type);
-        let quantity: Decimal = row
-            .quantity
-            .parse()
-            .map_err(|_| anyhow!("invalid quantity '{}' for {}", row.quantity, row.symbol))?;
-        let price_per_unit: Option<Decimal> = row
-            .price_per_unit
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|s| {
-                s.parse::<Decimal>()
-                    .map_err(|_| anyhow!("invalid price_per_unit '{}' for {}", s, row.symbol))
-            })
-            .transpose()?;
-        let value: Decimal = match (&row.value, &price_per_unit) {
-            (Some(v), _) => v
-                .parse::<Decimal>()
-                .map_err(|_| anyhow!("invalid value '{}' for {}", v, row.symbol))?,
-            (None, Some(ppu)) => quantity * ppu,
-            (None, None) => {
-                tracing::warn!(symbol = %row.symbol, "skipping holding: no value and no price_per_unit");
-                continue;
-            }
-        };
+/// Lenient variant used by the unified parser: an unreadable row drops that
+/// row only, and the second return value carries user-facing drop notes.
+pub(crate) fn convert_parsed_holdings_lenient(
+    parsed: &ParsedHoldings,
+) -> (Vec<Holding>, Vec<String>) {
+    let now = Local::now().naive_local();
+    let mut holdings = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
+    for row in &parsed.rows {
+        match convert_holding_row(row, now) {
+            Ok(Some(holding)) => holdings.push(holding),
+            Ok(None) => {}
+            Err(e) => dropped.push(e.to_string()),
+        }
+    }
+    let mut notes = Vec::new();
+    if !dropped.is_empty() {
+        let examples = dropped
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        notes.push(format!(
+            "dropped {} holding rows with unreadable values (examples: {})",
+            dropped.len(),
+            examples
+        ));
+    }
+    (holdings, notes)
+}
 
-        let as_of = row
-            .as_of
-            .as_deref()
-            .and_then(|s| {
-                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .ok()
-                    .and_then(|d| d.and_hms_opt(23, 59, 59))
-            })
-            .unwrap_or(now);
-
-        holdings.push(Holding {
-            account_id: String::new(),
-            symbol: row.symbol.clone(),
-            name: row.name.clone(),
-            holding_type,
-            quantity,
-            price_per_unit,
-            value,
-            currency: row.currency.clone(),
-            as_of,
-            short_name: Some(row.symbol.clone()),
-            sub_account: row.sub_account.clone(),
-            is_closed: false,
-            derived: row.derived,
-            source_document_ids: Vec::new(),
-            source_file: row.source_file.clone(),
-        });
+fn convert_holding_row(
+    row: &ParsedHoldingRow,
+    now: chrono::NaiveDateTime,
+) -> Result<Option<Holding>> {
+    if row.row_confidence < 0.70 {
+        return Ok(None);
     }
 
-    Ok(holdings)
+    let holding_type = parse_holding_type_fuzzy(&row.holding_type);
+    let quantity: Decimal = row
+        .quantity
+        .parse()
+        .map_err(|_| anyhow!("invalid quantity '{}' for {}", row.quantity, row.symbol))?;
+    let price_per_unit: Option<Decimal> = row
+        .price_per_unit
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse::<Decimal>()
+                .map_err(|_| anyhow!("invalid price_per_unit '{}' for {}", s, row.symbol))
+        })
+        .transpose()?;
+    let value: Decimal = match (&row.value, &price_per_unit) {
+        (Some(v), _) => v
+            .parse::<Decimal>()
+            .map_err(|_| anyhow!("invalid value '{}' for {}", v, row.symbol))?,
+        (None, Some(ppu)) => quantity * ppu,
+        (None, None) => {
+            tracing::warn!(symbol = %row.symbol, "skipping holding: no value and no price_per_unit");
+            return Ok(None);
+        }
+    };
+
+    let as_of = row
+        .as_of
+        .as_deref()
+        .and_then(|s| {
+            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(23, 59, 59))
+        })
+        .unwrap_or(now);
+
+    Ok(Some(Holding {
+        account_id: String::new(),
+        symbol: row.symbol.clone(),
+        name: row.name.clone(),
+        holding_type,
+        quantity,
+        price_per_unit,
+        value,
+        currency: row.currency.clone(),
+        as_of,
+        short_name: Some(row.symbol.clone()),
+        sub_account: row.sub_account.clone(),
+        is_closed: false,
+        derived: row.derived,
+        source_document_ids: Vec::new(),
+        source_file: row.source_file.clone(),
+    }))
 }
 
 fn parse_holding_type_fuzzy(s: &str) -> HoldingType {

@@ -10,6 +10,7 @@ pub mod format_detection;
 pub mod holdings_parser;
 pub mod investments_parser;
 pub mod llm_parser;
+pub mod pdf_extract;
 pub mod pdf_parser;
 pub mod periodic_holdings_parser;
 pub mod pricing;
@@ -25,6 +26,16 @@ use anyhow::Result;
 
 use crate::model::ImportResult;
 use crate::storage::Db;
+
+/// Held by every test in this module tree that mutates process-global env
+/// vars. Env is process-wide and Cargo runs tests in parallel in one
+/// process, so one lock (not one per module) is what keeps an env-mutating
+/// `pdf_extract` test from racing an `OpenAIProvider::from_env` read in
+/// `provider`. `.unwrap_or_else(into_inner)` keeps the lock usable if a
+/// guarded test panics, so the real failure surfaces instead of a poison
+/// cascade.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Deserialize a `tool_use` JSON payload from the LLM into the parser's
 /// expected struct, attaching rich context to any serde failure so the error

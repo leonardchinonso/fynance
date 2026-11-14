@@ -459,6 +459,8 @@ Distinct error codes that the frontend can match on to show appropriate messages
 | Anthropic returned 4xx (other) | 400 | `upstream_rejected` | "The AI service rejected the request: {details}" |
 | Response body unreadable | 502 | `upstream_garbled` | "Received an unreadable response from the AI service." |
 | Response missing tool_use block | 502 | `upstream_no_tool_use` | "The AI service did not return structured data. Try again." |
+| Model output truncated at its token cap (any provider) | 400 | `response_truncated` | "The model hit its output limit. Split the upload into smaller batches." |
+| Document-conversion step (pdf-extract tool) failed | 400 | `document_conversion_failed` | "Could not convert this PDF for the configured provider. Check the pdf-extract setup, or use native PDF mode." |
 
 ### How to implement
 
@@ -475,6 +477,13 @@ pub enum ProviderError {
     UpstreamClientError { status: u16, body: String },
     ResponseUnreadable(String),
     NoToolUse { tool_name: String },
+    // Added with plan 30 (OpenAI-compatible provider parity):
+    // The model ran out of output budget mid-response; any provider can hit
+    // it. Maps to the existing 400 response_truncated code.
+    Truncated { output_tokens: u64 },
+    // An auxiliary document-conversion step (the external pdf-extract tool)
+    // failed; the message is user-facing. Maps to 400 document_conversion_failed.
+    DocumentConversion(String),
 }
 ```
 

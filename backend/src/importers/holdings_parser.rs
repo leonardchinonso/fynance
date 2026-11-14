@@ -246,6 +246,7 @@ impl HoldingsExtractor for MockHoldingsParser {
                 model: "mock".to_string(),
                 duration_ms: 0,
                 stop_reason: None,
+                warnings: Vec::new(),
             },
         ))
     }

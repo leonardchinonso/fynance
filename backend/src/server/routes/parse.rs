@@ -26,6 +26,12 @@ use crate::model::IngestionPreview;
 use crate::server::error::AppError;
 use crate::server::state::{AppState, lock_or_recover};
 
+/// Shared by the post-parse `max_tokens` check and the `Truncated` provider
+/// error: either way the model ran out of output budget mid-result.
+const RESPONSE_TRUNCATED_MESSAGE: &str = "The uploaded document(s) produced more data than the model could return in a \
+     single response, so the result was truncated. Please split your upload into \
+     smaller batches (we recommend a few months at a time) and try again.";
+
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10 MB per file
 const MAX_TOTAL_SIZE: usize = 50 * 1024 * 1024; // 50 MB total
 const MAX_FILES: usize = 5;
@@ -590,9 +596,7 @@ async fn run_unified_path(
     // return partial rows, fail with actionable guidance to split the upload.
     if unified.call.stop_reason.as_deref() == Some("max_tokens") {
         return Err(AppError::bad_request(
-            "The uploaded document(s) produced more data than the model could return in a \
-             single response, so the result was truncated. Please split your upload into \
-             smaller batches (we recommend a few months at a time) and try again.",
+            RESPONSE_TRUNCATED_MESSAGE,
             "response_truncated",
         ));
     }
@@ -1024,6 +1028,12 @@ fn provider_err_to_app_error(e: anyhow::Error) -> AppError {
             }
             ProviderError::NotSupported(msg) => {
                 AppError::bad_request(msg.clone(), "provider_not_supported")
+            }
+            ProviderError::Truncated { .. } => {
+                AppError::bad_request(RESPONSE_TRUNCATED_MESSAGE, "response_truncated")
+            }
+            ProviderError::DocumentConversion(msg) => {
+                AppError::bad_request(msg.clone(), "document_conversion_failed")
             }
         };
     }
