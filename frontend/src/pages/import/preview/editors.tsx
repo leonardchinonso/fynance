@@ -39,6 +39,7 @@ export function TextCell({
 }
 
 const DECIMAL_RE = /^-?\d*\.?\d*$/
+const NON_NEGATIVE_DECIMAL_RE = /^\d*\.?\d*$/
 
 /**
  * Color a money string green (positive / income) or red (negative / spend).
@@ -56,26 +57,38 @@ export function DecimalCell({
   onChange,
   disabled,
   colorize,
+  nonNegative,
+  invalid,
+  ariaLabel,
 }: {
   value: string
   onChange: (v: string) => void
   disabled?: boolean
   /** Tint green for positive, red for negative. Use on money columns. */
   colorize?: boolean
+  /** Reject a minus sign while typing. */
+  nonNegative?: boolean
+  /** Mark the cell as holding a value the backend would reject. */
+  invalid?: boolean
+  ariaLabel?: string
 }) {
+  const re = nonNegative ? NON_NEGATIVE_DECIMAL_RE : DECIMAL_RE
   return (
     <Input
       inputMode="decimal"
       value={value}
       onChange={(e) => {
         const v = e.target.value
-        if (v === "" || v === "-" || DECIMAL_RE.test(v)) onChange(v)
+        if (v === "" || (!nonNegative && v === "-") || re.test(v)) onChange(v)
       }}
       disabled={disabled}
+      aria-label={ariaLabel}
+      aria-invalid={invalid || undefined}
       className={cn(
         cellInputClass,
         "text-right tabular-nums",
-        colorize && moneyDirectionClass(value)
+        colorize && moneyDirectionClass(value),
+        invalid && "border-destructive"
       )}
     />
   )

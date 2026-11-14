@@ -87,6 +87,7 @@ function Layout() {
           <Route path="/import" element={<ImportPage />} />
           <Route path="/import/wizard" element={<ImportPage />} />
           <Route path="/import/single" element={<ImportPage />} />
+          <Route path="/import/tax" element={<ImportPage />} />
           <Route path="*" element={<Navigate to={homepage} replace />} />
         </Routes>
         </ErrorBoundary>

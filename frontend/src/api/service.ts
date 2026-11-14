@@ -34,6 +34,8 @@ import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+import type { TaxDocumentsImportPayload } from "@/bindings/TaxDocumentsImportPayload"
+import type { TaxDocumentsImportResult } from "@/bindings/TaxDocumentsImportResult"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
 import type { InvestmentHistoryRow } from "@/bindings/InvestmentHistoryRow"
 import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
@@ -271,6 +273,18 @@ export interface ApiService {
   commitHoldings(payload: HoldingsImportPayload): Promise<HoldingsImportResponse>
   /** Stage 2: commit investment events via `/api/investments/import`. */
   commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult>
+  /**
+   * Stage 1 for payslips and P60s: `/api/parse` with `return_type.tax_documents`
+   * and the profile the records belong to. The preview carries `tax_documents`.
+   */
+  parseTaxDocuments(
+    files: File[],
+    profileId: string,
+    hint: string | null,
+    opts?: ParseOptions,
+  ): Promise<IngestionPreview>
+  /** Stage 2 for tax documents: all-or-nothing `POST /api/income-records/import`. */
+  commitTaxDocuments(payload: TaxDocumentsImportPayload): Promise<TaxDocumentsImportResult>
 
   // ── Reports ───────────────────────────────────────────────────────
   /**
