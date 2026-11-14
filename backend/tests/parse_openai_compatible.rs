@@ -78,6 +78,33 @@ fn serve_once(body: &'static str) -> (String, std::thread::JoinHandle<String>) {
     (format!("http://{addr}"), handle)
 }
 
+/// One-shot loopback SSE fake: answers the first request with `body` as a
+/// whole `text/event-stream` (the connection close ends the body) and hands
+/// the raw request back through the join handle.
+fn serve_sse(body: &'static str) -> (String, std::thread::JoinHandle<String>) {
+    use std::io::{Read, Write};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 8192];
+        while !request_complete(&raw) {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => raw.extend_from_slice(&buf[..n]),
+            }
+        }
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+             Connection: close\r\n\r\n{body}"
+        );
+        let _ = stream.write_all(response.as_bytes());
+        String::from_utf8_lossy(&raw).into_owned()
+    });
+    (format!("http://{addr}"), handle)
+}
+
 fn request_complete(raw: &[u8]) -> bool {
     let Some(header_end) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
         return false;
@@ -298,6 +325,55 @@ async fn csv_unified_parse_end_to_end() {
     assert_eq!(
         calls.first().and_then(|c| c["model"].as_str()),
         Some("test-model")
+    );
+}
+
+#[tokio::test]
+async fn csv_unified_parse_streams_by_default() {
+    let _guard = env_guard();
+    let sse = format!(
+        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "tool_calls": [{ "index": 0, "id": "c0",
+                    "function": { "name": "extract_unified", "arguments": UNIFIED_TOOL_JSON } }] },
+                "finish_reason": "tool_calls"
+            }]
+        }),
+        serde_json::json!({ "usage": { "prompt_tokens": 100, "completion_tokens": 200 } })
+    );
+    let (url, server) = serve_sse(Box::leak(sse.into_boxed_str()));
+    EnvCase::start(&url);
+    // Streaming is the default; the case removes the Part 2 pin rather than
+    // setting anything.
+    unsafe { std::env::remove_var("FYNANCE_OPENAI_STREAM") };
+
+    let (status, json) = post_parse(
+        test_db(),
+        multipart_request(
+            ("statement.csv", "text/csv", TINY_CSV),
+            TRANSACTIONS_AND_HOLDINGS_HINTS,
+        ),
+    )
+    .await;
+    let request = request_json(&server.join().unwrap());
+
+    assert_eq!(status, StatusCode::OK, "body: {json}");
+    assert_eq!(
+        json["transactions"]["count"],
+        serde_json::json!(2),
+        "body: {json}"
+    );
+    assert_eq!(
+        json["holdings"]["count"],
+        serde_json::json!(1),
+        "body: {json}"
+    );
+    assert_eq!(request["stream"], serde_json::json!(true));
+    assert_eq!(
+        request["stream_options"]["include_usage"],
+        serde_json::json!(true)
     );
 }
 

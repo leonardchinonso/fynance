@@ -218,7 +218,7 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
 
     /// Return a clone of this provider that emits progress events during
     /// streaming calls. Returns `None` if the provider doesn't support
-    /// progress. Only `AnthropicProvider` implements this.
+    /// progress.
     fn with_progress(
         &self,
         _tx: ProgressTx,
@@ -459,43 +459,7 @@ impl SseAccumulator {
     /// so far. This parses partial JSON, so it is a heuristic — fine for a label.
     fn extraction_progress(&self) -> (Option<String>, u64) {
         let buf: String = self.tool_inputs.values().cloned().collect();
-        let section = if buf.contains("\"investments\"") {
-            Some("investments")
-        } else if buf.contains("\"holdings\"") {
-            Some("holdings")
-        } else if buf.contains("\"transactions\"") {
-            Some("transactions")
-        } else {
-            None
-        };
-        // Count array-element objects that have closed: each closes back to depth 2
-        // (root object -> section array -> element). String bytes are skipped so
-        // braces inside string values do not miscount.
-        let (mut depth, mut in_str, mut esc, mut rows) = (0i32, false, false, 0u64);
-        for c in buf.bytes() {
-            if in_str {
-                match (esc, c) {
-                    (true, _) => esc = false,
-                    (false, b'\\') => esc = true,
-                    (false, b'"') => in_str = false,
-                    _ => {}
-                }
-                continue;
-            }
-            match c {
-                b'"' => in_str = true,
-                b'{' | b'[' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 2 {
-                        rows += 1;
-                    }
-                }
-                b']' => depth -= 1,
-                _ => {}
-            }
-        }
-        (section.map(str::to_string), rows)
+        streamed_extraction_progress(&buf)
     }
 
     fn into_result(self, expected_tool: &str) -> Result<ProviderCallResult, ProviderError> {
@@ -539,6 +503,83 @@ impl SseAccumulator {
             duration_ms: 0,
             stop_reason: self.stop_reason,
         })
+    }
+}
+
+/// Shared progress heuristic for streamed tool JSON: the section currently
+/// being filled (the unified tool returns transactions, holdings, then
+/// investments, in that order) and the number of rows completed so far.
+/// Parses partial JSON, so it is a heuristic — fine for a label.
+fn streamed_extraction_progress(buf: &str) -> (Option<String>, u64) {
+    let section = if buf.contains("\"investments\"") {
+        Some("investments")
+    } else if buf.contains("\"holdings\"") {
+        Some("holdings")
+    } else if buf.contains("\"transactions\"") {
+        Some("transactions")
+    } else {
+        None
+    };
+    // Count array-element objects that have closed: each closes back to depth 2
+    // (root object -> section array -> element). String bytes are skipped so
+    // braces inside string values do not miscount.
+    let (mut depth, mut in_str, mut esc, mut rows) = (0i32, false, false, 0u64);
+    for c in buf.bytes() {
+        if in_str {
+            match (esc, c) {
+                (true, _) => esc = false,
+                (false, b'\\') => esc = true,
+                (false, b'"') => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'{' | b'[' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 2 {
+                    rows += 1;
+                }
+            }
+            b']' => depth -= 1,
+            _ => {}
+        }
+    }
+    (section.map(str::to_string), rows)
+}
+
+/// Byte-buffered SSE line splitter shared by the Anthropic and OpenAI
+/// streams. Buffering bytes and splitting on `\n` (then trimming `\r`) means
+/// a multi-byte character split across two network chunks decodes correctly,
+/// which per-chunk `str::from_utf8` could not do.
+#[derive(Default)]
+struct SseLineSplitter {
+    pending: Vec<u8>,
+}
+
+impl SseLineSplitter {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append one network chunk and return every line completed by it.
+    fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut start = 0;
+        for (i, byte) in chunk.iter().enumerate() {
+            if *byte == b'\n' {
+                self.pending.extend_from_slice(&chunk[start..i]);
+                let line = String::from_utf8_lossy(&std::mem::take(&mut self.pending))
+                    .trim_end_matches('\r')
+                    .to_string();
+                lines.push(line);
+                start = i + 1;
+            }
+        }
+        self.pending.extend_from_slice(&chunk[start..]);
+        lines
     }
 }
 
@@ -663,20 +704,14 @@ impl AnthropicProvider {
 
         let mut stream = response.bytes_stream();
         let mut accumulator = SseAccumulator::new();
-        let mut line_buf = String::new();
+        // Byte-buffered splitter: a multi-byte character split across two
+        // network chunks must not fail the call.
+        let mut splitter = SseLineSplitter::new();
         let mut last_progress_emit = std::time::Instant::now();
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| ProviderError::StreamInterrupted(format!("{e}")))?;
-            let text = std::str::from_utf8(&chunk)
-                .map_err(|e| ProviderError::ResponseUnreadable(format!("{e}")))?;
-
-            line_buf.push_str(text);
-
-            while let Some(newline_pos) = line_buf.find('\n') {
-                let line = line_buf[..newline_pos].trim_end_matches('\r').to_string();
-                line_buf = line_buf[newline_pos + 1..].to_string();
-
+            for line in splitter.push(&chunk) {
                 if let Some(data) = line.strip_prefix("data: ") {
                     if data == "[DONE]" {
                         continue;
@@ -1096,6 +1131,9 @@ pub struct OpenAIProvider {
     /// Page cap counted across all PDFs in a single call.
     pdf_max_pages: usize,
     pdf_extract: PdfExtractConfig,
+    /// `FYNANCE_OPENAI_STREAM`: streaming is on unless explicitly disabled.
+    stream: bool,
+    progress: Option<(ProgressTx, Option<String>)>,
 }
 
 impl std::fmt::Debug for OpenAIProvider {
@@ -1115,6 +1153,8 @@ impl std::fmt::Debug for OpenAIProvider {
             .field("pdf_mode", &self.pdf_mode)
             .field("pdf_max_pages", &self.pdf_max_pages)
             .field("pdf_extract", &self.pdf_extract)
+            .field("stream", &self.stream)
+            .field("progress", &self.progress.as_ref().map(|_| "<progress>"))
             .finish()
     }
 }
@@ -1255,6 +1295,19 @@ impl OpenAIProvider {
 
         let pdf_extract = PdfExtractConfig::from_env()?;
 
+        let stream = match std::env::var("FYNANCE_OPENAI_STREAM") {
+            Ok(v) => match v.trim().to_ascii_lowercase().as_str() {
+                "true" => true,
+                "false" => false,
+                other => {
+                    return Err(anyhow!(
+                        "FYNANCE_OPENAI_STREAM must be true or false, got '{other}'"
+                    ));
+                }
+            },
+            Err(_) => true,
+        };
+
         let client = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
@@ -1274,7 +1327,29 @@ impl OpenAIProvider {
             pdf_mode,
             pdf_max_pages,
             pdf_extract,
+            stream,
+            progress: None,
         })
+    }
+
+    pub fn clone_with_progress(&self, tx: ProgressTx, task_id: Option<String>) -> Self {
+        Self {
+            client: self.client.clone(),
+            base_url: self.base_url.clone(),
+            api_key: self.api_key.clone(),
+            timeout: self.timeout,
+            standard_model: self.standard_model.clone(),
+            advanced_model: self.advanced_model.clone(),
+            tool_choice: self.tool_choice,
+            max_tokens: self.max_tokens,
+            temperature: self.temperature,
+            extra_body: self.extra_body.clone(),
+            pdf_mode: self.pdf_mode,
+            pdf_max_pages: self.pdf_max_pages,
+            pdf_extract: self.pdf_extract.clone(),
+            stream: self.stream,
+            progress: Some((tx, task_id)),
+        }
     }
 
     fn model_for_tier(&self, tier: ModelTier) -> &str {
@@ -1398,8 +1473,7 @@ impl LlmProvider for OpenAIProvider {
             "sending text request"
         );
 
-        self.post_chat_completion(&request_body, &model, tool_name)
-            .await
+        self.call_model(&request_body, &model, tool_name).await
     }
 
     async fn chat_with_pdf_and_tools(
@@ -1565,12 +1639,19 @@ impl LlmProvider for OpenAIProvider {
             "sending files request"
         );
 
-        self.post_chat_completion(&request_body, &model, tool_name)
-            .await
+        self.call_model(&request_body, &model, tool_name).await
     }
 
     fn name(&self) -> &'static str {
         "openai"
+    }
+
+    fn with_progress(
+        &self,
+        tx: ProgressTx,
+        task_id: Option<String>,
+    ) -> Option<Arc<dyn LlmProvider>> {
+        Some(Arc::new(self.clone_with_progress(tx, task_id)))
     }
 }
 
@@ -1672,6 +1753,288 @@ impl OpenAIProvider {
             usage,
             model: model.to_string(),
             duration_ms,
+            stop_reason,
+        })
+    }
+}
+
+// ── OpenAI streamed transport ────────────────────────────────────────────────
+
+/// Accumulates chat-completion SSE chunks into the same `OpenAIReply` the
+/// non-streaming body produces, so post-processing happens in one place.
+#[derive(Default)]
+struct OpenAIStreamAccumulator {
+    model: Option<String>,
+    usage: Option<OpenAIUsage>,
+    finish_reason: Option<String>,
+    content: String,
+    /// Tool-call parts keyed by delta index, in arrival order: the first
+    /// non-empty `name` wins, `arguments` strings concatenate.
+    parts: Vec<(usize, String, String)>,
+    delta_count: u64,
+}
+
+impl OpenAIStreamAccumulator {
+    /// Feed one parsed SSE chunk. Returns whether it carried any content or
+    /// tool-call delta (the progress trigger). `reasoning_content` is
+    /// deliberately ignored.
+    fn handle_chunk(&mut self, chunk: &Value) -> bool {
+        if let Some(model) = chunk["model"].as_str() {
+            self.model = Some(model.to_string());
+        }
+        if let Some(usage) = chunk.get("usage").filter(|u| !u.is_null()) {
+            if let Ok(parsed) = serde_json::from_value::<OpenAIUsage>(usage.clone()) {
+                self.usage = Some(parsed);
+            }
+        }
+        let mut saw_delta = false;
+        if let Some(choice) = chunk["choices"].get(0) {
+            let delta = &choice["delta"];
+            if let Some(text) = delta["content"].as_str() {
+                self.content.push_str(text);
+                saw_delta = true;
+            }
+            if let Some(calls) = delta["tool_calls"].as_array() {
+                for call in calls {
+                    let index = call["index"].as_u64().unwrap_or(0) as usize;
+                    let name = call["function"]["name"].as_str().unwrap_or("");
+                    let args = call["function"]["arguments"].as_str().unwrap_or("");
+                    match self.parts.iter_mut().find(|(i, _, _)| *i == index) {
+                        Some(entry) => {
+                            if entry.1.is_empty() {
+                                entry.1 = name.to_string();
+                            }
+                            entry.2.push_str(args);
+                        }
+                        None => self.parts.push((index, name.to_string(), args.to_string())),
+                    }
+                    if !name.is_empty() || !args.is_empty() {
+                        saw_delta = true;
+                    }
+                }
+            }
+            if let Some(reason) = choice["finish_reason"].as_str() {
+                self.finish_reason = Some(reason.to_string());
+            }
+        }
+        if saw_delta {
+            self.delta_count += 1;
+        }
+        saw_delta
+    }
+
+    fn tool_args(&self) -> String {
+        self.parts
+            .iter()
+            .map(|(_, _, args)| args.as_str())
+            .collect()
+    }
+
+    fn into_reply(self) -> OpenAIReply {
+        let mut reply = OpenAIReply {
+            content: (!self.content.is_empty()).then_some(self.content),
+            tool_calls: Vec::new(),
+            finish_reason: self.finish_reason,
+            invalid_arguments: None,
+        };
+        for (_, name, args) in &self.parts {
+            match serde_json::from_str::<Value>(args) {
+                Ok(parsed) => reply.tool_calls.push((name.clone(), parsed)),
+                Err(e) => {
+                    if reply.invalid_arguments.is_none() {
+                        reply.invalid_arguments = Some(format!(
+                            "parsing streamed OpenAI function arguments for {name}: {e} \
+                             (arguments: {}...)",
+                            &args[..args.len().min(200)]
+                        ));
+                    }
+                }
+            }
+        }
+        reply
+    }
+}
+
+impl OpenAIProvider {
+    /// The one transport every chat call goes through: streamed unless
+    /// `FYNANCE_OPENAI_STREAM=false`.
+    async fn call_model(
+        &self,
+        request_body: &Value,
+        model: &str,
+        tool_name: &str,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        if self.stream {
+            self.post_chat_completion_streamed(request_body, model, tool_name)
+                .await
+        } else {
+            self.post_chat_completion(request_body, model, tool_name)
+                .await
+        }
+    }
+
+    /// Streaming transport: the same request plus `stream` and
+    /// `stream_options.include_usage`, an SSE read loop with an overall
+    /// deadline, then the shared response post-processing. Dropping this
+    /// future drops the body stream, which closes the connection and cancels
+    /// generation upstream.
+    async fn post_chat_completion_streamed(
+        &self,
+        request_body: &Value,
+        model: &str,
+        tool_name: &str,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        let started = Instant::now();
+        let mut body = request_body.clone();
+        {
+            let obj = body
+                .as_object_mut()
+                .expect("request body must be an object");
+            obj.insert("stream".to_string(), json!(true));
+            obj.insert(
+                "stream_options".to_string(),
+                json!({ "include_usage": true }),
+            );
+        }
+
+        let mut request = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .timeout(self.timeout)
+            .header("Content-Type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            request = request.header("Authorization", format!("Bearer {api_key}"));
+        }
+        let response = request
+            .json(&body)
+            .send()
+            .await
+            .map_err(classify_reqwest_error)?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable>".to_string());
+            let status_code = status.as_u16();
+            return Err(match status_code {
+                429 => ProviderError::RateLimit {
+                    retry_after: None,
+                    detail: error_body,
+                },
+                401 | 403 => ProviderError::AuthRejected(error_body),
+                400..=499 => ProviderError::UpstreamClientError {
+                    status: status_code,
+                    body: error_body,
+                },
+                _ => ProviderError::UpstreamServerError {
+                    status: status_code,
+                    body: error_body,
+                },
+            });
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut splitter = SseLineSplitter::new();
+        let mut accumulator = OpenAIStreamAccumulator::default();
+        let mut last_progress_emit = Instant::now();
+        let mut first_chunk = true;
+
+        tokio::time::timeout(self.timeout, async {
+            while let Some(chunk) = stream.next().await {
+                let chunk = match chunk {
+                    Ok(chunk) => chunk,
+                    Err(e) if e.is_timeout() => {
+                        return Err(ProviderError::Timeout(format!("{e}")));
+                    }
+                    Err(e) => {
+                        return Err(ProviderError::StreamInterrupted(format!("{e}")));
+                    }
+                };
+                for line in splitter.push(&chunk) {
+                    if line.is_empty() || line.starts_with(':') || line.starts_with("event:") {
+                        continue;
+                    }
+                    let Some(data) = line.strip_prefix("data:").map(str::trim_start) else {
+                        continue;
+                    };
+                    if data == "[DONE]" {
+                        return Ok(());
+                    }
+                    let Ok(event) = serde_json::from_str::<Value>(data) else {
+                        tracing::warn!(
+                            data_preview = &data[..data.len().min(100)],
+                            "OpenAI SSE: failed to parse chunk, skipping"
+                        );
+                        continue;
+                    };
+                    if !event["error"].is_null() {
+                        return Err(ProviderError::UpstreamServerError {
+                            status: 0,
+                            body: event["error"].to_string(),
+                        });
+                    }
+                    if first_chunk {
+                        first_chunk = false;
+                        if let Some((tx, task_id)) = &self.progress {
+                            let _ = tx.send(ProgressEvent::LlmStart {
+                                model: model.to_string(),
+                                input_tokens: 0,
+                                task_id: task_id.clone(),
+                            });
+                        }
+                    }
+                    let saw_delta = accumulator.handle_chunk(&event);
+                    if saw_delta
+                        && last_progress_emit.elapsed() >= std::time::Duration::from_secs(1)
+                    {
+                        if let Some((tx, task_id)) = &self.progress {
+                            let (section, items) =
+                                streamed_extraction_progress(&accumulator.tool_args());
+                            let _ = tx.send(ProgressEvent::LlmProgress {
+                                output_tokens: accumulator.delta_count,
+                                elapsed_ms: 0,
+                                items,
+                                section,
+                                task_id: task_id.clone(),
+                            });
+                        }
+                        last_progress_emit = Instant::now();
+                    }
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| {
+            ProviderError::Timeout(format!(
+                "streamed response stalled: no completion within {}s",
+                self.timeout.as_secs()
+            ))
+        })??;
+
+        let usage = accumulator
+            .usage
+            .as_ref()
+            .map(|u| TokenUsage {
+                input_tokens: u.prompt_tokens,
+                output_tokens: u.completion_tokens,
+            })
+            .unwrap_or_default();
+        let model = accumulator
+            .model
+            .clone()
+            .unwrap_or_else(|| model.to_string());
+        let reply = accumulator.into_reply();
+        let (value, stop_reason) =
+            post_process_openai_reply(&reply, tool_name, usage.output_tokens)?;
+
+        Ok(ProviderCallResult {
+            value,
+            usage,
+            model,
+            duration_ms: started.elapsed().as_millis() as u64,
             stop_reason,
         })
     }
@@ -2887,7 +3250,12 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (server_url, server) = serve_once(OPENAI_TOOL_CALL_RESPONSE);
         clear_openai_env();
-        unsafe { std::env::set_var("FYNANCE_OPENAI_BASE_URL", format!("{server_url}/v1/")) };
+        unsafe {
+            std::env::set_var("FYNANCE_OPENAI_BASE_URL", format!("{server_url}/v1/"));
+            // The fake answers with a JSON body: keep this on the
+            // non-streaming transport.
+            std::env::set_var("FYNANCE_OPENAI_STREAM", "false");
+        }
         let provider = OpenAIProvider::from_env();
         clear_openai_env();
 
@@ -2915,6 +3283,9 @@ mod tests {
         unsafe {
             std::env::set_var("FYNANCE_OPENAI_BASE_URL", format!("{server_url}/v1"));
             std::env::set_var("FYNANCE_OPENAI_API_KEY", "local-key");
+            // The fake answers with a JSON body: keep this on the
+            // non-streaming transport.
+            std::env::set_var("FYNANCE_OPENAI_STREAM", "false");
         }
         let provider = OpenAIProvider::from_env().unwrap();
         clear_openai_env();
@@ -3659,6 +4030,11 @@ mod tests {
         pdf_mode: Option<OpenAIPdfMode>,
         pdf_max_pages: Option<usize>,
         pdf_extract_cmd: Option<std::path::PathBuf>,
+        /// None keeps the transport non-streaming for the Part 2 fakes;
+        /// streaming tests pass `Some(true)`.
+        stream: Option<bool>,
+        progress: Option<(ProgressTx, Option<String>)>,
+        timeout_secs: Option<u64>,
     }
 
     impl OpenAIProvider {
@@ -3679,7 +4055,7 @@ mod tests {
                     .base_url
                     .unwrap_or_else(|| "http://127.0.0.1:9/v1".to_string()),
                 api_key: None,
-                timeout: std::time::Duration::from_secs(5),
+                timeout: std::time::Duration::from_secs(cfg.timeout_secs.unwrap_or(5)),
                 standard_model: "test-model".to_string(),
                 advanced_model: "test-model".to_string(),
                 tool_choice: cfg.tool_choice.unwrap_or(OpenAIToolChoice::Required),
@@ -3693,6 +4069,8 @@ mod tests {
                     extra_args: Vec::new(),
                     timeout: std::time::Duration::from_secs(30),
                 },
+                stream: cfg.stream.unwrap_or(false),
+                progress: cfg.progress,
             }
         }
     }
@@ -3875,6 +4253,7 @@ mod tests {
             ("FYNANCE_OPENAI_PDF_MAX_PAGES", "many"),
             ("FYNANCE_OPENAI_EXTRA_BODY", r#"[1,2]"#),
             ("FYNANCE_OPENAI_EXTRA_BODY", r#"{"messages": []}"#),
+            ("FYNANCE_OPENAI_STREAM", "sometimes"),
         ] {
             clear_openai_env();
             unsafe {
@@ -4274,5 +4653,470 @@ mod tests {
             provider.extra_body["chat_template_kwargs"]["enable_thinking"],
             json!(false)
         );
+        assert!(provider.stream, "streaming is on unless disabled");
+
+        clear_openai_env();
+        unsafe {
+            std::env::set_var("FYNANCE_OPENAI_BASE_URL", "http://127.0.0.1:9/v1");
+            std::env::set_var("FYNANCE_OPENAI_STREAM", "false");
+        }
+        let provider = OpenAIProvider::from_env().unwrap();
+        clear_openai_env();
+        assert!(!provider.stream);
+    }
+
+    // ── Part 3: streaming transport ─────────────────────────────────────────
+
+    /// One-shot SSE fake: answers the first request with a chunked
+    /// `text/event-stream` body made of `chunks`, written one at a time with
+    /// `gap` between writes when set. Stops writing when the client hangs up,
+    /// so cancellation is observable. The handle returns the raw request, the
+    /// milliseconds from the first write until the connection died, and
+    /// whether every chunk got out.
+    fn serve_sse(
+        chunks: Vec<Vec<u8>>,
+        gap: Option<std::time::Duration>,
+    ) -> (String, std::thread::JoinHandle<(String, u128, bool)>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !http_request_complete(&raw) {
+                match stream.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => raw.extend_from_slice(&buf[..n]),
+                }
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                       Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            let started = std::time::Instant::now();
+            let mut wrote_all = true;
+            for (i, chunk) in chunks.iter().enumerate() {
+                if i > 0 {
+                    if let Some(gap) = gap {
+                        std::thread::sleep(gap);
+                    }
+                }
+                let frame = format!("{:X}\r\n", chunk.len());
+                if stream
+                    .write_all(frame.as_bytes())
+                    .and_then(|()| {
+                        stream.write_all(chunk)?;
+                        stream.write_all(b"\r\n")?;
+                        stream.flush()
+                    })
+                    .is_err()
+                {
+                    wrote_all = false;
+                    break;
+                }
+            }
+            if wrote_all {
+                let _ = stream.write_all(b"0\r\n\r\n");
+                let _ = stream.flush();
+                // Wait for the client to hang up (it does when the call
+                // finishes, times out, or is cancelled).
+                loop {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => continue,
+                    }
+                }
+            }
+            (
+                String::from_utf8_lossy(&raw).into_owned(),
+                started.elapsed().as_millis(),
+                wrote_all,
+            )
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    fn sse_chunk(event: Value) -> Vec<u8> {
+        format!("data: {event}\n\n").into_bytes()
+    }
+
+    const STREAM_TOOL_ARGS: &str = r#"{"transactions":[{"date":"2026-11-02","description":"Corner Shop £5.00","amount":"-5.00","currency":"GBP","row_confidence":0.9}],"holdings":[],"investments":[]}"#;
+
+    fn stream_delta(args_fragment: &str) -> Value {
+        json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": args_fragment } }] },
+                "finish_reason": null
+            }]
+        })
+    }
+
+    fn stream_openai(provider: &OpenAIProvider) -> Result<ProviderCallResult, ProviderError> {
+        call_extract_unified_result(provider)
+    }
+
+    #[test]
+    fn test_openai_stream_accumulates_tool_calls_usage_and_split_multibyte_bytes() {
+        // One argument fragment carries a multi-byte £; its wire bytes are
+        // split through the middle of the character across two writes.
+        let mut full = sse_chunk(stream_delta(STREAM_TOOL_ARGS));
+        let pound = full
+            .windows(2)
+            .position(|w| w[0] == 0xc2 && w[1] == 0xa3)
+            .unwrap();
+        let tail = full.split_off(pound + 1);
+
+        let chunks = vec![
+            sse_chunk(json!({
+                "model": "fake-stream",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [{ "index": 0, "id": "c0",
+                            "function": { "name": "extract_unified", "arguments": "" } }]
+                    },
+                    "finish_reason": null
+                }]
+            })),
+            full,
+            tail,
+            sse_chunk(json!({
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }]
+            })),
+            sse_chunk(json!({ "usage": { "prompt_tokens": 30, "completion_tokens": 120 } })),
+            b"data: [DONE]\n\n".to_vec(),
+        ];
+        let (url, server) = serve_sse(chunks, None);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            ..Default::default()
+        });
+        let result = stream_openai(&provider).expect("streamed tool call must parse");
+        let (request, _ms, wrote_all) = server.join().unwrap();
+        assert!(wrote_all, "fake must have sent every chunk");
+
+        assert_eq!(
+            result.value,
+            serde_json::from_str::<Value>(STREAM_TOOL_ARGS).unwrap()
+        );
+        assert_eq!(result.usage.input_tokens, 30);
+        assert_eq!(result.usage.output_tokens, 120);
+        assert_eq!(result.model, "fake-stream");
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_calls"));
+
+        let request = request_json(&request);
+        assert_eq!(request["stream"], json!(true));
+        assert_eq!(request["stream_options"]["include_usage"], json!(true));
+    }
+
+    #[test]
+    fn test_openai_stream_in_stream_error_is_upstream_server_error() {
+        let chunks = vec![
+            sse_chunk(stream_delta("{\"transactions\":[")),
+            sse_chunk(json!({ "error": { "message": "model crashed", "type": "server_error" } })),
+            b"data: [DONE]\n\n".to_vec(),
+        ];
+        let (url, server) = serve_sse(chunks, None);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            ..Default::default()
+        });
+        let err = stream_openai(&provider).expect_err("in-stream error must fail");
+        match err {
+            ProviderError::UpstreamServerError { status, body } => {
+                assert_eq!(status, 0);
+                assert!(body.contains("model crashed"), "got: {body}");
+            }
+            other => panic!("expected UpstreamServerError, got {other}"),
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_stream_finish_reason_length_returns_truncated() {
+        let chunks = vec![
+            sse_chunk(stream_delta("{\"transactions\":[{\"date\":\"2026-11-")),
+            sse_chunk(json!({
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": "length" }]
+            })),
+            sse_chunk(json!({ "usage": { "prompt_tokens": 50, "completion_tokens": 16384 } })),
+            b"data: [DONE]\n\n".to_vec(),
+        ];
+        let (url, server) = serve_sse(chunks, None);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            ..Default::default()
+        });
+        let err = stream_openai(&provider).expect_err("length must truncate");
+        match err {
+            ProviderError::Truncated { output_tokens } => assert_eq!(output_tokens, 16384),
+            other => panic!("expected Truncated, got {other}"),
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_stream_content_fallback_recovers_tool_input() {
+        let pieces = [
+            "Here you go:\n```json\n{\"transactions\":[]",
+            ",\"holdings\":[],\"investments\":[]}\n```",
+        ];
+        let mut chunks: Vec<Vec<u8>> = pieces
+            .iter()
+            .map(|p| {
+                sse_chunk(json!({
+                    "choices": [{ "index": 0, "delta": { "content": p }, "finish_reason": null }]
+                }))
+            })
+            .collect();
+        chunks.push(sse_chunk(json!({
+            "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }]
+        })));
+        chunks.push(b"data: [DONE]\n\n".to_vec());
+        let (url, server) = serve_sse(chunks, None);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            ..Default::default()
+        });
+        let result = stream_openai(&provider).expect("content fallback must recover");
+        assert_eq!(
+            result.value,
+            json!({ "transactions": [], "holdings": [], "investments": [] })
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_stream_prose_only_returns_no_tool_use() {
+        let chunks = vec![
+            sse_chunk(json!({
+                "choices": [{ "index": 0, "delta": { "content": "I could not read it." },
+                              "finish_reason": null }]
+            })),
+            sse_chunk(json!({
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }]
+            })),
+            b"data: [DONE]\n\n".to_vec(),
+        ];
+        let (url, server) = serve_sse(chunks, None);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            ..Default::default()
+        });
+        let err = stream_openai(&provider).expect_err("prose is not a tool call");
+        assert!(matches!(err, ProviderError::NoToolUse { .. }), "got: {err}");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_stream_stall_times_out() {
+        let chunks = vec![
+            sse_chunk(stream_delta("{\"transactions\":[")),
+            sse_chunk(stream_delta("{\"date\":\"later\"}]}")),
+        ];
+        // The fake sleeps 3 s between the two writes; the provider deadline
+        // is 1 s.
+        let (url, server) = serve_sse(chunks, Some(std::time::Duration::from_secs(3)));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            timeout_secs: Some(1),
+            ..Default::default()
+        });
+        let err = stream_openai(&provider).expect_err("stalled stream must time out");
+        assert!(matches!(err, ProviderError::Timeout(_)), "got: {err}");
+        // The hang-up is what lets the fake finish.
+        let (_request, _ms, _wrote_all) = server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_stream_dropping_the_call_cancels_upstream() {
+        // A slow fake: 12 chunks, 200 ms apart, so the client hangs up well
+        // before the stream would end.
+        let chunks = vec![sse_chunk(stream_delta("{\"transactions\":[")); 12];
+        let (url, server) = serve_sse(chunks, Some(std::time::Duration::from_millis(200)));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            ..Default::default()
+        });
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let fut = provider.chat_with_tools(
+                "system",
+                "user",
+                "extract_unified",
+                json!({"type": "object"}),
+                ModelTier::Standard,
+                None,
+            );
+            tokio::pin!(fut);
+            let outcome = tokio::time::timeout(std::time::Duration::from_millis(300), fut).await;
+            assert!(outcome.is_err(), "call must still be running at 300 ms");
+            // The timeout dropping the pinned future is what hangs up.
+        });
+        let (_request, disconnected_ms, wrote_all) = server.join().unwrap();
+        assert!(!wrote_all, "fake must have seen the hang-up mid-stream");
+        assert!(
+            disconnected_ms < 3000,
+            "disconnect took {disconnected_ms} ms to reach the fake"
+        );
+    }
+
+    #[test]
+    fn test_openai_stream_emits_progress_events() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<ProgressEvent>(32);
+        // Deltas 1.1 s apart so at least one second passes between two
+        // progress emissions.
+        let chunks = vec![
+            sse_chunk(json!({
+                "choices": [{
+                    "index": 0,
+                    "delta": { "tool_calls": [{ "index": 0,
+                        "function": { "name": "extract_unified", "arguments": "{\"transactions\":[" } }] },
+                    "finish_reason": null
+                }]
+            })),
+            sse_chunk(stream_delta(
+                "{\"date\":\"2026-11-01\",\"description\":\"A\",\"amount\":\"-1.00\",\"currency\":\"GBP\",\"row_confidence\":0.9},",
+            )),
+            sse_chunk(stream_delta(
+                "{\"date\":\"2026-11-02\",\"description\":\"B\",\"amount\":\"-2.00\",\"currency\":\"GBP\",\"row_confidence\":0.9}",
+            )),
+            sse_chunk(stream_delta("],\"holdings\":[],\"investments\":[]}")),
+            sse_chunk(json!({
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }]
+            })),
+            b"data: [DONE]\n\n".to_vec(),
+        ];
+        let (url, server) = serve_sse(chunks, Some(std::time::Duration::from_millis(1100)));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            progress: Some((tx, Some("task-1".to_string()))),
+            // The fake needs ~5.5 s to drip the chunks out; the deadline is
+            // not what this test is checking.
+            timeout_secs: Some(15),
+            ..Default::default()
+        });
+        let result = stream_openai(&provider).expect("streamed tool call must parse");
+        server.join().unwrap();
+        assert_eq!(result.value["transactions"].as_array().unwrap().len(), 2);
+
+        let mut started = 0;
+        let mut progress = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                ProgressEvent::LlmStart {
+                    model,
+                    input_tokens,
+                    task_id,
+                } => {
+                    assert_eq!(model, "test-model");
+                    assert_eq!(input_tokens, 0);
+                    assert_eq!(task_id.as_deref(), Some("task-1"));
+                    started += 1;
+                }
+                ProgressEvent::LlmProgress {
+                    output_tokens,
+                    items,
+                    section,
+                    ..
+                } => progress.push((output_tokens, items, section)),
+                other => panic!("unexpected progress event: {other:?}"),
+            }
+        }
+        assert_eq!(started, 1, "exactly one LlmStart");
+        assert!(
+            progress.len() >= 2,
+            "expected at least two LlmProgress events, got {progress:?}"
+        );
+        // The final emission sees the completed buffer, whose last section
+        // keyword is "investments".
+        let (tokens, items, section) = progress.last().unwrap();
+        assert!(*items >= 2, "rows must grow: {progress:?}");
+        assert_eq!(section.as_deref(), Some("investments"));
+        let first_tokens = progress[0].0;
+        assert!(
+            *tokens > first_tokens,
+            "delta count must grow: {progress:?}"
+        );
+    }
+
+    #[test]
+    fn test_sse_line_splitter_edge_cases() {
+        let mut splitter = SseLineSplitter::new();
+        let mut lines = Vec::new();
+        lines.extend(splitter.push(b"data:{\"a\":1}\r\n")); // no space after colon
+        lines.extend(splitter.push(b": ping\n")); // SSE comment
+        lines.extend(splitter.push(b"data: [DONE]")); // line not yet ended
+        lines.extend(splitter.push(b"\r\n")); // completed by the next write
+        lines.extend(splitter.push(b"event: message_start\n\n")); // blank line
+        assert_eq!(
+            lines,
+            [
+                "data:{\"a\":1}",
+                ": ping",
+                "data: [DONE]",
+                "event: message_start",
+                "",
+            ]
+        );
+
+        // A multi-byte character split across two writes must survive.
+        let bytes = "data: \"Café\"\n".as_bytes().to_vec();
+        let acute = bytes
+            .windows(2)
+            .position(|w| w[0] == 0xc3 && w[1] == 0xa9)
+            .unwrap();
+        let (first, second) = bytes.split_at(acute + 1);
+        let mut splitter = SseLineSplitter::new();
+        assert!(splitter.push(first).is_empty());
+        assert_eq!(splitter.push(second), ["data: \"Café\""]);
+    }
+
+    #[test]
+    fn test_anthropic_sse_splitter_keeps_split_multibyte_tool_input() {
+        // The same network-shaped split fed through the Anthropic path: the
+        // accumulator must see the intact characters.
+        let mut acc = SseAccumulator::new();
+        acc.handle_event(&json!({
+            "type": "content_block_start", "index": 0,
+            "content_block": { "type": "tool_use", "id": "tu_1", "name": "extract_unified" }
+        }));
+        let event = json!({
+            "type": "content_block_delta", "index": 0,
+            "delta": { "type": "input_json_delta", "partial_json": "{\"note\":\"Café ☕\"}" }
+        });
+        let bytes = format!("data: {event}\n\n").into_bytes();
+        let split = bytes
+            .windows(2)
+            .position(|w| w[0] == 0xe2 && w[1] == 0x98)
+            .unwrap();
+        let (first, second) = bytes.split_at(split + 1);
+        let mut splitter = SseLineSplitter::new();
+        let mut lines = splitter.push(first);
+        lines.extend(splitter.push(second));
+        // The data line, then the blank line ending the event.
+        assert_eq!(lines.len(), 2);
+        let parsed: Value =
+            serde_json::from_str(lines[0].strip_prefix("data: ").expect("data line"))
+                .expect("line must decode and parse");
+        acc.handle_event(&parsed);
+        let result = acc.into_result("extract_unified").expect("tool input");
+        assert_eq!(result.value["note"], json!("Café ☕"));
     }
 }
