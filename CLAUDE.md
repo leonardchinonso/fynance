@@ -169,8 +169,9 @@ POST   /api/import                           # DEPRECATED alias of /api/transact
 POST   /api/import/csv                       # upload CSV (single file)
 POST   /api/import/bulk                      # upload multiple CSVs
 
-POST   /api/parse                            # Stage 1: extract structured txns/holdings from uploaded CSV/PDF/images (no DB writes)
+POST   /api/parse                            # Stage 1: extract structured txns/holdings, or payslips/P60s (tax_documents + profile_id), from uploaded CSV/PDF/images (documents stored, no records written)
 GET    /api/parse/progress/:parse_id         # progress stream for an in-flight parse
+POST   /api/income-records/import             # Stage 2 for tax documents: commit reviewed payslips (records) and P60s (checks)
 
 GET    /api/documents                        # list stored source documents (provenance: ref count, orphan flag)
 POST   /api/documents                        # upload standalone source document(s), deduped by content hash

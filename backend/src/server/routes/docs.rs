@@ -380,6 +380,67 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         }
                     }
                 },
+                "TaxDocumentsImportPayload": {
+                    "type": "object",
+                    "description": "Request body for POST /api/income-records/import: the reviewed drafts of a tax-document parse.",
+                    "required": ["profile_id", "documents"],
+                    "properties": {
+                        "profile_id": { "type": "string" },
+                        "documents": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["document_type", "source_name", "tax_year", "currency", "line_items"],
+                                "properties": {
+                                    "document_type": { "type": "string", "enum": ["payslip", "annual_certificate"], "description": "`annual_certificate` is a P60." },
+                                    "source_name": { "type": "string", "description": "The employer." },
+                                    "paye_reference": { "type": "string" },
+                                    "tax_year": { "type": "string", "example": "2025-26" },
+                                    "pay_date": { "type": "string", "format": "date" },
+                                    "period_start": { "type": "string", "format": "date" },
+                                    "period_end": { "type": "string", "format": "date" },
+                                    "currency": { "type": "string" },
+                                    "line_items": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "required": ["line_type", "amount", "basis"],
+                                            "properties": {
+                                                "line_type": { "type": "string" },
+                                                "label": { "type": "string" },
+                                                "amount": { "type": "string" },
+                                                "basis": { "type": "string", "enum": ["period", "year_to_date"] }
+                                            }
+                                        }
+                                    },
+                                    "transaction_id": { "type": "string", "description": "The accepted net-pay bank credit." },
+                                    "document_ids": { "type": "array", "items": { "type": "string" } },
+                                    "notes": { "type": "string" }
+                                }
+                            }
+                        }
+                    }
+                },
+                "TaxDocumentsImportResult": {
+                    "type": "object",
+                    "required": ["inserted", "duplicates", "errors"],
+                    "properties": {
+                        "inserted": { "type": "integer", "description": "Records and checks written." },
+                        "duplicates": { "type": "integer", "description": "Rows skipped because the same record was already saved." },
+                        "errors": {
+                            "type": "array",
+                            "description": "Always present; empty when every row was written or skipped.",
+                            "items": {
+                                "type": "object",
+                                "required": ["index", "reason"],
+                                "properties": {
+                                    "index": { "type": "integer", "description": "Position in the request's `documents`." },
+                                    "reason": { "type": "string" }
+                                }
+                            }
+                        }
+                    }
+                },
                 "IncomeCheck": {
                     "type": "object",
                     "description": "A P60 or annual accounts kept as a reconciliation check: its printed figures are compared with the summed records and never added to them.",
@@ -874,7 +935,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/parse": {
                 "post": {
                     "summary": "Stage 1 parse: extract transactions from uploaded documents (PDF/CSV)",
-                    "description": "Accepts a multipart upload (50 MB total, 10 MB per file). Kicks off LLM extraction; track progress via `GET /api/parse/progress/{parse_id}`.",
+                    "description": "Accepts a multipart upload (50 MB total, 10 MB per file). Kicks off LLM extraction; track progress via `GET /api/parse/progress/{parse_id}`. Set `hints.return_type.tax_documents` to parse payslips and P60s (PDF or image, up to 15 files, `profile_id` field required, `account_id` ignored): the response then carries a `tax_documents` object (rows, payslip-vs-P60 reconciliation, known employer names) and empty transactions, holdings and investments. Tax documents cannot be combined with another return type. Statement requests keep the 5-file cap. 400 codes added for tax documents: `invalid_return_type`, `missing_profile_id`, `profile_not_found`, `unsupported_tax_document_format`, `too_many_files`, `response_truncated`.",
                     "security": [{ "bearerAuth": [] }],
                     "requestBody": {
                         "required": true,
@@ -1551,6 +1612,18 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 "responses": {
                     "201": { "description": "The created record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecord" } } } },
                     "400": { "description": "Validation failure; the error code names the rule.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-records/import": {
+            "post": {
+                "summary": "Commit parsed payslips and P60s",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Stage 2 of the tax-document import. Each draft finds or creates the profile's employment source by normalised name (the PAYE reference is stored when the draft has one). A payslip becomes a `period` income record with `origin = parse` (`period_end` falls back to `pay_date`, `period_start` to `period_end`; the draft's `transaction_id` is linked); a P60 becomes a `p60` income check holding its period-basis figures. Server-side duplicates (same source, tax year and period end) are skipped and counted. Rows that fail validation, or a P60 whose check already exists, are reported in `errors` by index and never fail the batch. Valid rows are written in one SQLite transaction.",
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaxDocumentsImportPayload" } } } },
+                "responses": {
+                    "200": { "description": "Counts and per-row errors.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaxDocumentsImportResult" } } } },
+                    "400": { "description": "Unknown profile (`profile_not_found`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
                 }
             }
         },

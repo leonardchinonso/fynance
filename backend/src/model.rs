@@ -2232,6 +2232,103 @@ pub struct TaxDocumentDraft {
     pub notes: Option<String>,
 }
 
+/// A bank credit that could be the payslip's net pay.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct NetPayCandidate {
+    pub transaction_id: String,
+    pub account_id: String,
+    pub account_name: String,
+    /// ISO `YYYY-MM-DD`.
+    pub date: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    pub currency: String,
+    pub description: String,
+    /// Signed: negative when the credit is before the pay date.
+    pub days_from_pay_date: i64,
+}
+
+/// One payslip or P60 in a tax-document preview.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxDocumentPreviewRow {
+    pub index: usize,
+    pub status: TransactionPreviewStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error_reason: Option<String>,
+    /// The saved record or check this row duplicates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub existing_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub same_key_as_row: Option<usize>,
+    pub row_confidence: f32,
+    pub source_document_ids: Vec<String>,
+    pub warnings: Vec<String>,
+    pub net_pay_candidates: Vec<NetPayCandidate>,
+    pub draft: TaxDocumentDraft,
+}
+
+/// Payslips against the P60 for one employer and tax year.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxReconciliation {
+    pub source_name: String,
+    pub tax_year: String,
+    pub currency: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub certificate_row: Option<usize>,
+    pub payslip_rows: Vec<usize>,
+    /// Taxable pay, else gross pay, summed over the payslips.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub payslips_pay_total: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub payslips_tax_total: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub certificate_pay: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub certificate_tax: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub latest_ytd_pay: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub latest_ytd_tax: Option<Decimal>,
+    /// Certificate pay minus the payslips' total.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub pay_difference: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub tax_difference: Option<Decimal>,
+    /// `YYYY-MM` of each payslip's pay date, sorted.
+    pub months_covered: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxDocumentIngestionResult {
+    pub count: usize,
+    pub new: usize,
+    pub duplicate: usize,
+    pub errors: usize,
+    pub profile_id: String,
+    pub rows: Vec<TaxDocumentPreviewRow>,
+    pub reconciliation: Vec<TaxReconciliation>,
+    /// Existing employer names for the profile.
+    pub known_sources: Vec<String>,
+}
+
 /// Request body for `POST /api/income-records/import`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/bindings/")]
@@ -2680,6 +2777,10 @@ pub struct IngestionPreview {
     /// "Source" chip per id and resolves the name/date from this list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub documents: Vec<DocumentSummary>,
+    /// Present for a tax-documents parse only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tax_documents: Option<TaxDocumentIngestionResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

@@ -5,6 +5,7 @@ import type { HoldingsIngestionResult } from "./HoldingsIngestionResult";
 import type { IngestionMetadata } from "./IngestionMetadata";
 import type { IngestionStatus } from "./IngestionStatus";
 import type { InvestmentIngestionResult } from "./InvestmentIngestionResult";
+import type { TaxDocumentIngestionResult } from "./TaxDocumentIngestionResult";
 import type { TransactionIngestionResult } from "./TransactionIngestionResult";
 
 /**
@@ -16,4 +17,8 @@ export type IngestionPreview = { status: IngestionStatus, metadata: IngestionMet
  * by id via their `source_document_ids`; the frontend renders a numbered
  * "Source" chip per id and resolves the name/date from this list.
  */
-documents: Array<DocumentSummary>, };
+documents: Array<DocumentSummary>, 
+/**
+ * Present for a tax-documents parse only.
+ */
+tax_documents?: TaxDocumentIngestionResult, };
