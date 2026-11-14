@@ -390,3 +390,129 @@ async fn sync_rejects_wrong_source_and_bad_range() {
         "no upstream call was made"
     );
 }
+
+/// Serve a 302 to `location` on a random local port; returns the URL.
+async fn start_redirect(location: String) -> (String, Arc<Mutex<usize>>) {
+    let hits = Arc::new(Mutex::new(0usize));
+    let counter = hits.clone();
+    let app = axum::Router::new().route(
+        "/income",
+        get(move || {
+            let location = location.clone();
+            let counter = counter.clone();
+            async move {
+                *counter.lock().unwrap() += 1;
+                (StatusCode::FOUND, [("location", location)], String::new())
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}/income"), hits)
+}
+
+#[tokio::test]
+async fn sync_does_not_follow_redirects() {
+    let _guard = ENV_LOCK.lock().await;
+    let (target, target_stub) = start_stub(200, shop_body(100)).await;
+    let (url, hits) = start_redirect(target).await;
+    configure(&url);
+    let app = test_router();
+    let id = create_source(&app, "self_employment", Some("shop_app")).await;
+    let (status, body) = sync(&app, &id, false).await;
+    unconfigure();
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(body.to_string().contains("302"), "{body}");
+    assert_eq!(*hits.lock().unwrap(), 1);
+    assert!(target_stub.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn sync_currency_change_is_409_and_changes_nothing() {
+    let _guard = ENV_LOCK.lock().await;
+    let (url, _stub) = start_stub(200, shop_body(100)).await;
+    configure(&url);
+    let app = test_router();
+    let id = create_source(&app, "self_employment", Some("shop_app")).await;
+    let (status, body) = sync(&app, &id, false).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let before = records(&app, &id).await;
+
+    let mut eur = shop_body(999);
+    eur["currency"] = json!("EUR");
+    let (url, _stub) = start_stub(200, eur).await;
+    configure(&url);
+    let (status, body) = sync(&app, &id, false).await;
+    unconfigure();
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "sync_currency_changed");
+    assert_eq!(records(&app, &id).await, before);
+}
+
+#[tokio::test]
+async fn sync_commit_rolls_back_when_a_later_period_is_bad() {
+    let _guard = ENV_LOCK.lock().await;
+    let mut bad = shop_body(100);
+    let first = bad["periods"][0].clone();
+    bad["periods"] = json!([bad["periods"][1].clone(), first.clone(), first]);
+    let (url, _stub) = start_stub(200, bad).await;
+    configure(&url);
+    let app = test_router();
+    let id = create_source(&app, "self_employment", Some("shop_app")).await;
+    let (status, body) = sync(&app, &id, false).await;
+    unconfigure();
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(body.to_string().contains("appears twice"), "{body}");
+    assert!(records(&app, &id).await.is_empty());
+}
+
+#[tokio::test]
+async fn sync_warns_on_other_basis_and_rejects_negative_pence() {
+    let _guard = ENV_LOCK.lock().await;
+    let mut other = shop_body(100);
+    other["basis"] = json!("ship_date");
+    let (url, _stub) = start_stub(200, other).await;
+    configure(&url);
+    let app = test_router();
+    let id = create_source(&app, "self_employment", Some("shop_app")).await;
+    let (status, body) = sync(&app, &id, true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["warnings"].to_string().contains("ship_date"), "{body}");
+
+    let (url, _stub) = start_stub(200, shop_body(-100)).await;
+    configure(&url);
+    let (status, body) = sync(&app, &id, false).await;
+    unconfigure();
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(records(&app, &id).await.is_empty());
+}
+
+#[tokio::test]
+async fn sync_refuses_bad_urls_and_long_ranges() {
+    let _guard = ENV_LOCK.lock().await;
+    let app = test_router();
+    let id = create_source(&app, "self_employment", Some("shop_app")).await;
+    for url in [
+        "shop.example.com/income",
+        "ftp://shop.example.com/income",
+        "http://shop.example.com/income",
+    ] {
+        configure(url);
+        let (status, body) = sync(&app, &id, false).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{url}: {body}");
+        assert_eq!(body["code"], "sync_not_configured", "{url}");
+        assert!(!body.to_string().contains("shop.example.com"), "{body}");
+    }
+    unconfigure();
+
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &format!("/api/income-sources/{id}/sync"),
+        Some(json!({ "from": "2020-04-06", "to": "2025-04-05" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "invalid_range");
+}

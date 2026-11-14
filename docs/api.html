@@ -4142,10 +4142,10 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   <table class="errors-table">
     <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
     <tbody>
-      <tr><td>400</td><td><code>sync_not_configured</code></td><td>The URL or token variable is unset</td></tr>
+      <tr><td>400</td><td><code>sync_not_configured</code></td><td>The URL or token variable is unset, the URL is not a valid http(s) URL, or it is plain <code>http://</code> to a non-loopback host (use https)</td></tr>
       <tr><td>400</td><td><code>sync_not_supported</code></td><td>Source is not <code>self_employment</code> with <code>sync_kind = shop_app</code></td></tr>
       <tr><td>400</td><td><code>source_not_found</code></td><td>Unknown source id</td></tr>
-      <tr><td>400</td><td><code>invalid_date</code> / <code>invalid_range</code></td><td>Bad <code>from</code>/<code>to</code>, or <code>to</code> before <code>from</code></td></tr>
+      <tr><td>400</td><td><code>invalid_date</code> / <code>invalid_range</code></td><td>Bad <code>from</code>/<code>to</code>, <code>to</code> before <code>from</code>, or a range over three years</td></tr>
       <tr><td>409</td><td><code>sync_currency_changed</code></td><td>A stored period is in another currency</td></tr>
       <tr><td>502</td><td><code>sync_upstream_error</code></td><td>The shop app answered non-200 (status code only), was unreachable, or sent data that does not fit</td></tr>
       <tr><td>504</td><td><code>sync_upstream_error</code></td><td>The shop app timed out</td></tr>

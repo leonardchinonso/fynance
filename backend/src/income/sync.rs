@@ -24,6 +24,8 @@ use crate::storage::db::Db;
 const URL_VAR: &str = "FYNANCE_SHOP_SYNC_URL";
 const TOKEN_VAR: &str = "FYNANCE_SHOP_SYNC_TOKEN";
 const ORIGIN: &str = "shop_sync";
+/// Far above three years of monthly periods.
+const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Where to fetch from, read from the environment on each sync.
 pub struct SyncConfig {
@@ -39,14 +41,37 @@ impl SyncConfig {
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
         };
-        match (read(URL_VAR), read(TOKEN_VAR)) {
-            (Some(url), Some(token)) => Ok(Self { url, token }),
-            _ => Err(AppError::bad_request(
+        let (Some(url), Some(token)) = (read(URL_VAR), read(TOKEN_VAR)) else {
+            return Err(AppError::bad_request(
                 format!("set {URL_VAR} and {TOKEN_VAR} to enable the shop sync"),
                 "sync_not_configured",
-            )),
-        }
+            ));
+        };
+        check_url(&url)?;
+        Ok(Self { url, token })
     }
+}
+
+/// The URL must parse as http(s), and the token may only travel in clear text
+/// to a loopback host. The value is never echoed.
+fn check_url(url: &str) -> Result<(), AppError> {
+    let not_configured = |message: String| AppError::bad_request(message, "sync_not_configured");
+    let parsed = reqwest::Url::parse(url)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
+        .ok_or_else(|| not_configured(format!("{URL_VAR} is not a valid http(s) URL")))?;
+    let host = parsed.host_str().unwrap_or("");
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if parsed.scheme() == "http" && !loopback {
+        return Err(not_configured(format!(
+            "{URL_VAR} must use https unless the host is loopback"
+        )));
+    }
+    Ok(())
 }
 
 /// The endpoint's response body (plan 30 section 8).
@@ -132,10 +157,25 @@ pub async fn fetch(
             status.as_u16()
         )));
     }
-    let bytes = response
-        .bytes()
+    let too_big = || upstream("the shop sync response is too large");
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_RESPONSE_BYTES)
+    {
+        return Err(too_big());
+    }
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|_| upstream("the shop sync response could not be read"))?;
+        .map_err(|_| upstream("the shop sync response could not be read"))?
+    {
+        if bytes.len() as u64 + chunk.len() as u64 > MAX_RESPONSE_BYTES {
+            return Err(too_big());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     let parsed: ShopSyncResponse = serde_json::from_slice(&bytes)
         .map_err(|_| upstream("the shop sync response is not in the expected shape"))?;
     tracing::info!(
@@ -198,12 +238,18 @@ fn same_items(stored: &[IncomeLineItem], incoming: &[IncomeLineItemInput]) -> bo
     a == b && stored.iter().all(|i| i.basis == IncomeBasis::Period)
 }
 
-/// The text of a 400, for folding an upstream-data problem into a 502.
+/// The text of a 400, for folding an upstream-data problem into a 502. The
+/// dates in a validated period are well formed, so the text is short.
 fn message(e: &AppError) -> String {
     match e {
-        AppError::BadRequest { message, .. } => message.clone(),
+        AppError::BadRequest { message, .. } => capped(message),
         _ => "invalid".to_string(),
     }
+}
+
+/// An upstream string cut to 40 characters before it goes into an error body.
+fn capped(s: &str) -> String {
+    s.chars().take(40).collect()
 }
 
 /// Map the response onto the source's records. With `dry_run` nothing is
@@ -215,12 +261,8 @@ pub fn apply(
     response: &ShopSyncResponse,
     dry_run: bool,
 ) -> Result<IncomeSyncResult, AppError> {
-    validate_currency(db, &response.currency).map_err(|_| {
-        upstream(format!(
-            "the shop sync currency {:?} is not a known currency",
-            response.currency
-        ))
-    })?;
+    validate_currency(db, &response.currency)
+        .map_err(|_| upstream("the shop sync currency is not a known currency"))?;
     let mut result = IncomeSyncResult {
         dry_run,
         created: 0,
@@ -232,17 +274,24 @@ pub fn apply(
     };
     if let Some(basis) = response.basis.as_deref().filter(|b| *b != "order_date") {
         result.warnings.push(format!(
-            "the endpoint reports basis {basis:?}, not order_date"
+            "the endpoint reports basis {:?}, not order_date",
+            capped(basis)
         ));
     }
     let mut seen = HashSet::new();
-    for period in &response.periods {
+    for (index, period) in response.periods.iter().enumerate() {
+        let number = index + 1;
+        parse_iso_date(&period.start, "period start")
+            .and_then(|_| parse_iso_date(&period.end, "period end"))
+            .map_err(|_| {
+                upstream(format!(
+                    "period #{number} has a start or end that is not a date"
+                ))
+            })?;
         let external_ref = format!("{}..{}", period.start, period.end);
         if !seen.insert(external_ref.clone()) {
-            return Err(upstream(format!("period {external_ref} appears twice")));
+            return Err(upstream(format!("period #{number} appears twice")));
         }
-        parse_iso_date(&period.start, "period start").map_err(|e| upstream(message(&e)))?;
-        parse_iso_date(&period.end, "period end").map_err(|e| upstream(message(&e)))?;
         let items = line_items(period)?;
         let insert = IncomeRecordInsert {
             source_id: source.id.clone(),
@@ -259,7 +308,7 @@ pub fn apply(
             line_items: items.clone(),
         };
         let tax_year = validate_record(db, source, &insert, true)
-            .map_err(|e| upstream(format!("period {external_ref} rejected: {}", message(&e))))?;
+            .map_err(|e| upstream(format!("period #{number} rejected: {}", message(&e))))?;
         let status = match db.find_income_record_by_ref(&source.id, ORIGIN, &external_ref)? {
             None => {
                 if !dry_run {

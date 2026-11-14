@@ -113,7 +113,7 @@ All runtime configuration is done via environment variables. The binary loads `.
 | `FYNANCE_PDF_EXTRACT_ARGS`       | unset (none)                | Extra tool arguments as a JSON array of strings, e.g. `["--dpi","150"]`                |
 | `FYNANCE_PDF_EXTRACT_TIMEOUT_SECS` | `120`                     | Timeout per pdf-extract tool run                                                       |
 | `FYNANCE_PARSE_DUMP_DIR`         | unset (off)                 | Opt-in: write each unified parse's raw model output (personal financial data) to this directory |
-| `FYNANCE_SHOP_SYNC_URL`          | unset (sync off)            | Shop app income endpoint for `POST /api/income-sources/:id/sync`. Both this and the token must be set, else the sync answers 400 `sync_not_configured` |
+| `FYNANCE_SHOP_SYNC_URL`          | unset (sync off)            | Shop app income endpoint for `POST /api/income-sources/:id/sync`. Both this and the token must be set, else the sync answers 400 `sync_not_configured`. Use https: plain http is refused except for loopback hosts |
 | `FYNANCE_SHOP_SYNC_TOKEN`        | unset                       | Bearer token sent to the shop sync endpoint. Never logged                              |
 
 ### Default database path

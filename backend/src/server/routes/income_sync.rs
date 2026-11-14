@@ -26,6 +26,13 @@ pub async fn sync_income_source(
             "invalid_range",
         ));
     }
+    // The shop app refuses a range over three years, so refuse it here first.
+    if to > from + chrono::Months::new(36) {
+        return Err(AppError::bad_request(
+            "the range must not be longer than three years",
+            "invalid_range",
+        ));
+    }
     // The database lock is released before the HTTP call.
     let source = {
         let db = state.db();
