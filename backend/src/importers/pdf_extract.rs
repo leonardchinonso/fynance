@@ -204,6 +204,7 @@ pub async fn extract_pdf(
         }
     };
 
+    #[cfg(windows)]
     let child_pid = child.id();
     let secs = cfg.timeout.as_secs();
     let output = match tokio::time::timeout(cfg.timeout, child.wait_with_output()).await {
