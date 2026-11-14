@@ -1,6 +1,6 @@
 # 30 — OpenAI-compatible parse provider parity (local llama.cpp, PDFs via an external pdf-extract tool)
 
-Status: **plan, not started.** Builds on PR #138 (`feat/openai-base-url`), which is still in review.
+Status: **implemented on `feat/openai-parity`, in review.** All five parts are on the branch; benchmarks live outside the repo.
 
 ## Goal
 
