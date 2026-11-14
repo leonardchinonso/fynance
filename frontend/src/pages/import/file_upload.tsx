@@ -24,6 +24,8 @@ interface Props {
   submitting?: boolean
   accountName: string
   accountInstitution: string
+  /** `tax` is for payslips and P60s: no return-type choice, PDF and images only. */
+  variant?: "statement" | "tax"
 }
 
 const PERIOD_LABELS: Record<"none" | SnapshotPeriod, string> = {
@@ -38,9 +40,11 @@ const PERIOD_LABELS: Record<"none" | SnapshotPeriod, string> = {
 const CSV_ROW_WARN = 200
 const PDF_SIZE_WARN = 1.5 * 1024 * 1024
 const LARGE_FILE_WARN = 3 * 1024 * 1024
+const TAX_MAX_FILES = 15
 const fmtMb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`
 
-export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmit, onSkip, submitting, accountName, accountInstitution }: Props) {
+export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmit, onSkip, submitting, accountName, accountInstitution, variant = "statement" }: Props) {
+  const isTax = variant === "tax"
   const [dragOver, setDragOver] = useState(false)
   const [showContext, setShowContext] = useState(() => !!hints.hint)
   const [sizeWarnings, setSizeWarnings] = useState<string[]>([])
@@ -118,13 +122,13 @@ export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmi
           Drop files here or click to browse
         </p>
         <p className="text-xs text-muted-foreground mt-1">
-          CSV, PDF, and image files accepted
+          {isTax ? `PDF and image files accepted. Up to ${TAX_MAX_FILES} files` : "CSV, PDF, and image files accepted"}
         </p>
         <input
           ref={inputRef}
           type="file"
           multiple
-          accept=".csv,.pdf,.png,.jpg,.jpeg,.webp,.gif"
+          accept={isTax ? ".pdf,.png,.jpg,.jpeg,.webp,.gif" : ".csv,.pdf,.png,.jpg,.jpeg,.webp,.gif"}
           className="hidden"
           onChange={(e) => addFiles(e.target.files)}
         />
@@ -170,7 +174,14 @@ export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmi
         </div>
       )}
 
+      {isTax && files.length > TAX_MAX_FILES && (
+        <p className="text-xs text-destructive">
+          {files.length} files chosen; the limit is {TAX_MAX_FILES}. Remove some to continue.
+        </p>
+      )}
+
       {/* What does this document contain? */}
+      {!isTax && (
       <div className="space-y-3 rounded-lg border p-3">
         <p className="text-sm font-medium">What does this document contain?</p>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -252,6 +263,7 @@ export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmi
           </div>
         )}
       </div>
+      )}
 
       {/* Optional free-text context passed to the parsing agent via hints.hint */}
       <div>
@@ -297,9 +309,11 @@ export function FileUpload({ files, onFilesChange, hints, onHintsChange, onSubmi
             disabled={
               files.length === 0 ||
               submitting ||
-              (!hints.return_type.transactions &&
-                !hints.return_type.holdings.enabled &&
-                !hints.return_type.investments)
+              (isTax
+                ? files.length > TAX_MAX_FILES
+                : !hints.return_type.transactions &&
+                  !hints.return_type.holdings.enabled &&
+                  !hints.return_type.investments)
             }
             className="bg-blue-600 text-white hover:bg-blue-600/90"
           >

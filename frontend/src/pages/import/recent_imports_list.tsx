@@ -36,6 +36,10 @@ function formatTimestamp(ms: number): string {
 }
 
 function summarize(entry: RecentImportEntry): string {
+  if (entry.kind === "tax") {
+    const n = entry.preview.tax_documents?.count ?? 0
+    return `${n} tax document${n !== 1 ? "s" : ""}`
+  }
   const txCount = (entry.edits.txPayload?.transactions.length ?? 0) - entry.edits.txDeleted.length
   const hldCount =
     (entry.edits.holdingsPayload?.holdings.length ?? 0) - entry.edits.holdingsDeleted.length
@@ -67,7 +71,13 @@ export function RecentImportsList({ entries, accounts, profiles, onResume, onDis
       <ul className="space-y-1.5">
         {entries.map((entry) => {
           const account = accountById.get(entry.accountId)
-          const accountLabel = account ? account.name : entry.accountId
+          const taxProfile = entry.kind === "tax" ? profileById.get(entry.profileId ?? "") : undefined
+          const accountLabel =
+            entry.kind === "tax"
+              ? `Tax documents${taxProfile ? ` · ${taxProfile.name}` : ""}`
+              : account
+                ? account.name
+                : entry.accountId
           return (
             <li key={entry.id}>
               <div className="group flex items-center gap-2 rounded-lg border bg-card p-3 hover:border-foreground/30 transition-colors">

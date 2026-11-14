@@ -3,6 +3,7 @@ import type { IngestionPreview } from "@/bindings/IngestionPreview"
 import type { ImportPayload } from "@/bindings/ImportPayload"
 import type { HoldingsImportPayload } from "@/bindings/HoldingsImportPayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
+import type { TaxDocumentDraft } from "@/bindings/TaxDocumentDraft"
 
 const STORAGE_KEY = "fynance-recent-imports"
 const MAX_ENTRIES = 50
@@ -17,11 +18,26 @@ export interface PreviewEdits {
   invDeleted: number[]
 }
 
+/** The reviewer's edits to a tax-document preview, by row position. */
+export interface TaxEdits {
+  /** One draft per preview row, edits applied. */
+  drafts: TaxDocumentDraft[]
+  /** `index` of every row marked to save. */
+  kept: number[]
+}
+
 export interface RecentImportEntry {
   id: string
   /** ms since epoch */
   timestamp: number
+  /** Empty for a tax-document import, which belongs to a profile instead. */
   accountId: string
+  /** Absent means a statement import. */
+  kind?: "statement" | "tax"
+  /** Set for a tax-document import. */
+  profileId?: string
+  /** Set for a tax-document import once the user has edited the preview. */
+  taxEdits?: TaxEdits
   fileNames: string[]
   preview: IngestionPreview
   edits: PreviewEdits
@@ -92,12 +108,20 @@ export function useRecentImports() {
   }, [])
 
   const add = useCallback(
-    (input: { accountId: string; fileNames: string[]; preview: IngestionPreview }): string => {
+    (input: {
+      accountId: string
+      fileNames: string[]
+      preview: IngestionPreview
+      kind?: "statement" | "tax"
+      profileId?: string
+    }): string => {
       const id = `imp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       const entry: RecentImportEntry = {
         id,
         timestamp: Date.now(),
         accountId: input.accountId,
+        ...(input.kind ? { kind: input.kind } : {}),
+        ...(input.profileId ? { profileId: input.profileId } : {}),
         fileNames: input.fileNames,
         preview: input.preview,
         edits: defaultEditsFor(input.preview),
@@ -121,6 +145,18 @@ export function useRecentImports() {
     [persist]
   )
 
+  const updateTaxEdits = useCallback(
+    (id: string, taxEdits: TaxEdits) => {
+      const current = readStorage()
+      const idx = current.findIndex((e) => e.id === id)
+      if (idx === -1) return
+      const next = current.slice()
+      next[idx] = { ...current[idx], taxEdits }
+      persist(next)
+    },
+    [persist]
+  )
+
   const remove = useCallback(
     (id: string) => {
       persist(readStorage().filter((e) => e.id !== id))
@@ -132,5 +168,5 @@ export function useRecentImports() {
     return readStorage().find((e) => e.id === id) ?? null
   }, [])
 
-  return { entries, add, updateEdits, remove, getById }
+  return { entries, add, updateEdits, updateTaxEdits, remove, getById }
 }

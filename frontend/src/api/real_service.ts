@@ -93,6 +93,8 @@ import type { HoldingWrite } from "@/bindings/HoldingWrite"
 import type { HoldingsWritePayload } from "@/bindings/HoldingsWritePayload"
 import type { InvestmentsImportPayload } from "@/bindings/InvestmentsImportPayload"
 import type { InvestmentImportResult } from "@/bindings/InvestmentImportResult"
+import type { TaxDocumentsImportPayload } from "@/bindings/TaxDocumentsImportPayload"
+import type { TaxDocumentsImportResult } from "@/bindings/TaxDocumentsImportResult"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
 import type { InvestmentHistoryRow } from "@/bindings/InvestmentHistoryRow"
 import type { CreateInvestmentEventBody } from "@/bindings/CreateInvestmentEventBody"
@@ -491,11 +493,38 @@ export class RealApiService implements ApiService {
     hints: ParseHints,
     opts?: ParseOptions
   ): Promise<IngestionPreview> {
-    const parseId = opts?.parseId ?? crypto.randomUUID()
     const formData = new FormData()
     files.forEach((f) => formData.append("files[]", f, f.name))
     formData.append("account_id", accountId)
     formData.append("hints", JSON.stringify(hints))
+    return this.postParse(formData, opts)
+  }
+
+  async parseTaxDocuments(
+    files: File[],
+    profileId: string,
+    hint: string | null,
+    opts?: ParseOptions
+  ): Promise<IngestionPreview> {
+    const hints: ParseHints = {
+      return_type: {
+        transactions: false,
+        holdings: { enabled: false, period: null },
+        investments: false,
+        tax_documents: true,
+      },
+      hint,
+    }
+    const formData = new FormData()
+    files.forEach((f) => formData.append("files[]", f, f.name))
+    formData.append("profile_id", profileId)
+    formData.append("hints", JSON.stringify(hints))
+    return this.postParse(formData, opts)
+  }
+
+  /** Shared `/api/parse` call: attaches the SSE progress stream, then uploads. */
+  private async postParse(formData: FormData, opts?: ParseOptions): Promise<IngestionPreview> {
+    const parseId = opts?.parseId ?? crypto.randomUUID()
     formData.append("parse_id", parseId)
 
     // Subscribe to progress before firing the upload. The backend registers the
@@ -549,6 +578,10 @@ export class RealApiService implements ApiService {
 
   async commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult> {
     return post<InvestmentImportResult>(`${BASE}/investments/import`, payload)
+  }
+
+  async commitTaxDocuments(payload: TaxDocumentsImportPayload): Promise<TaxDocumentsImportResult> {
+    return post<TaxDocumentsImportResult>(`${BASE}/income-records/import`, payload)
   }
 
   // ── Reports ───────────────────────────────────────────────────────

@@ -28,6 +28,11 @@ import type {
 import type { Category } from "@/bindings/Category"
 import type { CategoryNode } from "@/bindings/CategoryNode"
 import type { IngestionPreview } from "@/bindings/IngestionPreview"
+import type { TaxDocumentDraft } from "@/bindings/TaxDocumentDraft"
+import type { TaxDocumentPreviewRow } from "@/bindings/TaxDocumentPreviewRow"
+import type { TaxDocumentsImportPayload } from "@/bindings/TaxDocumentsImportPayload"
+import type { TaxDocumentsImportResult } from "@/bindings/TaxDocumentsImportResult"
+import type { TaxReconciliation } from "@/bindings/TaxReconciliation"
 import type { ParseHints } from "@/bindings/ParseHints"
 import type { CategorySource } from "@/bindings/CategorySource"
 import type { ImportPayload } from "@/bindings/ImportPayload"
@@ -1252,6 +1257,183 @@ export class MockApiService implements ApiService {
   async commitInvestments(payload: InvestmentsImportPayload): Promise<InvestmentImportResult> {
     await delay(DELAY_MS)
     return { total: payload.events.length, inserted: payload.events.length, duplicates: 0, errors: [] }
+  }
+
+  async parseTaxDocuments(
+    files: File[],
+    profileId: string,
+    _hint: string | null,
+    opts?: ParseOptions
+  ): Promise<IngestionPreview> {
+    const emit = opts?.onProgress
+    emit?.({ event: "llm_start", model: "claude-sonnet-4-6", input_tokens: 3100, task_id: "tax_documents" })
+    for (const items of [1, 2, 4]) {
+      await delay(DELAY_MS / 2)
+      emit?.({ event: "llm_progress", output_tokens: 0, elapsed_ms: 0, items, section: "tax_documents", task_id: "tax_documents" })
+    }
+    emit?.({ event: "phase", phase: "post_processing", message: "Checking saved records", task_id: null })
+    await delay(DELAY_MS / 3)
+    emit?.({ event: "done", total_ms: 1800 })
+
+    const employer = "Example Widgets Ltd"
+    const documents = [
+      { id: "doc_tax_1", filename: "synthetic_payslips.pdf", mime_type: "application/pdf", size_bytes: 48200, origin: "parse", account_id: null, uploaded_at: "2026-01-20T10:00:00", reference_count: null, orphaned: true },
+    ]
+    const payslip = (over: Partial<TaxDocumentDraft>, period: [string, string, string, string, string]): TaxDocumentDraft => ({
+      document_type: "payslip",
+      source_name: employer,
+      tax_year: "2025-26",
+      currency: "GBP",
+      document_ids: ["doc_tax_1"],
+      line_items: [
+        { line_type: "gross_pay", amount: period[0], basis: "period" },
+        { line_type: "paye_tax", amount: period[1], basis: "period" },
+        { line_type: "employee_ni", amount: period[2], basis: "period" },
+        { line_type: "student_loan", amount: period[3], basis: "period" },
+        { line_type: "net_pay", amount: period[4], basis: "period" },
+      ],
+      ...over,
+    })
+    const candidate = (id: string, date: string, amount: string, days: number) => ({
+      transaction_id: id,
+      account_id: "acc_current",
+      account_name: "Everyday Current",
+      date,
+      amount,
+      currency: "GBP",
+      description: "EXAMPLE WIDGETS LTD SALARY",
+      days_from_pay_date: BigInt(days),
+    })
+    const rows: TaxDocumentPreviewRow[] = [
+      {
+        index: 0,
+        status: "new",
+        row_confidence: 0.96,
+        source_document_ids: ["doc_tax_1"],
+        warnings: [],
+        net_pay_candidates: [candidate("tx_mock_pay_1", "2025-12-19", "2300.00", 0)],
+        draft: payslip(
+          { pay_date: "2025-12-19", period_start: "2025-12-01", period_end: "2025-12-31", transaction_id: "tx_mock_pay_1" },
+          ["3000.00", "400.00", "200.00", "100.00", "2300.00"],
+        ),
+      },
+      {
+        index: 1,
+        status: "new",
+        row_confidence: 0.88,
+        source_document_ids: ["doc_tax_1"],
+        warnings: ["Notional pay line (RSU) recorded; its offset deduction was not."],
+        net_pay_candidates: [
+          candidate("tx_mock_pay_2a", "2026-01-23", "2450.00", -1),
+          candidate("tx_mock_pay_2b", "2026-01-26", "2450.00", 2),
+        ],
+        draft: payslip(
+          {
+            pay_date: "2026-01-24",
+            period_start: "2026-01-01",
+            period_end: "2026-01-31",
+            line_items: [
+              { line_type: "gross_pay", amount: "3000.00", basis: "period" },
+              { line_type: "gross_pay", amount: "6000.00", basis: "year_to_date" },
+              { line_type: "paye_tax", amount: "420.00", basis: "period" },
+              { line_type: "employee_ni", amount: "210.00", basis: "period" },
+              { line_type: "rsu_vest_value", amount: "500.00", basis: "period" },
+              { line_type: "net_pay", amount: "2450.00", basis: "period" },
+            ],
+          },
+          ["", "", "", "", ""],
+        ),
+      },
+      {
+        index: 2,
+        status: "new",
+        row_confidence: 0.93,
+        source_document_ids: ["doc_tax_1"],
+        warnings: [],
+        net_pay_candidates: [],
+        draft: {
+          document_type: "annual_certificate",
+          source_name: employer,
+          tax_year: "2025-26",
+          period_end: "2026-04-05",
+          currency: "GBP",
+          document_ids: ["doc_tax_1"],
+          line_items: [
+            { line_type: "taxable_pay", amount: "36000.00", basis: "period" },
+            { line_type: "paye_tax", amount: "4800.00", basis: "period" },
+            { line_type: "employee_ni", amount: "2400.00", basis: "period" },
+          ],
+        },
+      },
+      {
+        index: 3,
+        status: "duplicate",
+        existing_id: "rec_mock_existing",
+        row_confidence: 0.95,
+        source_document_ids: ["doc_tax_1"],
+        warnings: [],
+        net_pay_candidates: [],
+        draft: payslip(
+          { pay_date: "2025-11-21", period_start: "2025-11-01", period_end: "2025-11-30" },
+          ["3000.00", "400.00", "200.00", "100.00", "2300.00"],
+        ),
+      },
+    ]
+    const reconciliation: TaxReconciliation[] = [
+      {
+        source_name: employer,
+        tax_year: "2025-26",
+        currency: "GBP",
+        certificate_row: 2,
+        payslip_rows: [0, 1, 3],
+        payslips_pay_total: "9000.00",
+        payslips_tax_total: "1220.00",
+        certificate_pay: "36000.00",
+        certificate_tax: "4800.00",
+        pay_difference: "27000.00",
+        tax_difference: "3580.00",
+        months_covered: ["2025-11", "2025-12", "2026-01"],
+        message: "P60 pay is 27000.00 more than the 3 payslips total; 9 months have no payslip in this batch.",
+      },
+    ]
+    return {
+      status: "success",
+      documents,
+      metadata: {
+        files_processed: files.length,
+        institution_detected: null,
+        detection_confidence: 0.94,
+        processing_time_ms: BigInt(1800),
+        notes: [],
+        relationships_found: [],
+        estimated_price: {
+          calls: [
+            { parser: "tax_documents", agent: "sonnet", model: "claude-sonnet-4-6", input_tokens: BigInt(3100), output_tokens: BigInt(900), duration_ms: BigInt(1800), amount: "0.0220", currency: "USD" },
+          ],
+          total: "0.0220",
+          currency: "USD",
+        },
+      },
+      transactions: { count: 0, new: 0, duplicate: 0, errors: 0, rows: [], payload: null },
+      holdings: { count: 0, new: 0, modify: 0, rows: [], payload: null, known_holdings: [] },
+      investments: { count: 0, new: 0, duplicate: 0, rows: [], payload: null },
+      clarifications_needed: [],
+      tax_documents: {
+        count: rows.length,
+        new: rows.filter((r) => r.status === "new").length,
+        duplicate: rows.filter((r) => r.status === "duplicate").length,
+        errors: 0,
+        profile_id: profileId,
+        rows,
+        reconciliation,
+        known_sources: [employer],
+      },
+    }
+  }
+
+  async commitTaxDocuments(payload: TaxDocumentsImportPayload): Promise<TaxDocumentsImportResult> {
+    await delay(DELAY_MS)
+    return { inserted: payload.documents.length, duplicates: 0, errors: [] }
   }
 
   // ── Reports ───────────────────────────────────────────────────────
