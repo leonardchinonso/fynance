@@ -251,6 +251,10 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
         .route("/income-records", get(routes::income::list_records))
         .route("/income-records", post(routes::income::create_record))
         .route(
+            "/income-sources/:id/sync",
+            post(routes::income_sync::sync_income_source),
+        )
+        .route(
             "/income-records/import",
             post(routes::income_import::import_income_records),
         )

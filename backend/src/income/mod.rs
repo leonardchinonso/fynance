@@ -2,5 +2,6 @@
 
 pub mod line_types;
 pub mod summary;
+pub mod sync;
 pub mod validate;
 pub mod vest;
