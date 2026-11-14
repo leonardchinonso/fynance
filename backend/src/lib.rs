@@ -9,6 +9,7 @@ pub mod cgt;
 pub mod cli;
 pub mod commands;
 pub mod importers;
+pub mod income;
 pub mod model;
 pub mod server;
 pub mod storage;

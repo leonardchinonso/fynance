@@ -278,6 +278,284 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             "items": { "$ref": "#/components/schemas/S104PoolState" }
                         }
                     }
+                },
+                "IncomeSource": {
+                    "type": "object",
+                    "description": "An employer or a business that produces income for one profile (plan 30). `account_ids` and `expense_category_map` apply to self_employment sources: outflows on those accounts are grouped by category and mapped to an expense line type.",
+                    "required": ["id", "profile_id", "source_type", "name", "identifiers", "account_ids", "expense_category_map", "active", "created_at", "updated_at"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "profile_id": { "type": "string" },
+                        "source_type": { "type": "string", "enum": ["employment", "self_employment", "property", "other"], "description": "property and other are accepted but have no special summary in V1." },
+                        "name": { "type": "string" },
+                        "identifiers": { "type": "object", "description": "employment: paye_reference, payroll_id. self_employment: description, accounting_basis (`cash`)." },
+                        "account_ids": { "type": "array", "items": { "type": "string" } },
+                        "expense_category_map": { "type": "object", "additionalProperties": { "type": "string" }, "description": "category id to the expense line type it feeds. `uncategorized` maps transactions with no category." },
+                        "sync_kind": { "type": "string", "enum": ["shop_app"], "description": "Set when the business income sync feeds the source." },
+                        "active": { "type": "boolean" },
+                        "notes": { "type": "string" },
+                        "created_at": { "type": "string" },
+                        "updated_at": { "type": "string" }
+                    }
+                },
+                "IncomeSourcePayload": {
+                    "type": "object",
+                    "description": "Request body for POST /api/income-sources.",
+                    "required": ["profile_id", "source_type", "name"],
+                    "properties": {
+                        "profile_id": { "type": "string" },
+                        "source_type": { "type": "string", "enum": ["employment", "self_employment", "property", "other"] },
+                        "name": { "type": "string" },
+                        "identifiers": { "type": "object" },
+                        "account_ids": { "type": "array", "items": { "type": "string" } },
+                        "expense_category_map": { "type": "object", "additionalProperties": { "type": "string" } },
+                        "sync_kind": { "type": "string", "enum": ["shop_app"] },
+                        "active": { "type": "boolean", "default": true },
+                        "notes": { "type": "string" }
+                    }
+                },
+                "IncomeLineItem": {
+                    "type": "object",
+                    "required": ["id", "line_type", "amount", "currency", "basis"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "line_type": { "type": "string", "description": "See GET /api/income/line-types." },
+                        "amount": { "type": "string", "description": "Decimal string, >= 0 (negative only on year_end_adjustment records)." },
+                        "currency": { "type": "string", "example": "GBP" },
+                        "basis": { "type": "string", "enum": ["period", "year_to_date"], "description": "year_to_date lines are stored but never summed." },
+                        "label": { "type": "string", "description": "As printed on the document." },
+                        "investment_event_id": { "type": "string", "description": "rsu_vest_value only: the linked `vest` investment event." }
+                    }
+                },
+                "IncomeRecord": {
+                    "type": "object",
+                    "description": "One period of income for a source (a payslip month, a month of sales) with its line items embedded.",
+                    "required": ["id", "source_id", "kind", "period_start", "period_end", "tax_year", "currency", "transaction_ids", "document_ids", "origin", "line_items", "created_at", "updated_at"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "source_id": { "type": "string" },
+                        "kind": { "type": "string", "enum": ["period", "year_end_adjustment"] },
+                        "period_start": { "type": "string", "format": "date" },
+                        "period_end": { "type": "string", "format": "date" },
+                        "pay_date": { "type": "string", "format": "date", "description": "Employment: PAYE is by payment date." },
+                        "tax_year": { "type": "string", "example": "2025-26", "description": "Derived server-side: employment by pay_date (else period_end), everything else by period_end." },
+                        "currency": { "type": "string" },
+                        "transaction_ids": { "type": "array", "items": { "type": "string" }, "description": "Linked bank credits. A deleted transaction is removed from this list." },
+                        "document_ids": { "type": "array", "items": { "type": "string" } },
+                        "origin": { "type": "string", "enum": ["manual", "parse", "shop_sync", "adjustment"] },
+                        "external_ref": { "type": "string", "description": "shop_sync: the period key `YYYY-MM-DD..YYYY-MM-DD`." },
+                        "notes": { "type": "string" },
+                        "line_items": { "type": "array", "items": { "$ref": "#/components/schemas/IncomeLineItem" } },
+                        "created_at": { "type": "string" },
+                        "updated_at": { "type": "string" }
+                    }
+                },
+                "IncomeRecordPayload": {
+                    "type": "object",
+                    "description": "Request body for POST /api/income-records. Records made here are kind=period, origin=manual.",
+                    "required": ["source_id", "period_start", "period_end"],
+                    "properties": {
+                        "source_id": { "type": "string" },
+                        "period_start": { "type": "string", "format": "date" },
+                        "period_end": { "type": "string", "format": "date" },
+                        "pay_date": { "type": "string", "format": "date" },
+                        "currency": { "type": "string", "default": "GBP" },
+                        "transaction_ids": { "type": "array", "items": { "type": "string" } },
+                        "document_ids": { "type": "array", "items": { "type": "string" } },
+                        "notes": { "type": "string" },
+                        "line_items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["line_type", "amount"],
+                                "properties": {
+                                    "line_type": { "type": "string" },
+                                    "amount": { "type": "string" },
+                                    "currency": { "type": "string", "description": "Defaults to the record's currency." },
+                                    "basis": { "type": "string", "enum": ["period", "year_to_date"], "default": "period" },
+                                    "label": { "type": "string" },
+                                    "investment_event_id": { "type": "string" }
+                                }
+                            }
+                        }
+                    }
+                },
+                "TaxDocumentsImportPayload": {
+                    "type": "object",
+                    "description": "Request body for POST /api/income-records/import: the reviewed drafts of a tax-document parse.",
+                    "required": ["profile_id", "documents"],
+                    "properties": {
+                        "profile_id": { "type": "string" },
+                        "documents": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["document_type", "source_name", "tax_year", "currency", "line_items"],
+                                "properties": {
+                                    "document_type": { "type": "string", "enum": ["payslip", "annual_certificate"], "description": "`annual_certificate` is a P60." },
+                                    "source_name": { "type": "string", "description": "The employer." },
+                                    "paye_reference": { "type": "string" },
+                                    "tax_year": { "type": "string", "example": "2025-26" },
+                                    "pay_date": { "type": "string", "format": "date" },
+                                    "period_start": { "type": "string", "format": "date" },
+                                    "period_end": { "type": "string", "format": "date" },
+                                    "currency": { "type": "string" },
+                                    "line_items": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "required": ["line_type", "amount", "basis"],
+                                            "properties": {
+                                                "line_type": { "type": "string" },
+                                                "label": { "type": "string" },
+                                                "amount": { "type": "string" },
+                                                "basis": { "type": "string", "enum": ["period", "year_to_date"] }
+                                            }
+                                        }
+                                    },
+                                    "transaction_id": { "type": "string", "description": "The accepted net-pay bank credit." },
+                                    "document_ids": { "type": "array", "items": { "type": "string" } },
+                                    "notes": { "type": "string" }
+                                }
+                            }
+                        }
+                    }
+                },
+                "TaxDocumentsImportResult": {
+                    "type": "object",
+                    "required": ["inserted", "duplicates", "errors"],
+                    "properties": {
+                        "inserted": { "type": "integer", "description": "Records and checks written." },
+                        "duplicates": { "type": "integer", "description": "Rows skipped because the same record was already saved." },
+                        "errors": {
+                            "type": "array",
+                            "description": "Always present; empty when every row was written or skipped.",
+                            "items": {
+                                "type": "object",
+                                "required": ["index", "reason"],
+                                "properties": {
+                                    "index": { "type": "integer", "description": "Position in the request's `documents`." },
+                                    "reason": { "type": "string" }
+                                }
+                            }
+                        }
+                    }
+                },
+                "IncomeCheck": {
+                    "type": "object",
+                    "description": "A P60 or annual accounts kept as a reconciliation check: its printed figures are compared with the summed records and never added to them.",
+                    "required": ["id", "source_id", "tax_year", "check_type", "figures", "document_ids", "created_at", "updated_at"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "source_id": { "type": "string" },
+                        "tax_year": { "type": "string", "example": "2025-26" },
+                        "check_type": { "type": "string", "enum": ["p60", "annual_accounts"] },
+                        "figures": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["line_type", "amount", "currency"],
+                                "properties": {
+                                    "line_type": { "type": "string" },
+                                    "amount": { "type": "string" },
+                                    "currency": { "type": "string" }
+                                }
+                            }
+                        },
+                        "document_ids": { "type": "array", "items": { "type": "string" } },
+                        "notes": { "type": "string" },
+                        "created_at": { "type": "string" },
+                        "updated_at": { "type": "string" }
+                    }
+                },
+                "VestCandidate": {
+                    "type": "object",
+                    "required": ["investment_event_id", "account_name", "symbol", "date", "quantity", "price_per_share", "currency", "value_gbp", "status"],
+                    "properties": {
+                        "investment_event_id": { "type": "string" },
+                        "account_name": { "type": "string" },
+                        "symbol": { "type": "string" },
+                        "date": { "type": "string", "format": "date" },
+                        "quantity": { "type": "string" },
+                        "price_per_share": { "type": "string" },
+                        "currency": { "type": "string" },
+                        "value_gbp": { "type": "string", "description": "quantity x price at the vest-date rate, in the preferred currency." },
+                        "status": { "type": "string", "enum": ["matched", "mismatch"], "description": "matched when within 1 of the record's vest lines." }
+                    }
+                },
+                "TaxYearSummary": {
+                    "type": "object",
+                    "description": concat!(
+                        "One profile's figures for a UK tax year (plan 30). Employment and self-employment ",
+                        "are per source: SA102 and SA103S values summed from the records' period-basis, ",
+                        "summed line items (taxable pay per record when present, else gross pay). Checks ",
+                        "(P60, annual accounts) are compared with the sum and never added to it. Interest ",
+                        "and Gift Aid come from the profile's accounts, with joint accounts split equally. ",
+                        "`warnings` lists missing exchange rates; the amounts concerned are left out."
+                    ),
+                    "required": ["tax_year", "start_date", "end_date", "profile_id", "employment", "self_employment", "interest", "donations", "cgt_link", "warnings"],
+                    "properties": {
+                        "tax_year": { "type": "string", "example": "2025-26" },
+                        "start_date": { "type": "string", "format": "date", "description": "6 April opening day." },
+                        "end_date": { "type": "string", "format": "date", "description": "5 April closing day." },
+                        "profile_id": { "type": "string" },
+                        "employment": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "description": "source_id, name, paye_reference?, record_count, months_covered, boxes {pay, tax, student_loan, postgraduate_loan}, shown {gross_pay, employee_ni, employee_pension, rsu_vest_value, rsu_tax, net_pay}, check? {check_id, pay, tax, pay_difference, tax_difference, status: matched|gap|adjusted}, rsu [{record_id, line_item_id, vest_value, investment_event_id?, event_value?, status: unlinked|matched|mismatch}]."
+                            }
+                        },
+                        "self_employment": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "description": "source_id, name, months_covered, turnover, expenses_by_line_type, total_expenses, net_profit, trading_allowance_better, bank_expenses {mapped_total, unmapped [{category_id, name, total}]}, info (costing totals, never summed), check? {check_id, turnover, expenses, turnover_difference, expenses_difference, status}."
+                            }
+                        },
+                        "interest": { "$ref": "#/components/schemas/InterestSummary" },
+                        "donations": { "$ref": "#/components/schemas/DonationSummary" },
+                        "cgt_link": {
+                            "type": "object",
+                            "properties": {
+                                "start_date": { "type": "string", "format": "date" },
+                                "end_date": { "type": "string", "format": "date" }
+                            }
+                        },
+                        "warnings": { "type": "array", "items": { "type": "string" } }
+                    }
+                },
+                "InterestSummary": {
+                    "type": "object",
+                    "required": ["taxable_total", "non_taxable_total", "by_account"],
+                    "properties": {
+                        "taxable_total": { "type": "string" },
+                        "non_taxable_total": { "type": "string" },
+                        "by_account": {
+                            "type": "array",
+                            "description": "Only accounts with interest transactions in the range.",
+                            "items": { "$ref": "#/components/schemas/InterestAccountTotal" }
+                        }
+                    }
+                },
+                "InterestAccountTotal": {
+                    "type": "object",
+                    "required": ["account_id", "account_name", "taxable", "non_taxable"],
+                    "properties": {
+                        "account_id": { "type": "string" },
+                        "account_name": { "type": "string" },
+                        "taxable": { "type": "string" },
+                        "non_taxable": { "type": "string" }
+                    }
+                },
+                "DonationSummary": {
+                    "type": "object",
+                    "description": "Gift Aid is the `donation_taxable` category type; only outflow legs count.",
+                    "required": ["gift_aid_total", "non_gift_aid_total"],
+                    "properties": {
+                        "gift_aid_total": { "type": "string" },
+                        "non_gift_aid_total": { "type": "string" }
+                    }
                 }
             }
         },
@@ -657,7 +935,7 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
             "/api/parse": {
                 "post": {
                     "summary": "Stage 1 parse: extract transactions from uploaded documents (PDF/CSV)",
-                    "description": "Accepts a multipart upload (50 MB total, 10 MB per file). Kicks off LLM extraction; track progress via `GET /api/parse/progress/{parse_id}`.",
+                    "description": "Accepts a multipart upload (50 MB total, 10 MB per file). Kicks off LLM extraction; track progress via `GET /api/parse/progress/{parse_id}`. Set `hints.return_type.tax_documents` to parse payslips and P60s (PDF or image, up to 15 files, `profile_id` field required, `account_id` ignored): the response then carries a `tax_documents` object (rows, payslip-vs-P60 reconciliation, known employer names) and empty transactions, holdings and investments. Tax documents cannot be combined with another return type. Statement requests keep the 5-file cap. 400 codes added for tax documents: `invalid_return_type`, `missing_profile_id`, `profile_not_found`, `unsupported_tax_document_format`, `too_many_files`, `response_truncated`.",
                     "security": [{ "bearerAuth": [] }],
                     "requestBody": {
                         "required": true,
@@ -1218,6 +1496,240 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                             }
                         }
                     }
+                }
+            }
+        },
+        "/api/income/line-types": {
+            "get": {
+                "summary": "Income line-type catalogue",
+                "description": "One row per line type: the source type it belongs to, its label, whether it is summed, its sign, and the self-assessment form and box it feeds. The summary and the frontend columns both come from this table.",
+                "responses": {
+                    "200": { "description": "The catalogue, as `{ \"items\": [LineTypeInfo] }`." }
+                }
+            }
+        },
+        "/api/income/vest-candidates": {
+            "get": {
+                "summary": "RSU vest candidates for a payslip",
+                "description": "`vest` investment events of the source profile within 7 days of the record pay date (else period end). `matched` when the event value in the preferred currency is within 1 of the record vest lines. Empty when the record has no rsu_vest_value line.",
+                "parameters": [
+                    { "name": "record_id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Income record id." }
+                ],
+                "responses": {
+                    "200": { "description": "The candidates, as `{ \"items\": [VestCandidate] }`.", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/VestCandidate" } } } } } } },
+                    "400": { "description": "record_id missing.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-sources": {
+            "get": {
+                "summary": "List income sources",
+                "description": "Sources of one profile, or of every profile when profile_id is omitted.",
+                "parameters": [
+                    { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Restrict to one profile." }
+                ],
+                "responses": {
+                    "200": { "description": "The sources, as `{ \"items\": [IncomeSource] }`.", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/IncomeSource" } } } } } } }
+                }
+            },
+            "post": {
+                "summary": "Create an income source",
+                "security": [{ "bearerAuth": [] }],
+                "description": "account_ids, expense_category_map and sync_kind apply to self_employment sources only. Mapped line types must be expense line types.",
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeSourcePayload" } } } },
+                "responses": {
+                    "201": { "description": "The created source.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeSource" } } } },
+                    "400": { "description": "Unknown profile, account or category, empty name, or an invalid line type or sync_kind.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-sources/{id}": {
+            "patch": {
+                "summary": "Update an income source",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Partial update of name, identifiers, account_ids, expense_category_map, sync_kind (null clears), active and notes (null clears). At least one field is required.",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income source id." }
+                ],
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
+                "responses": {
+                    "200": { "description": "The source after the update.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeSource" } } } },
+                    "400": { "description": "Empty body or an invalid field.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            },
+            "delete": {
+                "summary": "Delete an income source",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Refused while the source still has income records. Its checks are deleted with it.",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income source id." }
+                ],
+                "responses": {
+                    "204": { "description": "Source deleted." },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "409": { "description": "source_has_records.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-sources/{id}/year-end-adjustment": {
+            "post": {
+                "summary": "Create a year-end adjustment",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Compares the source check (P60 or annual accounts) for the tax year with its summed period records and, when they differ, creates one `year_end_adjustment` record spanning the tax year whose line items are the signed differences. Negative amounts are allowed on these records only. For a self-employment source the whole expense gap is written to the `other_expenses` line, whatever the expense types in the annual accounts. To refresh a stale adjustment, delete the adjustment record and create it again.",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income source id." }
+                ],
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["tax_year"], "properties": { "tax_year": { "type": "string", "example": "2025-26" } } } } } },
+                "responses": {
+                    "201": { "description": "The adjustment record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecord" } } } },
+                    "400": { "description": "Bad tax_year, or a source type without checks.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "409": { "description": "no_check, no_gap or adjustment_exists.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-records": {
+            "get": {
+                "summary": "List income records",
+                "description": "Records with line items embedded, sorted by pay date then period end.",
+                "parameters": [
+                    { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Restrict to one profile." },
+                    { "name": "source_id", "in": "query", "schema": { "type": "string" }, "description": "Restrict to one source." },
+                    { "name": "tax_year", "in": "query", "schema": { "type": "string" }, "description": "Restrict to one tax year, as `YYYY-YY`." }
+                ],
+                "responses": {
+                    "200": { "description": "The records, as `{ \"items\": [IncomeRecord] }`.", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/IncomeRecord" } } } } } } },
+                    "400": { "description": "Bad tax_year.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            },
+            "post": {
+                "summary": "Create an income record",
+                "security": [{ "bearerAuth": [] }],
+                "description": "The tax year is derived server-side. Refused: unknown source, bad dates, period_end before period_start, a non-employment period crossing a tax year, a negative amount, a line type not valid for the source type, an investment_event_id that is not a vest event, unknown transaction ids, an unknown currency.",
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecordPayload" } } } },
+                "responses": {
+                    "201": { "description": "The created record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecord" } } } },
+                    "400": { "description": "Validation failure; the error code names the rule. A body that does not deserialise (unknown basis or line type, missing field) is `invalid_body`; an unknown document id is `document_not_found`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-records/import": {
+            "post": {
+                "summary": "Commit parsed payslips and P60s",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Stage 2 of the tax-document import. Each draft finds or creates the profile's employment source by normalised name (the PAYE reference is stored when the draft has one). A payslip becomes a `period` income record with `origin = parse` (`period_end` falls back to `pay_date`, `period_start` to `period_end`; the draft's `transaction_id` is linked); a P60 becomes a `p60` income check holding its period-basis figures. Server-side duplicates (same source, tax year and period end) are skipped and counted. Rows that fail validation, or a P60 whose check already exists, are reported in `errors` by index and never fail the batch. Valid rows are written in one SQLite transaction.",
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaxDocumentsImportPayload" } } } },
+                "responses": {
+                    "200": { "description": "Counts and per-row errors.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaxDocumentsImportResult" } } } },
+                    "400": { "description": "Unknown profile (`profile_not_found`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-records/{id}": {
+            "get": {
+                "summary": "Get an income record",
+                "description": "One record with its line items.",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income record id." }
+                ],
+                "responses": {
+                    "200": { "description": "The record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecord" } } } },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            },
+            "patch": {
+                "summary": "Update an income record",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Partial update. A present `line_items` array replaces every line item of the record; an absent key leaves them alone. pay_date and notes accept null to clear.",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income record id." }
+                ],
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
+                "responses": {
+                    "200": { "description": "The record after the update.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecord" } } } },
+                    "400": { "description": "Empty body or a validation failure.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            },
+            "delete": {
+                "summary": "Delete an income record",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Its line items are deleted with it.",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income record id." }
+                ],
+                "responses": {
+                    "204": { "description": "Record deleted." },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-checks": {
+            "get": {
+                "summary": "List income checks",
+                "description": "P60s and annual accounts kept as reconciliation checks.",
+                "parameters": [
+                    { "name": "profile_id", "in": "query", "schema": { "type": "string" }, "description": "Restrict to one profile." },
+                    { "name": "tax_year", "in": "query", "schema": { "type": "string" }, "description": "Restrict to one tax year, as `YYYY-YY`." }
+                ],
+                "responses": {
+                    "200": { "description": "The checks, as `{ \"items\": [IncomeCheck] }`.", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/IncomeCheck" } } } } } } },
+                    "400": { "description": "Bad tax_year.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            },
+            "post": {
+                "summary": "Create an income check",
+                "security": [{ "bearerAuth": [] }],
+                "description": "One check per source, tax year and type. An employment source takes p60, a self_employment source annual_accounts.",
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["source_id", "tax_year", "check_type", "figures"], "properties": { "source_id": { "type": "string" }, "tax_year": { "type": "string", "example": "2025-26" }, "check_type": { "type": "string", "enum": ["p60", "annual_accounts"] }, "figures": { "type": "array", "items": { "type": "object" } }, "document_ids": { "type": "array", "items": { "type": "string" } }, "notes": { "type": "string" } } } } } },
+                "responses": {
+                    "201": { "description": "The created check.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeCheck" } } } },
+                    "400": { "description": "Bad tax_year, unknown source, wrong check type, invalid figure, unknown document id (`document_not_found`), malformed body (`invalid_body`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "409": { "description": "check_exists.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-checks/{id}": {
+            "patch": {
+                "summary": "Update an income check",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Partial update of figures, document_ids and notes (null clears).",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income check id." }
+                ],
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
+                "responses": {
+                    "200": { "description": "The check after the update.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeCheck" } } } },
+                    "400": { "description": "Empty body or an invalid figure.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            },
+            "delete": {
+                "summary": "Delete an income check",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Removes the check; summed records are untouched.",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income check id." }
+                ],
+                "responses": {
+                    "204": { "description": "Check deleted." },
+                    "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/tax/summary/{tax_year}": {
+            "get": {
+                "summary": "Tax-year summary for one profile",
+                "description": "Employment and self-employment per source, interest, Gift Aid and a link to the CGT report window. Only period-basis lines of summed line types are added up; checks are compared, never summed.",
+                "parameters": [
+                    { "name": "tax_year", "in": "path", "required": true, "schema": { "type": "string" }, "description": "UK tax year as `YYYY-YY`." },
+                    { "name": "profile_id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "The taxpayer profile." }
+                ],
+                "responses": {
+                    "200": { "description": "The year's figures.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaxYearSummary" } } } },
+                    "400": { "description": "tax_year is not in YYYY-YY form, or profile_id is missing (missing_profile_id) or unknown.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
                 }
             }
         },

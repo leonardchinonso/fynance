@@ -234,6 +234,37 @@ pub fn build_router(db: Arc<Mutex<Db>>, loopback_only: bool) -> Router {
             "/investments/brought-forward-losses",
             get(routes::capital_gains::get_brought_forward_losses),
         )
+        // -- Income model and tax-year summary -------------------------------
+        .route("/income/line-types", get(routes::income::list_line_types))
+        .route(
+            "/income/vest-candidates",
+            get(routes::income::vest_candidates),
+        )
+        .route("/income-sources", get(routes::income::list_sources))
+        .route("/income-sources", post(routes::income::create_source))
+        .route("/income-sources/:id", patch(routes::income::update_source))
+        .route("/income-sources/:id", delete(routes::income::delete_source))
+        .route(
+            "/income-sources/:id/year-end-adjustment",
+            post(routes::income::create_year_end_adjustment),
+        )
+        .route("/income-records", get(routes::income::list_records))
+        .route("/income-records", post(routes::income::create_record))
+        .route(
+            "/income-records/import",
+            post(routes::income_import::import_income_records),
+        )
+        .route("/income-records/:id", get(routes::income::get_record))
+        .route("/income-records/:id", patch(routes::income::update_record))
+        .route("/income-records/:id", delete(routes::income::delete_record))
+        .route("/income-checks", get(routes::income::list_checks))
+        .route("/income-checks", post(routes::income::create_check))
+        .route("/income-checks/:id", patch(routes::income::update_check))
+        .route("/income-checks/:id", delete(routes::income::delete_check))
+        .route(
+            "/tax/summary/:tax_year",
+            get(routes::income::get_tax_year_summary),
+        )
         .route("/tax-config", get(routes::tax::get_tax_config))
         .route("/tax-config", put(routes::tax::put_tax_config))
         .route(

@@ -21,3 +21,7 @@ export { useAccountHoldingsHistory } from "./use_account_holdings_history"
 export { useProfilesData } from "./use_profiles"
 export { useCurrencies } from "./use_currencies"
 export { useDocuments } from "./use_documents"
+export {
+  useIncomeChecks, useIncomeLineTypes, useIncomeRecords, useIncomeSources,
+  useTaxSummary, useVestCandidates,
+} from "./use_tax"

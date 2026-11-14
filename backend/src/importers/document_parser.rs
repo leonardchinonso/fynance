@@ -127,10 +127,23 @@ pub struct ReturnType {
     pub holdings: HoldingsReturnConfig,
     #[serde(default)]
     pub investments: bool,
+    /// Payslips and P60s. Exclusive: cannot be combined with another kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tax_documents: Option<bool>,
 }
 
 impl ReturnType {
     pub fn is_valid(&self) -> bool {
+        self.transactions || self.holdings.enabled || self.investments || self.wants_tax_documents()
+    }
+
+    pub fn wants_tax_documents(&self) -> bool {
+        self.tax_documents.unwrap_or(false)
+    }
+
+    /// Whether a statement kind (transactions, holdings or investments) is also requested.
+    pub fn wants_statement_data(&self) -> bool {
         self.transactions || self.holdings.enabled || self.investments
     }
 
@@ -503,6 +516,7 @@ pub fn build_multi_preview(
         investments: investments_result,
         clarifications_needed: vec![],
         documents: vec![],
+        tax_documents: None,
     })
 }
 
@@ -1007,6 +1021,7 @@ mod tests {
     #[test]
     fn test_to_content_types_includes_investments() {
         let rt = ReturnType {
+            tax_documents: None,
             transactions: false,
             holdings: HoldingsReturnConfig::default(),
             investments: true,
@@ -1033,6 +1048,7 @@ mod tests {
     #[test]
     fn test_return_type_is_valid() {
         let rt = ReturnType {
+            tax_documents: None,
             transactions: false,
             holdings: HoldingsReturnConfig::default(),
             investments: false,
@@ -1040,6 +1056,7 @@ mod tests {
         assert!(!rt.is_valid());
 
         let rt = ReturnType {
+            tax_documents: None,
             transactions: true,
             holdings: HoldingsReturnConfig::default(),
             investments: false,
@@ -1047,6 +1064,7 @@ mod tests {
         assert!(rt.is_valid());
 
         let rt = ReturnType {
+            tax_documents: None,
             transactions: false,
             holdings: HoldingsReturnConfig {
                 enabled: true,
@@ -1057,6 +1075,7 @@ mod tests {
         assert!(rt.is_valid());
 
         let rt = ReturnType {
+            tax_documents: None,
             transactions: false,
             holdings: HoldingsReturnConfig::default(),
             investments: true,
@@ -1067,6 +1086,7 @@ mod tests {
     #[test]
     fn test_return_type_to_content_types() {
         let rt = ReturnType {
+            tax_documents: None,
             transactions: true,
             holdings: HoldingsReturnConfig::default(),
             investments: false,
@@ -1074,6 +1094,7 @@ mod tests {
         assert_eq!(rt.to_content_types(), vec![ContentType::Transactions]);
 
         let rt = ReturnType {
+            tax_documents: None,
             transactions: false,
             holdings: HoldingsReturnConfig {
                 enabled: true,
@@ -1084,6 +1105,7 @@ mod tests {
         assert_eq!(rt.to_content_types(), vec![ContentType::Holdings]);
 
         let rt = ReturnType {
+            tax_documents: None,
             transactions: true,
             holdings: HoldingsReturnConfig {
                 enabled: true,
@@ -1097,6 +1119,7 @@ mod tests {
         );
 
         let rt = ReturnType {
+            tax_documents: None,
             transactions: false,
             holdings: HoldingsReturnConfig::default(),
             investments: true,
@@ -1104,6 +1127,7 @@ mod tests {
         assert_eq!(rt.to_content_types(), vec![ContentType::Investments]);
 
         let rt = ReturnType {
+            tax_documents: None,
             transactions: true,
             holdings: HoldingsReturnConfig {
                 enabled: true,
@@ -1121,6 +1145,7 @@ mod tests {
         );
 
         let rt = ReturnType {
+            tax_documents: None,
             transactions: false,
             holdings: HoldingsReturnConfig::default(),
             investments: false,
@@ -1150,6 +1175,7 @@ mod tests {
         // invalid per the route handler validation.
         let hints = ParseHints {
             return_type: ReturnType {
+                tax_documents: None,
                 transactions: false,
                 holdings: HoldingsReturnConfig {
                     enabled: true,

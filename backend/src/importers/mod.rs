@@ -15,6 +15,7 @@ pub mod pdf_parser;
 pub mod periodic_holdings_parser;
 pub mod pricing;
 pub mod provider;
+pub mod tax_documents;
 pub mod unified;
 pub mod unified_parser;
 

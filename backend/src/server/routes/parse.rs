@@ -18,6 +18,7 @@ use crate::importers::provider::{
     self, ParsePhase, ProgressEvent, ProgressTx, ProviderError, create_provider_with_auth,
     emit_progress,
 };
+use crate::importers::tax_documents::parser::{LlmTaxDocumentParser, ParsedTaxDocuments};
 use crate::importers::unified_parser::{
     CategorySummary, HoldingSummary, UnifiedContext, extract_all as unified_extract_all,
 };
@@ -34,6 +35,7 @@ const RESPONSE_TRUNCATED_MESSAGE: &str = "The uploaded document(s) produced more
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10 MB per file
 const MAX_TOTAL_SIZE: usize = 50 * 1024 * 1024; // 50 MB total
 const MAX_FILES: usize = 5;
+const MAX_TAX_FILES: usize = 15;
 
 type ProgressChannels =
     std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, ProgressTx>>>;
@@ -57,6 +59,24 @@ impl Drop for ProgressCleanupGuard {
     }
 }
 
+/// Open the broadcast channel for this parse's SSE stream. The map entry is
+/// removed by [`ProgressCleanupGuard`]; the timer is only a backstop.
+fn register_progress(state: &AppState, parse_id: Option<&String>) -> Option<ProgressTx> {
+    parse_id.map(|pid| {
+        let (tx, _rx) = tokio::sync::broadcast::channel::<ProgressEvent>(64);
+        state.progress_channels().insert(pid.clone(), tx.clone());
+
+        let channels = state.progress_channels.clone();
+        let pid_clone = pid.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            lock_or_recover(&channels).remove(&pid_clone);
+        });
+
+        tx
+    })
+}
+
 // ── POST /api/parse ─────────────────────────────────────────────────────────
 
 pub async fn parse_documents(
@@ -67,6 +87,7 @@ pub async fn parse_documents(
     tracing::info!("POST /api/parse: request received");
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut account_id: Option<String> = None;
+    let mut profile_id: Option<String> = None;
     let mut hints: Option<ParseHints> = None;
     let mut parse_id: Option<String> = None;
 
@@ -77,9 +98,9 @@ pub async fn parse_documents(
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "files[]" | "file" => {
-                if files.len() >= MAX_FILES {
+                if files.len() >= MAX_TAX_FILES {
                     return Err(AppError::bad_request(
-                        format!("maximum {MAX_FILES} files per request"),
+                        format!("maximum {MAX_TAX_FILES} files per request"),
                         "too_many_files",
                     ));
                 }
@@ -116,6 +137,17 @@ pub async fn parse_documents(
                 })?;
                 if !val.is_empty() {
                     account_id = Some(val);
+                }
+            }
+            "profile_id" => {
+                let bytes = field.bytes().await.map_err(|e| {
+                    AppError::bad_request(format!("failed to read profile_id: {e}"), "field_error")
+                })?;
+                let val = String::from_utf8(bytes.to_vec()).map_err(|_| {
+                    AppError::bad_request("profile_id is not valid UTF-8", "field_error")
+                })?;
+                if !val.is_empty() {
+                    profile_id = Some(val);
                 }
             }
             "hints" => {
@@ -172,6 +204,16 @@ pub async fn parse_documents(
         ));
     }
 
+    let wants_tax = hints
+        .as_ref()
+        .is_some_and(|h| h.return_type.wants_tax_documents());
+    if !wants_tax && files.len() > MAX_FILES {
+        return Err(AppError::bad_request(
+            format!("maximum {MAX_FILES} files per request"),
+            "too_many_files",
+        ));
+    }
+
     // Validate total size
     let total_size: usize = files.iter().map(|(_, b)| b.len()).sum();
     if total_size > MAX_TOTAL_SIZE {
@@ -179,6 +221,19 @@ pub async fn parse_documents(
             format!("total upload size exceeds 50 MB limit ({total_size} bytes)"),
             "total_too_large",
         ));
+    }
+
+    if let (true, Some(hints)) = (wants_tax, hints.as_ref()) {
+        return run_tax_documents_path(
+            state,
+            files,
+            profile_id,
+            hints.clone(),
+            parse_id,
+            route_started,
+        )
+        .await
+        .map(Json);
     }
 
     let account_id = account_id.ok_or_else(|| {
@@ -196,7 +251,7 @@ pub async fn parse_documents(
     // Validate return_type
     if !hints.return_type.is_valid() {
         return Err(AppError::bad_request(
-            "return_type must have at least one extraction type enabled (transactions, holdings.enabled, or investments)",
+            "return_type must have at least one extraction type enabled (transactions, holdings.enabled, investments, or tax_documents)",
             "invalid_return_type",
         ));
     }
@@ -224,21 +279,7 @@ pub async fn parse_documents(
         "parse: hints validated, starting pipeline"
     );
 
-    // ── Progress channel setup ─────────────────────────────────────────────
-    let progress_tx: Option<ProgressTx> = parse_id.as_ref().map(|pid| {
-        let (tx, _rx) = tokio::sync::broadcast::channel::<ProgressEvent>(64);
-        state.progress_channels().insert(pid.clone(), tx.clone());
-
-        let channels = state.progress_channels.clone();
-        let pid_clone = pid.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
-            lock_or_recover(&channels).remove(&pid_clone);
-        });
-
-        tx
-    });
-
+    let progress_tx = register_progress(&state, parse_id.as_ref());
     let _progress_cleanup = ProgressCleanupGuard {
         parse_id: parse_id.clone(),
         channels: state.progress_channels.clone(),
@@ -380,7 +421,7 @@ pub async fn parse_documents(
     let preview = {
         let db = state.db();
         let (doc_map, all_doc_ids, doc_summaries) =
-            store_parse_documents(&db, &documents, &account_id)
+            store_parse_documents(&db, &documents, Some(&account_id))
                 .map_err(|e| AppError::bad_request(e.to_string(), "document_store_error"))?;
         let mut preview = build_multi_preview(
             merged_extraction,
@@ -573,7 +614,7 @@ async fn run_unified_path(
     let mut preview = {
         let db = state.db();
         let (doc_map, all_doc_ids, doc_summaries) =
-            store_parse_documents(&db, &documents, &account_id)
+            store_parse_documents(&db, &documents, Some(&account_id))
                 .map_err(|e| AppError::bad_request(e.to_string(), "document_store_error"))?;
         let mut preview = build_multi_preview(
             extraction,
@@ -610,6 +651,296 @@ async fn run_unified_path(
         "parse: unified-mode response shipped"
     );
     Ok(preview)
+}
+
+// ── Tax-documents dispatch ───────────────────────────────────────────────────
+
+const TAX_DOCUMENT_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "webp", "gif"];
+
+/// Payslips and P60s: no account, one LLM call per file, a profile instead.
+async fn run_tax_documents_path(
+    state: AppState,
+    files: Vec<(String, Vec<u8>)>,
+    profile_id: Option<String>,
+    hints: ParseHints,
+    parse_id: Option<String>,
+    route_started: std::time::Instant,
+) -> Result<IngestionPreview, AppError> {
+    use crate::importers::pricing::parser_call_cost;
+
+    if hints.return_type.wants_statement_data() {
+        return Err(AppError::bad_request(
+            "tax_documents cannot be combined with transactions, holdings or investments",
+            "invalid_return_type",
+        ));
+    }
+    let profile_id = profile_id.ok_or_else(|| {
+        AppError::bad_request(
+            "profile_id is required for tax documents",
+            "missing_profile_id",
+        )
+    })?;
+    if !state.db().profile_exists(&profile_id)? {
+        return Err(AppError::bad_request(
+            format!("profile {profile_id} not found"),
+            "profile_not_found",
+        ));
+    }
+    for (filename, _) in &files {
+        let ext = filename
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !TAX_DOCUMENT_EXTENSIONS.contains(&ext.as_str()) {
+            return Err(AppError::bad_request(
+                format!(
+                    "'{filename}' is not a PDF or image; tax documents must be .pdf, .png, .jpg, .jpeg, .webp or .gif"
+                ),
+                "unsupported_tax_document_format",
+            ));
+        }
+    }
+    tracing::info!(
+        files = files.len(),
+        agent = ?hints.agent(),
+        "parse: tax documents, starting pipeline"
+    );
+
+    let progress_tx = register_progress(&state, parse_id.as_ref());
+    let _progress_cleanup = ProgressCleanupGuard {
+        parse_id: parse_id.clone(),
+        channels: state.progress_channels.clone(),
+    };
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Phase {
+            phase: ParsePhase::Preprocessing,
+            message: format!("Processing {} uploaded file(s)", files.len()),
+            task_id: None,
+        },
+    );
+    let mut documents: Vec<DocumentInput> = Vec::new();
+    for (filename, raw_bytes) in files {
+        let doc = crate::importers::format_detection::preprocess_file(&filename, raw_bytes)
+            .map_err(|e| {
+                AppError::bad_request(
+                    format!("failed to process '{filename}': {e}"),
+                    "preprocessing_error",
+                )
+            })?;
+        documents.push(doc);
+    }
+
+    let provider = create_provider_with_auth(hints.auth())
+        .map_err(|e| AppError::bad_request(e.to_string(), "provider_config"))?;
+    let start = std::time::Instant::now();
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Phase {
+            phase: ParsePhase::SendingToLlm,
+            message: format!("Sending {} file(s) to AI model", documents.len()),
+            task_id: None,
+        },
+    );
+
+    let per_file = extract_tax_files(
+        &documents,
+        provider,
+        hints.hint.as_deref(),
+        hints.agent(),
+        &progress_tx,
+    )
+    .await
+    .map_err(|e| {
+        emit_progress(
+            &progress_tx,
+            ProgressEvent::Error {
+                code: "parse_error".to_string(),
+                message: e.to_string(),
+            },
+        );
+        provider_err_to_app_error(e)
+    })?;
+
+    for (doc, (_, call)) in documents.iter().zip(&per_file) {
+        if call.stop_reason.as_deref() == Some("max_tokens") {
+            return Err(AppError::bad_request(
+                format!(
+                    "'{}' produced more data than the model could return in a single response, \
+                     so the result was truncated. Please split it into smaller files and try again.",
+                    doc.filename
+                ),
+                "response_truncated",
+            ));
+        }
+    }
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Phase {
+            phase: ParsePhase::PostProcessing,
+            message: "Checking for duplicates".to_string(),
+            task_id: None,
+        },
+    );
+
+    let calls = per_file
+        .iter()
+        .map(|(_, call)| parser_call_cost("tax_documents", call))
+        .collect();
+    let parsed = per_file.into_iter().map(|(p, _)| p).collect();
+    let preview = {
+        let db = state.db();
+        finish_tax_preview(
+            &db,
+            &profile_id,
+            &documents,
+            parsed,
+            calls,
+            start.elapsed().as_millis() as u64,
+        )?
+    };
+
+    emit_progress(
+        &progress_tx,
+        ProgressEvent::Done {
+            total_ms: route_started.elapsed().as_millis() as u64,
+        },
+    );
+    tracing::info!(
+        elapsed_ms = route_started.elapsed().as_millis() as u64,
+        rows = preview.tax_documents.as_ref().map_or(0, |t| t.count),
+        cost_usd = %preview.metadata.estimated_price.total,
+        "parse: tax-documents response shipped"
+    );
+    Ok(preview)
+}
+
+/// One LLM call per file, in parallel; results come back in upload order.
+async fn extract_tax_files(
+    documents: &[DocumentInput],
+    provider: std::sync::Arc<dyn provider::LlmProvider>,
+    user_hint: Option<&str>,
+    agent: Option<crate::model::Agent>,
+    progress_tx: &Option<ProgressTx>,
+) -> anyhow::Result<Vec<(ParsedTaxDocuments, provider::ProviderCallResult)>> {
+    let mut join_set = tokio::task::JoinSet::new();
+    for (index, doc) in documents.iter().enumerate() {
+        let task_provider = match progress_tx {
+            Some(tx) => provider
+                .with_progress(tx.clone(), Some(format!("{}:tax_documents", doc.filename)))
+                .unwrap_or_else(|| provider.clone()),
+            None => provider.clone(),
+        };
+        let filename = doc.filename.clone();
+        let mime = infer_mime(&doc.filename);
+        let bytes = doc.raw_bytes.clone();
+        let hint = user_hint.map(str::to_string);
+        join_set.spawn(async move {
+            let parser = LlmTaxDocumentParser::new(task_provider);
+            let result = parser
+                .extract(&filename, &mime, bytes, hint.as_deref(), agent)
+                .await;
+            (index, result)
+        });
+    }
+    let mut results: Vec<Option<(ParsedTaxDocuments, provider::ProviderCallResult)>> =
+        (0..documents.len()).map(|_| None).collect();
+    while let Some(joined) = join_set.join_next().await {
+        let (index, result) =
+            joined.map_err(|e| anyhow::anyhow!("tax document task panicked: {e}"))?;
+        results[index] = Some(result?);
+    }
+    Ok(results.into_iter().flatten().collect())
+}
+
+/// Store the uploads and turn the parsed documents into the preview. Needs
+/// the database, so it runs after the LLM calls with the lock held.
+fn finish_tax_preview(
+    db: &crate::storage::Db,
+    profile_id: &str,
+    documents: &[DocumentInput],
+    parsed: Vec<ParsedTaxDocuments>,
+    calls: Vec<crate::model::ParserCallCost>,
+    processing_time_ms: u64,
+) -> Result<IngestionPreview, AppError> {
+    use crate::importers::tax_documents::{assemble, validate::SourceDocuments};
+    use crate::model::{
+        HoldingsIngestionResult, IngestionMetadata, IngestionStatus, InvestmentIngestionResult,
+        TransactionIngestionResult,
+    };
+
+    let (doc_map, all_doc_ids, doc_summaries) = store_parse_documents(db, documents, None)
+        .map_err(|e| AppError::bad_request(e.to_string(), "document_store_error"))?;
+    let min_row_confidence: f32 = std::env::var("FYNANCE_IMPORT_MIN_ROW_CONF")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.70);
+
+    let mut notes = Vec::new();
+    let mut detection_confidence: f32 = 0.0;
+    let mut elements = Vec::new();
+    for (doc, file) in documents.iter().zip(parsed) {
+        detection_confidence = detection_confidence.max(file.detection_confidence);
+        if file.documents.is_empty() {
+            notes.push(format!(
+                "No payslips or P60s were found in {}.",
+                doc.filename
+            ));
+        }
+        elements.extend(file.documents);
+    }
+
+    let tax_documents = assemble(
+        db,
+        profile_id,
+        elements,
+        min_row_confidence,
+        &SourceDocuments {
+            ids_by_filename: &doc_map,
+            all_ids: &all_doc_ids,
+        },
+    )
+    .map_err(|e| AppError::bad_request(e.to_string(), "parse_error"))?;
+
+    Ok(IngestionPreview {
+        status: IngestionStatus::Success,
+        metadata: IngestionMetadata {
+            files_processed: documents.len(),
+            institution_detected: None,
+            detection_confidence,
+            processing_time_ms,
+            notes,
+            relationships_found: vec![],
+            estimated_price: crate::importers::pricing::estimated_price(calls),
+        },
+        transactions: TransactionIngestionResult {
+            count: 0,
+            new: 0,
+            duplicate: 0,
+            errors: 0,
+            rows: vec![],
+            payload: None,
+        },
+        holdings: HoldingsIngestionResult {
+            count: 0,
+            new: 0,
+            modify: 0,
+            rows: vec![],
+            payload: None,
+            known_holdings: vec![],
+        },
+        investments: InvestmentIngestionResult {
+            count: 0,
+            new: 0,
+            duplicate: 0,
+            rows: vec![],
+            payload: None,
+        },
+        clarifications_needed: vec![],
+        documents: doc_summaries,
+        tax_documents: Some(tax_documents),
+    })
 }
 
 // ── SSE progress endpoint ─────────────────────────────────────────────────────
@@ -756,7 +1087,7 @@ type StoredParseDocuments = (
 fn store_parse_documents(
     db: &crate::storage::Db,
     documents: &[DocumentInput],
-    account_id: &str,
+    account_id: Option<&str>,
 ) -> anyhow::Result<StoredParseDocuments> {
     let mut by_filename = std::collections::HashMap::new();
     let mut all_ids: Vec<String> = Vec::new();
@@ -773,7 +1104,7 @@ fn store_parse_documents(
             &doc.raw_bytes
         };
         let (stored, _deduped) =
-            db.store_document(&doc.filename, &mime, bytes, "parse", Some(account_id))?;
+            db.store_document(&doc.filename, &mime, bytes, "parse", account_id)?;
         by_filename.insert(doc.filename.clone(), stored.id.clone());
         if !all_ids.contains(&stored.id) {
             all_ids.push(stored.id.clone());

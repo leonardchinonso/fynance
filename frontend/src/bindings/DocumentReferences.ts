@@ -4,4 +4,4 @@
  * Per-entity reference counts for one document. Used in the delete-conflict
  * body and the force-delete unlink summary.
  */
-export type DocumentReferences = { transactions: number, holdings: number, investments: number, };
+export type DocumentReferences = { transactions: number, holdings: number, investments: number, income_records: number, income_checks: number, };

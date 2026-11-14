@@ -30,6 +30,10 @@ use crate::util::dedupe::{
 };
 use crate::util::normalize_description;
 
+mod income_store;
+mod tax_import_store;
+pub use income_store::{AccountLeg, BankOutflow};
+
 /// The full schema DDL. Embedded at compile time so a release binary can
 /// create a fresh DB on a new machine with no files on disk beside itself.
 const SCHEMA_SQL: &str = include_str!("../../../db/sql/schema.sql");
@@ -1898,6 +1902,15 @@ impl Db {
         Ok(rows > 0)
     }
 
+    pub fn transaction_exists(&self, id: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     // ── Transactions ──────────────────────────────────────────────────────────
 
     /// Insert one transaction. `INSERT OR IGNORE` on the unique fingerprint
@@ -2853,10 +2866,37 @@ impl Db {
     /// (0 when the id does not exist). The row's fingerprint is freed, so
     /// re-importing the same statement will re-insert the transaction.
     pub fn delete_transaction(&self, id: &str) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.strip_transactions_from_income_records("id = ?1", params![id])?;
         let n = self
             .conn
             .execute("DELETE FROM transactions WHERE id = ?1", params![id])?;
+        tx.commit()?;
         Ok(n)
+    }
+
+    /// Remove the ids of the transactions matching `where_clause` from every
+    /// `income_records.transaction_ids` array, before those transactions go.
+    fn strip_transactions_from_income_records(
+        &self,
+        where_clause: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<()> {
+        self.conn.execute(
+            &format!(
+                "UPDATE income_records SET transaction_ids = (
+                    SELECT COALESCE(json_group_array(value), '[]')
+                    FROM json_each(income_records.transaction_ids)
+                    WHERE value NOT IN (SELECT id FROM transactions WHERE {where_clause})
+                 )
+                 WHERE EXISTS (
+                    SELECT 1 FROM json_each(income_records.transaction_ids) j
+                    WHERE j.value IN (SELECT id FROM transactions WHERE {where_clause})
+                 )"
+            ),
+            params,
+        )?;
+        Ok(())
     }
 
     /// Hard-delete transactions by id. Returns the number of rows removed.
@@ -2869,19 +2909,28 @@ impl Db {
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!("DELETE FROM transactions WHERE id IN ({placeholders})");
+        let tx = self.conn.unchecked_transaction()?;
+        self.strip_transactions_from_income_records(
+            &format!("id IN ({placeholders})"),
+            rusqlite::params_from_iter(ids.iter()),
+        )?;
         let n = self
             .conn
             .execute(&sql, rusqlite::params_from_iter(ids.iter()))?;
+        tx.commit()?;
         Ok(n)
     }
 
     /// Hard-delete every transaction for an account. Returns the number of rows
     /// removed. Used to clear an account before deleting it.
     pub fn delete_transactions_for_account(&self, account_id: &str) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.strip_transactions_from_income_records("account_id = ?1", params![account_id])?;
         let n = self.conn.execute(
             "DELETE FROM transactions WHERE account_id = ?1",
             params![account_id],
         )?;
+        tx.commit()?;
         Ok(n)
     }
 
@@ -3754,7 +3803,7 @@ impl Db {
     /// List every stored document with its orphan flag. `reference_count` is
     /// left `None` by default (clients fetch it lazily per row via
     /// `get_document`); with `include_refs` it is populated for every row via
-    /// one grouped scan over the three referencing link sources, matching
+    /// one grouped scan over the referencing link sources, matching
     /// `document_references(id).total()` per document.
     pub fn list_documents(&self, include_refs: bool) -> Result<Vec<DocumentSummary>> {
         // Single pass per table over the source_document_ids JSON arrays.
@@ -3769,6 +3818,10 @@ impl Db {
                     SELECT j.value FROM holdings h, json_each(h.source_document_ids) j
                     UNION ALL
                     SELECT j.value FROM investments i, json_each(i.source_document_ids) j
+                    UNION ALL
+                    SELECT j.value FROM income_records r, json_each(r.document_ids) j
+                    UNION ALL
+                    SELECT j.value FROM income_checks c, json_each(c.document_ids) j
                   ) GROUP BY value",
             )?;
             let rows = stmt.query_map([], |row| {
@@ -3781,7 +3834,11 @@ impl Db {
                   UNION
                   SELECT j.value FROM holdings h, json_each(h.source_document_ids) j
                   UNION
-                  SELECT j.value FROM investments i, json_each(i.source_document_ids) j",
+                  SELECT j.value FROM investments i, json_each(i.source_document_ids) j
+                  UNION
+                  SELECT j.value FROM income_records r, json_each(r.document_ids) j
+                  UNION
+                  SELECT j.value FROM income_checks c, json_each(c.document_ids) j",
             )?;
             let ids = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, 0usize)))?;
             ids.collect::<rusqlite::Result<_>>()?
@@ -3823,13 +3880,17 @@ impl Db {
                 r"SELECT
                     (SELECT COUNT(*) FROM transactions t, json_each(t.source_document_ids) j WHERE j.value = ?1),
                     (SELECT COUNT(*) FROM holdings h, json_each(h.source_document_ids) j WHERE j.value = ?1),
-                    (SELECT COUNT(*) FROM investments i, json_each(i.source_document_ids) j WHERE j.value = ?1)",
+                    (SELECT COUNT(*) FROM investments i, json_each(i.source_document_ids) j WHERE j.value = ?1),
+                    (SELECT COUNT(*) FROM income_records r, json_each(r.document_ids) j WHERE j.value = ?1),
+                    (SELECT COUNT(*) FROM income_checks c, json_each(c.document_ids) j WHERE j.value = ?1)",
                 params![id],
                 |row| {
                     Ok(DocumentReferences {
                         transactions: row.get::<_, i64>(0)? as usize,
                         holdings: row.get::<_, i64>(1)? as usize,
                         investments: row.get::<_, i64>(2)? as usize,
+                        income_records: row.get::<_, i64>(3)? as usize,
+                        income_checks: row.get::<_, i64>(4)? as usize,
                     })
                 },
             )
@@ -3854,15 +3915,22 @@ impl Db {
         let tx = self.conn.unchecked_transaction()?;
         let unlinked = if refs.total() > 0 {
             let mut counts = DocumentReferences::default();
-            for table in ["transactions", "holdings", "investments"] {
+            let tables = [
+                ("transactions", "source_document_ids"),
+                ("holdings", "source_document_ids"),
+                ("investments", "source_document_ids"),
+                ("income_records", "document_ids"),
+                ("income_checks", "document_ids"),
+            ];
+            for (table, col) in tables {
                 let n = tx.execute(
                     &format!(
-                        "UPDATE {table} SET source_document_ids = (
+                        "UPDATE {table} SET {col} = (
                             SELECT COALESCE(json_group_array(value), '[]')
-                            FROM json_each({table}.source_document_ids) WHERE value <> ?1
+                            FROM json_each({table}.{col}) WHERE value <> ?1
                          )
                          WHERE id IN (
-                            SELECT x.id FROM {table} x, json_each(x.source_document_ids) j
+                            SELECT x.id FROM {table} x, json_each(x.{col}) j
                             WHERE j.value = ?1
                          )"
                     ),
@@ -3871,7 +3939,9 @@ impl Db {
                 match table {
                     "transactions" => counts.transactions = n,
                     "holdings" => counts.holdings = n,
-                    _ => counts.investments = n,
+                    "investments" => counts.investments = n,
+                    "income_records" => counts.income_records = n,
+                    _ => counts.income_checks = n,
                 }
             }
             counts
@@ -6888,6 +6958,25 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
         .is_err()
     {
         conn.execute_batch("ALTER TABLE profiles ADD COLUMN spouse_id TEXT")?;
+    }
+
+    // ── 19. Income model replaces employment_pay (plan 30) ──
+    // The income tables come from schema.sql (IF NOT EXISTS, run on every open).
+    // Only dev databases ever held an employment_pay table: drop it when empty,
+    // keep it and warn when it has rows.
+    if conn
+        .prepare("SELECT id FROM employment_pay LIMIT 0")
+        .is_ok()
+    {
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM employment_pay", [], |r| r.get(0))?;
+        if rows == 0 {
+            conn.execute_batch("DROP TABLE employment_pay")?;
+        } else {
+            tracing::warn!(
+                rows,
+                "employment_pay still holds rows and is no longer used; re-enter them as income records"
+            );
+        }
     }
 
     Ok(())

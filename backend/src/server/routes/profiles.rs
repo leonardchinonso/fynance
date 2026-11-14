@@ -186,6 +186,13 @@ pub async fn delete_profile(
             "profile_in_use",
         ));
     }
+    let sources = db.count_income_sources_for_profile(&id)?;
+    if sources > 0 {
+        return Err(AppError::conflict(
+            format!("{sources} income source(s) still belong to profile {id}; delete them first"),
+            "profile_in_use",
+        ));
+    }
     db.delete_profile(&id)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

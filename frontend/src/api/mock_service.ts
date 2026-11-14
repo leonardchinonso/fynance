@@ -56,6 +56,21 @@ import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, PortfolioHistoryResponse } from "./service"
 import { DocumentReferencedError } from "./service"
 import { cgtFiltersToParams } from "./cgt_filter_params"
+import type { IncomeSource } from "@/bindings/IncomeSource"
+import type { IncomeSourcePayload } from "@/bindings/IncomeSourcePayload"
+import type { PatchIncomeSourceBody } from "@/bindings/PatchIncomeSourceBody"
+import type { IncomeRecord } from "@/bindings/IncomeRecord"
+import type { IncomeRecordPayload } from "@/bindings/IncomeRecordPayload"
+import type { PatchIncomeRecordBody } from "@/bindings/PatchIncomeRecordBody"
+import type { IncomeCheck } from "@/bindings/IncomeCheck"
+import type { IncomeCheckPayload } from "@/bindings/IncomeCheckPayload"
+import type { PatchIncomeCheckBody } from "@/bindings/PatchIncomeCheckBody"
+import type { IncomeSyncRequest } from "@/bindings/IncomeSyncRequest"
+import type { IncomeSyncResult } from "@/bindings/IncomeSyncResult"
+import type { LineTypeInfo } from "@/bindings/LineTypeInfo"
+import type { VestCandidate } from "@/bindings/VestCandidate"
+import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
+import { MOCK_LINE_TYPES, MockIncomeStore } from "@/data/mock_income"
 import {
   MOCK_PROFILES,
   MOCK_ACCOUNTS,
@@ -100,6 +115,8 @@ function classifyBalance(
 }
 
 export class MockApiService implements ApiService {
+  private income = new MockIncomeStore()
+
   // In-memory document store so the Documents page renders in mock mode. One
   // referenced (orphaned = false) and one orphaned entry to exercise the badge.
   // `reference_count` is null in the list (matching the real backend), so the
@@ -148,6 +165,7 @@ export class MockApiService implements ApiService {
     mockEvent("mock_inv_vusa_sell_1", "t212-isa-alex", "sell", "VUSA", "2024-09-15T10:00:00", "30.0000", "85.50", "1.00", "GBP"),
     mockEvent("mock_inv_aapl_buy_1", "t212-isa-sam", "buy", "AAPL", "2024-06-20T14:30:00", "40.0000", "126.40", "0.00", "USD"),
     mockEvent("mock_inv_aapl_vest_1", "t212-isa-sam", "vest", "AAPL", "2024-10-01T00:00:00", "25.0000", "150.00", null, "USD"),
+    mockEvent(this.income.vestEventId, "t212-isa-alex", "vest", "AAPL", `${this.income.vestEventDate()}T00:00:00`, "20.0000", "125.00", null, "USD"),
     mockEvent("mock_inv_aapl_sell_1", "t212-isa-sam", "sell", "AAPL", "2025-01-29T15:30:00", "10.0000", "150.00", "0.50", "USD"),
   ]
 
@@ -1299,6 +1317,100 @@ export class MockApiService implements ApiService {
     return next
   }
 
+  // ── Income / tax-year summary ─────────────────────────────────────
+
+  async listIncomeLineTypes(): Promise<LineTypeInfo[]> {
+    await delay(DELAY_MS)
+    return MOCK_LINE_TYPES
+  }
+
+  async listIncomeSources(profileId?: string): Promise<IncomeSource[]> {
+    await delay(DELAY_MS)
+    return this.income.listSources(profileId)
+  }
+
+  async createIncomeSource(body: IncomeSourcePayload): Promise<IncomeSource> {
+    await delay(DELAY_MS)
+    return this.income.createSource(body)
+  }
+
+  async updateIncomeSource(id: string, body: PatchIncomeSourceBody): Promise<IncomeSource> {
+    await delay(DELAY_MS)
+    return this.income.updateSource(id, body)
+  }
+
+  async deleteIncomeSource(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    this.income.deleteSource(id)
+  }
+
+  async listIncomeRecords(
+    filters: { profileId?: string; sourceId?: string; taxYear?: string } = {},
+  ): Promise<IncomeRecord[]> {
+    await delay(DELAY_MS)
+    return this.income.listRecords(filters)
+  }
+
+  async createIncomeRecord(body: IncomeRecordPayload): Promise<IncomeRecord> {
+    await delay(DELAY_MS)
+    return this.income.createRecord(body)
+  }
+
+  async updateIncomeRecord(id: string, body: PatchIncomeRecordBody): Promise<IncomeRecord> {
+    await delay(DELAY_MS)
+    return this.income.updateRecord(id, body)
+  }
+
+  async deleteIncomeRecord(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    this.income.deleteRecord(id)
+  }
+
+  async listIncomeChecks(
+    filters: { profileId?: string; taxYear?: string } = {},
+  ): Promise<IncomeCheck[]> {
+    await delay(DELAY_MS)
+    return this.income.listChecks(filters)
+  }
+
+  async createIncomeCheck(body: IncomeCheckPayload): Promise<IncomeCheck> {
+    await delay(DELAY_MS)
+    return this.income.createCheck(body)
+  }
+
+  async updateIncomeCheck(id: string, body: PatchIncomeCheckBody): Promise<IncomeCheck> {
+    await delay(DELAY_MS)
+    return this.income.updateCheck(id, body)
+  }
+
+  async deleteIncomeCheck(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    this.income.deleteCheck(id)
+  }
+
+  async createYearEndAdjustment(sourceId: string, taxYear: string): Promise<IncomeRecord> {
+    await delay(DELAY_MS)
+    return this.income.createAdjustment(sourceId, taxYear)
+  }
+
+  async importShopSync(sourceId: string, body: IncomeSyncRequest): Promise<IncomeSyncResult> {
+    await delay(DELAY_MS)
+    return this.income.sync(sourceId, body)
+  }
+
+  async listVestCandidates(recordId: string): Promise<VestCandidate[]> {
+    await delay(DELAY_MS)
+    const accountsOf = (profileId: string) => MOCK_ACCOUNTS
+      .filter((a) => a.profile_ids.includes(profileId))
+      .map((a) => a.id)
+    return this.income.vestCandidates(recordId, this.investments, accountsOf)
+  }
+
+  async getTaxSummary(taxYear: string, profileId: string): Promise<TaxYearSummary> {
+    await delay(DELAY_MS)
+    return this.income.summary(taxYear, profileId, this.investments)
+  }
+
   // ── Investments ───────────────────────────────────────────────────
 
   async listInvestments(
@@ -1440,7 +1552,7 @@ export class MockApiService implements ApiService {
     this.documents = this.documents.filter((d) => d.id !== id)
     return {
       deleted: true,
-      unlinked: { transactions: refs, holdings: 0, investments: 0 },
+      unlinked: { transactions: refs, holdings: 0, investments: 0, income_records: 0, income_checks: 0 },
     }
   }
 
