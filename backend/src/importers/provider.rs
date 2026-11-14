@@ -11,6 +11,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::importers::pdf_extract::{self, PdfExtractConfig};
 use crate::model::{Agent, AuthSource};
 
 // ── Tier hint ────────────────────────────────────────────────────────────────
@@ -132,6 +133,13 @@ pub enum ProviderError {
     },
     StreamInterrupted(String),
     NotSupported(String),
+    /// The model ran out of output budget mid-response.
+    Truncated {
+        output_tokens: u64,
+    },
+    /// An auxiliary document-conversion step (e.g. the pdf-extract tool)
+    /// failed; the message is user-facing.
+    DocumentConversion(String),
 }
 
 impl std::fmt::Display for ProviderError {
@@ -153,6 +161,10 @@ impl std::fmt::Display for ProviderError {
             }
             Self::StreamInterrupted(msg) => write!(f, "stream interrupted: {msg}"),
             Self::NotSupported(msg) => write!(f, "not supported: {msg}"),
+            Self::Truncated { output_tokens } => {
+                write!(f, "response truncated after {output_tokens} output tokens")
+            }
+            Self::DocumentConversion(msg) => write!(f, "document conversion failed: {msg}"),
         }
     }
 }
@@ -502,11 +514,19 @@ impl SseAccumulator {
                 tool_name: expected_tool.to_string(),
             })?;
 
+        // A max_tokens stop reason means the tool input was cut off mid-JSON,
+        // so the parse failure is a truncation, not a garbled model reply.
+        let stop_reason = self.stop_reason.clone();
+        let output_tokens = self.output_tokens;
         let value: serde_json::Value = serde_json::from_str(&tool_json).map_err(|e| {
-            ProviderError::ResponseUnreadable(format!(
-                "invalid JSON for tool {expected_tool}: {e} (preview: {})",
-                &tool_json[..tool_json.len().min(200)]
-            ))
+            if stop_reason.as_deref() == Some("max_tokens") {
+                ProviderError::Truncated { output_tokens }
+            } else {
+                ProviderError::ResponseUnreadable(format!(
+                    "invalid JSON for tool {expected_tool}: {e} (preview: {})",
+                    &tool_json[..tool_json.len().min(200)]
+                ))
+            }
         })?;
 
         Ok(ProviderCallResult {
@@ -1029,6 +1049,33 @@ fn extract_anthropic_stop_reason(body: &str) -> Option<String> {
 
 const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const OPENAI_DEFAULT_TIMEOUT_SECS: u64 = 300;
+/// gpt-4o is the default model and OpenAI rejects a `max_tokens` above a
+/// model's output cap, so the Anthropic 64k value cannot be the default here.
+/// A local server can raise it with FYNANCE_OPENAI_MAX_TOKENS; 0 omits the
+/// field entirely.
+const OPENAI_DEFAULT_MAX_TOKENS: u64 = 16_384;
+const OPENAI_DEFAULT_PDF_MAX_PAGES: usize = 50;
+
+/// `FYNANCE_OPENAI_TOOL_CHOICE`. llama.cpp only honours the string forms
+/// (it silently ignores the object form), so `"required"` is the default on
+/// every server. `Function` keeps the spec's explicit named-tool form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAIToolChoice {
+    Required,
+    Function,
+    Auto,
+}
+
+/// `FYNANCE_OPENAI_PDF_MODE`. `Native` sends the PDF as an OpenAI `file`
+/// content part and needs no external tool; the other modes run the
+/// pdf-extract adapter and send per-page text and/or page images.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAIPdfMode {
+    Both,
+    Images,
+    Text,
+    Native,
+}
 
 pub struct OpenAIProvider {
     client: Client,
@@ -1036,8 +1083,19 @@ pub struct OpenAIProvider {
     api_key: Option<String>,
     timeout: std::time::Duration,
     standard_model: String,
-    #[allow(dead_code)]
     advanced_model: String,
+    tool_choice: OpenAIToolChoice,
+    /// 0 means the field is omitted from the request.
+    max_tokens: u64,
+    /// None sends no temperature at all: some OpenAI reasoning models reject
+    /// a non-default temperature.
+    temperature: Option<f64>,
+    /// `FYNANCE_OPENAI_EXTRA_BODY`, merged into every request last.
+    extra_body: serde_json::Map<String, Value>,
+    pdf_mode: OpenAIPdfMode,
+    /// Page cap counted across all PDFs in a single call.
+    pdf_max_pages: usize,
+    pdf_extract: PdfExtractConfig,
 }
 
 impl std::fmt::Debug for OpenAIProvider {
@@ -1050,9 +1108,28 @@ impl std::fmt::Debug for OpenAIProvider {
             .field("timeout", &self.timeout)
             .field("standard_model", &self.standard_model)
             .field("advanced_model", &self.advanced_model)
+            .field("tool_choice", &self.tool_choice)
+            .field("max_tokens", &self.max_tokens)
+            .field("temperature", &self.temperature)
+            .field("extra_body", &self.extra_body)
+            .field("pdf_mode", &self.pdf_mode)
+            .field("pdf_max_pages", &self.pdf_max_pages)
+            .field("pdf_extract", &self.pdf_extract)
             .finish()
     }
 }
+
+/// Request keys the provider owns; an `EXTRA_BODY` entry for one of these
+/// would silently fight with the provider's own value, so it is rejected at
+/// startup.
+const OPENAI_RESERVED_BODY_KEYS: &[&str] = &[
+    "model",
+    "messages",
+    "tools",
+    "tool_choice",
+    "stream",
+    "stream_options",
+];
 
 impl OpenAIProvider {
     /// Build from environment variables.
@@ -1060,7 +1137,11 @@ impl OpenAIProvider {
     /// Required: `FYNANCE_OPENAI_API_KEY`, unless `FYNANCE_OPENAI_BASE_URL`
     /// points at an OpenAI-compatible server that needs no key.
     /// Optional: `FYNANCE_OPENAI_BASE_URL`, `FYNANCE_OPENAI_TIMEOUT_SECS`,
-    /// `FYNANCE_OPENAI_TEXT_MODEL`, `FYNANCE_OPENAI_PDF_MODEL`
+    /// `FYNANCE_OPENAI_TEXT_MODEL`, `FYNANCE_OPENAI_PDF_MODEL`,
+    /// `FYNANCE_OPENAI_TOOL_CHOICE`, `FYNANCE_OPENAI_MAX_TOKENS`,
+    /// `FYNANCE_OPENAI_TEMPERATURE`, `FYNANCE_OPENAI_EXTRA_BODY`,
+    /// `FYNANCE_OPENAI_PDF_MODE`, `FYNANCE_OPENAI_PDF_MAX_PAGES`, plus the
+    /// `FYNANCE_PDF_EXTRACT_*` variables read by [`PdfExtractConfig::from_env`].
     pub fn from_env() -> Result<Self> {
         let custom_base_url = std::env::var("FYNANCE_OPENAI_BASE_URL")
             .ok()
@@ -1100,6 +1181,80 @@ impl OpenAIProvider {
         let advanced_model =
             std::env::var("FYNANCE_OPENAI_PDF_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
 
+        let tool_choice = match env_or_default("FYNANCE_OPENAI_TOOL_CHOICE", "required").as_str() {
+            "required" => OpenAIToolChoice::Required,
+            "function" => OpenAIToolChoice::Function,
+            "auto" => OpenAIToolChoice::Auto,
+            other => {
+                return Err(anyhow!(
+                    "FYNANCE_OPENAI_TOOL_CHOICE must be one of required, function or auto, \
+                     got '{other}'"
+                ));
+            }
+        };
+
+        let max_tokens = match std::env::var("FYNANCE_OPENAI_MAX_TOKENS") {
+            Ok(v) => v.trim().parse::<u64>().map_err(|_| {
+                anyhow!(
+                    "FYNANCE_OPENAI_MAX_TOKENS must be a whole number of tokens \
+                     (0 omits the field), got '{v}'"
+                )
+            })?,
+            Err(_) => OPENAI_DEFAULT_MAX_TOKENS,
+        };
+
+        let temperature =
+            match std::env::var("FYNANCE_OPENAI_TEMPERATURE") {
+                Ok(v) => Some(v.trim().parse::<f64>().map_err(|_| {
+                    anyhow!("FYNANCE_OPENAI_TEMPERATURE must be a number, got '{v}'")
+                })?),
+                Err(_) => None,
+            };
+
+        let extra_body = match std::env::var("FYNANCE_OPENAI_EXTRA_BODY") {
+            Ok(raw) => {
+                let parsed: Value = serde_json::from_str(&raw).map_err(|e| {
+                    anyhow!("FYNANCE_OPENAI_EXTRA_BODY must be a JSON object, got '{raw}': {e}")
+                })?;
+                let obj = parsed
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("FYNANCE_OPENAI_EXTRA_BODY must be a JSON object"))?;
+                for key in OPENAI_RESERVED_BODY_KEYS {
+                    if obj.contains_key(*key) {
+                        return Err(anyhow!(
+                            "FYNANCE_OPENAI_EXTRA_BODY must not set '{key}': the provider \
+                             controls that request field"
+                        ));
+                    }
+                }
+                obj
+            }
+            Err(_) => serde_json::Map::new(),
+        };
+
+        let pdf_mode = match env_or_default("FYNANCE_OPENAI_PDF_MODE", "both").as_str() {
+            "both" => OpenAIPdfMode::Both,
+            "images" => OpenAIPdfMode::Images,
+            "text" => OpenAIPdfMode::Text,
+            "native" => OpenAIPdfMode::Native,
+            other => {
+                return Err(anyhow!(
+                    "FYNANCE_OPENAI_PDF_MODE must be one of both, images, text or native, \
+                     got '{other}'"
+                ));
+            }
+        };
+
+        let pdf_max_pages = match std::env::var("FYNANCE_OPENAI_PDF_MAX_PAGES") {
+            Ok(v) => v.trim().parse::<usize>().map_err(|_| {
+                anyhow!("FYNANCE_OPENAI_PDF_MAX_PAGES must be a whole number of pages, got '{v}'")
+            })?,
+            Err(_) => OPENAI_DEFAULT_PDF_MAX_PAGES,
+        };
+
+        let pdf_extract = PdfExtractConfig::from_env()?;
+
         let client = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
@@ -1112,6 +1267,13 @@ impl OpenAIProvider {
             timeout: std::time::Duration::from_secs(timeout_secs),
             standard_model,
             advanced_model,
+            tool_choice,
+            max_tokens,
+            temperature,
+            extra_body,
+            pdf_mode,
+            pdf_max_pages,
+            pdf_extract,
         })
     }
 
@@ -1121,6 +1283,62 @@ impl OpenAIProvider {
             ModelTier::Advanced => &self.advanced_model,
         }
     }
+
+    /// The one request builder for every transport (streamed or not): system
+    /// message, one function tool, `tool_choice` per config, `max_tokens`
+    /// unless 0, `temperature` when set, then the `EXTRA_BODY` keys merged
+    /// last so they win.
+    fn build_request(
+        &self,
+        model: &str,
+        system_prompt: &str,
+        user_content: Value,
+        tool_name: &str,
+        tool_schema: &Value,
+    ) -> Value {
+        let tool_choice = match self.tool_choice {
+            OpenAIToolChoice::Required => json!("required"),
+            OpenAIToolChoice::Function => {
+                json!({"type": "function", "function": { "name": tool_name }})
+            }
+            OpenAIToolChoice::Auto => json!("auto"),
+        };
+        let mut request = json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_content }
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": format!("Extract structured data using the {} tool.", tool_name),
+                    "parameters": tool_schema
+                }
+            }],
+            "tool_choice": tool_choice
+        });
+        if self.max_tokens != 0 {
+            request["max_tokens"] = json!(self.max_tokens);
+        }
+        if let Some(temperature) = self.temperature {
+            request["temperature"] = json!(temperature);
+        }
+        if let Some(obj) = request.as_object_mut() {
+            for (key, value) in &self.extra_body {
+                obj.insert(key.clone(), value.clone());
+            }
+        }
+        request
+    }
+}
+
+fn env_or_default(key: &str, default: &str) -> String {
+    std::env::var(key)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 /// Rejects base URLs that would silently build a wrong request URL: a missing
@@ -1165,26 +1383,13 @@ impl LlmProvider for OpenAIProvider {
             ));
         }
         let model = self.model_for_tier(tier).to_string();
-
-        let request_body = json!({
-            "model": model,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user",   "content": user_message }
-            ],
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "description": format!("Extract structured data using the {} tool.", tool_name),
-                    "parameters": tool_schema
-                }
-            }],
-            "tool_choice": {
-                "type": "function",
-                "function": { "name": tool_name }
-            }
-        });
+        let request_body = self.build_request(
+            &model,
+            system_prompt,
+            json!(user_message),
+            tool_name,
+            &tool_schema,
+        );
 
         tracing::debug!(
             provider = "openai",
@@ -1193,6 +1398,211 @@ impl LlmProvider for OpenAIProvider {
             "sending text request"
         );
 
+        self.post_chat_completion(&request_body, &model, tool_name)
+            .await
+    }
+
+    async fn chat_with_pdf_and_tools(
+        &self,
+        system_prompt: &str,
+        pdf_bytes: &[u8],
+        text_supplement: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        let files = vec![(
+            "document.pdf".to_string(),
+            "application/pdf".to_string(),
+            pdf_bytes.to_vec(),
+        )];
+        self.chat_with_files_and_tools(
+            system_prompt,
+            &files,
+            text_supplement,
+            tool_name,
+            tool_schema,
+            agent_override,
+        )
+        .await
+    }
+
+    async fn chat_with_files_and_tools(
+        &self,
+        system_prompt: &str,
+        files: &[(String, String, Vec<u8>)],
+        text_supplement: &str,
+        tool_name: &str,
+        tool_schema: Value,
+        agent_override: Option<Agent>,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        if agent_override.is_some() {
+            return Err(ProviderError::NotSupported(
+                "agent override is only supported with the Anthropic provider. \
+                 Set FYNANCE_PARSE_PROVIDER=anthropic to use agent overrides."
+                    .to_string(),
+            ));
+        }
+        let model = self.model_for_tier(ModelTier::Advanced).to_string();
+
+        let mut content: Vec<Value> = Vec::with_capacity(files.len() * 2 + 1);
+        let mut pdf_pages_total = 0usize;
+        for (filename, mime, bytes) in files {
+            // Same per-file label the Anthropic and Gemini providers use, so
+            // the model can attribute rows via `source_file`.
+            content.push(json!({
+                "type": "text",
+                "text": format!(
+                    "Source document filename: {filename}\nFor every row you extract from the document immediately below, set its \"source_file\" field to exactly this filename."
+                ),
+            }));
+
+            let mime_lower = mime.to_ascii_lowercase();
+            if mime_lower == "application/pdf" {
+                if self.pdf_mode == OpenAIPdfMode::Native {
+                    content.push(json!({
+                        "type": "file",
+                        "file": {
+                            "filename": filename,
+                            "file_data": format!(
+                                "data:application/pdf;base64,{}",
+                                BASE64.encode(bytes)
+                            ),
+                        }
+                    }));
+                    continue;
+                }
+                let extracted = pdf_extract::extract_pdf(bytes, filename, &self.pdf_extract)
+                    .await
+                    .map_err(pdf_extract_err_to_provider_err)?;
+                if !extracted.page_errors.is_empty() {
+                    // Some pages came out; send what we have rather than
+                    // failing the whole call.
+                    tracing::warn!(
+                        filename,
+                        failed_pages = extracted.page_errors.len(),
+                        "pdf-extract: some pages failed; continuing with the pages that worked"
+                    );
+                }
+                pdf_pages_total += extracted.pages.len();
+                if pdf_pages_total > self.pdf_max_pages {
+                    return Err(ProviderError::DocumentConversion(format!(
+                        "the uploaded PDF documents expand to {pdf_pages_total} page images, \
+                         more than FYNANCE_OPENAI_PDF_MAX_PAGES ({}) allows in one call: \
+                         split the upload into smaller files and try again",
+                        self.pdf_max_pages
+                    )));
+                }
+                let page_count = extracted.pages.len();
+                for page in &extracted.pages {
+                    content.push(json!({
+                        "type": "text",
+                        "text": format!("Page {} of {page_count} of {filename}", page.page),
+                    }));
+                    let has_text = page.has_text_layer && !page.text.is_empty();
+                    let has_image = !page.png.is_empty();
+                    let send_text = match self.pdf_mode {
+                        OpenAIPdfMode::Both => has_text,
+                        OpenAIPdfMode::Text => has_text || !has_image,
+                        OpenAIPdfMode::Images => !has_image && has_text,
+                        OpenAIPdfMode::Native => unreachable!(),
+                    };
+                    let send_image = match self.pdf_mode {
+                        OpenAIPdfMode::Both | OpenAIPdfMode::Images => has_image,
+                        OpenAIPdfMode::Text => has_image && !has_text,
+                        OpenAIPdfMode::Native => unreachable!(),
+                    };
+                    if send_text {
+                        content.push(json!({ "type": "text", "text": page.text }));
+                    }
+                    if send_image {
+                        content.push(image_url_part("image/png", &page.png));
+                    }
+                }
+                continue;
+            }
+
+            if mime_lower.starts_with("image/") {
+                content.push(image_url_part(&mime_lower, bytes));
+                continue;
+            }
+            if mime_lower.starts_with("text/")
+                || mime_lower == "application/csv"
+                || mime_lower == "application/json"
+                || mime_lower == "application/x-ndjson"
+            {
+                // Lossy decode, like Gemini: a stray non-UTF-8 byte in a CSV
+                // must not fail the whole parse.
+                let text = String::from_utf8_lossy(bytes);
+                content.push(json!({
+                    "type": "text",
+                    "text": format!("--- file: {filename} ({mime_lower}) ---\n{text}"),
+                }));
+                continue;
+            }
+            return Err(ProviderError::NotSupported(format!(
+                "OpenAI provider does not accept file '{filename}' with MIME '{mime}'. \
+                 Supported: application/pdf, image/*, text/*, CSV, JSON and NDJSON."
+            )));
+        }
+        if !text_supplement.is_empty() {
+            content.push(json!({ "type": "text", "text": text_supplement }));
+        }
+
+        let request_body = self.build_request(
+            &model,
+            system_prompt,
+            json!(content),
+            tool_name,
+            &tool_schema,
+        );
+
+        tracing::debug!(
+            provider = "openai",
+            model = %model,
+            tool_name,
+            files = files.len(),
+            "sending files request"
+        );
+
+        self.post_chat_completion(&request_body, &model, tool_name)
+            .await
+    }
+
+    fn name(&self) -> &'static str {
+        "openai"
+    }
+}
+
+fn image_url_part(mime: &str, bytes: &[u8]) -> Value {
+    json!({
+        "type": "image_url",
+        "image_url": { "url": format!("data:{mime};base64,{}", BASE64.encode(bytes)) }
+    })
+}
+
+/// pdf-extract failures surfaced to the user: an unconfigured or missing tool
+/// is a setup problem (`provider_not_supported`, whose message names the fix),
+/// anything else the tool ran and failed (`document_conversion_failed`).
+fn pdf_extract_err_to_provider_err(e: pdf_extract::PdfExtractError) -> ProviderError {
+    match e {
+        pdf_extract::PdfExtractError::NotConfigured
+        | pdf_extract::PdfExtractError::NotFound { .. } => {
+            ProviderError::NotSupported(e.to_string())
+        }
+        other => ProviderError::DocumentConversion(other.to_string()),
+    }
+}
+
+/// Non-streaming transport: POST, status mapping, then the shared response
+/// post-processing.
+impl OpenAIProvider {
+    async fn post_chat_completion(
+        &self,
+        request_body: &Value,
+        model: &str,
+        tool_name: &str,
+    ) -> Result<ProviderCallResult, ProviderError> {
         let started = Instant::now();
         let mut request = self
             .client
@@ -1203,7 +1613,7 @@ impl LlmProvider for OpenAIProvider {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
         let response = request
-            .json(&request_body)
+            .json(request_body)
             .send()
             .await
             .map_err(classify_reqwest_error)?;
@@ -1234,52 +1644,36 @@ impl LlmProvider for OpenAIProvider {
             });
         }
 
-        let value = extract_openai_tool_input(&body, tool_name)
-            .map_err(|e| ProviderError::ResponseUnreadable(format!("{e}")))?;
-        let usage = extract_openai_usage(&body);
+        let api_resp: OpenAIResponse = serde_json::from_str(&body).map_err(|e| {
+            ProviderError::ResponseUnreadable(format!(
+                "parsing OpenAI response (preview: {}): {e}",
+                &body[..body.len().min(200)]
+            ))
+        })?;
+        let usage = api_resp
+            .usage
+            .map(|u| TokenUsage {
+                input_tokens: u.prompt_tokens,
+                output_tokens: u.completion_tokens,
+            })
+            .unwrap_or_default();
+        let reply = api_resp
+            .choices
+            .first()
+            .map(reply_from_choice)
+            .ok_or_else(|| {
+                ProviderError::ResponseUnreadable("no choices in OpenAI response".to_string())
+            })?;
+        let (value, stop_reason) =
+            post_process_openai_reply(&reply, tool_name, usage.output_tokens)?;
+
         Ok(ProviderCallResult {
             value,
             usage,
-            model,
+            model: model.to_string(),
             duration_ms,
-            stop_reason: None,
+            stop_reason,
         })
-    }
-
-    async fn chat_with_pdf_and_tools(
-        &self,
-        _system_prompt: &str,
-        _pdf_bytes: &[u8],
-        _text_supplement: &str,
-        _tool_name: &str,
-        _tool_schema: Value,
-        _agent_override: Option<Agent>,
-    ) -> Result<ProviderCallResult, ProviderError> {
-        Err(ProviderError::NotSupported(
-            "PDF input is not supported with the OpenAI provider in V0. \
-             To import PDF documents, switch to FYNANCE_PARSE_PROVIDER=anthropic."
-                .to_string(),
-        ))
-    }
-
-    async fn chat_with_files_and_tools(
-        &self,
-        _system_prompt: &str,
-        _files: &[(String, String, Vec<u8>)],
-        _text_supplement: &str,
-        _tool_name: &str,
-        _tool_schema: Value,
-        _agent_override: Option<Agent>,
-    ) -> Result<ProviderCallResult, ProviderError> {
-        Err(ProviderError::NotSupported(
-            "Unified file input is not supported with the OpenAI provider in V0. \
-             To use unified mode, switch to FYNANCE_PARSE_PROVIDER=anthropic."
-                .to_string(),
-        ))
-    }
-
-    fn name(&self) -> &'static str {
-        "openai"
     }
 }
 
@@ -1287,6 +1681,7 @@ impl LlmProvider for OpenAIProvider {
 
 #[derive(Deserialize)]
 struct OpenAIResponse {
+    #[serde(default)]
     choices: Vec<OpenAIChoice>,
     #[serde(default)]
     usage: Option<OpenAIUsage>,
@@ -1300,14 +1695,20 @@ struct OpenAIUsage {
     completion_tokens: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct OpenAIChoice {
+    #[serde(default)]
     message: OpenAIMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct OpenAIMessage {
+    #[serde(default)]
     tool_calls: Option<Vec<OpenAIToolCall>>,
+    #[serde(default)]
+    content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1317,45 +1718,162 @@ struct OpenAIToolCall {
 
 #[derive(Deserialize)]
 struct OpenAIFunctionCall {
+    #[serde(default)]
     name: String,
-    /// JSON string — must be parsed, not used as-is.
-    arguments: String,
+    /// Some servers send the arguments as a JSON string, others (and streamed
+    /// deltas once accumulated) as an object. Accept both.
+    #[serde(default)]
+    arguments: Value,
 }
 
-fn extract_openai_tool_input(body: &str, tool_name: &str) -> Result<Value> {
-    let api_resp: OpenAIResponse = serde_json::from_str(body).map_err(|e| {
-        anyhow!(
-            "parsing OpenAI response (preview: {}): {e}",
-            &body[..body.len().min(200)]
-        )
-    })?;
+/// The provider-neutral view of one chat reply, the same for the non-stream
+/// body and the accumulated stream, so post-processing happens in one place.
+struct OpenAIReply {
+    content: Option<String>,
+    /// (tool name, tool input) for every tool call, arguments already parsed.
+    tool_calls: Vec<(String, Value)>,
+    finish_reason: Option<String>,
+    /// First unparsable `arguments` string, if any: only reported when no
+    /// correctly-named tool call exists anyway.
+    invalid_arguments: Option<String>,
+}
 
-    let tool_call = api_resp
-        .choices
-        .into_iter()
-        .next()
-        .and_then(|c| c.message.tool_calls)
-        .and_then(|calls| calls.into_iter().find(|tc| tc.function.name == tool_name))
-        .ok_or_else(|| anyhow!("no {tool_name} tool call in OpenAI response"))?;
+fn reply_from_choice(choice: &OpenAIChoice) -> OpenAIReply {
+    let mut reply = OpenAIReply {
+        content: choice.message.content.clone(),
+        tool_calls: Vec::new(),
+        finish_reason: choice.finish_reason.clone(),
+        invalid_arguments: None,
+    };
+    if let Some(calls) = &choice.message.tool_calls {
+        for call in calls {
+            match &call.function.arguments {
+                Value::String(raw) => match serde_json::from_str(raw) {
+                    Ok(parsed) => reply.tool_calls.push((call.function.name.clone(), parsed)),
+                    Err(e) => {
+                        if reply.invalid_arguments.is_none() {
+                            reply.invalid_arguments = Some(format!(
+                                "parsing OpenAI function arguments for {}: {e} (arguments: {}...)",
+                                call.function.name,
+                                &raw[..raw.len().min(200)]
+                            ));
+                        }
+                    }
+                },
+                other => reply
+                    .tool_calls
+                    .push((call.function.name.clone(), other.clone())),
+            }
+        }
+    }
+    reply
+}
 
-    serde_json::from_str(&tool_call.function.arguments).map_err(|e| {
-        anyhow!(
-            "parsing OpenAI function arguments for {tool_name}: {e} \
-             (arguments: {}...)",
-            &tool_call.function.arguments[..tool_call.function.arguments.len().min(200)]
-        )
+/// finish_reason for the API surface: the OpenAI spelling of truncation is
+/// `"length"`, the rest of the pipeline speaks `"max_tokens"`.
+fn map_openai_finish_reason(finish_reason: Option<&str>) -> Option<String> {
+    match finish_reason {
+        Some("length") => Some("max_tokens".to_string()),
+        other => other.map(str::to_string),
+    }
+}
+
+/// Shared result handling for both transports. A `length` finish_reason is a
+/// truncation, never a parse; a correctly-named tool call wins; otherwise the
+/// tool input may still be recoverable from the message content (thinking
+/// models that emit the call as text when `tool_choice` is not enforced).
+fn post_process_openai_reply(
+    reply: &OpenAIReply,
+    tool_name: &str,
+    output_tokens: u64,
+) -> Result<(Value, Option<String>), ProviderError> {
+    if reply.finish_reason.as_deref() == Some("length") {
+        return Err(ProviderError::Truncated { output_tokens });
+    }
+
+    if !reply.tool_calls.is_empty() {
+        if let Some((_, input)) = reply.tool_calls.iter().find(|(name, _)| name == tool_name) {
+            return Ok((
+                input.clone(),
+                map_openai_finish_reason(reply.finish_reason.as_deref()),
+            ));
+        }
+        if let Some(detail) = &reply.invalid_arguments {
+            return Err(ProviderError::ResponseUnreadable(detail.clone()));
+        }
+        return Err(ProviderError::NoToolUse {
+            tool_name: tool_name.to_string(),
+        });
+    }
+
+    if let Some(content) = &reply.content {
+        if let Some(input) = recover_tool_input_from_content(content, tool_name) {
+            tracing::warn!(
+                tool_name,
+                "OpenAI reply carried no tool call; recovered the tool input from message content"
+            );
+            return Ok((
+                input,
+                map_openai_finish_reason(reply.finish_reason.as_deref()),
+            ));
+        }
+    }
+
+    Err(ProviderError::NoToolUse {
+        tool_name: tool_name.to_string(),
     })
 }
 
-fn extract_openai_usage(body: &str) -> TokenUsage {
-    serde_json::from_str::<OpenAIResponse>(body)
-        .ok()
-        .and_then(|r| r.usage)
-        .map(|u| TokenUsage {
-            input_tokens: u.prompt_tokens,
-            output_tokens: u.completion_tokens,
-        })
-        .unwrap_or_default()
+/// Only JSON objects are ever accepted as a recovered tool input: prose,
+/// arrays and scalars must produce `NoToolUse`, not an empty extraction.
+fn recover_tool_input_from_content(content: &str, tool_name: &str) -> Option<Value> {
+    let cleaned = strip_think_tags(content);
+    let candidate = extract_between(&cleaned, "<tool_call>", "</tool_call>")
+        .or_else(|| extract_fenced_json(&cleaned))
+        .unwrap_or_else(|| cleaned.trim().to_string());
+    let parsed: Value = serde_json::from_str(&candidate).ok()?;
+    let obj = parsed.as_object()?;
+    if obj.get("name").and_then(Value::as_str) == Some(tool_name) {
+        match obj.get("arguments") {
+            Some(Value::String(raw)) => serde_json::from_str(raw).ok(),
+            Some(arguments @ Value::Object(_)) => Some(arguments.clone()),
+            _ => None,
+        }
+    } else {
+        Some(Value::Object(obj.clone()))
+    }
+}
+
+fn strip_think_tags(content: &str) -> String {
+    let mut out = content.to_string();
+    while let Some(start) = out.find("<think>") {
+        let after = &out[start + "<think>".len()..];
+        match after.find("</think>") {
+            Some(end) => out = format!("{}{}", &out[..start], &after[end + "</think>".len()..]),
+            None => {
+                out.truncate(start);
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn extract_between(hay: &str, open: &str, close: &str) -> Option<String> {
+    let start = hay.find(open)? + open.len();
+    let end = hay[start..].find(close)?;
+    Some(hay[start..start + end].to_string())
+}
+
+/// Body of the first fenced code block (```` ```json ```` or a plain fence;
+/// a language tag on the opening line is skipped).
+fn extract_fenced_json(hay: &str) -> Option<String> {
+    let open = hay.find("```")? + 3;
+    let after = &hay[open..];
+    let body_start = after.find('\n').map_or(0, |i| i + 1);
+    let body = &after[body_start..];
+    let end = body.find("```")?;
+    Some(body[..end].to_string())
 }
 
 // ── GeminiProvider ────────────────────────────────────────────────────────────
@@ -2249,13 +2767,26 @@ mod tests {
     }
 
     fn clear_openai_env() {
-        unsafe {
-            std::env::remove_var("FYNANCE_PARSE_PROVIDER");
-            std::env::remove_var("FYNANCE_OPENAI_API_KEY");
-            std::env::remove_var("FYNANCE_OPENAI_BASE_URL");
-            std::env::remove_var("FYNANCE_OPENAI_TIMEOUT_SECS");
+        for key in OPENAI_ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
         }
     }
+
+    const OPENAI_ENV_KEYS: &[&str] = &[
+        "FYNANCE_PARSE_PROVIDER",
+        "FYNANCE_OPENAI_API_KEY",
+        "FYNANCE_OPENAI_BASE_URL",
+        "FYNANCE_OPENAI_TIMEOUT_SECS",
+        "FYNANCE_OPENAI_TEXT_MODEL",
+        "FYNANCE_OPENAI_PDF_MODEL",
+        "FYNANCE_OPENAI_TOOL_CHOICE",
+        "FYNANCE_OPENAI_MAX_TOKENS",
+        "FYNANCE_OPENAI_TEMPERATURE",
+        "FYNANCE_OPENAI_EXTRA_BODY",
+        "FYNANCE_OPENAI_PDF_MODE",
+        "FYNANCE_OPENAI_PDF_MAX_PAGES",
+        "FYNANCE_OPENAI_STREAM",
+    ];
 
     /// One-shot HTTP server on an ephemeral loopback port. Answers the first
     /// request with `body` as JSON and returns the raw request it received.
@@ -2766,42 +3297,49 @@ mod tests {
     }
 
     #[test]
-    fn test_openai_pdf_returns_error() {
+    fn test_openai_pdf_without_tool_configured_is_not_supported() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("FYNANCE_OPENAI_API_KEY", "test-key") };
+        clear_openai_env();
+        unsafe {
+            std::env::remove_var("FYNANCE_PDF_EXTRACT_CMD");
+            std::env::set_var("FYNANCE_OPENAI_BASE_URL", "http://127.0.0.1:9/v1");
+        }
         let provider = OpenAIProvider::from_env().unwrap();
-        unsafe { std::env::remove_var("FYNANCE_OPENAI_API_KEY") };
+        clear_openai_env();
 
+        let result = call_openai_pdf(&provider);
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("PDF without the extract tool must fail"),
+        };
+        assert!(matches!(err, ProviderError::NotSupported(_)), "got: {err}");
+        assert!(
+            err.to_string().contains("FYNANCE_PDF_EXTRACT_CMD"),
+            "got: {err}"
+        );
+    }
+
+    fn call_openai_pdf(provider: &OpenAIProvider) -> Result<ProviderCallResult, ProviderError> {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(provider.chat_with_pdf_and_tools(
+        rt.block_on(provider.chat_with_pdf_and_tools(
             "system",
-            b"fake pdf bytes",
+            b"%PDF-1.4 fake",
             "text",
-            "tool",
-            serde_json::json!({}),
+            "extract_unified",
+            json!({"type": "object"}),
             None,
-        ));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not supported"));
+        ))
     }
 
     #[test]
-    fn test_openai_response_parsing() {
-        let body = r#"{
-            "choices": [{
-                "message": {
-                    "tool_calls": [{
-                        "function": {
-                            "name": "parse_bank_statement",
-                            "arguments": "{\"detected_bank\":\"monzo\",\"detection_confidence\":0.95,\"rows\":[]}"
-                        }
-                    }]
-                }
-            }]
-        }"#;
-        let result = extract_openai_tool_input(body, "parse_bank_statement").unwrap();
-        assert_eq!(result["detected_bank"], "monzo");
-        assert_eq!(result["detection_confidence"], 0.95);
+    fn test_openai_response_tool_call_string_arguments() {
+        let api_resp: OpenAIResponse =
+            serde_json::from_str(OPENAI_EXTRACT_UNIFIED_RESPONSE).unwrap();
+        let reply = reply_from_choice(api_resp.choices.first().unwrap());
+        assert_eq!(reply.finish_reason.as_deref(), Some("tool_calls"));
+        let (value, stop) = post_process_openai_reply(&reply, "extract_unified", 20).unwrap();
+        assert_eq!(value["transactions"], json!([]));
+        assert_eq!(stop.as_deref(), Some("tool_calls"));
     }
 
     #[test]
@@ -2873,9 +3411,10 @@ mod tests {
             "choices": [{"message": {"tool_calls": null}}],
             "usage": {"prompt_tokens": 12, "completion_tokens": 34}
         }"#;
-        let usage = extract_openai_usage(body);
-        assert_eq!(usage.input_tokens, 12);
-        assert_eq!(usage.output_tokens, 34);
+        let api_resp: OpenAIResponse = serde_json::from_str(body).unwrap();
+        let usage = api_resp.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 12);
+        assert_eq!(usage.completion_tokens, 34);
     }
 
     #[test]
@@ -3056,5 +3595,684 @@ mod tests {
 
         let err = extract_gemini_tool_input(&body, "parse_statement").unwrap_err();
         assert!(matches!(err, ProviderError::NoToolUse { .. }));
+    }
+
+    // ── OpenAI provider parity (plan 30 Part 2) ─────────────────────────────
+
+    const OPENAI_EXTRACT_UNIFIED_RESPONSE: &str = r#"{
+        "choices": [{
+            "message": {
+                "tool_calls": [{
+                    "function": {
+                        "name": "extract_unified",
+                        "arguments": "{\"transactions\":[],\"holdings\":[],\"investments\":[]}"
+                    }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 20}
+    }"#;
+
+    const OPENAI_TRUNCATED_RESPONSE: &str = r#"{
+        "choices": [{
+            "message": {
+                "tool_calls": [{
+                    "function": {
+                        "name": "extract_unified",
+                        "arguments": "{\"transactions\":[{\"date\":\"2026-11-0"
+                    }
+                }]
+            },
+            "finish_reason": "length"
+        }],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 999}
+    }"#;
+
+    fn openai_content_response(content: &str) -> String {
+        serde_json::to_string(&json!({
+            "choices": [{ "message": { "content": content }, "finish_reason": "stop" }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2}
+        }))
+        .unwrap()
+    }
+
+    /// The JSON body of the raw HTTP request captured by `serve_once`.
+    fn request_json(raw: &str) -> Value {
+        let body = raw
+            .split_once("\r\n\r\n")
+            .expect("request had no header terminator")
+            .1;
+        serde_json::from_str(body).expect("request body must be JSON")
+    }
+
+    /// A provider wired for tests only. `base_url` defaults to an unreachable
+    /// loopback port: every test that sends a request points it at a
+    /// `serve_once` fake first, so no test can reach api.openai.com.
+    #[derive(Default)]
+    struct TestConfig {
+        base_url: Option<String>,
+        tool_choice: Option<OpenAIToolChoice>,
+        max_tokens: Option<u64>,
+        temperature: Option<f64>,
+        extra_body: Option<Value>,
+        pdf_mode: Option<OpenAIPdfMode>,
+        pdf_max_pages: Option<usize>,
+        pdf_extract_cmd: Option<std::path::PathBuf>,
+    }
+
+    impl OpenAIProvider {
+        fn for_test(cfg: TestConfig) -> Self {
+            let extra_body = match cfg.extra_body {
+                Some(value) => value
+                    .as_object()
+                    .expect("extra_body must be an object")
+                    .clone(),
+                None => serde_json::Map::new(),
+            };
+            Self {
+                client: Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(5))
+                    .build()
+                    .unwrap(),
+                base_url: cfg
+                    .base_url
+                    .unwrap_or_else(|| "http://127.0.0.1:9/v1".to_string()),
+                api_key: None,
+                timeout: std::time::Duration::from_secs(5),
+                standard_model: "test-model".to_string(),
+                advanced_model: "test-model".to_string(),
+                tool_choice: cfg.tool_choice.unwrap_or(OpenAIToolChoice::Required),
+                max_tokens: cfg.max_tokens.unwrap_or(OPENAI_DEFAULT_MAX_TOKENS),
+                temperature: cfg.temperature,
+                extra_body,
+                pdf_mode: cfg.pdf_mode.unwrap_or(OpenAIPdfMode::Both),
+                pdf_max_pages: cfg.pdf_max_pages.unwrap_or(OPENAI_DEFAULT_PDF_MAX_PAGES),
+                pdf_extract: PdfExtractConfig {
+                    cmd: cfg.pdf_extract_cmd,
+                    extra_args: Vec::new(),
+                    timeout: std::time::Duration::from_secs(30),
+                },
+            }
+        }
+    }
+
+    fn call_extract_unified(provider: &OpenAIProvider) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(provider.chat_with_tools(
+            "system",
+            "user",
+            "extract_unified",
+            json!({"type": "object"}),
+            ModelTier::Standard,
+            None,
+        ))
+        .expect("fake server returns a valid tool call");
+    }
+
+    fn call_openai_files(
+        provider: &OpenAIProvider,
+        files: &[(String, String, Vec<u8>)],
+    ) -> Result<ProviderCallResult, ProviderError> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(provider.chat_with_files_and_tools(
+            "system",
+            files,
+            "supplement text",
+            "extract_unified",
+            json!({"type": "object"}),
+            None,
+        ))
+    }
+
+    fn pdf_file() -> (String, String, Vec<u8>) {
+        (
+            "statement.pdf".to_string(),
+            "application/pdf".to_string(),
+            pdf_extract::tests::sample_pdf_bytes(),
+        )
+    }
+
+    fn png_file() -> (String, String, Vec<u8>) {
+        (
+            "receipt.png".to_string(),
+            "image/png".to_string(),
+            vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+        )
+    }
+
+    fn csv_file() -> (String, String, Vec<u8>) {
+        (
+            "statement.csv".to_string(),
+            "text/csv".to_string(),
+            b"date,description,amount\n2026-11-02,Corner Shop,-12.00\n".to_vec(),
+        )
+    }
+
+    fn user_content_parts(request: &Value) -> Vec<Value> {
+        request["messages"][1]["content"]
+            .as_array()
+            .expect("user message content must be an array")
+            .clone()
+    }
+
+    fn fake_tool_in_temp_dir(
+        behaviour: pdf_extract::tests::Behaviour,
+    ) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tool = pdf_extract::tests::write_fake_tool(dir.path(), behaviour);
+        (dir, tool)
+    }
+
+    fn image_url_parts(parts: &[Value]) -> Vec<String> {
+        parts
+            .iter()
+            .filter(|p| p["type"] == "image_url")
+            .map(|p| p["image_url"]["url"].as_str().unwrap_or("").to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_openai_tool_choice_forms() {
+        for (choice, expected) in [
+            (OpenAIToolChoice::Required, json!("required")),
+            (
+                OpenAIToolChoice::Function,
+                json!({"type": "function", "function": { "name": "extract_unified" }}),
+            ),
+            (OpenAIToolChoice::Auto, json!("auto")),
+        ] {
+            let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+            let provider = OpenAIProvider::for_test(TestConfig {
+                base_url: Some(format!("{url}/v1")),
+                tool_choice: Some(choice),
+                ..Default::default()
+            });
+            call_extract_unified(&provider);
+            let request = request_json(&server.join().unwrap());
+            assert_eq!(request["tool_choice"], expected, "form: {choice:?}");
+        }
+    }
+
+    #[test]
+    fn test_openai_max_tokens_default_and_zero_omits() {
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        call_extract_unified(&provider);
+        let request = request_json(&server.join().unwrap());
+        assert_eq!(request["max_tokens"], json!(16_384));
+
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            max_tokens: Some(0),
+            ..Default::default()
+        });
+        call_extract_unified(&provider);
+        let request = request_json(&server.join().unwrap());
+        assert!(
+            request.get("max_tokens").is_none(),
+            "max_tokens must be absent when 0: {request}"
+        );
+    }
+
+    #[test]
+    fn test_openai_temperature_absent_unless_set() {
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        call_extract_unified(&provider);
+        let request = request_json(&server.join().unwrap());
+        assert!(
+            request.get("temperature").is_none(),
+            "no temperature unless set: {request}"
+        );
+
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            temperature: Some(0.2),
+            ..Default::default()
+        });
+        call_extract_unified(&provider);
+        let request = request_json(&server.join().unwrap());
+        assert_eq!(request["temperature"], json!(0.2));
+    }
+
+    #[test]
+    fn test_openai_extra_body_is_merged_into_every_request() {
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            extra_body: Some(json!({
+                "chat_template_kwargs": { "enable_thinking": false },
+                "top_k": 5
+            })),
+            ..Default::default()
+        });
+        call_extract_unified(&provider);
+        let request = request_json(&server.join().unwrap());
+        assert_eq!(
+            request["chat_template_kwargs"]["enable_thinking"],
+            json!(false)
+        );
+        assert_eq!(request["top_k"], json!(5));
+    }
+
+    #[test]
+    fn test_openai_from_env_rejects_bad_knobs() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for (key, value) in [
+            ("FYNANCE_OPENAI_TOOL_CHOICE", "sometimes"),
+            ("FYNANCE_OPENAI_MAX_TOKENS", "lots"),
+            ("FYNANCE_OPENAI_TEMPERATURE", "hot"),
+            ("FYNANCE_OPENAI_PDF_MODE", "scanned"),
+            ("FYNANCE_OPENAI_PDF_MAX_PAGES", "many"),
+            ("FYNANCE_OPENAI_EXTRA_BODY", r#"[1,2]"#),
+            ("FYNANCE_OPENAI_EXTRA_BODY", r#"{"messages": []}"#),
+        ] {
+            clear_openai_env();
+            unsafe {
+                std::env::set_var("FYNANCE_OPENAI_BASE_URL", "http://127.0.0.1:9/v1");
+                std::env::set_var(key, value);
+            }
+            let result = OpenAIProvider::from_env();
+            clear_openai_env();
+            let msg = match result {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("{key}={value} must be rejected"),
+            };
+            assert!(msg.contains(key), "{key}={value}: got {msg}");
+        }
+    }
+
+    #[test]
+    fn test_openai_files_part_order() {
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        call_openai_files(&provider, &[csv_file(), png_file()]).unwrap();
+        let request = request_json(&server.join().unwrap());
+        let parts = user_content_parts(&request);
+
+        assert_eq!(
+            parts[0]["text"]
+                .as_str()
+                .unwrap_or("")
+                .strip_prefix("Source document filename: ")
+                .unwrap_or(""),
+            "statement.csv\nFor every row you extract from the document immediately below, set its \"source_file\" field to exactly this filename.",
+            "label part: {}",
+            parts[0]
+        );
+        assert!(
+            parts[1]["text"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("--- file: statement.csv (text/csv) ---\ndate,description,amount"),
+            "csv part: {}",
+            parts[1]
+        );
+        assert!(
+            parts[2]["text"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("Source document filename: receipt.png"),
+            "label part: {}",
+            parts[2]
+        );
+        assert_eq!(parts[3]["type"], "image_url");
+        assert!(
+            parts[3]["image_url"]["url"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("data:image/png;base64,"),
+            "image part: {}",
+            parts[3]
+        );
+        assert_eq!(parts[4]["text"], json!("supplement text"));
+        assert_eq!(parts.len(), 5, "parts: {parts:?}");
+    }
+
+    #[test]
+    fn test_openai_pdf_mode_both() {
+        let (_dir, tool) = fake_tool_in_temp_dir(pdf_extract::tests::Behaviour::Ok);
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            pdf_extract_cmd: Some(tool),
+            ..Default::default()
+        });
+        call_openai_files(&provider, &[pdf_file()]).unwrap();
+        let parts = user_content_parts(&request_json(&server.join().unwrap()));
+
+        let images = image_url_parts(&parts);
+        assert_eq!(images.len(), 3, "every page sends its image: {parts:?}");
+        assert!(
+            images
+                .iter()
+                .all(|u| u.starts_with("data:image/png;base64,")),
+            "{images:?}"
+        );
+
+        let page_labels: Vec<&str> = parts
+            .iter()
+            .filter(|p| p["text"].as_str().unwrap_or("").starts_with("Page "))
+            .map(|p| p["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            page_labels,
+            [
+                "Page 1 of 3 of statement.pdf",
+                "Page 2 of 3 of statement.pdf",
+                "Page 3 of 3 of statement.pdf"
+            ]
+        );
+
+        // Pages 1-2 carry their text layer; page 3 (scanned) is image-only:
+        // the part after its label is the image, not text.
+        let page1_label = parts
+            .iter()
+            .position(|p| p["text"] == json!("Page 1 of 3 of statement.pdf"))
+            .unwrap();
+        assert!(
+            parts[page1_label + 1]["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Corner Shop"),
+            "page 1 text part: {}",
+            parts[page1_label + 1]
+        );
+        let page3_label = parts
+            .iter()
+            .position(|p| p["text"] == json!("Page 3 of 3 of statement.pdf"))
+            .unwrap();
+        assert_eq!(parts[page3_label + 1]["type"], "image_url");
+    }
+
+    #[test]
+    fn test_openai_pdf_mode_images_sends_no_page_text() {
+        let (_dir, tool) = fake_tool_in_temp_dir(pdf_extract::tests::Behaviour::Ok);
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            pdf_extract_cmd: Some(tool),
+            pdf_mode: Some(OpenAIPdfMode::Images),
+            ..Default::default()
+        });
+        call_openai_files(&provider, &[pdf_file()]).unwrap();
+        let parts = user_content_parts(&request_json(&server.join().unwrap()));
+        assert_eq!(image_url_parts(&parts).len(), 3);
+        assert!(
+            !parts
+                .iter()
+                .any(|p| { p["text"].as_str().unwrap_or("").contains("Corner Shop") }),
+            "images mode must not send page text"
+        );
+    }
+
+    #[test]
+    fn test_openai_pdf_mode_text_uses_images_only_for_scanned_pages() {
+        let (_dir, tool) = fake_tool_in_temp_dir(pdf_extract::tests::Behaviour::Ok);
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            pdf_extract_cmd: Some(tool),
+            pdf_mode: Some(OpenAIPdfMode::Text),
+            ..Default::default()
+        });
+        call_openai_files(&provider, &[pdf_file()]).unwrap();
+        let parts = user_content_parts(&request_json(&server.join().unwrap()));
+        assert!(
+            parts
+                .iter()
+                .any(|p| { p["text"].as_str().unwrap_or("").contains("Corner Shop") })
+        );
+        let images = image_url_parts(&parts);
+        assert_eq!(
+            images.len(),
+            1,
+            "only the no-text-layer page sends an image"
+        );
+    }
+
+    #[test]
+    fn test_openai_pdf_page_cap_is_document_conversion() {
+        let (_dir, tool) = fake_tool_in_temp_dir(pdf_extract::tests::Behaviour::Ok);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            pdf_extract_cmd: Some(tool),
+            pdf_max_pages: Some(2),
+            ..Default::default()
+        });
+        let err = call_openai_files(&provider, &[pdf_file()])
+            .expect_err("3 pages over a cap of 2 must fail");
+        match err {
+            ProviderError::DocumentConversion(msg) => {
+                assert!(msg.contains("FYNANCE_OPENAI_PDF_MAX_PAGES"), "got: {msg}");
+            }
+            other => panic!("expected DocumentConversion, got {other}"),
+        }
+    }
+
+    #[test]
+    fn test_openai_pdf_native_mode_never_runs_the_tool() {
+        // The Fail fake exits 3: reaching it would fail the call, so a green
+        // call proves native mode skipped the tool entirely.
+        let (_dir, tool) = fake_tool_in_temp_dir(pdf_extract::tests::Behaviour::Fail);
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            pdf_extract_cmd: Some(tool),
+            pdf_mode: Some(OpenAIPdfMode::Native),
+            ..Default::default()
+        });
+        call_openai_files(&provider, &[pdf_file()]).unwrap();
+        let parts = user_content_parts(&request_json(&server.join().unwrap()));
+        let file_parts: Vec<&Value> = parts.iter().filter(|p| p["type"] == "file").collect();
+        assert_eq!(file_parts.len(), 1, "exactly one file part: {parts:?}");
+        assert_eq!(file_parts[0]["file"]["filename"], json!("statement.pdf"));
+        assert!(
+            file_parts[0]["file"]["file_data"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("data:application/pdf;base64,"),
+            "file part: {}",
+            file_parts[0]
+        );
+        assert!(image_url_parts(&parts).is_empty());
+    }
+
+    #[test]
+    fn test_openai_finish_reason_length_returns_truncated() {
+        let (url, server) = serve_once(OPENAI_TRUNCATED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(provider.chat_with_tools(
+            "system",
+            "user",
+            "extract_unified",
+            json!({"type": "object"}),
+            ModelTier::Standard,
+            None,
+        ));
+        server.join().unwrap();
+        match result {
+            Err(ProviderError::Truncated { output_tokens }) => {
+                assert_eq!(output_tokens, 999);
+            }
+            other => panic!("expected Truncated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_openai_arguments_sent_as_object_are_accepted() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "function": {
+                            "name": "extract_unified",
+                            "arguments": {"transactions": [], "holdings": [], "investments": []}
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2}
+        })
+        .to_string();
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        call_extract_unified(&provider);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_content_fallback_recovers_tool_call_block() {
+        let content = "<think>pondering\nsome hidden reasoning\n</think><tool_call>{\"transactions\":[],\"holdings\":[],\"investments\":[]}</tool_call>";
+        let body = openai_content_response(content);
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let result = call_openai_files(&provider, &[csv_file()]).unwrap();
+        assert_eq!(result.value["transactions"], json!([]));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_content_fallback_recovers_fenced_json() {
+        let content = "Sure, here is the extraction:\n```json\n{\"transactions\": [], \"holdings\": [], \"investments\": []}\n```";
+        let body = openai_content_response(content);
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let result = call_openai_files(&provider, &[csv_file()]).unwrap();
+        assert_eq!(result.value["holdings"], json!([]));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_prose_only_returns_no_tool_use() {
+        let body = openai_content_response("I could not find any transactions in that file.");
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let err = call_openai_files(&provider, &[csv_file()])
+            .expect_err("prose must not produce an extraction");
+        assert!(matches!(err, ProviderError::NoToolUse { .. }), "got: {err}");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_wrong_named_tool_call_returns_no_tool_use() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "function": {
+                            "name": "some_other_tool",
+                            "arguments": "{}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        })
+        .to_string();
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let err = call_extract_unified_result(&provider).expect_err("wrong name must fail");
+        assert!(matches!(err, ProviderError::NoToolUse { .. }), "got: {err}");
+        server.join().unwrap();
+    }
+
+    fn call_extract_unified_result(
+        provider: &OpenAIProvider,
+    ) -> Result<ProviderCallResult, ProviderError> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(provider.chat_with_tools(
+            "system",
+            "user",
+            "extract_unified",
+            json!({"type": "object"}),
+            ModelTier::Standard,
+            None,
+        ))
+    }
+
+    #[test]
+    fn test_anthropic_max_tokens_with_truncated_json_returns_truncated() {
+        let mut acc = SseAccumulator::new();
+        acc.handle_event(&json!({
+            "type": "content_block_start", "index": 0,
+            "content_block": { "type": "tool_use", "id": "tu_1", "name": "extract_unified" }
+        }));
+        acc.handle_event(&json!({
+            "type": "content_block_delta", "index": 0,
+            "delta": { "type": "input_json_delta", "partial_json": "{\"transactions\":[" }
+        }));
+        acc.handle_event(&json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "max_tokens" },
+            "usage": { "output_tokens": 1234 }
+        }));
+        match acc.into_result("extract_unified") {
+            Err(ProviderError::Truncated { output_tokens }) => {
+                assert_eq!(output_tokens, 1234);
+            }
+            other => panic!("expected Truncated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_openai_from_env_reads_knobs() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_openai_env();
+        unsafe {
+            std::env::set_var("FYNANCE_OPENAI_BASE_URL", "http://127.0.0.1:9/v1");
+            std::env::set_var("FYNANCE_OPENAI_TOOL_CHOICE", "auto");
+            std::env::set_var("FYNANCE_OPENAI_MAX_TOKENS", "64000");
+            std::env::set_var("FYNANCE_OPENAI_TEMPERATURE", "0");
+            std::env::set_var("FYNANCE_OPENAI_PDF_MODE", "native");
+            std::env::set_var("FYNANCE_OPENAI_PDF_MAX_PAGES", "10");
+            std::env::set_var(
+                "FYNANCE_OPENAI_EXTRA_BODY",
+                r#"{"chat_template_kwargs":{"enable_thinking":false}}"#,
+            );
+        }
+        let provider = OpenAIProvider::from_env().unwrap();
+        clear_openai_env();
+
+        assert_eq!(provider.tool_choice, OpenAIToolChoice::Auto);
+        assert_eq!(provider.max_tokens, 64000);
+        assert_eq!(provider.temperature, Some(0.0));
+        assert_eq!(provider.pdf_mode, OpenAIPdfMode::Native);
+        assert_eq!(provider.pdf_max_pages, 10);
+        assert_eq!(
+            provider.extra_body["chat_template_kwargs"]["enable_thinking"],
+            json!(false)
+        );
     }
 }

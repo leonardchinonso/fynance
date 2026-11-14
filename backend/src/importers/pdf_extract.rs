@@ -390,8 +390,10 @@ struct ToolImage {
     path: String,
 }
 
+// `pub(crate)` so the provider tests (plan 30 Part 2) can drive the fake
+// tool; everything in here stays test-only.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::fs;
@@ -414,7 +416,7 @@ mod tests {
         fs::read(fixtures_dir().join(name)).expect("fixture present")
     }
 
-    fn sample_pdf_bytes() -> Vec<u8> {
+    pub(crate) fn sample_pdf_bytes() -> Vec<u8> {
         fs::read(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests")
@@ -426,7 +428,7 @@ mod tests {
 
     /// What the fake tool does when run. Scripts bake in literal paths, so
     /// tests need no env and can run in parallel.
-    enum Behaviour {
+    pub(crate) enum Behaviour {
         /// Copy the fixture manifest and PNGs into `--out`.
         Ok,
         /// stderr + exit 3.
@@ -504,7 +506,7 @@ mod tests {
     /// Write a fake pdf-extract tool (an `sh` script on Unix, a `.cmd` batch
     /// file on Windows) into `dir`, plus any variant manifest JSON it needs.
     /// Returns the path to the tool.
-    fn write_fake_tool(dir: &Path, behaviour: Behaviour) -> PathBuf {
+    pub(crate) fn write_fake_tool(dir: &Path, behaviour: Behaviour) -> PathBuf {
         let fix = fixtures_dir().display().to_string();
         let variant_path = dir.join("manifest_variant.json");
         let fixture: serde_json::Value =
