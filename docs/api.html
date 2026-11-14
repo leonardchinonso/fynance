@@ -361,6 +361,7 @@ td code { font-size: 12px; }
     <a href="#patch-api-income-sources-id" class="nav-endpoint"><span class="method-badge method-patch">PATCH</span>/income-sources/:id</a>
     <a href="#delete-api-income-sources-id" class="nav-endpoint"><span class="method-badge method-delete">DEL</span>/income-sources/:id</a>
     <a href="#post-api-income-sources-id-year-end-adjustment" class="nav-endpoint"><span class="method-badge method-post">POST</span>/income-sources/:id/year-end-adjustment</a>
+    <a href="#post-api-income-sources-id-sync" class="nav-endpoint"><span class="method-badge method-post">POST</span>/income-sources/:id/sync</a>
     <a href="#get-api-income-records" class="nav-endpoint"><span class="method-badge method-get">GET</span>/income-records</a>
     <a href="#post-api-income-records" class="nav-endpoint"><span class="method-badge method-post">POST</span>/income-records</a>
     <a href="#post-api-income-records-import" class="nav-endpoint"><span class="method-badge method-post">POST</span>/income-records/import</a>
@@ -4103,6 +4104,55 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
   </table>
 </section>
 
+<section class="endpoint" id="post-api-income-sources-id-sync" data-method="POST" data-path="/api/income-sources/:id/sync">
+  <div class="endpoint-header">
+    <span class="method-badge method-post">POST</span>
+    <code class="endpoint-path">/api/income-sources/:id/sync</code>
+  </div>
+  <p class="endpoint-summary">Pull monthly sales periods from the shop app and upsert them as income records. Needs <code>FYNANCE_SHOP_SYNC_URL</code> and <code>FYNANCE_SHOP_SYNC_TOKEN</code>. Each period becomes one <code>period</code> record with <code>origin = shop_sync</code> and <code>external_ref = "start..end"</code> (calendar months, April split at the 6th); pence become decimal pounds and zero amounts are omitted. The shop app widens <code>from</code>/<code>to</code> to whole periods, so the periods can extend beyond the range asked for. An existing synced record has its line items replaced; <code>manual</code> and <code>parse</code> records are never touched. With <code>dry_run</code> nothing is written; a real run writes every period in one SQLite transaction. The source must be <code>self_employment</code> with <code>sync_kind = shop_app</code>.</p>
+  <h4>Parameters</h4>
+  <table class="params-table">
+    <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>id</code></td><td>path</td><td>string</td><td>Yes</td><td>Income source id.</td></tr>
+    </tbody>
+  </table>
+  <h4>Request Body</h4>
+  <pre class="example-request"><code>{ "from": "2025-04-06", "to": "2026-04-05", "dry_run": true }</code></pre>
+  <h4>Example Response <span class="status-code">200</span></h4>
+  <pre class="example-response"><code>{
+  "dry_run": true,
+  "created": 1,
+  "updated": 0,
+  "unchanged": 0,
+  "periods": [
+    {
+      "external_ref": "2025-04-06..2025-04-30",
+      "status": "created",
+      "line_items": [
+        { "line_type": "sales", "amount": "120.50", "basis": "period" },
+        { "line_type": "platform_fees", "amount": "9.64", "basis": "period" }
+      ]
+    }
+  ],
+  "late_refunds": [ { "order_month": "2025-03", "refund_date": "2025-04-10", "amount": "5.00" } ],
+  "warnings": [ "2025-04-06..2025-04-30: 2 orders have no platform fee recorded" ]
+}</code></pre>
+  <h4>Errors</h4>
+  <table class="errors-table">
+    <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>sync_not_configured</code></td><td>The URL or token variable is unset</td></tr>
+      <tr><td>400</td><td><code>sync_not_supported</code></td><td>Source is not <code>self_employment</code> with <code>sync_kind = shop_app</code></td></tr>
+      <tr><td>400</td><td><code>source_not_found</code></td><td>Unknown source id</td></tr>
+      <tr><td>400</td><td><code>invalid_date</code> / <code>invalid_range</code></td><td>Bad <code>from</code>/<code>to</code>, or <code>to</code> before <code>from</code></td></tr>
+      <tr><td>409</td><td><code>sync_currency_changed</code></td><td>A stored period is in another currency</td></tr>
+      <tr><td>502</td><td><code>sync_upstream_error</code></td><td>The shop app answered non-200 (status code only), was unreachable, or sent data that does not fit</td></tr>
+      <tr><td>504</td><td><code>sync_upstream_error</code></td><td>The shop app timed out</td></tr>
+    </tbody>
+  </table>
+</section>
+
 <section class="endpoint" id="get-api-income-records" data-method="GET" data-path="/api/income-records">
   <div class="endpoint-header">
     <span class="method-badge method-get">GET</span>
@@ -4560,6 +4610,7 @@ browser requests pass without a token; non-loopback requires a bearer token.</p>
     <tr><td>2026-08-15</td><td><strong>BREAKING:</strong> Capital Gains endpoints drop <code>tax_year</code> and <code>as_at</code> in favour of <code>start_date</code>/<code>end_date</code> alone (plan 23 §0.2 decision 7.3). Added <code>disposal_groups</code> to <code>CapitalGainsResponse</code>, rolling <code>realized_events</code> up by <code>(symbol, disposal_date)</code>.</td></tr>
     <tr><td>2026-11-14</td><td><strong>BREAKING:</strong> the employment-pay endpoints are gone, replaced by the income model (plan 30): <code>/api/income-sources</code>, <code>/api/income-records</code>, <code>/api/income-checks</code>, <code>GET /api/income/line-types</code>, <code>GET /api/income/vest-candidates</code> and <code>POST /api/income-sources/:id/year-end-adjustment</code>. <code>GET /api/tax/summary/:tax_year</code> now requires <code>profile_id</code> and returns per-source employment and self-employment figures.</td></tr>
     <tr><td>2026-11-14</td><td><code>POST /api/parse</code> accepts <code>return_type.tax_documents</code> and a <code>profile_id</code> field for payslips and P60s, and returns a <code>tax_documents</code> object. New <code>POST /api/income-records/import</code> commits the reviewed drafts.</td></tr>
+    <tr><td>2026-11-14</td><td>New <code>POST /api/income-sources/:id/sync</code> pulls business sales periods from the shop app into income records.</td></tr>
     <tr><td>2026-09-03</td><td>Added tax endpoints: <code>GET/PUT /api/tax-config</code> (statutory AEA and rate bands) and <code>GET/PUT /api/tax-inputs/:profile_id/:tax_year</code> (the taxpayer&#39;s own figures). <code>GET /api/investments/capital-gains</code> gains an optional <code>tax_year</code> param that adds a computed <code>tax</code> object to the response, including the pre/post-30-Oct-2024 rate split. Added <code>GET /api/investments/brought-forward-losses</code>, which derives a <em>suggested</em> (upper-bound) carried-loss figure from prior years.</td></tr>
   </tbody>
 </table>

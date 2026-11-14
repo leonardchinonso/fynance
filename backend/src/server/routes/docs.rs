@@ -441,6 +441,43 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                         }
                     }
                 },
+                "IncomeSyncResult": {
+                    "type": "object",
+                    "description": "Outcome of POST /api/income-sources/{id}/sync. `periods` are the periods the shop app returned (it widens the range to whole periods), keyed by `external_ref` = `start..end`.",
+                    "required": ["dry_run", "created", "updated", "unchanged", "periods", "late_refunds", "warnings"],
+                    "properties": {
+                        "dry_run": { "type": "boolean" },
+                        "created": { "type": "integer" },
+                        "updated": { "type": "integer" },
+                        "unchanged": { "type": "integer" },
+                        "periods": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["external_ref", "status", "line_items"],
+                                "properties": {
+                                    "external_ref": { "type": "string", "example": "2025-04-06..2025-04-30" },
+                                    "status": { "type": "string", "enum": ["created", "updated", "unchanged"] },
+                                    "line_items": { "type": "array", "items": { "type": "object", "description": "Line type, decimal-string amount and basis (always period). Zero amounts are omitted." } }
+                                }
+                            }
+                        },
+                        "late_refunds": {
+                            "type": "array",
+                            "description": "Refunds dated in a different month from their order. Reported, never written.",
+                            "items": {
+                                "type": "object",
+                                "required": ["order_month", "refund_date", "amount"],
+                                "properties": {
+                                    "order_month": { "type": "string", "example": "2025-03" },
+                                    "refund_date": { "type": "string" },
+                                    "amount": { "type": "string", "description": "Decimal pounds." }
+                                }
+                            }
+                        },
+                        "warnings": { "type": "array", "items": { "type": "string" }, "description": "Orders missing a platform fee or costing, per period." }
+                    }
+                },
                 "IncomeCheck": {
                     "type": "object",
                     "description": "A P60 or annual accounts kept as a reconciliation check: its printed figures are compared with the summed records and never added to them.",
@@ -1612,6 +1649,24 @@ pub async fn openapi_spec() -> Result<Json<Value>, AppError> {
                 "responses": {
                     "201": { "description": "The created record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeRecord" } } } },
                     "400": { "description": "Validation failure; the error code names the rule. A body that does not deserialise (unknown basis or line type, missing field) is `invalid_body`; an unknown document id is `document_not_found`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+                }
+            }
+        },
+        "/api/income-sources/{id}/sync": {
+            "post": {
+                "summary": "Sync business income from the shop app",
+                "security": [{ "bearerAuth": [] }],
+                "description": "Fetches monthly sales periods from the shop app (`FYNANCE_SHOP_SYNC_URL`, bearer `FYNANCE_SHOP_SYNC_TOKEN`) and upserts one `period` record per period with `origin = shop_sync` and `external_ref = start..end` (calendar months, April split at the 6th). The shop app widens `from`/`to` to whole periods, so the periods may extend beyond the range asked for. Amounts are pence converted to pounds; zero amounts are omitted. An existing synced record has its line items replaced; `manual` and `parse` records are never touched. With `dry_run` nothing is written. A real run writes all periods in one SQLite transaction. Orders missing a fee or costing become warnings. The source must be `self_employment` with `sync_kind = shop_app`.",
+                "parameters": [
+                    { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Income source id." }
+                ],
+                "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["from", "to"], "properties": { "from": { "type": "string", "example": "2025-04-06" }, "to": { "type": "string", "example": "2026-04-05" }, "dry_run": { "type": "boolean", "default": false } } } } } },
+                "responses": {
+                    "200": { "description": "What was (or, for a dry run, would be) written.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IncomeSyncResult" } } } },
+                    "400": { "description": "`sync_not_configured`, `sync_not_supported` (wrong source type or no `sync_kind`), `source_not_found`, `invalid_date`, `invalid_range`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "409": { "description": "`sync_currency_changed`: a stored period is in another currency.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "502": { "description": "`sync_upstream_error`: the shop app answered with a non-200 status (the code only is reported), was unreachable, or returned data that does not fit.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+                    "504": { "description": "The shop app timed out.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
                 }
             }
         },
