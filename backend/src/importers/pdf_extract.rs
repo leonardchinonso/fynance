@@ -138,6 +138,9 @@ pub struct ExtractedPdf {
     /// (real page number, tool's error description) for pages that failed on
     /// a partial-success run. Empty on a clean run.
     pub page_errors: Vec<(u32, String)>,
+    /// The manifest's document-wide `page_count`: the document's real page
+    /// count, which can exceed `pages.len()` with failed or filtered pages.
+    pub page_count: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -201,9 +204,20 @@ pub async fn extract_pdf(
         }
     };
 
+    let child_pid = child.id();
     let secs = cfg.timeout.as_secs();
     let output = match tokio::time::timeout(cfg.timeout, child.wait_with_output()).await {
-        Err(_) => return Err(PdfExtractError::TimedOut { secs }),
+        Err(_) => {
+            // `kill_on_drop` only kills what we spawned. When that is a
+            // `.cmd`/`.bat` wrapper on Windows, the real tool it started is
+            // orphaned with the temp-dir files still open. Kill the whole
+            // tree while the wrapper can still be traced, before the drop.
+            #[cfg(windows)]
+            if let Some(pid) = child_pid {
+                kill_process_tree(pid).await;
+            }
+            return Err(PdfExtractError::TimedOut { secs });
+        }
         Ok(Err(e)) => {
             return Err(PdfExtractError::NotFound {
                 cmd: format!("{} ({e})", cmd.display()),
@@ -292,7 +306,26 @@ pub async fn extract_pdf(
         duration_ms = started.elapsed().as_millis() as u64,
         "pdf-extract finished"
     );
-    Ok(ExtractedPdf { pages, page_errors })
+    Ok(ExtractedPdf {
+        pages,
+        page_errors,
+        page_count: tool.page_count,
+    })
+}
+
+/// Kill a spawned process and everything it started. `kill_on_drop` reaches
+/// only the direct child; a batch-file wrapper leaves the real tool running
+/// with the temp-dir files open. Errors (the tree is often partly gone
+/// already) are ignored: this is cleanup, best effort.
+#[cfg(windows)]
+async fn kill_process_tree(pid: u32) {
+    let _ = tokio::process::Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
 }
 
 fn failed_from_stderr(status: i32, stderr: &[u8]) -> PdfExtractError {
@@ -368,7 +401,6 @@ fn non_whitespace_chars(text: &str) -> usize {
 #[derive(Debug, Deserialize)]
 struct ToolOutput {
     schema_version: u32,
-    #[allow(dead_code)]
     #[serde(default)]
     page_count: Option<u32>,
     pages: Vec<ToolPage>,
@@ -395,15 +427,14 @@ struct ToolImage {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::importers::TEST_ENV_LOCK;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::sync::Mutex;
 
-    /// Serialises the two tests that mutate `FYNANCE_PDF_EXTRACT_*`, so their
-    /// `set_var` calls cannot interleave with each other's env reads. Tests
-    /// that pass an explicit `PdfExtractConfig` never touch env and stay
-    /// parallel-safe.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    // The tests that mutate `FYNANCE_PDF_EXTRACT_*` hold the crate-wide test
+    // env lock (see `importers::mod`), shared with the provider tests whose
+    // `OpenAIProvider::from_env` reads the same variables. Tests that pass an
+    // explicit `PdfExtractConfig` never touch env and stay parallel-safe.
 
     fn fixtures_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -662,7 +693,7 @@ pub(crate) mod tests {
     /// Run `f` with `vars` (a `None` value unsets) in the environment, then
     /// restore the original values.
     fn with_env<F: FnOnce()>(vars: &[(&str, Option<&str>)], f: F) {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved: Vec<(String, Option<String>)> = vars
             .iter()
             .map(|(k, _)| ((*k).to_string(), std::env::var(*k).ok()))

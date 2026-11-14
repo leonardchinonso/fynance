@@ -96,6 +96,7 @@ impl Default for UnifiedExtraction {
                 model: String::new(),
                 duration_ms: 0,
                 stop_reason: None,
+                warnings: Vec::new(),
             },
         }
     }
@@ -194,6 +195,9 @@ pub async fn extract_all(
         .map_err(|e| anyhow::anyhow!("unified parser: invalid tool input shape: {e}"))?;
 
     let mut extraction = post_validate(raw, hints, account_id, ctx)?;
+    // Degraded-input notes from the call itself (a PDF page the extract tool
+    // could not read) join the row-drop notes so they reach metadata.notes.
+    extraction.notes.extend(call.warnings.iter().cloned());
     extraction.call = call;
     Ok(extraction)
 }
@@ -206,8 +210,25 @@ fn dump_raw_output(call: &ProviderCallResult, account_id: &str) {
         Some(d) if !d.is_empty() => d,
         _ => return,
     };
-    let stamp = Local::now().format("%Y%m%dT%H%M%S");
-    let path = Path::new(&dir).join(format!("{stamp}-{account_id}-unified.json"));
+    // Millisecond stamp plus a short nonce: two calls for the same account
+    // in the same millisecond must not overwrite each other's dump. The
+    // account id goes into a path segment, so only safe characters survive.
+    let stamp = Local::now().format("%Y%m%dT%H%M%S%.3f");
+    let safe_account: String = account_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let path = Path::new(&dir).join(format!(
+        "{stamp}-{safe_account}-{}-unified.json",
+        &nonce[..8]
+    ));
     let payload = json!({
         "model": call.model,
         "stop_reason": call.stop_reason,
@@ -394,7 +415,9 @@ fn post_validate(
     for value in raw_transactions {
         match convert_transaction_row(value) {
             Ok(row) => transactions.push(row),
-            Err(reasons) => tx_drops.extend(reasons),
+            // One entry per dropped row, whatever the number of reasons, so
+            // the note's count is a row count.
+            Err(reasons) => tx_drops.push(reasons.join(", ")),
         }
     }
     if !tx_drops.is_empty() {
@@ -486,7 +509,21 @@ fn convert_transaction_row(value: Value) -> std::result::Result<UnifiedStatement
         }
     };
     let amount = match parse_amount_lenient(&raw.amount) {
-        Ok(a) => Some(a),
+        Ok((amount, printed_currency)) => {
+            // A currency code printed on the figure must agree with the row's
+            // currency field: "120.00 GBX" on a GBP row is a ×100 scale flip,
+            // not a GBP amount.
+            match printed_currency {
+                Some(code) if !code.eq_ignore_ascii_case(raw.currency.trim()) => {
+                    reasons.push(format!(
+                        "amount currency '{code}' contradicts row currency '{}'",
+                        raw.currency
+                    ));
+                    None
+                }
+                _ => Some(amount),
+            }
+        }
         Err(_) => {
             reasons.push(format!("bad amount '{}'", raw.amount));
             None
@@ -577,8 +614,10 @@ fn scrub_unknown_categories(rows: &mut [UnifiedStatementRow], known: &HashSet<&s
 /// Amounts the way bank documents actually print them: currency symbols and
 /// ISO codes around the number, unicode minus, parentheses for negatives,
 /// thousands separators. Ambiguous forms (European decimal commas, CR/DR
-/// markers) are rejected rather than guessed.
-fn parse_amount_lenient(raw: &str) -> Result<Decimal> {
+/// markers, an explicit sign inside parentheses) are rejected rather than
+/// guessed. Returns the value plus any ISO currency code printed alongside
+/// the number, so the caller can check it against the row's currency field.
+fn parse_amount_lenient(raw: &str) -> Result<(Decimal, Option<String>)> {
     let mut s = raw.trim().to_string();
     if s.is_empty() {
         return Err(anyhow::anyhow!("empty amount"));
@@ -590,10 +629,12 @@ fn parse_amount_lenient(raw: &str) -> Result<Decimal> {
     s = s.replace('\u{2212}', "-");
     s = s.replace(['\u{00A3}', '$', '\u{20AC}', '\u{20A6}'], "");
 
+    let mut printed_currency: Option<String> = None;
     let lead_end = s
         .find(|c: char| !c.is_ascii_alphabetic())
         .unwrap_or(s.len());
     if lead_end == 3 {
+        printed_currency = Some(s[..lead_end].to_ascii_uppercase());
         s = s[lead_end..].trim_start().to_string();
     }
     let trimmed_alpha = s
@@ -601,6 +642,7 @@ fn parse_amount_lenient(raw: &str) -> Result<Decimal> {
         .to_string();
     let tail_len = s.len() - trimmed_alpha.len();
     if tail_len == 3 {
+        printed_currency = Some(s[s.len() - 3..].to_ascii_uppercase());
         s = trimmed_alpha.trim_end().to_string();
     } else if tail_len == 2 && matches!(s[s.len() - 2..].to_ascii_uppercase().as_str(), "CR" | "DR")
     {
@@ -608,12 +650,22 @@ fn parse_amount_lenient(raw: &str) -> Result<Decimal> {
         return Err(anyhow::anyhow!("accounting CR/DR suffix"));
     }
 
+    // Parentheses already say "negative"; an explicit sign inside them means
+    // the source text is self-contradictory, and negating again would flip a
+    // debit into a credit.
+    if parenthesised && s.trim_start().starts_with(['-', '+']) {
+        return Err(anyhow::anyhow!("already-signed parenthesised amount"));
+    }
+
     let normalised =
         normalise_number_text(&s).ok_or_else(|| anyhow::anyhow!("unreadable amount '{raw}'"))?;
     let amount: Decimal = normalised
         .parse()
         .map_err(|_| anyhow::anyhow!("unreadable amount '{raw}'"))?;
-    Ok(if parenthesised { -amount } else { amount })
+    Ok((
+        if parenthesised { -amount } else { amount },
+        printed_currency,
+    ))
 }
 
 /// Validate a decimal figure allowing only strict `1,234,567` thousands
@@ -690,15 +742,15 @@ fn strip_tz_suffix(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::importers::TEST_ENV_LOCK;
     use crate::importers::document_parser::{
         ExperimentalParseOptions, HoldingsReturnConfig, ParseMode, ReturnType,
     };
     use crate::importers::provider::testing::MockProvider;
 
-    /// Held by every test that calls `extract_all`: env mutation is
-    /// process-global, and a dump dir set by one test must not leak into
-    /// another test's provider call while Cargo runs them in parallel.
-    static DUMP_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    // `extract_all` reads `FYNANCE_PARSE_DUMP_DIR`, process-global env: every
+    // test that calls it holds the crate-wide test env lock (see
+    // `importers::mod`), shared with the provider and pdf_extract tests.
 
     fn make_hints(tx: bool, holdings: bool, inv: bool) -> ParseHints {
         ParseHints {
@@ -786,11 +838,25 @@ mod tests {
         })
     }
 
+    /// Drives `extract_all` from a sync test: the env lock is a std mutex,
+    /// and holding its guard across an `.await` is what clippy rejects, so
+    /// the await happens inside a `block_on` on the test thread.
+    fn run_extract(
+        files: &[(String, String, Vec<u8>)],
+        hints: &ParseHints,
+        account_id: &str,
+        provider: &dyn LlmProvider,
+        ctx: &UnifiedContext,
+    ) -> Result<UnifiedExtraction> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(extract_all(files, hints, account_id, provider, ctx))
+    }
+
     // The matching "before" test ran on the pre-fix HEAD (92bf04c) in a
     // throwaway worktree and showed the whole parse failing on this input.
-    #[tokio::test]
-    async fn test_bad_holding_quantity_drops_only_that_row() {
-        let _lock = DUMP_ENV_LOCK.lock().await;
+    #[test]
+    fn test_bad_holding_quantity_drops_only_that_row() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tool_input = json!({
             "transactions": [good_tx_json()],
             "holdings": [holding_json("VWRD", "10"), holding_json("VWRL", "N/A")],
@@ -798,14 +864,13 @@ mod tests {
         });
         let provider = MockProvider::new(tool_input);
         let hints = make_hints(true, true, false);
-        let extraction = extract_all(
+        let extraction = run_extract(
             &[],
             &hints,
             "acct_test",
             provider.as_ref(),
             &UnifiedContext::default(),
         )
-        .await
         .unwrap();
         assert_eq!(extraction.transactions.len(), 1);
         assert_eq!(extraction.holdings.len(), 1);
@@ -840,21 +905,23 @@ mod tests {
     #[test]
     fn test_parse_amount_lenient_accepts_common_forms() {
         let cases = [
-            ("-12.5", "-12.5"),
-            ("£1,234.50", "1234.50"),
-            ("(12.00)", "-12.00"),
-            ("\u{2212}5.00", "-5.00"),
-            ("5.00 GBP", "5.00"),
-            ("GBP 1,234.50", "1234.50"),
-            ("$1234", "1234"),
-            ("-£5.00", "-5.00"),
-            ("£-5.00", "-5.00"),
-            ("₦1,500.00", "1500.00"),
+            ("-12.5", "-12.5", None),
+            ("£1,234.50", "1234.50", None),
+            ("(12.00)", "-12.00", None),
+            ("\u{2212}5.00", "-5.00", None),
+            ("5.00 GBP", "5.00", Some("GBP")),
+            ("GBP 1,234.50", "1234.50", Some("GBP")),
+            ("$1234", "1234", None),
+            ("-£5.00", "-5.00", None),
+            ("£-5.00", "-5.00", None),
+            ("₦1,500.00", "1500.00", None),
+            ("120.00 gbp", "120.00", Some("GBP")),
         ];
-        for (input, expected) in cases {
-            let parsed =
+        for (input, expected, expected_code) in cases {
+            let (parsed, code) =
                 parse_amount_lenient(input).unwrap_or_else(|e| panic!("rejecting '{input}': {e}"));
             assert_eq!(parsed.to_string(), expected, "for input '{input}'");
+            assert_eq!(code.as_deref(), expected_code, "for input '{input}'");
         }
     }
 
@@ -870,12 +937,68 @@ mod tests {
             "   ",
             "N/A",
             "1,234,56.7",
+            // Parentheses already mean negative: an explicit sign inside them
+            // would double-negate, flipping a debit into a credit.
+            "(-12.00)",
+            "(\u{2212}5.00)",
+            "(£-5.00)",
+            "(+12.00)",
+            "(GBP -5.00)",
         ] {
             assert!(
                 parse_amount_lenient(input).is_err(),
                 "accepted ambiguous amount '{input}'"
             );
         }
+    }
+
+    #[test]
+    fn test_currency_code_on_figure_must_match_row_currency() {
+        let mut contra = good_tx_json();
+        contra["amount"] = json!("120.00 GBX");
+        let mut agrees = good_tx_json();
+        agrees["amount"] = json!("12.00 gbp");
+        let raw = UnifiedRaw {
+            transactions: vec![contra, agrees],
+            ..Default::default()
+        };
+        let hints = make_hints(true, false, false);
+        let extraction =
+            post_validate(raw, &hints, "acct_test", &UnifiedContext::default()).unwrap();
+        assert_eq!(extraction.transactions.len(), 1);
+        assert_eq!(extraction.transactions[0].amount, Decimal::new(1200, 2));
+        let note = extraction
+            .notes
+            .iter()
+            .find(|n| n.contains("transaction rows"))
+            .expect("drop note");
+        assert!(
+            note.contains("currency 'GBX' contradicts row currency 'GBP'"),
+            "note: {note}"
+        );
+    }
+
+    #[test]
+    fn test_one_row_with_two_problems_counted_once() {
+        let mut double = good_tx_json();
+        double["date"] = json!("not a date");
+        double["amount"] = json!("1.234,56");
+        let raw = UnifiedRaw {
+            transactions: vec![double],
+            ..Default::default()
+        };
+        let hints = make_hints(true, false, false);
+        let extraction =
+            post_validate(raw, &hints, "acct_test", &UnifiedContext::default()).unwrap();
+        assert!(extraction.transactions.is_empty());
+        let note = extraction
+            .notes
+            .iter()
+            .find(|n| n.contains("transaction rows"))
+            .expect("drop note");
+        assert!(note.contains("dropped 1 transaction rows"), "note: {note}");
+        assert!(note.contains("bad date 'not a date'"), "note: {note}");
+        assert!(note.contains("bad amount '1.234,56'"), "note: {note}");
     }
 
     #[test]
@@ -957,9 +1080,9 @@ mod tests {
         assert!(note.contains("bad amount '1.234,56'"), "note: {note}");
     }
 
-    #[tokio::test]
-    async fn test_json_number_money_fields_are_stringified() {
-        let _lock = DUMP_ENV_LOCK.lock().await;
+    #[test]
+    fn test_json_number_money_fields_are_stringified() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tool_input = json!({
             "transactions": [{
                 "date": "2026-03-01",
@@ -994,14 +1117,13 @@ mod tests {
         });
         let provider = MockProvider::new(tool_input);
         let hints = make_hints(true, true, true);
-        let extraction = extract_all(
+        let extraction = run_extract(
             &[],
             &hints,
             "acct_test",
             provider.as_ref(),
             &UnifiedContext::default(),
         )
-        .await
         .unwrap();
         assert_eq!(extraction.transactions[0].amount, Decimal::new(-125, 1));
         assert_eq!(extraction.holdings.len(), 1);
@@ -1043,9 +1165,9 @@ mod tests {
         assert_eq!(rows[0].category_id.as_deref(), Some("cat-made-up"));
     }
 
-    #[tokio::test]
-    async fn test_extract_all_scrubs_category_and_notes() {
-        let _lock = DUMP_ENV_LOCK.lock().await;
+    #[test]
+    fn test_extract_all_scrubs_category_and_notes() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut tx = good_tx_json();
         tx["category_id"] = json!("cat-made-up");
         let provider = MockProvider::new(json!({
@@ -1062,9 +1184,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let extraction = extract_all(&[], &hints, "acct_test", provider.as_ref(), &ctx)
-            .await
-            .unwrap();
+        let extraction = run_extract(&[], &hints, "acct_test", provider.as_ref(), &ctx).unwrap();
         assert!(extraction.transactions[0].category_id.is_none());
         assert!(extraction.transactions[0].category_confidence.is_none());
         assert!(
@@ -1077,25 +1197,50 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_non_object_top_level_fails_whole_parse() {
-        let _lock = DUMP_ENV_LOCK.lock().await;
-        let provider = MockProvider::new(json!(["not", "an", "object"]));
+    #[test]
+    fn test_provider_warnings_land_in_extraction_notes() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let provider = MockProvider::with_warnings(
+            json!({ "transactions": [], "holdings": [], "investments": [] }),
+            vec!["page 2 of statement.pdf could not be extracted: render failed".to_string()],
+        );
         let hints = make_hints(true, false, false);
-        let result = extract_all(
+        let extraction = run_extract(
             &[],
             &hints,
             "acct_test",
             provider.as_ref(),
             &UnifiedContext::default(),
         )
-        .await;
+        .unwrap();
+        assert!(
+            extraction
+                .notes
+                .iter()
+                .any(|n| n == "page 2 of statement.pdf could not be extracted: render failed"),
+            "notes: {:?}",
+            extraction.notes
+        );
+    }
+
+    #[test]
+    fn test_non_object_top_level_fails_whole_parse() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let provider = MockProvider::new(json!(["not", "an", "object"]));
+        let hints = make_hints(true, false, false);
+        let result = run_extract(
+            &[],
+            &hints,
+            "acct_test",
+            provider.as_ref(),
+            &UnifiedContext::default(),
+        );
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn test_dump_writes_raw_value_when_dir_set() {
-        let _lock = DUMP_ENV_LOCK.lock().await;
+    #[test]
+    fn test_dump_writes_raw_value_when_dir_set() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("FYNANCE_PARSE_DUMP_DIR", dir.path()) };
         let tool_input = json!({
@@ -1105,14 +1250,13 @@ mod tests {
         });
         let provider = MockProvider::new(tool_input.clone());
         let hints = make_hints(true, false, false);
-        let result = extract_all(
+        let result = run_extract(
             &[],
             &hints,
             "acct_test",
             provider.as_ref(),
             &UnifiedContext::default(),
-        )
-        .await;
+        );
         unsafe { std::env::remove_var("FYNANCE_PARSE_DUMP_DIR") };
         let extraction = result.unwrap();
 
@@ -1123,7 +1267,7 @@ mod tests {
         assert_eq!(entries.len(), 1, "entries: {entries:?}");
         let name = &entries[0];
         assert!(
-            name.ends_with("-acct_test-unified.json") && name[8..9] == *"T",
+            name.contains("-acct_test-") && name.ends_with("-unified.json") && name[8..9] == *"T",
             "file name: {name}"
         );
         let written: Value =
@@ -1133,9 +1277,55 @@ mod tests {
         assert_eq!(extraction.transactions.len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_unwritable_dump_dir_does_not_fail_parse() {
-        let _lock = DUMP_ENV_LOCK.lock().await;
+    #[test]
+    fn test_dump_names_collide_never_and_sanitise_account_id() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("FYNANCE_PARSE_DUMP_DIR", dir.path()) };
+        let provider = MockProvider::new(json!({
+            "transactions": [good_tx_json()],
+            "holdings": [],
+            "investments": []
+        }));
+        let hints = make_hints(true, false, false);
+        // Two calls back to back for the same account: same second, likely
+        // same millisecond, and a hostile account id.
+        for account in ["acct_test", "we/ird:na\\me"] {
+            run_extract(
+                &[],
+                &hints,
+                account,
+                provider.as_ref(),
+                &UnifiedContext::default(),
+            )
+            .unwrap();
+        }
+        unsafe { std::env::remove_var("FYNANCE_PARSE_DUMP_DIR") };
+
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries.len(), 2, "dumps must not overwrite: {entries:?}");
+        for name in entries {
+            assert!(
+                name.ends_with("-unified.json") && name[8..9] == *"T",
+                "{name}"
+            );
+            assert!(
+                name.contains("acct_test") || name.contains("we_ird_na_me"),
+                "hostile id not sanitised: {name}"
+            );
+            assert!(
+                !name.contains('/') && !name.contains('\\') && !name.contains(':'),
+                "unsafe path character in dump name: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unwritable_dump_dir_does_not_fail_parse() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         std::fs::remove_dir_all(dir.path()).unwrap();
         unsafe { std::env::set_var("FYNANCE_PARSE_DUMP_DIR", dir.path()) };
@@ -1145,14 +1335,13 @@ mod tests {
             "investments": []
         }));
         let hints = make_hints(true, false, false);
-        let result = extract_all(
+        let result = run_extract(
             &[],
             &hints,
             "acct_test",
             provider.as_ref(),
             &UnifiedContext::default(),
-        )
-        .await;
+        );
         unsafe { std::env::remove_var("FYNANCE_PARSE_DUMP_DIR") };
         assert!(result.is_ok());
     }

@@ -39,6 +39,10 @@ pub struct ProviderCallResult {
     pub duration_ms: u64,
     /// `"max_tokens"` here means the tool input is truncated.
     pub stop_reason: Option<String>,
+    /// Human-readable notes about degraded input that did not fail the call
+    /// (a PDF page the extract tool could not read). Routed into the parse
+    /// preview's metadata notes so the user always sees them.
+    pub warnings: Vec<String>,
 }
 
 const MAX_TOKENS_TEXT: u32 = 16_384;
@@ -502,6 +506,7 @@ impl SseAccumulator {
             model: self.model,
             duration_ms: 0,
             stop_reason: self.stop_reason,
+            warnings: Vec::new(),
         })
     }
 }
@@ -1473,7 +1478,8 @@ impl LlmProvider for OpenAIProvider {
             "sending text request"
         );
 
-        self.call_model(&request_body, &model, tool_name).await
+        self.call_model(&request_body, &model, tool_name, &tool_schema)
+            .await
     }
 
     async fn chat_with_pdf_and_tools(
@@ -1520,6 +1526,7 @@ impl LlmProvider for OpenAIProvider {
         let model = self.model_for_tier(ModelTier::Advanced).to_string();
 
         let mut content: Vec<Value> = Vec::with_capacity(files.len() * 2 + 1);
+        let mut warnings: Vec<String> = Vec::new();
         let mut pdf_pages_total = 0usize;
         for (filename, mime, bytes) in files {
             // Same per-file label the Anthropic and Gemini providers use, so
@@ -1551,12 +1558,24 @@ impl LlmProvider for OpenAIProvider {
                     .map_err(pdf_extract_err_to_provider_err)?;
                 if !extracted.page_errors.is_empty() {
                     // Some pages came out; send what we have rather than
-                    // failing the whole call.
+                    // failing the whole call, but tell the model which pages
+                    // are missing and record it for the preview notes.
                     tracing::warn!(
                         filename,
                         failed_pages = extracted.page_errors.len(),
                         "pdf-extract: some pages failed; continuing with the pages that worked"
                     );
+                    for (page, error) in &extracted.page_errors {
+                        content.push(json!({
+                            "type": "text",
+                            "text": format!(
+                                "Page {page} of {filename} could not be extracted: {error}"
+                            ),
+                        }));
+                        warnings.push(format!(
+                            "page {page} of {filename} could not be extracted: {error}"
+                        ));
+                    }
                 }
                 pdf_pages_total += extracted.pages.len();
                 if pdf_pages_total > self.pdf_max_pages {
@@ -1567,7 +1586,11 @@ impl LlmProvider for OpenAIProvider {
                         self.pdf_max_pages
                     )));
                 }
-                let page_count = extracted.pages.len();
+                // The document's real page count from the manifest: a page
+                // label like "Page 3 of 2" (failed or filtered pages) would
+                // mislead the model. Fall back to the pages we got when the
+                // manifest omits it.
+                let page_count = extracted.page_count.unwrap_or(extracted.pages.len() as u32);
                 for page in &extracted.pages {
                     content.push(json!({
                         "type": "text",
@@ -1639,7 +1662,11 @@ impl LlmProvider for OpenAIProvider {
             "sending files request"
         );
 
-        self.call_model(&request_body, &model, tool_name).await
+        let mut result = self
+            .call_model(&request_body, &model, tool_name, &tool_schema)
+            .await?;
+        result.warnings.extend(warnings);
+        Ok(result)
     }
 
     fn name(&self) -> &'static str {
@@ -1683,6 +1710,7 @@ impl OpenAIProvider {
         request_body: &Value,
         model: &str,
         tool_name: &str,
+        tool_schema: &Value,
     ) -> Result<ProviderCallResult, ProviderError> {
         let started = Instant::now();
         let mut request = self
@@ -1728,7 +1756,7 @@ impl OpenAIProvider {
         let api_resp: OpenAIResponse = serde_json::from_str(&body).map_err(|e| {
             ProviderError::ResponseUnreadable(format!(
                 "parsing OpenAI response (preview: {}): {e}",
-                &body[..body.len().min(200)]
+                preview_chars(&body, 200)
             ))
         })?;
         let usage = api_resp
@@ -1746,7 +1774,7 @@ impl OpenAIProvider {
                 ProviderError::ResponseUnreadable("no choices in OpenAI response".to_string())
             })?;
         let (value, stop_reason) =
-            post_process_openai_reply(&reply, tool_name, usage.output_tokens)?;
+            post_process_openai_reply(&reply, tool_name, tool_schema, usage.output_tokens)?;
 
         Ok(ProviderCallResult {
             value,
@@ -1754,6 +1782,7 @@ impl OpenAIProvider {
             model: model.to_string(),
             duration_ms,
             stop_reason,
+            warnings: Vec::new(),
         })
     }
 }
@@ -1844,8 +1873,8 @@ impl OpenAIStreamAccumulator {
                     if reply.invalid_arguments.is_none() {
                         reply.invalid_arguments = Some(format!(
                             "parsing streamed OpenAI function arguments for {name}: {e} \
-                             (arguments: {}...)",
-                            &args[..args.len().min(200)]
+                             (arguments: {})",
+                            preview_chars(args, 200)
                         ));
                     }
                 }
@@ -1863,12 +1892,13 @@ impl OpenAIProvider {
         request_body: &Value,
         model: &str,
         tool_name: &str,
+        tool_schema: &Value,
     ) -> Result<ProviderCallResult, ProviderError> {
         if self.stream {
-            self.post_chat_completion_streamed(request_body, model, tool_name)
+            self.post_chat_completion_streamed(request_body, model, tool_name, tool_schema)
                 .await
         } else {
-            self.post_chat_completion(request_body, model, tool_name)
+            self.post_chat_completion(request_body, model, tool_name, tool_schema)
                 .await
         }
     }
@@ -1883,6 +1913,7 @@ impl OpenAIProvider {
         request_body: &Value,
         model: &str,
         tool_name: &str,
+        tool_schema: &Value,
     ) -> Result<ProviderCallResult, ProviderError> {
         let started = Instant::now();
         let mut body = request_body.clone();
@@ -1956,6 +1987,15 @@ impl OpenAIProvider {
                     if line.is_empty() || line.starts_with(':') || line.starts_with("event:") {
                         continue;
                     }
+                    // Some servers (llama.cpp builds among them) report
+                    // in-stream failures as an `error:` event line instead of
+                    // a data payload.
+                    if let Some(payload) = line.strip_prefix("error:") {
+                        return Err(ProviderError::UpstreamServerError {
+                            status: 0,
+                            body: payload.trim().to_string(),
+                        });
+                    }
                     let Some(data) = line.strip_prefix("data:").map(str::trim_start) else {
                         continue;
                     };
@@ -1964,7 +2004,7 @@ impl OpenAIProvider {
                     }
                     let Ok(event) = serde_json::from_str::<Value>(data) else {
                         tracing::warn!(
-                            data_preview = &data[..data.len().min(100)],
+                            data_preview = preview_chars(data, 100),
                             "OpenAI SSE: failed to parse chunk, skipping"
                         );
                         continue;
@@ -2028,7 +2068,7 @@ impl OpenAIProvider {
             .unwrap_or_else(|| model.to_string());
         let reply = accumulator.into_reply();
         let (value, stop_reason) =
-            post_process_openai_reply(&reply, tool_name, usage.output_tokens)?;
+            post_process_openai_reply(&reply, tool_name, tool_schema, usage.output_tokens)?;
 
         Ok(ProviderCallResult {
             value,
@@ -2036,6 +2076,7 @@ impl OpenAIProvider {
             model,
             duration_ms: started.elapsed().as_millis() as u64,
             stop_reason,
+            warnings: Vec::new(),
         })
     }
 }
@@ -2116,9 +2157,9 @@ fn reply_from_choice(choice: &OpenAIChoice) -> OpenAIReply {
                     Err(e) => {
                         if reply.invalid_arguments.is_none() {
                             reply.invalid_arguments = Some(format!(
-                                "parsing OpenAI function arguments for {}: {e} (arguments: {}...)",
+                                "parsing OpenAI function arguments for {}: {e} (arguments: {})",
                                 call.function.name,
-                                &raw[..raw.len().min(200)]
+                                preview_chars(raw, 200)
                             ));
                         }
                     }
@@ -2148,6 +2189,7 @@ fn map_openai_finish_reason(finish_reason: Option<&str>) -> Option<String> {
 fn post_process_openai_reply(
     reply: &OpenAIReply,
     tool_name: &str,
+    tool_schema: &Value,
     output_tokens: u64,
 ) -> Result<(Value, Option<String>), ProviderError> {
     if reply.finish_reason.as_deref() == Some("length") {
@@ -2161,16 +2203,10 @@ fn post_process_openai_reply(
                 map_openai_finish_reason(reply.finish_reason.as_deref()),
             ));
         }
-        if let Some(detail) = &reply.invalid_arguments {
-            return Err(ProviderError::ResponseUnreadable(detail.clone()));
-        }
-        return Err(ProviderError::NoToolUse {
-            tool_name: tool_name.to_string(),
-        });
     }
 
     if let Some(content) = &reply.content {
-        if let Some(input) = recover_tool_input_from_content(content, tool_name) {
+        if let Some(input) = recover_tool_input_from_content(content, tool_name, tool_schema) {
             tracing::warn!(
                 tool_name,
                 "OpenAI reply carried no tool call; recovered the tool input from message content"
@@ -2182,14 +2218,28 @@ fn post_process_openai_reply(
         }
     }
 
+    if let Some(detail) = &reply.invalid_arguments {
+        // The most common local-model failure: slightly broken JSON
+        // arguments. That is an unreadable reply, not a refusal to call the
+        // tool, and the parse detail is worth keeping.
+        return Err(ProviderError::ResponseUnreadable(detail.clone()));
+    }
+
     Err(ProviderError::NoToolUse {
         tool_name: tool_name.to_string(),
     })
 }
 
-/// Only JSON objects are ever accepted as a recovered tool input: prose,
-/// arrays and scalars must produce `NoToolUse`, not an empty extraction.
-fn recover_tool_input_from_content(content: &str, tool_name: &str) -> Option<Value> {
+/// Only a plausible tool input is ever accepted from message content: prose,
+/// arrays and scalars must produce `NoToolUse`, not an empty extraction. An
+/// envelope-shaped object counts only when it names this tool; a bare object
+/// counts only when it actually carries properties of the tool's schema, so
+/// `{}` or an error payload never becomes a "successful" zero-row parse.
+fn recover_tool_input_from_content(
+    content: &str,
+    tool_name: &str,
+    tool_schema: &Value,
+) -> Option<Value> {
     let cleaned = strip_think_tags(content);
     let candidate = extract_between(&cleaned, "<tool_call>", "</tool_call>")
         .or_else(|| extract_fenced_json(&cleaned))
@@ -2202,9 +2252,33 @@ fn recover_tool_input_from_content(content: &str, tool_name: &str) -> Option<Val
             Some(arguments @ Value::Object(_)) => Some(arguments.clone()),
             _ => None,
         }
+    } else if obj.contains_key("name") || obj.contains_key("arguments") {
+        // Another tool's call, or a half-envelope: not ours to recover.
+        None
     } else {
-        Some(Value::Object(obj.clone()))
+        // A bare object counts only when it carries properties of this tool's
+        // schema, so `{}` and error payloads never become an extraction. Every
+        // real call site passes a schema with properties; one without cannot
+        // vouch for anything.
+        tool_schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|properties| {
+                obj.keys()
+                    .any(|k| properties.contains_key(k))
+                    .then(|| Value::Object(obj.clone()))
+            })
     }
+}
+
+/// First `max_chars` characters of `s`, on char boundaries (byte-slicing can
+/// panic mid multi-byte character in model output).
+fn preview_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max_chars).collect();
+    format!("{head}\u{2026}")
 }
 
 fn strip_think_tags(content: &str) -> String {
@@ -2392,6 +2466,7 @@ impl GeminiProvider {
             model: model.to_string(),
             duration_ms,
             stop_reason: finish_reason,
+            warnings: Vec::new(),
         })
     }
 }
@@ -3006,11 +3081,24 @@ pub mod testing {
     #[derive(Debug)]
     pub struct MockProvider {
         pub tool_input: Value,
+        pub warnings: Vec<String>,
     }
 
     impl MockProvider {
         pub fn new(tool_input: Value) -> Arc<Self> {
-            Arc::new(Self { tool_input })
+            Arc::new(Self {
+                tool_input,
+                warnings: Vec::new(),
+            })
+        }
+
+        /// A mock whose call result carries degraded-input warnings, for
+        /// tests of how parsers surface them.
+        pub fn with_warnings(tool_input: Value, warnings: Vec<String>) -> Arc<Self> {
+            Arc::new(Self {
+                tool_input,
+                warnings,
+            })
         }
 
         fn pretend_result(&self) -> ProviderCallResult {
@@ -3020,6 +3108,7 @@ pub mod testing {
                 model: "mock".to_string(),
                 duration_ms: 0,
                 stop_reason: None,
+                warnings: self.warnings.clone(),
             }
         }
     }
@@ -3073,19 +3162,19 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use crate::importers::TEST_ENV_LOCK;
 
-    /// Serializes tests that mutate process-global env vars
-    /// (`FYNANCE_PARSE_PROVIDER`, `FYNANCE_*_API_KEY`). Cargo runs tests in
-    /// parallel within one process, so without this one test's `set_var`
-    /// clobbers another's between its `set_var` and `create_provider()` read.
-    /// `.unwrap_or_else(into_inner)` keeps the lock usable if a guarded test
-    /// panics, so the real failure surfaces instead of a poison cascade.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    // Every test here that mutates process-global env vars (`FYNANCE_PARSE_PROVIDER`,
+    // `FYNANCE_*_API_KEY`, `FYNANCE_OPENAI_*`, `FYNANCE_PDF_EXTRACT_*`) holds the
+    // crate-wide test env lock from `importers::mod`. Cargo runs tests in parallel
+    // in one process, so one lock (not one per module) is what stops a
+    // `pdf_extract` env test from racing an `OpenAIProvider::from_env` read.
+    // `.unwrap_or_else(into_inner)` keeps the lock usable if a guarded test
+    // panics, so the real failure surfaces instead of a poison cascade.
 
     #[test]
     fn test_create_provider_unknown_name() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("FYNANCE_PARSE_PROVIDER", "invalid_provider") };
         let result = create_provider();
         unsafe { std::env::remove_var("FYNANCE_PARSE_PROVIDER") };
@@ -3096,7 +3185,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_gemini_requires_key() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "gemini");
             std::env::remove_var("FYNANCE_GEMINI_API_KEY");
@@ -3115,7 +3204,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_gemini_success() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "gemini");
             std::env::set_var("FYNANCE_GEMINI_API_KEY", "test-key");
@@ -3149,6 +3238,11 @@ mod tests {
         "FYNANCE_OPENAI_PDF_MODE",
         "FYNANCE_OPENAI_PDF_MAX_PAGES",
         "FYNANCE_OPENAI_STREAM",
+        // Read by PdfExtractConfig::from_env inside OpenAIProvider::from_env:
+        // a value left over from another test must not reach this one.
+        "FYNANCE_PDF_EXTRACT_CMD",
+        "FYNANCE_PDF_EXTRACT_ARGS",
+        "FYNANCE_PDF_EXTRACT_TIMEOUT_SECS",
     ];
 
     /// One-shot HTTP server on an ephemeral loopback port. Answers the first
@@ -3222,7 +3316,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_openai_requires_key() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe { std::env::set_var("FYNANCE_PARSE_PROVIDER", "openai") };
         let result = create_provider();
@@ -3234,7 +3328,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_openai_custom_base_url_needs_no_key() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "openai");
@@ -3247,7 +3341,7 @@ mod tests {
 
     #[test]
     fn test_openai_custom_base_url_without_key_sends_no_auth_header() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (server_url, server) = serve_once(OPENAI_TOOL_CALL_RESPONSE);
         clear_openai_env();
         unsafe {
@@ -3277,7 +3371,7 @@ mod tests {
 
     #[test]
     fn test_openai_custom_base_url_with_key_sends_bearer() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (server_url, server) = serve_once(OPENAI_TOOL_CALL_RESPONSE);
         clear_openai_env();
         unsafe {
@@ -3301,7 +3395,7 @@ mod tests {
 
     #[test]
     fn test_openai_defaults_to_openai_host() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe { std::env::set_var("FYNANCE_OPENAI_API_KEY", "test-key") };
         let provider = OpenAIProvider::from_env().unwrap();
@@ -3314,7 +3408,7 @@ mod tests {
 
     #[test]
     fn test_openai_custom_base_url_and_timeout() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe {
             std::env::set_var("FYNANCE_OPENAI_BASE_URL", "http://localhost:8080/v1/");
@@ -3330,7 +3424,7 @@ mod tests {
 
     #[test]
     fn test_openai_rejects_invalid_timeout() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe {
             std::env::set_var("FYNANCE_OPENAI_API_KEY", "test-key");
@@ -3345,7 +3439,7 @@ mod tests {
 
     #[test]
     fn test_openai_request_times_out() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Accepts the connection and holds it open without ever replying,
         // until the test drops `release`.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3392,7 +3486,7 @@ mod tests {
 
     #[test]
     fn test_openai_rejects_invalid_base_url() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         for bad in [
             "localhost:8080/v1",
             "http://127.0.0.1:8080/v1?x=1",
@@ -3414,7 +3508,7 @@ mod tests {
 
     #[test]
     fn test_openai_empty_key_error_mentions_base_url() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe { std::env::set_var("FYNANCE_OPENAI_API_KEY", "   ") };
         let result = OpenAIProvider::from_env();
@@ -3430,7 +3524,7 @@ mod tests {
 
     #[test]
     fn test_openai_and_gemini_debug_redact_api_key() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe {
             std::env::set_var("FYNANCE_OPENAI_API_KEY", "sk-openai-secret");
@@ -3457,7 +3551,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_anthropic_requires_some_credential() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
             std::env::remove_var("FYNANCE_ANTHROPIC_API_KEY");
@@ -3477,7 +3571,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_auto_prefers_subscription() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
             std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "sk-ant-test");
@@ -3495,7 +3589,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_auto_uses_api_key_without_subscription() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
             std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "sk-ant-test");
@@ -3511,7 +3605,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_subscription_requires_token() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_PARSE_PROVIDER", "anthropic");
             std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "sk-ant-test");
@@ -3552,7 +3646,7 @@ mod tests {
 
     #[test]
     fn test_gemini_from_env_requires_key() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::remove_var("FYNANCE_GEMINI_API_KEY");
             std::env::remove_var("GEMINI_API_KEY");
@@ -3563,7 +3657,7 @@ mod tests {
 
     #[test]
     fn test_gemini_resolve_model() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_GEMINI_API_KEY", "test-key");
             std::env::remove_var("FYNANCE_GEMINI_TEXT_MODEL");
@@ -3613,7 +3707,7 @@ mod tests {
 
     #[test]
     fn test_anthropic_resolve_model() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("FYNANCE_ANTHROPIC_API_KEY", "test-key");
             std::env::remove_var("FYNANCE_IMPORT_LLM_MODEL");
@@ -3669,7 +3763,7 @@ mod tests {
 
     #[test]
     fn test_openai_pdf_without_tool_configured_is_not_supported() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe {
             std::env::remove_var("FYNANCE_PDF_EXTRACT_CMD");
@@ -3708,7 +3802,9 @@ mod tests {
             serde_json::from_str(OPENAI_EXTRACT_UNIFIED_RESPONSE).unwrap();
         let reply = reply_from_choice(api_resp.choices.first().unwrap());
         assert_eq!(reply.finish_reason.as_deref(), Some("tool_calls"));
-        let (value, stop) = post_process_openai_reply(&reply, "extract_unified", 20).unwrap();
+        let (value, stop) =
+            post_process_openai_reply(&reply, "extract_unified", &json!({"type": "object"}), 20)
+                .unwrap();
         assert_eq!(value["transactions"], json!([]));
         assert_eq!(stop.as_deref(), Some("tool_calls"));
     }
@@ -4088,6 +4184,19 @@ mod tests {
         .expect("fake server returns a valid tool call");
     }
 
+    /// A schema shaped like `build_unified_tool_schema`, enough for the
+    /// content-recovery path to check a bare object's top-level keys.
+    fn unified_test_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "transactions": {},
+                "holdings": {},
+                "investments": {}
+            }
+        })
+    }
+
     fn call_openai_files(
         provider: &OpenAIProvider,
         files: &[(String, String, Vec<u8>)],
@@ -4098,7 +4207,7 @@ mod tests {
             files,
             "supplement text",
             "extract_unified",
-            json!({"type": "object"}),
+            unified_test_schema(),
             None,
         ))
     }
@@ -4244,7 +4353,7 @@ mod tests {
 
     #[test]
     fn test_openai_from_env_rejects_bad_knobs() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         for (key, value) in [
             ("FYNANCE_OPENAI_TOOL_CHOICE", "sometimes"),
             ("FYNANCE_OPENAI_MAX_TOKENS", "lots"),
@@ -4441,6 +4550,36 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_pdf_page_failures_are_surfaced_to_model_and_notes() {
+        let (_dir, tool) = fake_tool_in_temp_dir(pdf_extract::tests::Behaviour::PartialFail);
+        let (url, server) = serve_once(OPENAI_EXTRACT_UNIFIED_RESPONSE);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            pdf_extract_cmd: Some(tool),
+            ..Default::default()
+        });
+        let result = call_openai_files(&provider, &[pdf_file()]).unwrap();
+        let parts = user_content_parts(&request_json(&server.join().unwrap()));
+        let texts: Vec<&str> = parts.iter().filter_map(|p| p["text"].as_str()).collect();
+        assert!(
+            texts
+                .iter()
+                .any(|t| *t == "Page 2 of statement.pdf could not be extracted: render failed"),
+            "the model must be told which page is missing: {texts:?}"
+        );
+        // Surviving pages are labelled against the document's real page count
+        // from the manifest, not the number of pages that came back.
+        assert!(
+            texts.iter().any(|t| *t == "Page 3 of 3 of statement.pdf"),
+            "page labels: {texts:?}"
+        );
+        assert_eq!(
+            result.warnings,
+            vec!["page 2 of statement.pdf could not be extracted: render failed".to_string()]
+        );
+    }
+
+    #[test]
     fn test_openai_pdf_native_mode_never_runs_the_tool() {
         // The Fail fake exits 3: reaching it would fail the call, so a green
         // call proves native mode skipped the tool entirely.
@@ -4587,6 +4726,115 @@ mod tests {
         server.join().unwrap();
     }
 
+    #[test]
+    fn test_openai_content_fallback_rejects_empty_object() {
+        let body = openai_content_response("{}");
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let err = call_extract_unified_result(&provider)
+            .expect_err("an empty recovered object must not become an empty extraction");
+        assert!(matches!(err, ProviderError::NoToolUse { .. }), "got: {err}");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_content_fallback_rejects_error_payload() {
+        let body =
+            openai_content_response("```json\n{\"error\": \"cannot read the document\"}\n```");
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let err = call_extract_unified_result(&provider)
+            .expect_err("an error payload must not become an extraction");
+        assert!(matches!(err, ProviderError::NoToolUse { .. }), "got: {err}");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_content_fallback_rejects_wrong_tool_envelope() {
+        let body = openai_content_response(
+            r#"{"name": "some_other_tool", "arguments": {"transactions": []}}"#,
+        );
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let err = call_extract_unified_result(&provider)
+            .expect_err("another tool's call must not be recovered as ours");
+        assert!(matches!(err, ProviderError::NoToolUse { .. }), "got: {err}");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_content_fallback_bare_object_must_overlap_schema_properties() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "transactions": {},
+                "holdings": {},
+                "investments": {}
+            }
+        });
+        let call = |content: &str| -> Result<Value, ProviderError> {
+            let reply = OpenAIReply {
+                content: Some(content.to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: Some("stop".to_string()),
+                invalid_arguments: None,
+            };
+            post_process_openai_reply(&reply, "extract_unified", &schema, 5).map(|(v, _)| v)
+        };
+        // A bare object that carries the tool's own top-level keys recovers.
+        let value = call("```json\n{\"transactions\": [], \"holdings\": []}\n```")
+            .expect("schema-overlapping bare object must recover");
+        assert_eq!(value["transactions"], json!([]));
+        // One that shares nothing with the schema does not.
+        let err = call("```json\n{\"statements\": [{\"rows\": []}]}\n```")
+            .expect_err("non-overlapping bare object must not recover");
+        assert!(matches!(err, ProviderError::NoToolUse { .. }), "got: {err}");
+    }
+
+    #[test]
+    fn test_openai_unparsable_tool_arguments_returns_response_unreadable() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "function": {
+                            "name": "extract_unified",
+                            "arguments": "{\"transactions\":["
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        })
+        .to_string();
+        let (url, server) = serve_once(Box::leak(body.into_boxed_str()));
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            ..Default::default()
+        });
+        let err = call_extract_unified_result(&provider)
+            .expect_err("broken JSON arguments must be an unreadable reply, not NoToolUse");
+        match err {
+            ProviderError::ResponseUnreadable(detail) => {
+                assert!(
+                    detail.contains("parsing OpenAI function arguments"),
+                    "got: {detail}"
+                );
+            }
+            other => panic!("expected ResponseUnreadable, got {other}"),
+        }
+        server.join().unwrap();
+    }
+
     fn call_extract_unified_result(
         provider: &OpenAIProvider,
     ) -> Result<ProviderCallResult, ProviderError> {
@@ -4595,7 +4843,7 @@ mod tests {
             "system",
             "user",
             "extract_unified",
-            json!({"type": "object"}),
+            unified_test_schema(),
             ModelTier::Standard,
             None,
         ))
@@ -4627,7 +4875,7 @@ mod tests {
 
     #[test]
     fn test_openai_from_env_reads_knobs() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_openai_env();
         unsafe {
             std::env::set_var("FYNANCE_OPENAI_BASE_URL", "http://127.0.0.1:9/v1");
@@ -4922,14 +5170,68 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_stream_unparsable_arguments_returns_response_unreadable() {
+        let chunks = vec![
+            sse_chunk(stream_delta("{\"transactions\":[")),
+            sse_chunk(json!({
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }]
+            })),
+            b"data: [DONE]\n\n".to_vec(),
+        ];
+        let (url, server) = serve_sse(chunks, None);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            ..Default::default()
+        });
+        let err = stream_openai(&provider)
+            .expect_err("broken arguments must be unreadable, not NoToolUse");
+        match err {
+            ProviderError::ResponseUnreadable(detail) => {
+                assert!(
+                    detail.contains("parsing streamed OpenAI function arguments"),
+                    "got: {detail}"
+                );
+            }
+            other => panic!("expected ResponseUnreadable, got {other}"),
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_openai_stream_error_event_line_is_upstream_server_error() {
+        // llama.cpp-style in-stream failure: an `error:` event line, not a
+        // `data:` payload.
+        let chunks = vec![
+            sse_chunk(stream_delta("{\"transactions\":[")),
+            b"event: error\nerror: {\"message\": \"model crashed\"}\n\n".to_vec(),
+        ];
+        let (url, server) = serve_sse(chunks, None);
+        let provider = OpenAIProvider::for_test(TestConfig {
+            base_url: Some(format!("{url}/v1")),
+            stream: Some(true),
+            ..Default::default()
+        });
+        let err = stream_openai(&provider).expect_err("an error: line must fail the call");
+        match err {
+            ProviderError::UpstreamServerError { status, body } => {
+                assert_eq!(status, 0);
+                assert!(body.contains("model crashed"), "got: {body}");
+            }
+            other => panic!("expected UpstreamServerError, got {other}"),
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
     fn test_openai_stream_stall_times_out() {
         let chunks = vec![
             sse_chunk(stream_delta("{\"transactions\":[")),
             sse_chunk(stream_delta("{\"date\":\"later\"}]}")),
         ];
-        // The fake sleeps 3 s between the two writes; the provider deadline
-        // is 1 s.
-        let (url, server) = serve_sse(chunks, Some(std::time::Duration::from_secs(3)));
+        // The fake sleeps 2 s between the two writes; the provider deadline
+        // is 1 s, so the fake's next write lands after the hang-up.
+        let (url, server) = serve_sse(chunks, Some(std::time::Duration::from_secs(2)));
         let provider = OpenAIProvider::for_test(TestConfig {
             base_url: Some(format!("{url}/v1")),
             stream: Some(true),
@@ -4938,8 +5240,14 @@ mod tests {
         });
         let err = stream_openai(&provider).expect_err("stalled stream must time out");
         assert!(matches!(err, ProviderError::Timeout(_)), "got: {err}");
-        // The hang-up is what lets the fake finish.
-        let (_request, _ms, _wrote_all) = server.join().unwrap();
+        // The plan asks for more than the timeout itself: the fake must see
+        // the connection close within 3 s of its first write, which is what
+        // lets it finish at all.
+        let (_request, disconnected_ms, _wrote_all) = server.join().unwrap();
+        assert!(
+            disconnected_ms < 3000,
+            "hang-up took {disconnected_ms} ms to reach the fake"
+        );
     }
 
     #[test]

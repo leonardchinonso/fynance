@@ -101,7 +101,7 @@ Other findings:
 11. **Branching.**
     - Work on a new branch stacked on `feat/openai-base-url` (suggested name `feat/openai-parity`). Do not grow PR #138.
     - Rebase onto `master` after #138 merges.
-    - Work only in `C:\w\fynance\...` worktrees. Never build in `C:\Users\opsij\Documents\Coding\fynance\fynance`, where the owner's `cargo watch` runs.
+    - Work only in the `C:\w\fynance\...` worktrees. Never build in the owner's main checkout, where their `cargo watch` dev server runs.
 12. **Not changing:**
     - agent overrides (still rejected for OpenAI)
     - pricing and `ParserCallCost.agent`
@@ -114,7 +114,7 @@ Other findings:
 ## Questions for the owner (each has a recommended answer; "yes" accepts all)
 
 1. **Should the Docker image bundle the Helm `pdf-extract` tool?**
-   - **Recommended: not in this plan.** The tool's packaging (language, binary, dependencies) is not known yet, and the live NAS deployment uses Anthropic.
+   - **Recommended: not in this plan.** The tool's packaging (language, binary, dependencies) is not known yet, and existing long-running deployments use the Anthropic provider.
    - If the openai provider is ever run in Docker, mount the tool and set `FYNANCE_PDF_EXTRACT_CMD`. Revisit bundling as its own small change once the Helm tool ships.
 2. **Stacked PRs off `feat/openai-base-url`, rather than more commits on #138?** **Recommended: yes.** One PR per part, or Parts 1–2 together and then 3–5.
 3. **Accept a behaviour change for real-OpenAI users?** The changes are `tool_choice` `"required"`, streamed requests and `max_tokens` 16384. There are likely no such users today, since unified mode never worked. **Recommended: accept.**
@@ -157,7 +157,7 @@ Also run `python3 ../scripts/check_api_docs.py` when `docs/api.html`, `routes/do
 
 Ground rules for tests and manual runs:
 
-- Never point a test or manual run at a real model server, at `X:`, or at port 7433.
+- Never point a test or manual run at a real model server, at a production deployment, or at the default serve port (7433).
 - Env-mutating tests hold `ENV_LOCK` in `provider.rs`, or a file-local mutex in integration tests.
 - Any test that builds an `OpenAIProvider` sets `FYNANCE_OPENAI_BASE_URL` to a loopback fake **before** constructing it. The default base URL is the real OpenAI API.
 - No Docker impact in this plan: no native dependency is added, and the Dockerfile is unchanged.
@@ -592,7 +592,7 @@ Unit tests in `provider.rs`:
    - Set up:
      - run the worktree build from a scratch directory with no `.env` holding real credentials
      - use a port other than 7433
-     - use a temp `FYNANCE_DB_PATH` (never `X:`)
+     - use a temp `FYNANCE_DB_PATH` (never a live database)
    - Parse each of these in default unified mode, with no `experimental`:
      - `synthetic_statement.pdf`
      - a synthetic CSV
