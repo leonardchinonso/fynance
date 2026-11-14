@@ -266,6 +266,50 @@ async function runView(browser, view) {
   await shot(page, `preview_${label}_10b_tax_page`)
 
 
+  // 11b. Tax-document import: landing card -> profile -> upload -> review ->
+  //      bank-credit chip remove/re-accept -> save -> summary linking to /tax.
+  await page.goto(`${BASE}/import`, { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: /import tax documents/i }).click()
+  await page.waitForURL(/\/import\/tax$/, { timeout: 5000 })
+  const taxMain = page.getByRole("main")
+  // The mock has two profiles, so the select is shown; with exactly one it is pre-filled.
+  const profileSelect = taxMain.getByRole("combobox", { name: /^profile$/i })
+  await profileSelect.waitFor({ timeout: 10000 })
+  if ((await taxMain.getByText(/drop files here/i).count()) === 0) {
+    await profileSelect.click()
+    await page.getByRole("option").first().click()
+  }
+  await taxMain.getByText(/drop files here/i).waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_11b_tax_upload`)
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "synthetic_payslips.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4 synthetic"),
+  })
+  await taxMain.getByRole("button", { name: /^import$/i }).click()
+  await page.getByRole("heading", { name: /review tax documents/i }).waitFor({ timeout: 15000 })
+  await page.getByRole("columnheader", { name: /^gross pay$/i }).waitFor({ timeout: 5000 })
+  await page.getByTestId("reconciliation-banner").getByText(/P60 pay is .* more than/i).waitFor({ timeout: 5000 })
+  await page.getByText(/^P60$/).first().waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_11c_tax_review`)
+  const chip = page.getByTestId("net-pay-chip").first()
+  await chip.waitFor({ timeout: 5000 })
+  await chip.getByRole("button", { name: /remove bank credit link/i }).click()
+  await page.getByRole("button", { name: /link bank credit/i }).first().waitFor({ timeout: 5000 })
+  if ((await page.getByTestId("net-pay-chip").count()) !== 0) {
+    throw new Error("Removing the bank-credit link left a chip behind")
+  }
+  await page.getByRole("button", { name: /link bank credit/i }).first().click()
+  await page.getByRole("button", { name: /EXAMPLE|Everyday Current/i }).first().click()
+  await page.getByTestId("net-pay-chip").first().waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_11d_tax_relinked`)
+  await page.getByRole("button", { name: /^save \d+ records?$/i }).click()
+  await page.getByRole("dialog").getByRole("button", { name: /^confirm$/i }).click()
+  await page.getByText(/tax records saved/i).waitFor({ timeout: 10000 })
+  await shot(page, `preview_${label}_11e_tax_done`)
+  await page.getByRole("button", { name: /view tax records/i }).click()
+  await page.waitForURL(/\/tax\?profile=/, { timeout: 5000 })
+
   // 12. Budget grid — verify the "Show empty categories" toggle and the
   //     per-period spending-trend tooltip on the Average cell (V0 cleanup).
   await page.goto(`${BASE}/budget?view=overview`, { waitUntil: "domcontentloaded" })

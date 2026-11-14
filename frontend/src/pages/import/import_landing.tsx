@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom"
-import { FileUp, ListChecks, ArrowRight } from "lucide-react"
+import { FileUp, ListChecks, Receipt, ArrowRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface CardOption {
@@ -23,6 +23,12 @@ const OPTIONS: CardOption[] = [
     title: "Monthly ingestion wizard",
     description:
       "Walk through your selected accounts in order. Upload, review, commit, then move to the next.",
+  },
+  {
+    to: "/import/tax",
+    icon: <Receipt className="h-6 w-6" />,
+    title: "Import tax documents",
+    description: "Payslips and P60s, PDF or photo. Review, then save to your tax records.",
   },
 ]
 

@@ -27,6 +27,7 @@ import { ImportLanding } from "./import_landing"
 import { WizardSetup } from "./wizard_setup"
 import { RecentImportsList } from "./recent_imports_list"
 import { useRecentImports, type RecentImportEntry } from "@/hooks/use_recent_imports"
+import { TaxImport } from "./tax/tax_import"
 import { ParseProgressController, type ParseProgressUi } from "./parse_progress"
 
 type Step = "account-select" | "wizard-prep" | "upload" | "preview" | "complete"
@@ -115,6 +116,7 @@ export function ImportPage() {
   const pathSegment = location.pathname.split("/")[2]
   const mode: "wizard" | "single" = pathSegment === "wizard" ? "wizard" : "single"
   const showLanding = pathSegment !== "wizard" && pathSegment !== "single"
+  const isTaxImport = pathSegment === "tax"
 
   const [allAccounts, setAllAccounts] = useState<Account[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
@@ -413,6 +415,9 @@ export function ImportPage() {
     navStep({ completedAt: new Map() })
   }
 
+  // The tax flow loads its own profiles and needs no accounts.
+  if (isTaxImport) return <TaxImport />
+
   if (loading) {
     return (
       <div className="max-w-2xl mx-auto py-8">
@@ -459,15 +464,16 @@ export function ImportPage() {
   // active account; single mode shows all until an account is picked, then
   // narrows to it.
   const visibleRecents = (() => {
+    const statementEntries = recents.entries.filter((e) => e.kind !== "tax")
     if (mode === "wizard") {
       return currentAccount
-        ? recents.entries.filter((e) => e.accountId === currentAccount.id)
+        ? statementEntries.filter((e) => e.accountId === currentAccount.id)
         : []
     }
     if (selectedAccountId) {
-      return recents.entries.filter((e) => e.accountId === selectedAccountId)
+      return statementEntries.filter((e) => e.accountId === selectedAccountId)
     }
-    return recents.entries
+    return statementEntries
   })()
 
   return (
