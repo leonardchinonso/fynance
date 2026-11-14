@@ -31,7 +31,7 @@ never added to them.
 | Parsing payslips and P60s from PDFs or photos (`return_type.tax_documents` on the parse endpoint) | Built (backend) |
 | Committing reviewed payslips and P60s (`POST /api/income-records/import`) | Built (backend) |
 | Import wizard screens for payslips and P60s | **Not built.** The frontend has the generated types only; nothing in `frontend/src/pages/import/` handles tax documents yet |
-| Shop app sync | **Not built on the backend.** The Tax page has a "Sync from shop" button and dialog and the API client calls `POST /api/income-sources/:id/sync`, but no such route is registered, so the button cannot work yet. The `sync_kind` field and the `shop_sync` origin exist in the database |
+| Shop app sync | Built. `POST /api/income-sources/:id/sync`, used by the "Sync from shop" button and dialog. Needs `FYNANCE_SHOP_SYNC_URL` and `FYNANCE_SHOP_SYNC_TOKEN` (see "Shop sync" below) |
 | Property income | Reserved. The line types exist; no summary is computed |
 
 Until the import wizard lands, payslips and P60s are entered by hand in the Tax page dialogs, or sent
@@ -190,7 +190,7 @@ profile and returns preview rows. Per row, the server:
   warning if it disagrees. A P60 takes its year from the printed year end.
 - Forces every P60 line to `period` basis (a P60 is already an annual figure).
 - Marks a row a duplicate if the same employer (name compared ignoring case, punctuation and a
-  trailing "Ltd") already has that payslip month or that P60 year, or if it repeats an earlier
+  trailing company suffix: Ltd, Limited, PLC, LLP or Inc) already has that payslip month or that P60 year, or if it repeats an earlier
   row in the same batch.
 - Suggests the bank credit that matches the net pay, looking within 4 days of the expected pay
   date, and never one already linked to another record.
@@ -273,7 +273,7 @@ So the rule is:
 - Outflows in a category with no mapping are listed as "unmapped" with their totals, so a cost is
   never silently dropped. The "Map expense categories" dialog assigns them.
 
-If the planned shop sync is finished, it must follow this rule. The line-type table has the
+The shop sync follows this rule: sales, refunds, platform fees and platform postage are summed, and the `costing_*` lines are information only. The line-type table has the
 `summed` flag for exactly that reason, so the rule can change without a schema change.
 
 ### Checks and the year-end adjustment
@@ -301,6 +301,21 @@ the check reads `adjusted`. The check itself is still never added: only the adju
 Typical reason for an adjustment: an employer corrects pay in the final payslip of the year, or
 a month of payslips was lost. Prefer adding the missing payslip if you have it.
 
+## Shop sync
+
+`POST /api/income-sources/:id/sync` pulls monthly figures from the shop app for a source whose
+`sync_kind` is `shop_app`. It needs `FYNANCE_SHOP_SYNC_URL` and `FYNANCE_SHOP_SYNC_TOKEN`; without
+them the answer is 400 `sync_not_configured`. The URL must be https (plain http is accepted only for
+a loopback host), the date range may not be longer than 36 months (400 `invalid_range`), and a
+response larger than 4 MB is refused with a 502.
+
+A dry run shows what would change; the commit then writes every period in one transaction, so a
+bad period rolls the whole run back. Each period becomes one record with origin `shop_sync`, keyed
+by `start..end` in `external_ref`. A period that crosses the 6 April tax-year boundary is split at
+the 6th. Re-running is idempotent: unchanged figures are left alone and changed figures replace
+that record's line items in place. Manual and parsed records are never touched. Late refunds and
+counts of missing fees or costs are reported in the result but not written.
+
 ## Where it shows in the app
 
 Everything is on the **Tax** page (`frontend/src/pages/Tax.tsx`, parts in `pages/tax/`).
@@ -310,12 +325,12 @@ Everything is on the **Tax** page (`frontend/src/pages/Tax.tsx`, parts in `pages
 | Header | Taxpayer profile picker, tax year picker with its date window, "Add income source" |
 | Readiness checklist | One row per employer and business, plus interest and Gift Aid, showing what is still missing |
 | Employment (one card per employer) | Box 1 and 2 figures, the shown-only figures, the records table, the P60 check block with status and "Create year-end adjustment", RSU table with match badges |
-| Self-employment (one card per business) | Turnover, expenses, net profit, trading allowance hint, bank expenses with "Map expense categories", annual-accounts check block, "Sync from shop" (only when the source has `sync_kind = shop_app`; the backend is not built yet) |
+| Self-employment (one card per business) | Turnover, expenses, net profit, trading allowance hint, bank expenses with "Map expense categories", annual-accounts check block, "Sync from shop" (only when the source has `sync_kind = shop_app`) |
 | Interest and Gift Aid | Taxable and non-taxable interest per account (joint accounts are split by holder), and Gift Aid donations, taken from categorised transactions |
 | Dialogs | Source, record, check, expense mapping, shop sync |
 
 **Settings switch**: Settings, Appearance, "Show Tax tab". The Tax tab also appears by itself once
-payslip records exist (`hooks/use_tax_tab`).
+any income record exists (`hooks/use_tax_tab`).
 
 **Import wizard**: the normal Import page handles bank statements, holdings and investments. It has
 no payslip or P60 step on master yet. When it is added it will call the parse endpoint with
@@ -332,6 +347,8 @@ no payslip or P60 step on master yet. When it is added it will call the parse en
 | Storage | `backend/src/storage/db/income_store.rs` |
 | Routes | `backend/src/server/routes/income.rs`, `income_import.rs`; wired in `server/mod.rs` |
 | Document import | `backend/src/importers/tax_documents/` |
+| Shop sync (mapping and upsert) | `backend/src/income/sync.rs` |
+| Shop sync route | `backend/src/server/routes/income_sync.rs` |
 | UI | `frontend/src/pages/Tax.tsx`, `frontend/src/pages/tax/` |
 
 Adding a line type means one new row in the catalogue table and a matching enum variant. The
