@@ -222,13 +222,9 @@ pub async fn get_brought_forward_losses(
     // prior year in the window, newest last.
     let mut boundaries: Vec<(String, NaiveDate, NaiveDate)> = Vec::new();
     for offset in 1..=lookback {
-        let y = start_year - offset;
-        let label = format!("{y}-{:02}", (y + 1) % 100);
-        let from = NaiveDate::from_ymd_opt(y, 4, 6)
+        let year = crate::util::tax_year::TaxYear::from_start_year(start_year - offset)
             .ok_or_else(|| AppError::bad_request("tax year out of range", "invalid_tax_year"))?;
-        let to = NaiveDate::from_ymd_opt(y + 1, 4, 5)
-            .ok_or_else(|| AppError::bad_request("tax year out of range", "invalid_tax_year"))?;
-        boundaries.push((label, from, to));
+        boundaries.push((year.label(), year.start, year.end));
     }
     boundaries.reverse();
 

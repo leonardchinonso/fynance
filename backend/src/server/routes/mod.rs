@@ -11,6 +11,8 @@ pub mod exchange_rates;
 pub mod health;
 pub mod holdings;
 pub mod import_api;
+pub mod income;
+pub mod income_import;
 pub mod ingestion;
 pub mod investments;
 pub mod parse;

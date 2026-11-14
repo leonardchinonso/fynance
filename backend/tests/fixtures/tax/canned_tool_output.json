@@ -1,0 +1,66 @@
+{
+  "detection_confidence": 0.97,
+  "documents": [
+    {
+      "document_type": "payslip",
+      "employer": "Example Widgets Ltd",
+      "paye_reference": "123/AB456",
+      "pay_date": "2025-06-27",
+      "period_start": "2025-06-01",
+      "period_end": "2025-06-30",
+      "printed_tax_year": "2025/26",
+      "currency": "GBP",
+      "line_items": [
+        { "code": "gross_pay", "label": "Total gross pay", "amount": "5000.00", "basis": "period" },
+        { "code": "taxable_pay", "label": "Taxable pay", "amount": "5000.00", "basis": "period" },
+        { "code": "notional_pay", "label": "RSU notional", "amount": "2000.00", "basis": "period" },
+        { "code": "tax_deducted", "label": "PAYE tax", "amount": "1100.00", "basis": "period" },
+        { "code": "employee_ni", "label": "Employee NI", "amount": "150.00", "basis": "period" },
+        { "code": "employee_pension", "label": "Pension", "amount": "150.00", "basis": "period" },
+        { "code": "net_pay", "label": "Net pay", "amount": "1600.00", "basis": "period" },
+        { "code": "taxable_pay", "label": "Taxable pay YTD", "amount": "11000.00", "basis": "year_to_date" },
+        { "code": "tax_deducted", "label": "Tax YTD", "amount": "1700.00", "basis": "year_to_date" }
+      ],
+      "row_confidence": 0.96,
+      "notes": null
+    },
+    {
+      "document_type": "payslip",
+      "employer": "Example Widgets Ltd",
+      "paye_reference": "123/AB456",
+      "pay_date": "2025-07-25",
+      "period_start": "2025-07-01",
+      "period_end": "2025-07-31",
+      "printed_tax_year": "2025/26",
+      "currency": "GBP",
+      "line_items": [
+        { "code": "gross_pay", "label": "Total gross pay", "amount": "3000.00", "basis": "period" },
+        { "code": "taxable_pay", "label": "Taxable pay", "amount": "3000.00", "basis": "period" },
+        { "code": "tax_deducted", "label": "PAYE tax", "amount": "400.00", "basis": "period" },
+        { "code": "employee_ni", "label": "Employee NI", "amount": "150.00", "basis": "period" },
+        { "code": "employee_pension", "label": "Pension", "amount": "150.00", "basis": "period" },
+        { "code": "net_pay", "label": "Net pay", "amount": "2300.00", "basis": "period" },
+        { "code": "taxable_pay", "label": "Taxable pay YTD", "amount": "14000.00", "basis": "year_to_date" },
+        { "code": "tax_deducted", "label": "Tax YTD", "amount": "2100.00", "basis": "year_to_date" }
+      ],
+      "row_confidence": 0.97,
+      "notes": null
+    },
+    {
+      "document_type": "p60",
+      "employer": "Example Widgets Ltd",
+      "paye_reference": "123/AB456",
+      "pay_date": null,
+      "period_start": null,
+      "period_end": null,
+      "printed_tax_year": "Year to 5 April 2026",
+      "currency": "GBP",
+      "line_items": [
+        { "code": "taxable_pay", "label": "Pay in this employment", "amount": "40000.00", "basis": "period" },
+        { "code": "tax_deducted", "label": "Tax deducted in this employment", "amount": "7000.00", "basis": "period" }
+      ],
+      "row_confidence": 0.95,
+      "notes": null
+    }
+  ]
+}

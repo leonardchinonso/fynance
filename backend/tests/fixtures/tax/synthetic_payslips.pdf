@@ -1,0 +1,92 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Length 450 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+50 780 Td
+(Example Widgets Ltd) Tj T*
+(PAYE reference 123/AB456) Tj T*
+(PAYSLIP  Pay date 27/06/2025  Period 01/06/2025 to 30/06/2025  Tax year 2025/26) Tj T*
+(Total gross pay 5000.00) Tj T*
+(Taxable pay 5000.00) Tj T*
+(RSU notional 2000.00 \(included in gross pay\)) Tj T*
+(PAYE tax 1100.00) Tj T*
+(Employee NI 150.00) Tj T*
+(Pension 150.00) Tj T*
+(Net pay 1600.00) Tj T*
+(Year to date: taxable pay 11000.00, tax 1700.00) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 394 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+50 780 Td
+(Example Widgets Ltd) Tj T*
+(PAYE reference 123/AB456) Tj T*
+(PAYSLIP  Pay date 25/07/2025  Period 01/07/2025 to 31/07/2025  Tax year 2025/26) Tj T*
+(Total gross pay 3000.00) Tj T*
+(Taxable pay 3000.00) Tj T*
+(PAYE tax 400.00) Tj T*
+(Employee NI 150.00) Tj T*
+(Pension 150.00) Tj T*
+(Net pay 2300.00) Tj T*
+(Year to date: taxable pay 14000.00, tax 2100.00) Tj T*
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 238 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+50 780 Td
+(Example Widgets Ltd) Tj T*
+(PAYE reference 123/AB456) Tj T*
+(P60 End of Year Certificate  Year to 5 April 2026) Tj T*
+(Pay in this employment 40000.00) Tj T*
+(Tax deducted in this employment 7000.00) Tj T*
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000197 00000 n 
+0000000698 00000 n 
+0000000824 00000 n 
+0000001269 00000 n 
+0000001395 00000 n 
+0000001684 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+1810
+%%EOF

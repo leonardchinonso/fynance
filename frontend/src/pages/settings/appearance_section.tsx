@@ -1,10 +1,13 @@
 import { useThemeContext } from "@/context/theme_context"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Switch } from "@/components/ui/switch"
+import { setShowTaxTab, useShowTaxTab } from "@/hooks/use_tax_tab"
 import { Sun, Moon, Monitor } from "lucide-react"
 
 export function AppearanceSection() {
   const { theme, setTheme } = useThemeContext()
+  const showTaxTab = useShowTaxTab()
 
   return (
     <Card id="appearance">
@@ -14,7 +17,7 @@ export function AppearanceSection() {
           Choose how fynance looks on your device.
         </p>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         <div className="space-y-2">
           <label className="text-sm font-medium">Theme</label>
           <ToggleGroup value={[theme]} onValueChange={(v) => { if (v.length) setTheme(v[0] as "light" | "dark" | "system") }}
@@ -30,6 +33,15 @@ export function AppearanceSection() {
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
+        <label className="flex items-center justify-between gap-4">
+          <div>
+            <span className="text-sm font-medium">Show Tax tab</span>
+            <p className="text-xs text-muted-foreground">
+              The Tax tab also appears on its own once you have payslip records.
+            </p>
+          </div>
+          <Switch checked={showTaxTab} onCheckedChange={(v) => setShowTaxTab(!!v)} />
+        </label>
       </CardContent>
     </Card>
   )

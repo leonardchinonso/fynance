@@ -11,6 +11,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::income::line_types::IncomeLineType;
 use crate::util::{serde_naive_datetime, serde_naive_datetime_option};
 
 /// Generic pagination envelope shared by list endpoints. `total` is the full
@@ -1723,6 +1724,972 @@ pub struct TransactionImportPreview {
     pub payload: ImportPayload,
 }
 
+// ── Income model and the tax-year summary (plan 30) ─────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum IncomeSourceType {
+    Employment,
+    SelfEmployment,
+    Property,
+    Other,
+}
+
+impl IncomeSourceType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Employment => "employment",
+            Self::SelfEmployment => "self_employment",
+            Self::Property => "property",
+            Self::Other => "other",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "employment" => Some(Self::Employment),
+            "self_employment" => Some(Self::SelfEmployment),
+            "property" => Some(Self::Property),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+}
+
+/// Stored as JSON in `income_sources.identifiers`. Employment uses the PAYE
+/// fields, self-employment the description and basis.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeSourceIdentifiers {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub paye_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub payroll_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub description: Option<String>,
+    /// Self-employment only; `cash` is the only value V1 uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub accounting_basis: Option<String>,
+}
+
+/// An employer, business or property that produces income for one profile.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeSource {
+    pub id: String,
+    pub profile_id: String,
+    pub source_type: IncomeSourceType,
+    pub name: String,
+    pub identifiers: IncomeSourceIdentifiers,
+    /// Self-employment: the business bank accounts.
+    pub account_ids: Vec<String>,
+    /// Self-employment: category id to the expense line type it feeds.
+    pub expense_category_map: std::collections::BTreeMap<String, IncomeLineType>,
+    /// `shop_app` when the source is fed by the business income sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sync_kind: Option<String>,
+    pub active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Request body for `POST /api/income-sources`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeSourcePayload {
+    pub profile_id: String,
+    pub source_type: IncomeSourceType,
+    pub name: String,
+    #[serde(default)]
+    pub identifiers: IncomeSourceIdentifiers,
+    #[serde(default)]
+    pub account_ids: Vec<String>,
+    #[serde(default)]
+    pub expense_category_map: std::collections::BTreeMap<String, IncomeLineType>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub sync_kind: Option<String>,
+    #[serde(default = "default_true")]
+    pub active: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub notes: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Request body for `PATCH /api/income-sources/:id`. An absent key leaves the
+/// stored value alone; an explicit `null` clears a nullable field.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PatchIncomeSourceBody {
+    #[serde(default, deserialize_with = "deserialize_required_string_field")]
+    #[ts(optional, type = "string")]
+    pub name: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub identifiers: Option<IncomeSourceIdentifiers>,
+    #[serde(default)]
+    #[ts(optional, type = "string[]")]
+    pub account_ids: Option<Vec<String>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub expense_category_map: Option<std::collections::BTreeMap<String, IncomeLineType>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub sync_kind: Option<Option<String>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub active: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub notes: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum IncomeRecordKind {
+    Period,
+    YearEndAdjustment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum IncomeOrigin {
+    Manual,
+    Parse,
+    ShopSync,
+    Adjustment,
+}
+
+/// Year-to-date figures are stored but never summed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum IncomeBasis {
+    Period,
+    YearToDate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeLineItem {
+    pub id: String,
+    pub line_type: IncomeLineType,
+    /// Non-negative except on `year_end_adjustment` records; direction comes
+    /// from the line type.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    pub currency: String,
+    pub basis: IncomeBasis,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
+    /// `rsu_vest_value` only: the linked `vest` investment event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub investment_event_id: Option<String>,
+}
+
+/// A line item in a request body. `currency` defaults to the record's.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeLineItemInput {
+    pub line_type: IncomeLineType,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    #[serde(default)]
+    #[ts(optional)]
+    pub currency: Option<String>,
+    #[serde(default = "default_income_basis")]
+    pub basis: IncomeBasis,
+    #[serde(default)]
+    #[ts(optional)]
+    pub label: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub investment_event_id: Option<String>,
+}
+
+fn default_income_basis() -> IncomeBasis {
+    IncomeBasis::Period
+}
+
+/// One period of income for a source (a payslip month, a month of sales).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeRecord {
+    pub id: String,
+    pub source_id: String,
+    pub kind: IncomeRecordKind,
+    /// ISO `YYYY-MM-DD`.
+    pub period_start: String,
+    pub period_end: String,
+    /// Employment: the payment date (PAYE is by payment date).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pay_date: Option<String>,
+    /// Derived server-side, `YYYY-YY`.
+    pub tax_year: String,
+    pub currency: String,
+    pub transaction_ids: Vec<String>,
+    pub document_ids: Vec<String>,
+    pub origin: IncomeOrigin,
+    /// Shop sync: the period key `YYYY-MM-DD..YYYY-MM-DD`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub external_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notes: Option<String>,
+    pub line_items: Vec<IncomeLineItem>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Request body for `POST /api/income-records`. Records made here are
+/// `kind = period`, `origin = manual`; year-end adjustments have their own route.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeRecordPayload {
+    pub source_id: String,
+    pub period_start: String,
+    pub period_end: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub pay_date: Option<String>,
+    #[serde(default = "default_gbp")]
+    pub currency: String,
+    #[serde(default)]
+    pub transaction_ids: Vec<String>,
+    #[serde(default)]
+    pub document_ids: Vec<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub line_items: Vec<IncomeLineItemInput>,
+}
+
+fn default_gbp() -> String {
+    "GBP".to_string()
+}
+
+/// Request body for `PATCH /api/income-records/:id`. `line_items`, when
+/// present, replaces every line item of the record.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PatchIncomeRecordBody {
+    #[serde(default)]
+    #[ts(optional)]
+    pub period_start: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub period_end: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub pay_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_required_string_field")]
+    #[ts(optional, type = "string")]
+    pub currency: Option<String>,
+    #[serde(default)]
+    #[ts(optional, type = "string[]")]
+    pub transaction_ids: Option<Vec<String>>,
+    #[serde(default)]
+    #[ts(optional, type = "string[]")]
+    pub document_ids: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub notes: Option<Option<String>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub line_items: Option<Vec<IncomeLineItemInput>>,
+}
+
+/// Everything a record insert needs, including the fields the public payload
+/// does not expose. Not on the wire; used by the import and sync writers.
+#[derive(Debug, Clone)]
+pub struct IncomeRecordInsert {
+    pub source_id: String,
+    pub kind: IncomeRecordKind,
+    pub period_start: String,
+    pub period_end: String,
+    pub pay_date: Option<String>,
+    pub currency: String,
+    pub transaction_ids: Vec<String>,
+    pub document_ids: Vec<String>,
+    pub origin: IncomeOrigin,
+    pub external_ref: Option<String>,
+    pub notes: Option<String>,
+    pub line_items: Vec<IncomeLineItemInput>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum IncomeCheckType {
+    P60,
+    AnnualAccounts,
+}
+
+impl IncomeCheckType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::P60 => "p60",
+            Self::AnnualAccounts => "annual_accounts",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "p60" => Some(Self::P60),
+            "annual_accounts" => Some(Self::AnnualAccounts),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeCheckFigure {
+    pub line_type: IncomeLineType,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    pub currency: String,
+}
+
+/// A P60 or annual accounts kept as a reconciliation check. Never summed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeCheck {
+    pub id: String,
+    pub source_id: String,
+    pub tax_year: String,
+    pub check_type: IncomeCheckType,
+    pub figures: Vec<IncomeCheckFigure>,
+    pub document_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Request body for `POST /api/income-checks`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeCheckPayload {
+    pub source_id: String,
+    pub tax_year: String,
+    pub check_type: IncomeCheckType,
+    pub figures: Vec<IncomeCheckFigure>,
+    #[serde(default)]
+    pub document_ids: Vec<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub notes: Option<String>,
+}
+
+/// Request body for `PATCH /api/income-checks/:id`.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct PatchIncomeCheckBody {
+    #[serde(default)]
+    #[ts(optional)]
+    pub figures: Option<Vec<IncomeCheckFigure>>,
+    #[serde(default)]
+    #[ts(optional, type = "string[]")]
+    pub document_ids: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_string_field"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub notes: Option<Option<String>>,
+}
+
+/// Request body for `POST /api/income-sources/:id/year-end-adjustment`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct YearEndAdjustmentBody {
+    pub tax_year: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum VestMatchStatus {
+    Matched,
+    Mismatch,
+}
+
+/// A `vest` investment event near a payslip's vest line.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct VestCandidate {
+    pub investment_event_id: String,
+    pub account_name: String,
+    pub symbol: String,
+    /// ISO `YYYY-MM-DD`.
+    pub date: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub quantity: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub price_per_share: Decimal,
+    pub currency: String,
+    /// quantity x price at the vest-date rate, in the preferred currency.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub value_gbp: Decimal,
+    pub status: VestMatchStatus,
+}
+
+// ── Tax-document import contract (crew A2 implements the route) ──────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum TaxDocumentType {
+    Payslip,
+    /// A P60.
+    AnnualCertificate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxLineItem {
+    pub line_type: IncomeLineType,
+    /// As printed, e.g. "RSU notional".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub label: Option<String>,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    pub basis: IncomeBasis,
+}
+
+/// The editable record a preview row proposes, and exactly what commit receives.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxDocumentDraft {
+    pub document_type: TaxDocumentType,
+    /// The employer.
+    pub source_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub paye_reference: Option<String>,
+    /// `YYYY-YY`, derived in Rust.
+    pub tax_year: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pay_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub period_start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub period_end: Option<String>,
+    pub currency: String,
+    pub line_items: Vec<TaxLineItem>,
+    /// The accepted net-pay credit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub transaction_id: Option<String>,
+    #[serde(default)]
+    pub document_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notes: Option<String>,
+}
+
+/// A bank credit that could be the payslip's net pay.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct NetPayCandidate {
+    pub transaction_id: String,
+    pub account_id: String,
+    pub account_name: String,
+    /// ISO `YYYY-MM-DD`.
+    pub date: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+    pub currency: String,
+    pub description: String,
+    /// Signed: negative when the credit is before the pay date.
+    pub days_from_pay_date: i64,
+}
+
+/// One payslip or P60 in a tax-document preview.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxDocumentPreviewRow {
+    pub index: usize,
+    pub status: TransactionPreviewStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error_reason: Option<String>,
+    /// The saved record or check this row duplicates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub existing_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub same_key_as_row: Option<usize>,
+    pub row_confidence: f32,
+    pub source_document_ids: Vec<String>,
+    pub warnings: Vec<String>,
+    pub net_pay_candidates: Vec<NetPayCandidate>,
+    pub draft: TaxDocumentDraft,
+}
+
+/// Payslips against the P60 for one employer and tax year.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxReconciliation {
+    pub source_name: String,
+    pub tax_year: String,
+    pub currency: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub certificate_row: Option<usize>,
+    pub payslip_rows: Vec<usize>,
+    /// Taxable pay, else gross pay, summed over the payslips.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub payslips_pay_total: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub payslips_tax_total: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub certificate_pay: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub certificate_tax: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub latest_ytd_pay: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub latest_ytd_tax: Option<Decimal>,
+    /// Certificate pay minus the payslips' total.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub pay_difference: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[ts(optional, type = "string")]
+    pub tax_difference: Option<Decimal>,
+    /// `YYYY-MM` of each payslip's pay date, sorted.
+    pub months_covered: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxDocumentIngestionResult {
+    pub count: usize,
+    pub new: usize,
+    pub duplicate: usize,
+    pub errors: usize,
+    pub profile_id: String,
+    pub rows: Vec<TaxDocumentPreviewRow>,
+    pub reconciliation: Vec<TaxReconciliation>,
+    /// Existing employer names for the profile.
+    pub known_sources: Vec<String>,
+}
+
+/// Request body for `POST /api/income-records/import`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxDocumentsImportPayload {
+    pub profile_id: String,
+    pub documents: Vec<TaxDocumentDraft>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxDocumentImportError {
+    pub index: usize,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxDocumentsImportResult {
+    pub inserted: usize,
+    pub duplicates: usize,
+    #[serde(default)]
+    pub errors: Vec<TaxDocumentImportError>,
+}
+
+// ── Business income sync contract (crew A3 implements the route) ─────────────
+
+/// Request body for `POST /api/income-sources/:id/sync`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeSyncRequest {
+    /// ISO `YYYY-MM-DD`.
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum IncomeSyncStatus {
+    Created,
+    Updated,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeSyncPeriod {
+    /// `YYYY-MM-DD..YYYY-MM-DD`.
+    pub external_ref: String,
+    pub status: IncomeSyncStatus,
+    pub line_items: Vec<IncomeLineItemInput>,
+}
+
+/// A refund dated in a different month from its order.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeSyncLateRefund {
+    /// `YYYY-MM`.
+    pub order_month: String,
+    pub refund_date: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub amount: Decimal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct IncomeSyncResult {
+    pub dry_run: bool,
+    pub created: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+    pub periods: Vec<IncomeSyncPeriod>,
+    pub late_refunds: Vec<IncomeSyncLateRefund>,
+    pub warnings: Vec<String>,
+}
+
+// ── Tax-year summary ─────────────────────────────────────────────────────────
+
+/// Distinguishes "not mentioned" (absent key) from "clear it" (explicit null)
+/// from "set it" for a nullable string column. `deserialize_with` only runs
+/// when the key is present, so null in becomes `Some(None)` out.
+fn deserialize_present_nullable_string_field<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(Some(raw))
+}
+
+/// NOT NULL string column in a PATCH body: an explicit null is a mistake,
+/// so reject it instead of silently ignoring the key.
+fn deserialize_required_string_field<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: String = serde::Deserialize::deserialize(deserializer)?;
+    Ok(Some(raw))
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct EmploymentBoxes {
+    /// SA102 box 1.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub pay: Decimal,
+    /// SA102 box 2.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub tax: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub student_loan: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub postgraduate_loan: Decimal,
+}
+
+/// Figures shown but never summed into a box.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct EmploymentShown {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub gross_pay: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub employee_ni: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub employee_pension: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub rsu_vest_value: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub rsu_tax: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub net_pay: Decimal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum IncomeCheckStatus {
+    Matched,
+    Gap,
+    Adjusted,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct EmploymentCheckSummary {
+    pub check_id: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub pay: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub tax: Decimal,
+    /// Check minus the summed records.
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub pay_difference: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub tax_difference: Decimal,
+    pub status: IncomeCheckStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum RsuLinkStatus {
+    Unlinked,
+    Matched,
+    Mismatch,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct RsuVestSummary {
+    pub record_id: String,
+    pub line_item_id: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub vest_value: Decimal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub investment_event_id: Option<String>,
+    #[serde(
+        with = "rust_decimal::serde::str_option",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional, type = "string")]
+    pub event_value: Option<Decimal>,
+    pub status: RsuLinkStatus,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct EmploymentSourceSummary {
+    pub source_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub paye_reference: Option<String>,
+    pub record_count: u32,
+    /// `YYYY-MM`, sorted.
+    pub months_covered: Vec<String>,
+    pub boxes: EmploymentBoxes,
+    pub shown: EmploymentShown,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub check: Option<EmploymentCheckSummary>,
+    pub rsu: Vec<RsuVestSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct SelfEmploymentCheckSummary {
+    pub check_id: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub turnover: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub expenses: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub turnover_difference: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub expenses_difference: Decimal,
+    pub status: IncomeCheckStatus,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct UnmappedExpenseCategory {
+    pub category_id: String,
+    pub name: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total: Decimal,
+}
+
+/// Outflows on the business accounts, grouped by category.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct BankExpensesSummary {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub mapped_total: Decimal,
+    pub unmapped: Vec<UnmappedExpenseCategory>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct SelfEmploymentSummary {
+    pub source_id: String,
+    pub name: String,
+    pub months_covered: Vec<String>,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub turnover: Decimal,
+    /// Line type to decimal string; record lines plus mapped bank outflows.
+    pub expenses_by_line_type: std::collections::BTreeMap<String, String>,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub total_expenses: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub net_profit: Decimal,
+    pub trading_allowance_better: bool,
+    pub bank_expenses: BankExpensesSummary,
+    /// `costing_*` totals; information only.
+    pub info: std::collections::BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub check: Option<SelfEmploymentCheckSummary>,
+}
+
+/// Interest in range, bucketed by the `interest_taxable` /
+/// `interest_non_taxable` category types of the transaction's category.
+/// Joint accounts contribute an equal share per profile.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InterestSummary {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub taxable_total: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub non_taxable_total: Decimal,
+    /// Only accounts that have interest transactions in range.
+    pub by_account: Vec<InterestAccountTotal>,
+}
+
+/// Per-account interest totals for `InterestSummary`.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct InterestAccountTotal {
+    pub account_id: String,
+    pub account_name: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub taxable: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub non_taxable: Decimal,
+    /// Number of profiles sharing the account; the figures are 1/N of it.
+    pub joint_share_of: u32,
+}
+
+/// Gift Aid totals: the `donation_taxable` / `donation_non_taxable` category
+/// types are the Gift Aid flag, and only outflow legs count.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct DonationSummary {
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub gift_aid_total: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    #[ts(type = "string")]
+    pub non_gift_aid_total: Decimal,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct CgtLink {
+    pub start_date: String,
+    pub end_date: String,
+}
+
+/// The bottom-line figures for one profile and UK tax year (plan 30).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../frontend/src/bindings/")]
+pub struct TaxYearSummary {
+    pub tax_year: String,
+    /// ISO `YYYY-MM-DD`, the 6 April opening day.
+    pub start_date: String,
+    /// ISO `YYYY-MM-DD`, the 5 April closing day.
+    pub end_date: String,
+    pub profile_id: String,
+    pub employment: Vec<EmploymentSourceSummary>,
+    pub self_employment: Vec<SelfEmploymentSummary>,
+    pub interest: InterestSummary,
+    pub donations: DonationSummary,
+    pub cgt_link: CgtLink,
+    pub warnings: Vec<String>,
+}
+
 // ── Parse cost / agent selection ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
@@ -1811,6 +2778,10 @@ pub struct IngestionPreview {
     /// "Source" chip per id and resolves the name/date from this list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub documents: Vec<DocumentSummary>,
+    /// Present for a tax-documents parse only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tax_documents: Option<TaxDocumentIngestionResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2002,11 +2973,17 @@ pub struct DocumentReferences {
     pub transactions: usize,
     pub holdings: usize,
     pub investments: usize,
+    pub income_records: usize,
+    pub income_checks: usize,
 }
 
 impl DocumentReferences {
     pub fn total(&self) -> usize {
-        self.transactions + self.holdings + self.investments
+        self.transactions
+            + self.holdings
+            + self.investments
+            + self.income_records
+            + self.income_checks
     }
 }
 
