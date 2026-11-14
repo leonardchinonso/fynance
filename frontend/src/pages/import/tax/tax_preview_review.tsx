@@ -19,7 +19,14 @@ import type { TaxEdits } from "@/hooks/use_recent_imports"
 import { MetadataHeader } from "../preview/metadata_header"
 import { ReconciliationBanner } from "./reconciliation_banner"
 import { TaxDocumentsTable } from "./tax_documents_table"
-import { buildCommitPayload, defaultKept } from "./tax_drafts"
+import { extractErrorMessage } from "@/lib/error_message"
+import {
+  applyCommitErrors,
+  buildCommitPayload,
+  defaultKept,
+  rowsWithClashingLinks,
+  rowsWithInvalidAmounts,
+} from "./tax_drafts"
 
 interface Props {
   preview: IngestionPreview
@@ -30,7 +37,7 @@ interface Props {
   initialEdits?: TaxEdits
   /** Fired on every edit so the parent can persist to the recent-imports cache. */
   onEditsChanged?: (edits: TaxEdits) => void
-  /** Called once the backend saved the records without errors. */
+  /** Called once the backend saved the records and rejected none. */
   onCommitted: (result: TaxDocumentsImportResult) => void
   onCancel: () => void
 }
@@ -86,6 +93,20 @@ export function TaxPreviewReview({
 
   const payload = buildCommitPayload(result, rows, kept)
   const count = payload.documents.length
+  const badAmountRows = rowsWithInvalidAmounts(rows, kept)
+  const clashingRows = rowsWithClashingLinks(rows, kept)
+  const problems = [
+    ...(badAmountRows.length > 0
+      ? [
+          `Fix the amounts in row ${badAmountRows.map((i) => i + 1).join(", ")}: they must be numbers of zero or more.`,
+        ]
+      : []),
+    ...(clashingRows.length > 0
+      ? [
+          `Row ${clashingRows.map((i) => i + 1).join(", ")} link${clashingRows.length === 1 ? "s" : ""} a bank credit that another row already uses. Remove one of the links.`,
+        ]
+      : []),
+  ]
 
   function toggleKept(rowIndex: number) {
     setKept((prev) => {
@@ -103,22 +124,26 @@ export function TaxPreviewReview({
     const sentRows = rows.filter((r) => kept.has(r.index) && r.status !== "error")
     try {
       const res = await api.commitTaxDocuments(payload)
-      // All-or-nothing: any per-row error means nothing was saved.
+      // The backend saves every row it does not reject, so a rejected row never rolls back the others.
       const errors = res.errors ?? []
       if (errors.length > 0) {
+        const outcome = applyCommitErrors(
+          sentRows.map((r) => r.index),
+          errors,
+          kept
+        )
+        setKept(outcome.kept)
         setConfirmOpen(false)
         setSubmitError(
-          "Nothing was saved.\n" +
-            errors
-              .map((e) => `Row ${(sentRows[e.index]?.index ?? e.index) + 1}: ${e.reason}`)
-              .join("\n")
+          `${res.inserted} saved, ${res.duplicates} already saved and skipped, ${errors.length} not saved:\n` +
+            outcome.rejected.map((r) => `Row ${r.rowIndex + 1}: ${r.reason}`).join("\n")
         )
       } else {
         onCommitted(res)
       }
     } catch (e: unknown) {
       setConfirmOpen(false)
-      setSubmitError(`Saving failed: ${e instanceof Error ? e.message : String(e)}`)
+      setSubmitError(`Saving failed: ${extractErrorMessage(e)}`)
     } finally {
       setSubmitting(false)
     }
@@ -163,13 +188,21 @@ export function TaxPreviewReview({
         </div>
       )}
 
+      {problems.length > 0 && (
+        <ul className="space-y-0.5 text-xs text-destructive" role="alert">
+          {problems.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      )}
+
       <div className="flex items-center justify-between">
         <Button variant="outline" onClick={onCancel} disabled={submitting}>
           Back
         </Button>
         <Button
           onClick={() => setConfirmOpen(true)}
-          disabled={count === 0 || submitting}
+          disabled={count === 0 || submitting || problems.length > 0}
           className="bg-blue-600 text-white hover:bg-blue-600/90"
         >
           Save {count} record{count !== 1 ? "s" : ""}
@@ -181,8 +214,8 @@ export function TaxPreviewReview({
           <DialogHeader>
             <DialogTitle>Save tax records</DialogTitle>
             <DialogDescription>
-              {count} record{count !== 1 ? "s" : ""} will be saved to your tax records. If any row
-              is rejected, nothing is saved.
+              {count} record{count !== 1 ? "s" : ""} will be sent to your tax records. Rows the
+              server rejects are reported and the rest are saved.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

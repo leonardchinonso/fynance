@@ -15,6 +15,8 @@ interface Props {
   /** The accepted credit's transaction id, if any. */
   value: string | undefined
   onChange: (transactionId: string | undefined) => void
+  /** Credits already linked to another kept row; they are not offered again. */
+  takenIds?: ReadonlySet<string>
   disabled?: boolean
 }
 
@@ -22,7 +24,8 @@ interface Props {
  * The bank credit a payslip's net pay is linked to: an accepted chip that can
  * be removed, or a picker over the candidates the backend found.
  */
-export function NetPayLinkCell({ candidates, value, onChange, disabled }: Props) {
+export function NetPayLinkCell({ candidates, value, onChange, takenIds, disabled }: Props) {
+  const available = takenIds ? candidates.filter((c) => !takenIds.has(c.transaction_id)) : candidates
   if (value) {
     const accepted = candidates.find((c) => c.transaction_id === value)
     return (
@@ -47,8 +50,12 @@ export function NetPayLinkCell({ candidates, value, onChange, disabled }: Props)
       </span>
     )
   }
-  if (candidates.length === 0) {
-    return <span className="text-xs text-muted-foreground">No match</span>
+  if (available.length === 0) {
+    return (
+      <span className="text-xs text-muted-foreground">
+        {candidates.length === 0 ? "No match" : "Matches already linked"}
+      </span>
+    )
   }
   return (
     <Popover>
@@ -60,11 +67,11 @@ export function NetPayLinkCell({ candidates, value, onChange, disabled }: Props)
         )}
       >
         <Link2 className="h-3 w-3" />
-        Link bank credit ({candidates.length})
+        Link bank credit ({available.length})
       </PopoverTrigger>
       <PopoverContent className="w-72 p-1" align="start">
         <ul className="space-y-0.5">
-          {candidates.map((c) => (
+          {available.map((c) => (
             <li key={c.transaction_id}>
               <button
                 type="button"

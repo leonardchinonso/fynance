@@ -1337,7 +1337,7 @@ export class MockApiService implements ApiService {
               { line_type: "gross_pay", amount: "6000.00", basis: "year_to_date" },
               { line_type: "paye_tax", amount: "420.00", basis: "period" },
               { line_type: "employee_ni", amount: "210.00", basis: "period" },
-              { line_type: "other_payment", amount: "500.00", basis: "period", label: "RSU notional" },
+              { line_type: "rsu_vest_value", amount: "500.00", basis: "period" },
               { line_type: "net_pay", amount: "2450.00", basis: "period" },
             ],
           },

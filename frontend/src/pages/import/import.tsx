@@ -27,27 +27,11 @@ import { ImportLanding } from "./import_landing"
 import { WizardSetup } from "./wizard_setup"
 import { RecentImportsList } from "./recent_imports_list"
 import { useRecentImports, type RecentImportEntry } from "@/hooks/use_recent_imports"
+import { extractErrorMessage } from "@/lib/error_message"
 import { TaxImport } from "./tax/tax_import"
 import { ParseProgressController, type ParseProgressUi } from "./parse_progress"
 
 type Step = "account-select" | "wizard-prep" | "upload" | "preview" | "complete"
-
-/**
- * Pull a readable string out of a fetch error. The api client throws
- * `Error("400 Bad Request: {\"code\":..., \"error\":...}")`; pluck the
- * `error` field out of the JSON body when present.
- */
-function extractErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err)
-  const jsonStart = raw.indexOf("{")
-  if (jsonStart !== -1) {
-    try {
-      const body = JSON.parse(raw.slice(jsonStart))
-      if (body && typeof body.error === "string") return body.error
-    } catch { /* fall through */ }
-  }
-  return raw
-}
 
 function profilesFor(account: Account, profiles: Profile[]): Profile[] {
   if (account.profile_ids.length === 0) return []

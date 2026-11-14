@@ -20,7 +20,14 @@ import type { TaxDocumentPreviewRow } from "@/bindings/TaxDocumentPreviewRow"
 import { DuplicateHint, StatusBadge } from "../preview/status_badge"
 import { DecimalCell } from "../preview/editors"
 import { NetPayLinkCell } from "./net_pay_link_cell"
-import { lineTypeLabel, periodAmount, setPeriodAmount } from "./tax_drafts"
+import {
+  invalidAmountTypes,
+  lineTypeLabel,
+  periodAmount,
+  setPeriodAmount,
+  takenTransactionIds,
+  taxYearMismatchWarning,
+} from "./tax_drafts"
 
 const AMOUNT_COLUMNS: Array<{ code: IncomeLineType; header: string }> = [
   { code: "gross_pay", header: "Gross pay" },
@@ -107,7 +114,14 @@ export function TaxDocumentsTable({
             const locked = disabled || isError
             const isKept = kept.has(row.index)
             const isOpen = expanded.has(row.index)
-            const notes = [...(row.error_reason ? [row.error_reason] : []), ...row.warnings]
+            const yearWarning = taxYearMismatchWarning(d)
+            const notes = [
+              ...(row.error_reason ? [row.error_reason] : []),
+              ...row.warnings,
+              ...(yearWarning ? [yearWarning] : []),
+            ]
+            const badAmounts = invalidAmountTypes(d)
+            const rowNo = row.index + 1
             const period = periodLabel(d)
             return (
               <Fragment key={row.index}>
@@ -142,7 +156,7 @@ export function TaxDocumentsTable({
                       value={d.source_name}
                       onChange={(e) => onDraftChange(pos, { ...d, source_name: e.target.value })}
                       disabled={locked}
-                      aria-label="Employer"
+                      aria-label={`Employer, row ${rowNo}`}
                       className="h-7 min-w-40 px-1.5 py-0.5 text-xs"
                     />
                   </TableCell>
@@ -157,6 +171,9 @@ export function TaxDocumentsTable({
                         value={periodAmount(d, c.code) ?? ""}
                         onChange={(v) => onDraftChange(pos, setPeriodAmount(d, c.code, v))}
                         disabled={locked}
+                        nonNegative
+                        invalid={badAmounts.includes(c.code)}
+                        ariaLabel={`${c.header}, row ${rowNo}`}
                       />
                     </TableCell>
                   ))}
@@ -172,6 +189,7 @@ export function TaxDocumentsTable({
                         candidates={row.net_pay_candidates}
                         value={d.transaction_id}
                         onChange={(id) => onDraftChange(pos, { ...d, transaction_id: id })}
+                        takenIds={takenTransactionIds(rows, kept, row.index)}
                         disabled={disabled}
                       />
                     ) : (
@@ -186,9 +204,13 @@ export function TaxDocumentsTable({
                       <Tooltip>
                         <TooltipTrigger
                           render={
-                            <span className="cursor-help" aria-label="Warnings">
+                            <button
+                              type="button"
+                              className="cursor-help rounded"
+                              aria-label={`Warnings, row ${rowNo}`}
+                            >
                               <AlertTriangle className="h-4 w-4 text-amber-600" />
-                            </span>
+                            </button>
                           }
                         />
                         <TooltipContent>

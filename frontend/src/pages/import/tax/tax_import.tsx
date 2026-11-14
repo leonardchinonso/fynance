@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { ReloadingOverlay } from "@/components/reloading_overlay"
+import { extractErrorMessage } from "@/lib/error_message"
 import { useRecentImports } from "@/hooks/use_recent_imports"
 import { FileUpload } from "../file_upload"
 import { RecentImportsList } from "../recent_imports_list"
@@ -30,25 +31,6 @@ const TAX_HINTS_BASE: Omit<ParseHints, "hint"> = {
   },
 }
 
-/** Profiles a tax record can belong to: the real people, not the catch-all default. */
-export function pickableProfiles(profiles: Profile[]): Profile[] {
-  const people = profiles.filter((p) => p.id !== "default")
-  return people.length > 0 ? people : profiles
-}
-
-/** Pull the `error` field out of an api client error body when present. */
-function extractErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err)
-  const jsonStart = raw.indexOf("{")
-  if (jsonStart !== -1) {
-    try {
-      const body = JSON.parse(raw.slice(jsonStart))
-      if (body && typeof body.error === "string") return body.error
-    } catch { /* fall through */ }
-  }
-  return raw
-}
-
 /**
  * The tax-document import flow, derived from the URL like the statement flow:
  * `/import/tax` is setup, `?entry=<id>` is the preview, `?done=1` the summary.
@@ -58,7 +40,8 @@ export function TaxImport() {
   const [searchParams] = useSearchParams()
   const entryParam = searchParams.get("entry")
   const doneParam = searchParams.get("done") === "1"
-  const doneProfile = searchParams.get("profile")
+  // The navbar profile; also the profile the done screen links back to.
+  const profileParam = searchParams.get("profile")
 
   const [profiles, setProfiles] = useState<Profile[] | null>(null)
   const [profileId, setProfileId] = useState<string | null>(null)
@@ -75,8 +58,9 @@ export function TaxImport() {
       .getProfiles()
       .then((all) => {
         setProfiles(all)
-        const options = pickableProfiles(all)
-        if (options.length === 1) setProfileId(options[0].id)
+        // One profile: pre-fill it. Several: pre-select the navbar profile when it is one of them, else ask.
+        if (all.length === 1) setProfileId(all[0].id)
+        else if (profileParam && all.some((p) => p.id === profileParam)) setProfileId(profileParam)
       })
       .catch(() => setProfiles([]))
   }, [])
@@ -86,7 +70,7 @@ export function TaxImport() {
   const step: "setup" | "preview" | "done" =
     doneParam ? "done" : entry && taxResult ? "preview" : "setup"
 
-  const options = profiles ? pickableProfiles(profiles) : []
+  const options = profiles ?? []
   const selected = options.find((p) => p.id === profileId) ?? null
 
   async function handleSubmit() {
@@ -241,7 +225,7 @@ export function TaxImport() {
                 </Button>
                 <Button
                   className="bg-blue-600 text-white hover:bg-blue-600/90"
-                  onClick={() => navigate(doneProfile ? `/tax?profile=${encodeURIComponent(doneProfile)}` : "/tax")}
+                  onClick={() => navigate(profileParam ? `/tax?profile=${encodeURIComponent(profileParam)}` : "/tax")}
                 >
                   View tax records
                 </Button>
