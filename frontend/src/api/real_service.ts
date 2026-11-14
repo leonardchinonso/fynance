@@ -104,6 +104,10 @@ import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwa
 import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
+import type { EmploymentPay } from "@/bindings/EmploymentPay"
+import type { EmploymentPayPayload } from "@/bindings/EmploymentPayPayload"
+import type { PatchEmploymentPayBody } from "@/bindings/PatchEmploymentPayBody"
+import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, ParseProgressEvent, PortfolioHistoryResponse } from "./service"
@@ -566,6 +570,34 @@ export class RealApiService implements ApiService {
     body: PutTaxInputsPayload,
   ): Promise<TaxInputs> {
     return put<TaxInputs>(`${BASE}/tax-inputs/${profileId}/${taxYear}`, body)
+  }
+
+  // ── Employment pay / tax-year summary ─────────────────────────────
+
+  async listEmploymentPay(taxYear?: string): Promise<EmploymentPay[]> {
+    const params: Record<string, string> = {}
+    if (taxYear) params.tax_year = taxYear
+    const res = await get<{ items: EmploymentPay[] }>(`${BASE}/employment-pay`, params)
+    return res.items
+  }
+
+  async createEmploymentPay(body: EmploymentPayPayload): Promise<EmploymentPay> {
+    return post<EmploymentPay>(`${BASE}/employment-pay`, body)
+  }
+
+  async updateEmploymentPay(
+    id: string,
+    body: PatchEmploymentPayBody,
+  ): Promise<EmploymentPay> {
+    return patch<EmploymentPay>(`${BASE}/employment-pay/${encodeURIComponent(id)}`, body)
+  }
+
+  async deleteEmploymentPay(id: string): Promise<void> {
+    return del(`${BASE}/employment-pay/${encodeURIComponent(id)}`)
+  }
+
+  async getTaxSummary(taxYear: string): Promise<TaxYearSummary> {
+    return get<TaxYearSummary>(`${BASE}/tax/summary/${encodeURIComponent(taxYear)}`)
   }
 
   // ── Investments ───────────────────────────────────────────────────
