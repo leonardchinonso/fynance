@@ -104,9 +104,19 @@ import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwa
 import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
-import type { EmploymentPay } from "@/bindings/EmploymentPay"
-import type { EmploymentPayPayload } from "@/bindings/EmploymentPayPayload"
-import type { PatchEmploymentPayBody } from "@/bindings/PatchEmploymentPayBody"
+import type { IncomeSource } from "@/bindings/IncomeSource"
+import type { IncomeSourcePayload } from "@/bindings/IncomeSourcePayload"
+import type { PatchIncomeSourceBody } from "@/bindings/PatchIncomeSourceBody"
+import type { IncomeRecord } from "@/bindings/IncomeRecord"
+import type { IncomeRecordPayload } from "@/bindings/IncomeRecordPayload"
+import type { PatchIncomeRecordBody } from "@/bindings/PatchIncomeRecordBody"
+import type { IncomeCheck } from "@/bindings/IncomeCheck"
+import type { IncomeCheckPayload } from "@/bindings/IncomeCheckPayload"
+import type { PatchIncomeCheckBody } from "@/bindings/PatchIncomeCheckBody"
+import type { IncomeSyncRequest } from "@/bindings/IncomeSyncRequest"
+import type { IncomeSyncResult } from "@/bindings/IncomeSyncResult"
+import type { LineTypeInfo } from "@/bindings/LineTypeInfo"
+import type { VestCandidate } from "@/bindings/VestCandidate"
 import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
@@ -572,32 +582,99 @@ export class RealApiService implements ApiService {
     return put<TaxInputs>(`${BASE}/tax-inputs/${profileId}/${taxYear}`, body)
   }
 
-  // ── Employment pay / tax-year summary ─────────────────────────────
+  // ── Income / tax-year summary ─────────────────────────────────────
 
-  async listEmploymentPay(taxYear?: string): Promise<EmploymentPay[]> {
-    const params: Record<string, string> = {}
-    if (taxYear) params.tax_year = taxYear
-    const res = await get<{ items: EmploymentPay[] }>(`${BASE}/employment-pay`, params)
+  async listIncomeLineTypes(): Promise<LineTypeInfo[]> {
+    const res = await get<{ items: LineTypeInfo[] }>(`${BASE}/income/line-types`)
     return res.items
   }
 
-  async createEmploymentPay(body: EmploymentPayPayload): Promise<EmploymentPay> {
-    return post<EmploymentPay>(`${BASE}/employment-pay`, body)
+  async listIncomeSources(profileId?: string): Promise<IncomeSource[]> {
+    const params: Record<string, string> = {}
+    if (profileId) params.profile_id = profileId
+    const res = await get<{ items: IncomeSource[] }>(`${BASE}/income-sources`, params)
+    return res.items
   }
 
-  async updateEmploymentPay(
-    id: string,
-    body: PatchEmploymentPayBody,
-  ): Promise<EmploymentPay> {
-    return patch<EmploymentPay>(`${BASE}/employment-pay/${encodeURIComponent(id)}`, body)
+  async createIncomeSource(body: IncomeSourcePayload): Promise<IncomeSource> {
+    return post<IncomeSource>(`${BASE}/income-sources`, body)
   }
 
-  async deleteEmploymentPay(id: string): Promise<void> {
-    return del(`${BASE}/employment-pay/${encodeURIComponent(id)}`)
+  async updateIncomeSource(id: string, body: PatchIncomeSourceBody): Promise<IncomeSource> {
+    return patch<IncomeSource>(`${BASE}/income-sources/${encodeURIComponent(id)}`, body)
   }
 
-  async getTaxSummary(taxYear: string): Promise<TaxYearSummary> {
-    return get<TaxYearSummary>(`${BASE}/tax/summary/${encodeURIComponent(taxYear)}`)
+  async deleteIncomeSource(id: string): Promise<void> {
+    return del(`${BASE}/income-sources/${encodeURIComponent(id)}`)
+  }
+
+  async listIncomeRecords(
+    filters: { profileId?: string; sourceId?: string; taxYear?: string } = {},
+  ): Promise<IncomeRecord[]> {
+    const params: Record<string, string> = {}
+    if (filters.profileId) params.profile_id = filters.profileId
+    if (filters.sourceId) params.source_id = filters.sourceId
+    if (filters.taxYear) params.tax_year = filters.taxYear
+    const res = await get<{ items: IncomeRecord[] }>(`${BASE}/income-records`, params)
+    return res.items
+  }
+
+  async createIncomeRecord(body: IncomeRecordPayload): Promise<IncomeRecord> {
+    return post<IncomeRecord>(`${BASE}/income-records`, body)
+  }
+
+  async updateIncomeRecord(id: string, body: PatchIncomeRecordBody): Promise<IncomeRecord> {
+    return patch<IncomeRecord>(`${BASE}/income-records/${encodeURIComponent(id)}`, body)
+  }
+
+  async deleteIncomeRecord(id: string): Promise<void> {
+    return del(`${BASE}/income-records/${encodeURIComponent(id)}`)
+  }
+
+  async listIncomeChecks(
+    filters: { profileId?: string; taxYear?: string } = {},
+  ): Promise<IncomeCheck[]> {
+    const params: Record<string, string> = {}
+    if (filters.profileId) params.profile_id = filters.profileId
+    if (filters.taxYear) params.tax_year = filters.taxYear
+    const res = await get<{ items: IncomeCheck[] }>(`${BASE}/income-checks`, params)
+    return res.items
+  }
+
+  async createIncomeCheck(body: IncomeCheckPayload): Promise<IncomeCheck> {
+    return post<IncomeCheck>(`${BASE}/income-checks`, body)
+  }
+
+  async updateIncomeCheck(id: string, body: PatchIncomeCheckBody): Promise<IncomeCheck> {
+    return patch<IncomeCheck>(`${BASE}/income-checks/${encodeURIComponent(id)}`, body)
+  }
+
+  async deleteIncomeCheck(id: string): Promise<void> {
+    return del(`${BASE}/income-checks/${encodeURIComponent(id)}`)
+  }
+
+  async createYearEndAdjustment(sourceId: string, taxYear: string): Promise<IncomeRecord> {
+    return post<IncomeRecord>(
+      `${BASE}/income-sources/${encodeURIComponent(sourceId)}/year-end-adjustment`,
+      { tax_year: taxYear },
+    )
+  }
+
+  async importShopSync(sourceId: string, body: IncomeSyncRequest): Promise<IncomeSyncResult> {
+    return post<IncomeSyncResult>(`${BASE}/income-sources/${encodeURIComponent(sourceId)}/sync`, body)
+  }
+
+  async listVestCandidates(recordId: string): Promise<VestCandidate[]> {
+    const res = await get<{ items: VestCandidate[] }>(`${BASE}/income/vest-candidates`, {
+      record_id: recordId,
+    })
+    return res.items
+  }
+
+  async getTaxSummary(taxYear: string, profileId: string): Promise<TaxYearSummary> {
+    return get<TaxYearSummary>(`${BASE}/tax/summary/${encodeURIComponent(taxYear)}`, {
+      profile_id: profileId,
+    })
   }
 
   // ── Investments ───────────────────────────────────────────────────

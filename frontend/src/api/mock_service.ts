@@ -55,12 +55,22 @@ import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingsHistory, ApiService, CgtFilters, HoldingsImportResponse, ParseOptions, PortfolioHistoryResponse } from "./service"
 import { DocumentReferencedError } from "./service"
-import { cgtFiltersToParams, ukTaxYearForDate, ukTaxYearToDates } from "./cgt_filter_params"
-import type { EmploymentPay } from "@/bindings/EmploymentPay"
-import type { EmploymentPayPayload } from "@/bindings/EmploymentPayPayload"
-import type { PatchEmploymentPayBody } from "@/bindings/PatchEmploymentPayBody"
+import { cgtFiltersToParams } from "./cgt_filter_params"
+import type { IncomeSource } from "@/bindings/IncomeSource"
+import type { IncomeSourcePayload } from "@/bindings/IncomeSourcePayload"
+import type { PatchIncomeSourceBody } from "@/bindings/PatchIncomeSourceBody"
+import type { IncomeRecord } from "@/bindings/IncomeRecord"
+import type { IncomeRecordPayload } from "@/bindings/IncomeRecordPayload"
+import type { PatchIncomeRecordBody } from "@/bindings/PatchIncomeRecordBody"
+import type { IncomeCheck } from "@/bindings/IncomeCheck"
+import type { IncomeCheckPayload } from "@/bindings/IncomeCheckPayload"
+import type { PatchIncomeCheckBody } from "@/bindings/PatchIncomeCheckBody"
+import type { IncomeSyncRequest } from "@/bindings/IncomeSyncRequest"
+import type { IncomeSyncResult } from "@/bindings/IncomeSyncResult"
+import type { LineTypeInfo } from "@/bindings/LineTypeInfo"
+import type { VestCandidate } from "@/bindings/VestCandidate"
 import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
-import { sumMoney } from "@/lib/money"
+import { MOCK_LINE_TYPES, MockIncomeStore } from "@/data/mock_income"
 import {
   MOCK_PROFILES,
   MOCK_ACCOUNTS,
@@ -104,48 +114,8 @@ function classifyBalance(
   return { available: 0, unavailable: bal }
 }
 
-// Synthetic employment-pay rows for the current tax year so the Tax page
-// renders a full table in mock mode. Generic figures only.
-function mockEmploymentPaySeed(): EmploymentPay[] {
-  const taxYear = ukTaxYearForDate(new Date())
-  const [yearStart] = ukTaxYearToDates(taxYear)
-  const now = new Date().toISOString()
-  const row = (partial: Partial<EmploymentPay> & { id: string; employer: string }): EmploymentPay => ({
-    tax_year: taxYear,
-    period_start: yearStart,
-    period_end: yearStart,
-    is_p60: false,
-    gross_pay: "0.00",
-    tax_deducted: "0.00",
-    currency: "GBP",
-    document_ids: [],
-    created_at: now,
-    updated_at: now,
-    ...partial,
-  })
-  return [
-    row({
-      id: "mock_ep_payslip_1", employer: "Employer A",
-      gross_pay: "2500.00", tax_deducted: "500.00",
-      employees_ni: "180.00", student_loan: "100.00", net_pay: "2000.00",
-    }),
-    row({
-      id: "mock_ep_payslip_2", employer: "Employer B",
-      gross_pay: "1500.00", tax_deducted: "300.00",
-      net_pay: "1200.00",
-      notes: "NI and student loan unknown on this payslip",
-    }),
-    row({
-      id: "mock_ep_p60", employer: "Employer A", is_p60: true,
-      period_start: undefined, period_end: undefined,
-      gross_pay: "30000.00", tax_deducted: "6000.00",
-      employees_ni: "3600.00", student_loan: "1200.00", net_pay: "24000.00",
-    }),
-  ]
-}
-
 export class MockApiService implements ApiService {
-  private employmentPay: EmploymentPay[] = mockEmploymentPaySeed()
+  private income = new MockIncomeStore()
 
   // In-memory document store so the Documents page renders in mock mode. One
   // referenced (orphaned = false) and one orphaned entry to exercise the badge.
@@ -195,6 +165,7 @@ export class MockApiService implements ApiService {
     mockEvent("mock_inv_vusa_sell_1", "t212-isa-alex", "sell", "VUSA", "2024-09-15T10:00:00", "30.0000", "85.50", "1.00", "GBP"),
     mockEvent("mock_inv_aapl_buy_1", "t212-isa-sam", "buy", "AAPL", "2024-06-20T14:30:00", "40.0000", "126.40", "0.00", "USD"),
     mockEvent("mock_inv_aapl_vest_1", "t212-isa-sam", "vest", "AAPL", "2024-10-01T00:00:00", "25.0000", "150.00", null, "USD"),
+    mockEvent(this.income.vestEventId, "t212-isa-alex", "vest", "AAPL", `${this.income.vestEventDate()}T00:00:00`, "20.0000", "125.00", null, "USD"),
     mockEvent("mock_inv_aapl_sell_1", "t212-isa-sam", "sell", "AAPL", "2025-01-29T15:30:00", "10.0000", "150.00", "0.50", "USD"),
   ]
 
@@ -1346,102 +1317,98 @@ export class MockApiService implements ApiService {
     return next
   }
 
-  // ── Employment pay / tax-year summary ─────────────────────────────
+  // ── Income / tax-year summary ─────────────────────────────────────
 
-  async listEmploymentPay(taxYear?: string): Promise<EmploymentPay[]> {
+  async listIncomeLineTypes(): Promise<LineTypeInfo[]> {
     await delay(DELAY_MS)
-    return this.employmentPay
-      .filter((r) => !taxYear || r.tax_year === taxYear)
-      .slice()
-      .sort((a, b) => {
-        // period_end asc, NULLs last (matching the real endpoint).
-        const ae = a.period_end ?? ""
-        const be = b.period_end ?? ""
-        if (ae === be) return 0
-        if (ae === "") return 1
-        if (be === "") return -1
-        return ae.localeCompare(be)
-      })
+    return MOCK_LINE_TYPES
   }
 
-  async createEmploymentPay(body: EmploymentPayPayload): Promise<EmploymentPay> {
+  async listIncomeSources(profileId?: string): Promise<IncomeSource[]> {
     await delay(DELAY_MS)
-    if (!/^\d{4}-\d{2}$/.test(body.tax_year)) throw new Error("invalid tax_year (expected YYYY-YY)")
-    if (!body.employer.trim()) throw new Error("employer is required")
-    for (const [field, value] of [["gross_pay", body.gross_pay], ["tax_deducted", body.tax_deducted]] as const) {
-      const n = Number(value)
-      if (!Number.isFinite(n) || n < 0) throw new Error(`${field} must be a non-negative decimal`)
-    }
-    const now = new Date().toISOString()
-    const record: EmploymentPay = {
-      id: `mock_ep_${Math.random().toString(36).slice(2, 10)}`,
-      tax_year: body.tax_year,
-      period_start: body.period_start,
-      period_end: body.period_end,
-      employer: body.employer.trim(),
-      is_p60: body.is_p60,
-      gross_pay: body.gross_pay,
-      tax_deducted: body.tax_deducted,
-      employees_ni: body.employees_ni,
-      student_loan: body.student_loan,
-      net_pay: body.net_pay,
-      currency: body.currency,
-      transaction_id: body.transaction_id,
-      document_ids: body.document_ids ?? [],
-      notes: body.notes,
-      created_at: now,
-      updated_at: now,
-    }
-    this.employmentPay.unshift(record)
-    return record
+    return this.income.listSources(profileId)
   }
 
-  async updateEmploymentPay(
-    id: string,
-    body: PatchEmploymentPayBody,
-  ): Promise<EmploymentPay> {
+  async createIncomeSource(body: IncomeSourcePayload): Promise<IncomeSource> {
     await delay(DELAY_MS)
-    const idx = this.employmentPay.findIndex((r) => r.id === id)
-    if (idx === -1) throw new Error(`employment pay row ${id} not found`)
-    const next = { ...this.employmentPay[idx] }
-    for (const [k, v] of Object.entries(body)) {
-      if (v !== undefined) (next as unknown as Record<string, unknown>)[k] = v
-    }
-    next.updated_at = new Date().toISOString()
-    this.employmentPay[idx] = next
-    return next
+    return this.income.createSource(body)
   }
 
-  async deleteEmploymentPay(id: string): Promise<void> {
+  async updateIncomeSource(id: string, body: PatchIncomeSourceBody): Promise<IncomeSource> {
     await delay(DELAY_MS)
-    this.employmentPay = this.employmentPay.filter((r) => r.id !== id)
+    return this.income.updateSource(id, body)
   }
 
-  async getTaxSummary(taxYear: string): Promise<TaxYearSummary> {
+  async deleteIncomeSource(id: string): Promise<void> {
     await delay(DELAY_MS)
-    const rows = this.employmentPay.filter((r) => r.tax_year === taxYear)
-    const [start, end] = ukTaxYearToDates(taxYear)
-    return {
-      tax_year: taxYear,
-      start_date: start,
-      end_date: end,
-      employment: {
-        gross_pay: sumMoney(rows.map((r) => r.gross_pay)),
-        tax_deducted: sumMoney(rows.map((r) => r.tax_deducted)),
-        employees_ni: sumMoney(rows.map((r) => r.employees_ni)),
-        student_loan: sumMoney(rows.map((r) => r.student_loan)),
-        net_pay: sumMoney(rows.map((r) => r.net_pay)),
-        payslip_count: rows.filter((r) => !r.is_p60).length,
-        has_p60: rows.some((r) => r.is_p60),
-        has_unknown_employees_ni: rows.some((r) => r.employees_ni == null),
-        has_unknown_student_loan: rows.some((r) => r.student_loan == null),
-        has_unknown_net_pay: rows.some((r) => r.net_pay == null),
-      },
-      // Mock fixtures carry no interest or donation transactions, so these
-      // legs always render their zero/empty state in mock mode.
-      interest: { taxable_total: "0.00", non_taxable_total: "0.00", by_account: [] },
-      donations: { gift_aid_total: "0.00", non_gift_aid_total: "0.00" },
-    }
+    this.income.deleteSource(id)
+  }
+
+  async listIncomeRecords(
+    filters: { profileId?: string; sourceId?: string; taxYear?: string } = {},
+  ): Promise<IncomeRecord[]> {
+    await delay(DELAY_MS)
+    return this.income.listRecords(filters)
+  }
+
+  async createIncomeRecord(body: IncomeRecordPayload): Promise<IncomeRecord> {
+    await delay(DELAY_MS)
+    return this.income.createRecord(body)
+  }
+
+  async updateIncomeRecord(id: string, body: PatchIncomeRecordBody): Promise<IncomeRecord> {
+    await delay(DELAY_MS)
+    return this.income.updateRecord(id, body)
+  }
+
+  async deleteIncomeRecord(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    this.income.deleteRecord(id)
+  }
+
+  async listIncomeChecks(
+    filters: { profileId?: string; taxYear?: string } = {},
+  ): Promise<IncomeCheck[]> {
+    await delay(DELAY_MS)
+    return this.income.listChecks(filters)
+  }
+
+  async createIncomeCheck(body: IncomeCheckPayload): Promise<IncomeCheck> {
+    await delay(DELAY_MS)
+    return this.income.createCheck(body)
+  }
+
+  async updateIncomeCheck(id: string, body: PatchIncomeCheckBody): Promise<IncomeCheck> {
+    await delay(DELAY_MS)
+    return this.income.updateCheck(id, body)
+  }
+
+  async deleteIncomeCheck(id: string): Promise<void> {
+    await delay(DELAY_MS)
+    this.income.deleteCheck(id)
+  }
+
+  async createYearEndAdjustment(sourceId: string, taxYear: string): Promise<IncomeRecord> {
+    await delay(DELAY_MS)
+    return this.income.createAdjustment(sourceId, taxYear)
+  }
+
+  async importShopSync(sourceId: string, body: IncomeSyncRequest): Promise<IncomeSyncResult> {
+    await delay(DELAY_MS)
+    return this.income.sync(sourceId, body)
+  }
+
+  async listVestCandidates(recordId: string): Promise<VestCandidate[]> {
+    await delay(DELAY_MS)
+    const accountsOf = (profileId: string) => MOCK_ACCOUNTS
+      .filter((a) => a.profile_ids.includes(profileId))
+      .map((a) => a.id)
+    return this.income.vestCandidates(recordId, this.investments, accountsOf)
+  }
+
+  async getTaxSummary(taxYear: string, profileId: string): Promise<TaxYearSummary> {
+    await delay(DELAY_MS)
+    return this.income.summary(taxYear, profileId, this.investments)
   }
 
   // ── Investments ───────────────────────────────────────────────────
@@ -1585,7 +1552,7 @@ export class MockApiService implements ApiService {
     this.documents = this.documents.filter((d) => d.id !== id)
     return {
       deleted: true,
-      unlinked: { transactions: refs, holdings: 0, investments: 0 },
+      unlinked: { transactions: refs, holdings: 0, investments: 0, income_records: 0, income_checks: 0 },
     }
   }
 

@@ -245,12 +245,26 @@ async function runView(browser, view) {
   await page.getByText(/\d+ documents?/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_10_documents`)
 
-  // 11a. Tax tab is opt-in: it shows once employment-pay records exist. The mock
-  //      seeds rows, so it must be in the nav here; Settings carries the manual switch.
+  // 11a. Tax tab is opt-in: it shows once income records exist. The mock seeds
+  //      them, so it must be in the nav here; Settings carries the manual switch.
   await page.goto(`${BASE}/settings/general`, { waitUntil: "domcontentloaded" })
   await page.getByText(/^show tax tab$/i).waitFor({ timeout: 10000 })
   await page.getByRole("link", { name: /^tax$/i }).first().waitFor({ timeout: 10000 })
   await shot(page, `preview_${label}_10a_tax_tab_setting`)
+
+  //      The Tax page itself: an employment card with its P60 check row, and a
+  //      business card with the sync action, all from the mock's synthetic income.
+  await page.goto(`${BASE}/tax`, { waitUntil: "domcontentloaded" })
+  await page.getByRole("heading", { name: /^tax$/i }).waitFor({ timeout: 10000 })
+  const employmentCard = page.locator("[data-testid='employment-card']").first()
+  await employmentCard.waitFor({ timeout: 15000 })
+  await employmentCard.getByText("Employer A").first().waitFor({ timeout: 5000 })
+  await employmentCard.locator("[data-testid='check-row']").getByText(/^P60$/).waitFor({ timeout: 15000 })
+  const businessCard = page.locator("[data-testid='business-card']").first()
+  await businessCard.waitFor({ timeout: 15000 })
+  await businessCard.getByRole("button", { name: /sync from shop/i }).waitFor({ timeout: 5000 })
+  await shot(page, `preview_${label}_10b_tax_page`)
+
 
   // 12. Budget grid — verify the "Show empty categories" toggle and the
   //     per-period spending-trend tooltip on the Average cell (V0 cleanup).

@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from "react"
-import { useEmploymentPay } from "@/hooks/data"
+import { useIncomeRecords } from "@/hooks/data"
 
 /**
  * The Tax tab is opt-in: hidden until the user either turns it on in Settings
- * or has at least one employment-pay record. The flag lives at module scope
+ * or has at least one income record. The flag lives at module scope
  * (mirrored to localStorage) so the Settings switch updates the navbar in place.
  */
 const SHOW_TAX_TAB_KEY = "fynance.showTaxTab"
@@ -47,12 +47,12 @@ export function useShowTaxTab(): boolean {
 
 /**
  * Whether the navbar shows the Tax tab: the manual setting, or any
- * employment-pay record. Shares the Tax page's cache entry; a failed request
+ * income record in any profile. A failed request
  * (e.g. an older backend without the endpoint) just keeps the tab hidden.
  */
 export function useTaxTabVisible(): boolean {
   const manualOn = useShowTaxTab()
-  const [rows] = useEmploymentPay({ enabled: !manualOn })
+  const [rows] = useIncomeRecords({ enabled: !manualOn })
   if (manualOn) return true
   return (rows.status === "succeeded" || rows.status === "reloading") && rows.value.length > 0
 }
