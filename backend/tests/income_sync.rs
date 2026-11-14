@@ -439,6 +439,14 @@ async fn sync_currency_change_is_409_and_changes_nothing() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let before = records(&app, &id).await;
 
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        "/api/currencies",
+        Some(json!({ "code": "EUR", "fx_rate": "0.85" })),
+    )
+    .await;
+    assert!(status.is_success(), "{body}");
     let mut eur = shop_body(999);
     eur["currency"] = json!("EUR");
     let (url, _stub) = start_stub(200, eur).await;
