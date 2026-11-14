@@ -30,12 +30,12 @@ never added to them.
 | Year-end adjustment button and API | Built |
 | Parsing payslips and P60s from PDFs or photos (`return_type.tax_documents` on the parse endpoint) | Built (backend) |
 | Committing reviewed payslips and P60s (`POST /api/income-records/import`) | Built (backend) |
-| Import wizard screens for payslips and P60s | **Not built.** The frontend has the generated types only; nothing in `frontend/src/pages/import/` handles tax documents yet |
+| Import wizard screens for payslips and P60s | Built. `/import/tax`, reached from the Import page (see "Import wizard" below) |
 | Shop app sync | Built. `POST /api/income-sources/:id/sync`, used by the "Sync from shop" button and dialog. Needs `FYNANCE_SHOP_SYNC_URL` and `FYNANCE_SHOP_SYNC_TOKEN` (see "Shop sync" below) |
 | Property income | Reserved. The line types exist; no summary is computed |
 
-Until the import wizard lands, payslips and P60s are entered by hand in the Tax page dialogs, or sent
-to the API directly.
+Payslips and P60s can be imported through the wizard at `/import/tax`, entered by hand in the Tax page
+dialogs, or sent to the API directly.
 
 ## Words used
 
@@ -332,9 +332,22 @@ Everything is on the **Tax** page (`frontend/src/pages/Tax.tsx`, parts in `pages
 **Settings switch**: Settings, Appearance, "Show Tax tab". The Tax tab also appears by itself once
 any income record exists (`hooks/use_tax_tab`).
 
-**Import wizard**: the normal Import page handles bank statements, holdings and investments. It has
-no payslip or P60 step on master yet. When it is added it will call the parse endpoint with
-`return_type.tax_documents` and then the import endpoint above.
+**Import wizard**: the Import page has an "Import tax documents" landing card that opens `/import/tax`
+(`frontend/src/pages/import/tax/`). The steps:
+
+1. Choose a profile. With one profile it is pre-filled; with several, the navbar profile is pre-selected.
+2. Upload PDFs or photos (up to 15 files) and optionally add a hint. This calls the parse endpoint with
+   `return_type.tax_documents`.
+3. Preview. Amounts are editable and rows can be unticked. A reconciliation banner shows, per source and
+   tax year, whether payslip totals agree with the P60 (green) or differ (amber). Each payslip row has a
+   net-pay link chip for the matching bank credit, or "No match" when there is none; one credit can
+   only be linked to one row.
+4. Confirm. A dialog then calls `POST /api/income-records/import`.
+5. Done screen, with "Import more" and "View tax records", which links to the Tax page.
+
+On a partly rejected commit the valid rows are saved. The rejected rows stay in the preview, unticked,
+and the page lists each as "Row N: reason" with counts of saved and already-saved rows. Unfinished
+previews appear in the recent imports list on the setup step and can be resumed.
 
 ## For contributors
 
