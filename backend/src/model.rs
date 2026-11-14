@@ -1484,8 +1484,9 @@ pub struct CashSummaryResponse {
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub income: Decimal,
-    /// Absolute value of negative amounts in spending + donation_taxable +
-    /// donation_non_taxable transactions in range (internal transfers excluded).
+    /// Per leaf category in the spending + donation_taxable +
+    /// donation_non_taxable types: max(0, outflows - inflows) in range, summed;
+    /// internal transfers and interest excluded.
     #[serde(with = "rust_decimal::serde::str")]
     #[ts(type = "string")]
     pub spending: Decimal,

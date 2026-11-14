@@ -2655,16 +2655,19 @@ impl Db {
         }
 
         // Direction filter (sign-based).
+        // The aggregates are required, not decoration: SQLite answers a GROUP BY
+        // query with bare column expressions by returning one arbitrary row per
+        // group (see tests/by_category_totals.rs).
         let sum_expr = match direction {
             Some(TransactionDirection::Outflow) => {
                 conditions.push("CAST(t.amount AS REAL) < 0".to_string());
-                "ABS(CAST(t.amount AS REAL))"
+                "SUM(ABS(CAST(t.amount AS REAL)))"
             }
             Some(TransactionDirection::Income) => {
                 conditions.push("CAST(t.amount AS REAL) > 0".to_string());
-                "CAST(t.amount AS REAL)"
+                "SUM(CAST(t.amount AS REAL))"
             }
-            None => "CAST(t.amount AS REAL)",
+            None => "SUM(CAST(t.amount AS REAL))",
         };
 
         let join = if need_account_join {
@@ -5209,13 +5212,13 @@ impl Db {
     }
 
     /// `(income, spending)` over `[start, end]`, bucketed by category_type and
-    /// FX-converted. Income sums the positive amounts in the income_taxable and
-    /// income_non_taxable types; spending sums the absolute value of the
-    /// negative amounts in the spending, donation_taxable and
-    /// donation_non_taxable types. Direction is per row, not netted per
-    /// bucket: a refund landing in a spending category (or an overpayment
-    /// reversal in an income category) must not silently cancel other rows.
-    /// The internal_transfer and interest_* types are excluded — money moved
+    /// FX-converted row by row. Income sums the positive amounts in the
+    /// income_taxable and income_non_taxable types. Spending nets each leaf
+    /// category over the period (outflows minus refunds and repayments back
+    /// into that category), floors each net at zero, and sums over the
+    /// spending, donation_taxable and donation_non_taxable types; a category's
+    /// inflow excess is dropped and never offsets another category. The
+    /// internal_transfer and interest_* types are excluded — money moved
     /// between the owner's own accounts is neither income nor spending. Skips
     /// `exclude_from_summary` rows; profile-scoped via the owning account.
     pub fn compute_category_type_cash(
@@ -5244,7 +5247,7 @@ impl Db {
         };
 
         let sql = format!(
-            r"SELECT c.category_type, t.currency, t.amount
+            r"SELECT t.category_id, c.category_type, t.currency, t.amount
               FROM transactions t
               JOIN categories c ON c.id = t.category_id
               {join}
@@ -5261,25 +5264,30 @@ impl Db {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
                     ))
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut income = CurrencyAggregator::default();
-        let mut spending = CurrencyAggregator::default();
-        for (ctype_str, currency, amount_str) in rows {
+        let mut spending_net: HashMap<String, Decimal> = HashMap::new();
+        for (category_id, ctype_str, currency, amount_str) in rows {
             let Some(ctype) = CategoryType::parse(&ctype_str) else {
                 continue;
             };
-            let amount = parse_decimal_column(2, "transaction amount", &amount_str)?;
+            let amount = parse_decimal_column(3, "transaction amount", &amount_str)?;
             if CategoryType::INCOME.contains(&ctype) && amount > Decimal::ZERO {
                 income.add(amount, &currency, fx);
-            } else if CategoryType::SPENDING.contains(&ctype) && amount < Decimal::ZERO {
-                spending.add(-amount, &currency, fx);
+            } else if CategoryType::SPENDING.contains(&ctype) {
+                *spending_net.entry(category_id).or_default() += fx.convert(amount, &currency);
             }
         }
-        Ok((income.converted_sum(), spending.converted_sum()))
+        let spending = spending_net
+            .values()
+            .map(|net| (-net).max(Decimal::ZERO))
+            .sum();
+        Ok((income.converted_sum(), spending))
     }
 
     // ── Holdings close / reopen / dry-run ──────────────────────────────────
