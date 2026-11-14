@@ -16,6 +16,7 @@ A personal finance tracker written in Rust with a local React web UI. Ingests ba
 | 26 | [26_document_storage.md](26_document_storage.md) | Document storage + per-row source provenance. Implemented on `feat/document-storage`. |
 | 27 | [27_dynamic_history_endpoint.md](27_dynamic_history_endpoint.md) | Proposed generic time-series endpoint (dynamic granularity / measure / group_by / filters) to consolidate the bespoke history endpoints. |
 | 28 | [28_type_cleanup_and_test_signoff.md](28_type_cleanup_and_test_signoff.md) | Account/holding type enum cleanup (drop `cash` account type + `savings`/`loan`/`credit` holding types, add `liability`, startup migrations, Net Savings rework) + manual test sign-off list for shipped items 10-17. |
+| 30 | [30_openai_compatible_parity.md](30_openai_compatible_parity.md) | OpenAI-compatible parse provider parity: unified mode, PDFs via the external pdf-extract tool, request knobs, streaming/progress, per-row parse robustness. Parts 1-5 implemented on `feat/openai-parity`, stacked on `feat/openai-base-url` (PR #138, in review). |
 
 ## Archived Plans
 

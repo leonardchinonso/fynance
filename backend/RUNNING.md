@@ -102,6 +102,17 @@ All runtime configuration is done via environment variables. The binary loads `.
 | `FYNANCE_PARSE_PROVIDER`         | `anthropic`                 | LLM provider for `/api/parse` and import: `anthropic` (default), `openai`, or `gemini` (OpenAI/Gemini keys live in `.env.example`) |
 | `FYNANCE_OPENAI_BASE_URL`        | `https://api.openai.com/v1` | Base URL for the `openai` provider. Point it at any OpenAI-compatible server (e.g. a local llama.cpp server at `http://127.0.0.1:8080/v1`). When set, `FYNANCE_OPENAI_API_KEY` is optional and no Authorization header is sent without it |
 | `FYNANCE_OPENAI_TIMEOUT_SECS`    | `300`                       | Per-request timeout for the `openai` provider. Raise it for slow local models          |
+| `FYNANCE_OPENAI_TOOL_CHOICE`     | `required`                  | How the extraction tool call is requested: `required`, `function` (named-tool object), or `auto` |
+| `FYNANCE_OPENAI_MAX_TOKENS`      | `16384`                     | Output token cap per chat call. `0` omits the field; local servers often set `64000`   |
+| `FYNANCE_OPENAI_TEMPERATURE`     | unset (nothing sent)        | Sampling temperature. Unset because some OpenAI reasoning models reject a non-default value |
+| `FYNANCE_OPENAI_EXTRA_BODY`      | unset                       | JSON object merged into every chat request last (server-specific knobs). Reserved keys are rejected at startup |
+| `FYNANCE_OPENAI_STREAM`          | `true`                      | Stream chat responses (parse progress + clean cancellation). `false` uses the non-streaming path |
+| `FYNANCE_OPENAI_PDF_MODE`        | `both`                      | How PDFs reach the `openai` provider: `both` (text + page images), `images`, `text`, or `native` |
+| `FYNANCE_OPENAI_PDF_MAX_PAGES`   | `50`                        | Max PDF pages in one parse call, counted across all PDFs in the call                   |
+| `FYNANCE_PDF_EXTRACT_CMD`        | unset                       | Path to the external pdf-extract tool executable (or a wrapper script). Required for PDF uploads unless `FYNANCE_OPENAI_PDF_MODE=native` |
+| `FYNANCE_PDF_EXTRACT_ARGS`       | unset (none)                | Extra tool arguments as a JSON array of strings, e.g. `["--dpi","150"]`                |
+| `FYNANCE_PDF_EXTRACT_TIMEOUT_SECS` | `120`                     | Timeout per pdf-extract tool run                                                       |
+| `FYNANCE_PARSE_DUMP_DIR`         | unset (off)                 | Opt-in: write each unified parse's raw model output (personal financial data) to this directory |
 
 ### Default database path
 
@@ -302,6 +313,56 @@ fynance budget status --month 2026-03
 ```
 
 Budget categories should match those in `backend/config/categories.yaml`. The full taxonomy is a two-level hierarchy: `Parent: Child` strings such as `Food: Groceries` or `Transport: Public Transit`.
+
+## Imports on a local OpenAI-compatible server
+
+The `openai` provider (`FYNANCE_PARSE_PROVIDER=openai`) works with any server that speaks the OpenAI chat completions API (`/v1/chat/completions`), for example a local llama.cpp `llama-server` running a vision model. No cloud account is needed: when `FYNANCE_OPENAI_BASE_URL` points at such a server, `FYNANCE_OPENAI_API_KEY` is optional and no Authorization header is sent without one.
+
+### Server flags and capabilities
+
+- Run the server with `--jinja` so it handles tool calls. Fynance extracts data through a forced tool call (`FYNANCE_OPENAI_TOOL_CHOICE` defaults to `required`).
+- Run a vision model with `--mmproj <file>` so it can read images, including the PDF page images Fynance sends.
+- Give the server enough context for page images: 50 PDF pages at about 150 DPI come to roughly 80k to 120k prompt tokens. Raise the server's context size or lower `FYNANCE_OPENAI_PDF_MAX_PAGES`.
+- A single-slot server (one request at a time, llama.cpp's default) runs imports one at a time. Concurrent parse requests wait or fail; run them sequentially.
+
+### Example env
+
+```bash
+FYNANCE_PARSE_PROVIDER=openai
+FYNANCE_OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+FYNANCE_OPENAI_PDF_MODEL=<model id>
+FYNANCE_OPENAI_MAX_TOKENS=64000
+FYNANCE_OPENAI_TIMEOUT_SECS=1800
+FYNANCE_OPENAI_TEMPERATURE=0
+FYNANCE_OPENAI_EXTRA_BODY={"chat_template_kwargs":{"enable_thinking":false}}
+```
+
+On a local server that serves a single model, set both `FYNANCE_OPENAI_PDF_MODEL` and `FYNANCE_OPENAI_TEXT_MODEL` to the model id that server reports: default unified-mode parse calls use the `PDF_MODEL` tier, split-mode text calls use `TEXT_MODEL`. The `EXTRA_BODY` above turns thinking off on Qwen-style chat templates; drop or change it for other servers.
+
+### PDFs and the external pdf-extract tool
+
+By default (`FYNANCE_OPENAI_PDF_MODE=both`) Fynance does not read PDFs itself. It runs the external `pdf-extract` tool (its own project, not bundled with Fynance), which converts a PDF into per-page text plus PNG page images:
+
+```bash
+$FYNANCE_PDF_EXTRACT_CMD <input.pdf> --out <dir> [$FYNANCE_PDF_EXTRACT_ARGS...]
+```
+
+Modes:
+
+- `both` (default): the page text plus the page image for every page.
+- `images`: page images only.
+- `text`: the text layer, falling back to the image on pages with no text layer (scanned pages).
+- `native`: send the PDF itself as a file part. No tool needed, but it works only on servers that accept PDFs.
+
+Installing and pointing at the tool:
+
+- Windows: install the tool so its command is on `PATH`, or set `FYNANCE_PDF_EXTRACT_CMD` to the full path of its executable, or to a `.cmd`/`.bat` wrapper around it.
+- Linux: install the tool and set `FYNANCE_PDF_EXTRACT_CMD` to its command name (or full path).
+- Docker: the image does not include the tool. Bind-mount a folder that holds it into the container and set `FYNANCE_PDF_EXTRACT_CMD` to its path inside the container.
+
+`FYNANCE_PDF_EXTRACT_ARGS` passes extra tool flags (for example a lower DPI for large scans) and `FYNANCE_PDF_EXTRACT_TIMEOUT_SECS` caps each tool run. If a PDF upload fails with error code `provider_not_supported`, the tool is not configured or cannot be found: set `FYNANCE_PDF_EXTRACT_CMD`, or switch to `FYNANCE_OPENAI_PDF_MODE=native`.
+
+For debugging parses, `FYNANCE_PARSE_DUMP_DIR` writes each unified call's raw model output to a directory. The dumps contain your actual financial data, so leave it off unless you need it.
 
 ## Makefile targets
 
