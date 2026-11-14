@@ -30,6 +30,9 @@ use crate::util::dedupe::{
 };
 use crate::util::normalize_description;
 
+mod income_store;
+pub use income_store::{AccountLeg, BankOutflow};
+
 /// The full schema DDL. Embedded at compile time so a release binary can
 /// create a fresh DB on a new machine with no files on disk beside itself.
 const SCHEMA_SQL: &str = include_str!("../../../db/sql/schema.sql");
