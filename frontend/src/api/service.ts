@@ -45,6 +45,20 @@ import type { DerivedBroughtForwardLosses } from "@/bindings/DerivedBroughtForwa
 import type { PutTaxInputsPayload } from "@/bindings/PutTaxInputsPayload"
 import type { ExchangeRate } from "@/bindings/ExchangeRate"
 import type { ExchangeRateInput } from "@/bindings/ExchangeRateInput"
+import type { IncomeSource } from "@/bindings/IncomeSource"
+import type { IncomeSourcePayload } from "@/bindings/IncomeSourcePayload"
+import type { PatchIncomeSourceBody } from "@/bindings/PatchIncomeSourceBody"
+import type { IncomeRecord } from "@/bindings/IncomeRecord"
+import type { IncomeRecordPayload } from "@/bindings/IncomeRecordPayload"
+import type { PatchIncomeRecordBody } from "@/bindings/PatchIncomeRecordBody"
+import type { IncomeCheck } from "@/bindings/IncomeCheck"
+import type { IncomeCheckPayload } from "@/bindings/IncomeCheckPayload"
+import type { PatchIncomeCheckBody } from "@/bindings/PatchIncomeCheckBody"
+import type { IncomeSyncRequest } from "@/bindings/IncomeSyncRequest"
+import type { IncomeSyncResult } from "@/bindings/IncomeSyncResult"
+import type { LineTypeInfo } from "@/bindings/LineTypeInfo"
+import type { VestCandidate } from "@/bindings/VestCandidate"
+import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
 import type { DocumentSummary } from "@/bindings/DocumentSummary"
 import type { DocumentDeleteResult } from "@/bindings/DocumentDeleteResult"
 import type { AccountHoldingSeries } from "@/bindings/AccountHoldingSeries"
@@ -290,6 +304,49 @@ export interface ApiService {
     taxYear: string,
     body: PutTaxInputsPayload
   ): Promise<TaxInputs>
+
+  // ── Income / tax-year summary ─────────────────────────────────────
+
+  /** The line-type catalogue. Maps to `GET /api/income/line-types`. */
+  listIncomeLineTypes(): Promise<LineTypeInfo[]>
+  /** Income sources, optionally for one profile. Maps to `GET /api/income-sources`. */
+  listIncomeSources(profileId?: string): Promise<IncomeSource[]>
+  /** Maps to `POST /api/income-sources` (201). */
+  createIncomeSource(body: IncomeSourcePayload): Promise<IncomeSource>
+  /** Absent keys are left untouched, `null` clears a nullable field. Maps to `PATCH /api/income-sources/:id`. */
+  updateIncomeSource(id: string, body: PatchIncomeSourceBody): Promise<IncomeSource>
+  /** Maps to `DELETE /api/income-sources/:id` (204; 409 `source_has_records`). */
+  deleteIncomeSource(id: string): Promise<void>
+  /** Records with line items embedded, sorted pay date / period end. Maps to `GET /api/income-records`. */
+  listIncomeRecords(filters?: {
+    profileId?: string
+    sourceId?: string
+    taxYear?: string
+  }): Promise<IncomeRecord[]>
+  /** Maps to `POST /api/income-records` (201). */
+  createIncomeRecord(body: IncomeRecordPayload): Promise<IncomeRecord>
+  /** `line_items`, when present, replaces all of them. Maps to `PATCH /api/income-records/:id`. */
+  updateIncomeRecord(id: string, body: PatchIncomeRecordBody): Promise<IncomeRecord>
+  /** Maps to `DELETE /api/income-records/:id` (204). */
+  deleteIncomeRecord(id: string): Promise<void>
+  /** P60 / annual-accounts checks. Maps to `GET /api/income-checks`. */
+  listIncomeChecks(filters?: { profileId?: string; taxYear?: string }): Promise<IncomeCheck[]>
+  /** Maps to `POST /api/income-checks` (201; 409 on a (source, year, type) clash). */
+  createIncomeCheck(body: IncomeCheckPayload): Promise<IncomeCheck>
+  /** Maps to `PATCH /api/income-checks/:id`. */
+  updateIncomeCheck(id: string, body: PatchIncomeCheckBody): Promise<IncomeCheck>
+  /** Maps to `DELETE /api/income-checks/:id` (204). */
+  deleteIncomeCheck(id: string): Promise<void>
+  /** One labelled record closing the gap to the source's check. Maps to
+   *  `POST /api/income-sources/:id/year-end-adjustment` (201; 409 `no_check`, `no_gap`, `adjustment_exists`). */
+  createYearEndAdjustment(sourceId: string, taxYear: string): Promise<IncomeRecord>
+  /** Pull the shop app's monthly figures; `dry_run` previews without writing.
+   *  Maps to `POST /api/income-sources/:id/sync`. */
+  importShopSync(sourceId: string, body: IncomeSyncRequest): Promise<IncomeSyncResult>
+  /** `vest` events near a record's RSU line. Maps to `GET /api/income/vest-candidates`. */
+  listVestCandidates(recordId: string): Promise<VestCandidate[]>
+  /** One profile's summary for a tax year. Maps to `GET /api/tax/summary/:tax_year?profile_id=`. */
+  getTaxSummary(taxYear: string, profileId: string): Promise<TaxYearSummary>
 
   // ── Investments ───────────────────────────────────────────────────
   /** List investment events. Maps to `GET /api/investments`. */
