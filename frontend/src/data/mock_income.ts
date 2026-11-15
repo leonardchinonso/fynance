@@ -10,9 +10,6 @@ import type { IncomeRecord } from "@/bindings/IncomeRecord"
 import type { IncomeRecordPayload } from "@/bindings/IncomeRecordPayload"
 import type { IncomeSource } from "@/bindings/IncomeSource"
 import type { IncomeSourcePayload } from "@/bindings/IncomeSourcePayload"
-import type { IncomeSyncPeriod } from "@/bindings/IncomeSyncPeriod"
-import type { IncomeSyncRequest } from "@/bindings/IncomeSyncRequest"
-import type { IncomeSyncResult } from "@/bindings/IncomeSyncResult"
 import type { InterestSummary } from "@/bindings/InterestSummary"
 import type { InvestmentEvent } from "@/bindings/InvestmentEvent"
 import type { LineTypeInfo } from "@/bindings/LineTypeInfo"
@@ -149,11 +146,6 @@ function shopFigures(m: number): IncomeLineItemInput[] {
   ]
 }
 
-function sameItems(a: IncomeLineItem[], b: IncomeLineItemInput[]): boolean {
-  if (a.length !== b.length) return false
-  return a.every((x, i) => x.line_type === b[i].line_type && toCents(x.amount) === toCents(b[i].amount))
-}
-
 function httpError(code: string): Error {
   return new Error(code)
 }
@@ -190,7 +182,7 @@ export class MockIncomeStore {
       {
         ...base, id: "mock_src_craft_shop", profile_id: "alex", source_type: "self_employment",
         name: "Example Craft Shop", identifiers: { accounting_basis: "cash" },
-        account_ids: ["revolut-current"], expense_category_map: { shopping: "cost_of_goods" }, sync_kind: "shop_app",
+        account_ids: ["revolut-current"], expense_category_map: { shopping: "cost_of_goods" },
       },
       { ...base, id: "mock_src_employer_b", profile_id: "sam", source_type: "employment", name: "Employer B" },
     ]
@@ -218,7 +210,7 @@ export class MockIncomeStore {
       const lines = shopFigures(m)
       if (i === 2) lines[0] = item("sales", "9999.00")
       this.records.push(this.buildRecord(`mock_rec_shop_${i}`, "mock_src_craft_shop", start, end, {
-        origin: "shop_sync", external_ref: `${start}..${end}`, lines,
+        origin: "manual", lines,
       }))
     })
 
@@ -386,49 +378,6 @@ export class MockIncomeStore {
     const rec = this.buildRecord(newId("adj"), sourceId, start, ukEnd(taxYear), { origin: "adjustment", kind: "year_end_adjustment", lines })
     this.records.push(rec)
     return rec
-  }
-
-  // ── Shop sync ───────────────────────────────────────────────────
-
-  sync(sourceId: string, body: IncomeSyncRequest): IncomeSyncResult {
-    const src = this.sources.find((s) => s.id === sourceId)
-    if (!src) throw httpError("source_not_found")
-    if (src.source_type !== "self_employment" || src.sync_kind !== "shop_app") throw httpError("sync_not_supported")
-    const periods: IncomeSyncPeriod[] = []
-    const [fy, fm] = body.from.split("-").map(Number)
-    const [ty, tm] = body.to.split("-").map(Number)
-    const monthCount = (ty - fy) * 12 + (tm - fm) + 1
-    for (let n = 0; n < monthCount; n++) {
-      const y = fy + Math.floor((fm - 1 + n) / 12)
-      const m = ((fm - 1 + n) % 12) + 1
-      const start = m === 4 ? ymd(y, 4, 6) : ymd(y, m, 1)
-      const end = ymd(y, m, lastDay(y, m))
-      if (end < body.from || start > body.to) continue
-      const lines = shopFigures(m)
-      const external_ref = `${start}..${end}`
-      const existing = this.records.find((r) => r.source_id === sourceId && r.origin === "shop_sync" && r.external_ref === external_ref)
-      const status = !existing ? "created" : sameItems(existing.line_items, lines) ? "unchanged" : "updated"
-      periods.push({ external_ref, status, line_items: lines })
-    }
-    if (!body.dry_run) {
-      for (const p of periods) {
-        if (p.status === "unchanged") continue
-        const [start, end] = p.external_ref.split("..")
-        const idx = this.records.findIndex((r) => r.source_id === sourceId && r.origin === "shop_sync" && r.external_ref === p.external_ref)
-        const rec = this.buildRecord(idx === -1 ? newId("rec") : this.records[idx].id, sourceId, start, end, {
-          origin: "shop_sync", external_ref: p.external_ref, lines: p.line_items,
-        })
-        if (idx === -1) this.records.push(rec)
-        else this.records[idx] = rec
-      }
-    }
-    const count = (s: IncomeSyncPeriod["status"]) => periods.filter((p) => p.status === s).length
-    return {
-      dry_run: body.dry_run, created: count("created"), updated: count("updated"), unchanged: count("unchanged"),
-      periods,
-      late_refunds: [{ order_month: ukMonthBefore(body.from), refund_date: ymd(fy, fm, 10), amount: "14.00" }],
-      warnings: ["2 orders in the period have no card fee recorded"],
-    }
   }
 
   // ── Vest candidates ─────────────────────────────────────────────
@@ -629,11 +578,6 @@ function ukStart(taxYear: string): [string, string] {
 
 function ukEnd(taxYear: string): string {
   return ukStart(taxYear)[1]
-}
-
-function ukMonthBefore(date: string): string {
-  const [y, m] = date.split("-").map(Number)
-  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`
 }
 
 function emptyInterest(): InterestSummary {

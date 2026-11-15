@@ -14,8 +14,4 @@ account_ids: Array<string>,
 /**
  * Self-employment: category id to the expense line type it feeds.
  */
-expense_category_map: { [key in string]?: IncomeLineType }, 
-/**
- * `shop_app` when the source is fed by the business income sync.
- */
-sync_kind?: string, active: boolean, notes?: string, created_at: string, updated_at: string, };
+expense_category_map: { [key in string]?: IncomeLineType }, active: boolean, notes?: string, created_at: string, updated_at: string, };

@@ -20,6 +20,6 @@ pay_date?: string,
  */
 tax_year: string, currency: string, transaction_ids: Array<string>, document_ids: Array<string>, origin: IncomeOrigin, 
 /**
- * Shop sync: the period key `YYYY-MM-DD..YYYY-MM-DD`.
+ * An optional external reference for the record.
  */
 external_ref?: string, notes?: string, line_items: Array<IncomeLineItem>, created_at: string, updated_at: string, };

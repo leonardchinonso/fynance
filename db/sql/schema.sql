@@ -427,7 +427,7 @@ CREATE TABLE IF NOT EXISTS income_sources (
     identifiers          TEXT NOT NULL DEFAULT '{}',   -- JSON: paye_reference, payroll_id, description, accounting_basis
     account_ids          TEXT NOT NULL DEFAULT '[]',   -- self_employment: business bank accounts
     expense_category_map TEXT NOT NULL DEFAULT '{}',   -- self_employment: {category_id: line_type}
-    sync_kind            TEXT,                         -- NULL | 'shop_app'
+    sync_kind            TEXT,                         -- unused (legacy column, never read)
     active               INTEGER NOT NULL DEFAULT 1,
     notes                TEXT,
     created_at           TEXT NOT NULL,
@@ -446,8 +446,8 @@ CREATE TABLE IF NOT EXISTS income_records (
     currency        TEXT NOT NULL DEFAULT 'GBP',
     transaction_ids TEXT NOT NULL DEFAULT '[]',       -- optional links to bank credits
     document_ids    TEXT NOT NULL DEFAULT '[]',
-    origin          TEXT NOT NULL DEFAULT 'manual',   -- manual | parse | shop_sync | adjustment
-    external_ref    TEXT,                             -- shop_sync: "YYYY-MM-DD..YYYY-MM-DD"
+    origin          TEXT NOT NULL DEFAULT 'manual',   -- manual | parse | adjustment
+    external_ref    TEXT,                             -- optional external reference
     notes           TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL

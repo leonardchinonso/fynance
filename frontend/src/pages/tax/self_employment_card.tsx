@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ConfirmDialog } from "@/components/confirm_dialog"
-import { Pencil, Plus, RefreshCw } from "lucide-react"
+import { Pencil, Plus } from "lucide-react"
 import { CheckBlock } from "./check_block"
 import { RecordsTable } from "./records_table"
 import { visibleColumns } from "./tax_helpers"
@@ -17,7 +17,7 @@ import { Money, errorMessage } from "./tax_ui"
 
 export function SelfEmploymentCard({
   source, summary, records, check, catalogue, taxYear, currency,
-  onEditSource, onAddRecord, onEditRecord, onEditCheck, onSync, onMapCategories, reload,
+  onEditSource, onAddRecord, onEditRecord, onEditCheck, onMapCategories, reload,
 }: {
   source: IncomeSource
   summary: SelfEmploymentSummary | undefined
@@ -30,7 +30,6 @@ export function SelfEmploymentCard({
   onAddRecord: () => void
   onEditRecord: (record: IncomeRecord) => void
   onEditCheck: (check: IncomeCheck | undefined) => void
-  onSync: () => void
   onMapCategories: () => void
   reload: () => void
 }) {
@@ -84,11 +83,6 @@ export function SelfEmploymentCard({
           <Button variant="ghost" size="sm" onClick={onEditSource}>
             <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit source
           </Button>
-          {source.sync_kind === "shop_app" && (
-            <Button variant="outline" size="sm" onClick={onSync}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Sync from shop
-            </Button>
-          )}
           <Button size="sm" onClick={onAddRecord}>
             <Plus className="mr-1.5 h-4 w-4" /> Add month
           </Button>

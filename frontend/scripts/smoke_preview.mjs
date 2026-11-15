@@ -253,7 +253,7 @@ async function runView(browser, view) {
   await shot(page, `preview_${label}_10a_tax_tab_setting`)
 
   //      The Tax page itself: an employment card with its P60 check row, and a
-  //      business card with the sync action, all from the mock's synthetic income.
+  //      business card, all from the mock's synthetic income.
   await page.goto(`${BASE}/tax`, { waitUntil: "domcontentloaded" })
   await page.getByRole("heading", { name: /^tax$/i }).waitFor({ timeout: 10000 })
   const employmentCard = page.locator("[data-testid='employment-card']").first()

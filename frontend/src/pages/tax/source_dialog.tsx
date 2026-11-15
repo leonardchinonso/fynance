@@ -6,7 +6,6 @@ import type { IncomeSourceType } from "@/bindings/IncomeSourceType"
 import { useAccounts } from "@/hooks/data"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
@@ -33,7 +32,6 @@ export function SourceDialog({
   const [payeRef, setPayeRef] = useState(source?.identifiers.paye_reference ?? "")
   const [description, setDescription] = useState(source?.identifiers.description ?? "")
   const [accountIds, setAccountIds] = useState<string[]>(source?.account_ids ?? [])
-  const [shopSync, setShopSync] = useState(source?.sync_kind === "shop_app")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -63,7 +61,6 @@ export function SourceDialog({
           name: name.trim(),
           identifiers: identifiers(),
           account_ids: business ? accountIds : undefined,
-          sync_kind: business ? (shopSync ? "shop_app" : null) : undefined,
         })
       } else {
         await api.createIncomeSource({
@@ -73,7 +70,6 @@ export function SourceDialog({
           identifiers: identifiers(),
           account_ids: business ? accountIds : [],
           expense_category_map: {},
-          sync_kind: business && shopSync ? "shop_app" : undefined,
           active: true,
         })
       }
@@ -157,10 +153,6 @@ export function SourceDialog({
                   Categorised outflows on these accounts become the business expenses.
                 </p>
               </div>
-              <label className="flex items-center justify-between rounded-md border px-3 py-2">
-                <span className="text-sm font-medium">Sync sales from the shop app</span>
-                <Switch size="sm" checked={shopSync} onCheckedChange={setShopSync} />
-              </label>
             </>
           )}
           {error && <p className="text-xs text-destructive">{error}</p>}

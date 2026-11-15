@@ -57,9 +57,6 @@ export function RecordsTable({
                   {r.kind === "year_end_adjustment" && (
                     <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{r.tax_year}</Badge>
                   )}
-                  {r.kind === "period" && r.origin === "shop_sync" && (
-                    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">synced</Badge>
-                  )}
                   {r.kind === "period" && byPayDate && recordMonth(r) !== r.period_end.slice(0, 7) && (
                     <span className="text-xs text-muted-foreground">for {r.period_end.slice(0, 7)}</span>
                   )}
@@ -74,11 +71,9 @@ export function RecordsTable({
                 )
               })}
               <TableCell className="whitespace-nowrap text-right">
-                {r.origin !== "shop_sync" && (
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEdit(r)} title="Edit">
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                )}
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEdit(r)} title="Edit">
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onDelete(r)} title="Delete">
                   <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
                 </Button>

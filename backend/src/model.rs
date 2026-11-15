@@ -1790,10 +1790,6 @@ pub struct IncomeSource {
     pub account_ids: Vec<String>,
     /// Self-employment: category id to the expense line type it feeds.
     pub expense_category_map: std::collections::BTreeMap<String, IncomeLineType>,
-    /// `shop_app` when the source is fed by the business income sync.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub sync_kind: Option<String>,
     pub active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1815,9 +1811,6 @@ pub struct IncomeSourcePayload {
     pub account_ids: Vec<String>,
     #[serde(default)]
     pub expense_category_map: std::collections::BTreeMap<String, IncomeLineType>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub sync_kind: Option<String>,
     #[serde(default = "default_true")]
     pub active: bool,
     #[serde(default)]
@@ -1846,12 +1839,6 @@ pub struct PatchIncomeSourceBody {
     #[serde(default)]
     #[ts(optional)]
     pub expense_category_map: Option<std::collections::BTreeMap<String, IncomeLineType>>,
-    #[serde(
-        default,
-        deserialize_with = "deserialize_present_nullable_string_field"
-    )]
-    #[ts(optional, type = "string | null")]
-    pub sync_kind: Option<Option<String>>,
     #[serde(default)]
     #[ts(optional)]
     pub active: Option<bool>,
@@ -1875,9 +1862,10 @@ pub enum IncomeRecordKind {
 #[ts(export, export_to = "../../frontend/src/bindings/")]
 #[serde(rename_all = "snake_case")]
 pub enum IncomeOrigin {
+    /// `shop_sync` is accepted as an alias so rows written by an earlier version still load.
+    #[serde(alias = "shop_sync")]
     Manual,
     Parse,
-    ShopSync,
     Adjustment,
 }
 
@@ -1956,7 +1944,7 @@ pub struct IncomeRecord {
     pub transaction_ids: Vec<String>,
     pub document_ids: Vec<String>,
     pub origin: IncomeOrigin,
-    /// Shop sync: the period key `YYYY-MM-DD..YYYY-MM-DD`.
+    /// An optional external reference for the record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub external_ref: Option<String>,
@@ -2993,4 +2981,15 @@ impl DocumentReferences {
 pub struct DocumentDeleteResult {
     pub deleted: bool,
     pub unlinked: DocumentReferences,
+}
+
+#[cfg(test)]
+mod income_origin_tests {
+    use super::IncomeOrigin;
+
+    #[test]
+    fn earlier_origin_value_loads_as_manual() {
+        let origin: IncomeOrigin = serde_json::from_str("\"shop_sync\"").unwrap();
+        assert_eq!(origin, IncomeOrigin::Manual);
+    }
 }

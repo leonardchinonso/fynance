@@ -61,7 +61,7 @@ fn json_col<T: DeserializeOwned>(idx: usize, field: &str, s: &str) -> rusqlite::
 }
 
 const SOURCE_COLS: &str = "id, profile_id, source_type, name, identifiers, account_ids, \
-     expense_category_map, sync_kind, active, notes, created_at, updated_at";
+     expense_category_map, active, notes, created_at, updated_at";
 
 fn row_to_income_source(row: &rusqlite::Row<'_>) -> rusqlite::Result<IncomeSource> {
     let source_type: String = row.get(2)?;
@@ -76,11 +76,10 @@ fn row_to_income_source(row: &rusqlite::Row<'_>) -> rusqlite::Result<IncomeSourc
         identifiers: json_col(4, "income_sources.identifiers", &identifiers)?,
         account_ids: parse_id_array(&account_ids),
         expense_category_map: json_col(6, "income_sources.expense_category_map", &category_map)?,
-        sync_kind: row.get(7)?,
-        active: row.get::<_, i64>(8)? != 0,
-        notes: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
+        active: row.get::<_, i64>(7)? != 0,
+        notes: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
@@ -162,8 +161,8 @@ impl Db {
         let now = now_stamp();
         self.conn.execute(
             "INSERT INTO income_sources (id, profile_id, source_type, name, identifiers,
-                account_ids, expense_category_map, sync_kind, active, notes, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+                account_ids, expense_category_map, active, notes, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
             params![
                 id,
                 p.profile_id,
@@ -172,7 +171,6 @@ impl Db {
                 serde_json::to_string(&p.identifiers)?,
                 serde_json::to_string(&p.account_ids)?,
                 serde_json::to_string(&p.expense_category_map)?,
-                p.sync_kind,
                 p.active as i64,
                 p.notes,
                 now,
@@ -224,9 +222,6 @@ impl Db {
         if let Some(v) = &body.expense_category_map {
             s.expense_category_map = v.clone();
         }
-        if let Some(v) = &body.sync_kind {
-            s.sync_kind = v.clone();
-        }
         if let Some(v) = body.active {
             s.active = v;
         }
@@ -235,8 +230,8 @@ impl Db {
         }
         self.conn.execute(
             "UPDATE income_sources SET name = ?2, identifiers = ?3, account_ids = ?4,
-                expense_category_map = ?5, sync_kind = ?6, active = ?7, notes = ?8,
-                updated_at = ?9
+                expense_category_map = ?5, active = ?6, notes = ?7,
+                updated_at = ?8
              WHERE id = ?1",
             params![
                 id,
@@ -244,7 +239,6 @@ impl Db {
                 serde_json::to_string(&s.identifiers)?,
                 serde_json::to_string(&s.account_ids)?,
                 serde_json::to_string(&s.expense_category_map)?,
-                s.sync_kind,
                 s.active as i64,
                 s.notes,
                 now_stamp(),
