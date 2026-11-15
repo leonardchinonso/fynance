@@ -12,11 +12,11 @@ interface CardOption {
 
 const OPTIONS: CardOption[] = [
   {
-    to: "/reports/cgt",
+    to: "/reports/tax",
     icon: <Receipt className="h-6 w-6" />,
-    title: "Capital Gains Tax report",
+    title: "Tax",
     description:
-      "Generate a UK HMRC-style report of your disposals, gains, and S104 pool workings for any tax year.",
+      "Your UK tax year in one place: income, checks and readiness, plus the capital gains report with disposals and S104 pool workings.",
   },
   {
     to: "/reports/documents",

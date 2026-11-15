@@ -192,12 +192,14 @@ async function runView(browser, view) {
   // 10. Reports → CGT landing → generate → saved-report URL → history list.
   await page.goto(`${BASE}/reports`, { waitUntil: "domcontentloaded" })
   await page.getByRole("heading", { name: /^reports$/i }).waitFor({ timeout: 10000 })
-  await page.getByText(/capital gains tax report/i).waitFor({ timeout: 5000 })
+  await page.getByRole("button", { name: /^tax/i }).waitFor({ timeout: 5000 })
   await page.getByText(/^documents$/i).first().waitFor({ timeout: 5000 })
   await page.getByText(/pick a report to generate/i).waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9_reports_landing`)
 
-  await page.getByRole("button", { name: /capital gains tax report/i }).click()
+  await page.getByRole("button", { name: /^tax/i }).click()
+  await page.waitForURL(/\/reports\/tax$/, { timeout: 5000 })
+  await page.getByRole("link", { name: /capital gains report/i }).click()
   await page.waitForURL(/\/reports\/cgt$/, { timeout: 5000 })
   await page.getByRole("heading", { name: /capital gains tax report/i }).waitFor({ timeout: 5000 })
   await page.getByText(/^filters$/i).first().waitFor({ timeout: 5000 })
@@ -245,16 +247,10 @@ async function runView(browser, view) {
   await page.getByText(/\d+ documents?/i).first().waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_10_documents`)
 
-  // 11a. Tax tab is opt-in: it shows once income records exist. The mock seeds
-  //      them, so it must be in the nav here; Settings carries the manual switch.
-  await page.goto(`${BASE}/settings/general`, { waitUntil: "domcontentloaded" })
-  await page.getByText(/^show tax tab$/i).waitFor({ timeout: 10000 })
-  await page.getByRole("link", { name: /^tax$/i }).first().waitFor({ timeout: 10000 })
-  await shot(page, `preview_${label}_10a_tax_tab_setting`)
-
+  // 11a. Tax is always in Reports (no opt-in tab, no top-level /tax route).
   //      The Tax page itself: an employment card with its P60 check row, and a
   //      business card, all from the mock's synthetic income.
-  await page.goto(`${BASE}/tax`, { waitUntil: "domcontentloaded" })
+  await page.goto(`${BASE}/reports/tax`, { waitUntil: "domcontentloaded" })
   await page.getByRole("heading", { name: /^tax$/i }).waitFor({ timeout: 10000 })
   const employmentCard = page.locator("[data-testid='employment-card']").first()
   await employmentCard.waitFor({ timeout: 15000 })
@@ -267,7 +263,7 @@ async function runView(browser, view) {
 
 
   // 11b. Tax-document import: landing card -> profile -> upload -> review ->
-  //      bank-credit chip remove/re-accept -> save -> summary linking to /tax.
+  //      bank-credit chip remove/re-accept -> save -> summary linking to /reports/tax.
   await page.goto(`${BASE}/import`, { waitUntil: "domcontentloaded" })
   await page.getByRole("button", { name: /import tax documents/i }).click()
   await page.waitForURL(/\/import\/tax$/, { timeout: 5000 })

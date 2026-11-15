@@ -301,7 +301,7 @@ a month of payslips was lost. Prefer adding the missing payslip if you have it.
 
 ## Where it shows in the app
 
-Everything is on the **Tax** page (`frontend/src/pages/Tax.tsx`, parts in `pages/tax/`).
+Everything is on the **Tax** report (Reports → Tax, `/reports/tax`; `frontend/src/pages/Tax.tsx`, parts in `pages/tax/`). It is always available: there is no Tax tab to switch on. A card at the top opens the capital gains report.
 
 | Section | What it shows |
 |---|---|
