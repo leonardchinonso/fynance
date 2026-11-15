@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react"
-import { ukTaxYearForDate, ukTaxYearToDates } from "@/api/cgt_filter_params"
+import { ukTaxYearForDate, ukTaxYearToDates, ukTaxYearsBetween } from "@/api/cgt_filter_params"
 import type { IncomeCheck } from "@/bindings/IncomeCheck"
 import type { IncomeRecord } from "@/bindings/IncomeRecord"
 import type { IncomeSource } from "@/bindings/IncomeSource"
 import {
-  useIncomeChecks, useIncomeLineTypes, useIncomeRecords, useIncomeSources, useProfilesData, useTaxSummary,
+  useEarliestDataDate, useIncomeChecks, useIncomeLineTypes, useIncomeRecords, useIncomeSources, useProfilesData, useTaxSummary,
 } from "@/hooks/data"
 import { useUrlFilters } from "@/hooks/use_url_filters"
 import { usePreferredCurrency } from "@/context/preferred_currency_context"
@@ -62,11 +62,17 @@ export function TaxPage() {
   const checks = checksData.status === "succeeded" || checksData.status === "reloading" ? checksData.value : []
   const summary = summaryData.status === "succeeded" || summaryData.status === "reloading" ? summaryData.value : undefined
 
+  const earliestData = useEarliestDataDate(profileId)
+  const earliestDate = earliestData.status === "succeeded" || earliestData.status === "reloading" ? earliestData.value : undefined
+
   const yearOptions = useMemo(() => {
-    const years = new Set<string>([currentTaxYear])
+    const years = new Set<string>(ukTaxYearsBetween(earliestDate ?? "9999-01-01", new Date()))
     for (const r of allRecords) years.add(r.tax_year)
-    return [...years].sort((a, b) => b.localeCompare(a))
-  }, [allRecords, currentTaxYear])
+    const earliestRecordYear = [...years].sort()[0]
+    return ukTaxYearsBetween(`${earliestRecordYear.slice(0, 4)}-12-31`, new Date())
+      .concat([...years].filter((y) => y > currentTaxYear))
+      .sort((a, b) => b.localeCompare(a))
+  }, [allRecords, earliestDate, currentTaxYear])
 
   function reloadAll() {
     reloadSources()

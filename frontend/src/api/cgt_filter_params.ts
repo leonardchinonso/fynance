@@ -63,6 +63,19 @@ export function previousUkTaxYearForDate(date: Date): string {
   return `${prevStart}-${prevEndShort}`
 }
 
+/** Every UK tax year from the one containing `earliest` up to the one containing `latest`, newest first. */
+export function ukTaxYearsBetween(earliest: string, latest: Date): string[] {
+  const first = ukTaxYearForDate(new Date(`${earliest.slice(0, 10)}T12:00:00`))
+  const last = ukTaxYearForDate(latest)
+  const firstStart = Number.parseInt(first.slice(0, 4), 10)
+  const lastStart = Number.parseInt(last.slice(0, 4), 10)
+  const years: string[] = []
+  for (let y = lastStart; y >= Math.min(firstStart, lastStart); y--) {
+    years.push(`${y}-${String((y + 1) % 100).padStart(2, "0")}`)
+  }
+  return years
+}
+
 /** Human-readable label for the period, used in history rows + filenames. */
 export function periodLabel(period: CgtPeriod): string {
   switch (period.kind) {
