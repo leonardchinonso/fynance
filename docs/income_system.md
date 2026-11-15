@@ -31,7 +31,6 @@ never added to them.
 | Parsing payslips and P60s from PDFs or photos (`return_type.tax_documents` on the parse endpoint) | Built (backend) |
 | Committing reviewed payslips and P60s (`POST /api/income-records/import`) | Built (backend) |
 | Import wizard screens for payslips and P60s | Built. `/import/tax`, reached from the Import page (see "Import wizard" below) |
-| Shop app sync | Built. `POST /api/income-sources/:id/sync`, used by the "Sync from shop" button and dialog. Needs `FYNANCE_SHOP_SYNC_URL` and `FYNANCE_SHOP_SYNC_TOKEN` (see "Shop sync" below) |
 | Property income | Reserved. The line types exist; no summary is computed |
 
 Payslips and P60s can be imported through the wizard at `/import/tax`, entered by hand in the Tax page
@@ -75,15 +74,14 @@ CREATE TABLE income_sources (
     identifiers TEXT NOT NULL DEFAULT '{}',   -- JSON: paye_reference, payroll_id, ...
     account_ids TEXT NOT NULL DEFAULT '[]',   -- self_employment: the business bank accounts
     expense_category_map TEXT NOT NULL DEFAULT '{}', -- self_employment: {category_id: line_type}
-    sync_kind TEXT,                   -- NULL | 'shop_app'
+    sync_kind TEXT,                   -- unused (legacy)
     active INTEGER NOT NULL DEFAULT 1,
     notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 ```
 
 A source belongs to one profile. `account_ids` and `expense_category_map` are how a business source
-finds its costs in bank data (see "Business costs" below). The API rejects them, and `sync_kind`,
-on any other source type.
+finds its costs in bank data (see "Business costs" below). The API rejects them on any other source type.
 
 ### income_records
 
@@ -99,14 +97,14 @@ CREATE TABLE income_records (
     currency TEXT NOT NULL DEFAULT 'GBP',
     transaction_ids TEXT NOT NULL DEFAULT '[]',  -- optional links to bank credits
     document_ids TEXT NOT NULL DEFAULT '[]',     -- the uploaded payslip files
-    origin TEXT NOT NULL DEFAULT 'manual', -- manual | parse | shop_sync | adjustment
-    external_ref TEXT,                     -- shop_sync: "YYYY-MM-DD..YYYY-MM-DD"
+    origin TEXT NOT NULL DEFAULT 'manual', -- manual | parse | adjustment
+    external_ref TEXT,                     -- optional external reference
     notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 ```
 
 `origin` says where the record came from. A unique index on `(source_id, origin, external_ref)`
-means a sync can be re-run without duplicating a period.
+stops the same period being recorded twice from one origin.
 
 ### income_line_items
 
@@ -152,7 +150,7 @@ answer key the records are marked against.
 - Any line type the catalogue marks `summed = false`. The catalogue is a table in
   `backend/src/income/line_types.rs`, served at `GET /api/income/line-types`, and the UI builds
   its columns from it. Examples: employee NI, employee pension, net pay, RSU vest value and RSU tax
-  (both already inside taxable pay and PAYE), and the shop app's per-order `costing_*` lines.
+  (both already inside taxable pay and PAYE), and the per-order `costing_*` lines.
 
 ## From documents to boxes
 
@@ -257,23 +255,23 @@ Total expenses are the expense lines on records **plus** categorised bank outflo
 
 ### Business costs: the double-count rule
 
-A shop app knows the materials, packaging and postage each order used, but those are estimates
+Per-order costings (for example from a shop app, entered by hand) cover the materials, packaging and postage each order used, but those are estimates
 ("costings"). The real money for them left the business bank account, which Fynance already has.
 Adding both would count every cost twice.
 
 So the rule is:
 
-- From a shop app, only **sales, refunds and costs the platform takes at source** (card fees,
+- From such a source, only **sales, refunds and costs the platform takes at source** (card fees,
   marketplace fees, marketplace postage labels) are summed. These never show up as bank outflows.
 - Materials, own postage, packaging and everything else come from **bank outflows** on the
   source's business accounts, grouped by transaction category and turned into SA103S lines through
   the source's `expense_category_map`.
-- The shop app's per-order figures are stored as `costing_materials`, `costing_packaging`,
+- Per-order costings can be entered by hand as `costing_materials`, `costing_packaging`,
   `costing_postage`, `costing_other`: shown as information, never summed.
 - Outflows in a category with no mapping are listed as "unmapped" with their totals, so a cost is
   never silently dropped. The "Map expense categories" dialog assigns them.
 
-The shop sync follows this rule: sales, refunds, platform fees and platform postage are summed, and the `costing_*` lines are information only. The line-type table has the
+For business records, sales, refunds, platform fees and platform postage are summed, and the `costing_*` lines are information only. The line-type table has the
 `summed` flag for exactly that reason, so the rule can change without a schema change.
 
 ### Checks and the year-end adjustment
@@ -301,21 +299,6 @@ the check reads `adjusted`. The check itself is still never added: only the adju
 Typical reason for an adjustment: an employer corrects pay in the final payslip of the year, or
 a month of payslips was lost. Prefer adding the missing payslip if you have it.
 
-## Shop sync
-
-`POST /api/income-sources/:id/sync` pulls monthly figures from the shop app for a source whose
-`sync_kind` is `shop_app`. It needs `FYNANCE_SHOP_SYNC_URL` and `FYNANCE_SHOP_SYNC_TOKEN`; without
-them the answer is 400 `sync_not_configured`. The URL must be https (plain http is accepted only for
-a loopback host), the date range may not be longer than 36 months (400 `invalid_range`), and a
-response larger than 4 MB is refused with a 502.
-
-A dry run shows what would change; the commit then writes every period in one transaction, so a
-bad period rolls the whole run back. Each period becomes one record with origin `shop_sync`, keyed
-by `start..end` in `external_ref`. A period that crosses the 6 April tax-year boundary is split at
-the 6th. Re-running is idempotent: unchanged figures are left alone and changed figures replace
-that record's line items in place. Manual and parsed records are never touched. Late refunds and
-counts of missing fees or costs are reported in the result but not written.
-
 ## Where it shows in the app
 
 Everything is on the **Tax** page (`frontend/src/pages/Tax.tsx`, parts in `pages/tax/`).
@@ -325,9 +308,9 @@ Everything is on the **Tax** page (`frontend/src/pages/Tax.tsx`, parts in `pages
 | Header | Taxpayer profile picker, tax year picker with its date window, "Add income source" |
 | Readiness checklist | One row per employer and business, plus interest and Gift Aid, showing what is still missing |
 | Employment (one card per employer) | Box 1 and 2 figures, the shown-only figures, the records table, the P60 check block with status and "Create year-end adjustment", RSU table with match badges |
-| Self-employment (one card per business) | Turnover, expenses, net profit, trading allowance hint, bank expenses with "Map expense categories", annual-accounts check block, "Sync from shop" (only when the source has `sync_kind = shop_app`) |
+| Self-employment (one card per business) | Turnover, expenses, net profit, trading allowance hint, bank expenses with "Map expense categories", annual-accounts check block |
 | Interest and Gift Aid | Taxable and non-taxable interest per account (joint accounts are split by holder), and Gift Aid donations, taken from categorised transactions |
-| Dialogs | Source, record, check, expense mapping, shop sync |
+| Dialogs | Source, record, check, expense mapping |
 
 **Settings switch**: Settings, Appearance, "Show Tax tab". The Tax tab also appears by itself once
 any income record exists (`hooks/use_tax_tab`).
@@ -360,8 +343,6 @@ previews appear in the recent imports list on the setup step and can be resumed.
 | Storage | `backend/src/storage/db/income_store.rs` |
 | Routes | `backend/src/server/routes/income.rs`, `income_import.rs`; wired in `server/mod.rs` |
 | Document import | `backend/src/importers/tax_documents/` |
-| Shop sync (mapping and upsert) | `backend/src/income/sync.rs` |
-| Shop sync route | `backend/src/server/routes/income_sync.rs` |
 | UI | `frontend/src/pages/Tax.tsx`, `frontend/src/pages/tax/` |
 
 Adding a line type means one new row in the catalogue table and a matching enum variant. The

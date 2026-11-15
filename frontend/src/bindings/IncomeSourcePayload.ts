@@ -6,4 +6,4 @@ import type { IncomeSourceType } from "./IncomeSourceType";
 /**
  * Request body for `POST /api/income-sources`.
  */
-export type IncomeSourcePayload = { profile_id: string, source_type: IncomeSourceType, name: string, identifiers: IncomeSourceIdentifiers, account_ids: Array<string>, expense_category_map: { [key in string]?: IncomeLineType }, sync_kind?: string, active: boolean, notes?: string, };
+export type IncomeSourcePayload = { profile_id: string, source_type: IncomeSourceType, name: string, identifiers: IncomeSourceIdentifiers, account_ids: Array<string>, expense_category_map: { [key in string]?: IncomeLineType }, active: boolean, notes?: string, };

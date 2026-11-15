@@ -20,7 +20,6 @@ import { ReadinessChecklist } from "./tax/readiness_checklist"
 import { RecordDialog } from "./tax/record_dialog"
 import { SelfEmploymentCard } from "./tax/self_employment_card"
 import { SourceDialog } from "./tax/source_dialog"
-import { SyncDialog } from "./tax/sync_dialog"
 import { SectionError } from "./tax/tax_ui"
 
 /** Year window subtitle; empty for a malformed year coming from the server. */
@@ -38,7 +37,6 @@ type DialogState =
   | { kind: "record"; source: IncomeSource; record: IncomeRecord | null }
   | { kind: "check"; source: IncomeSource; check: IncomeCheck | undefined }
   | { kind: "mapping"; source: IncomeSource }
-  | { kind: "sync"; source: IncomeSource }
 
 export function TaxPage() {
   const currentTaxYear = useMemo(() => ukTaxYearForDate(new Date()), [])
@@ -176,7 +174,6 @@ export function TaxPage() {
               onAddRecord={() => setDialog({ kind: "record", source: s, record: null })}
               onEditRecord={(record) => setDialog({ kind: "record", source: s, record })}
               onEditCheck={(check) => setDialog({ kind: "check", source: s, check })}
-              onSync={() => setDialog({ kind: "sync", source: s })}
               onMapCategories={() => setDialog({ kind: "mapping", source: s })}
               reload={reloadAll}
             />
@@ -219,15 +216,6 @@ export function TaxPage() {
           currency={preferred}
           onClose={() => setDialog(null)}
           onSaved={saved}
-        />
-      )}
-      {dialog?.kind === "sync" && (
-        <SyncDialog
-          source={dialog.source}
-          taxYear={taxYear}
-          currency={preferred}
-          onClose={() => setDialog(null)}
-          onSynced={reloadAll}
         />
       )}
     </div>

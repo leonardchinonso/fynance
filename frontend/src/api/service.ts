@@ -56,8 +56,6 @@ import type { PatchIncomeRecordBody } from "@/bindings/PatchIncomeRecordBody"
 import type { IncomeCheck } from "@/bindings/IncomeCheck"
 import type { IncomeCheckPayload } from "@/bindings/IncomeCheckPayload"
 import type { PatchIncomeCheckBody } from "@/bindings/PatchIncomeCheckBody"
-import type { IncomeSyncRequest } from "@/bindings/IncomeSyncRequest"
-import type { IncomeSyncResult } from "@/bindings/IncomeSyncResult"
 import type { LineTypeInfo } from "@/bindings/LineTypeInfo"
 import type { VestCandidate } from "@/bindings/VestCandidate"
 import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
@@ -354,9 +352,6 @@ export interface ApiService {
   /** One labelled record closing the gap to the source's check. Maps to
    *  `POST /api/income-sources/:id/year-end-adjustment` (201; 409 `no_check`, `no_gap`, `adjustment_exists`). */
   createYearEndAdjustment(sourceId: string, taxYear: string): Promise<IncomeRecord>
-  /** Pull the shop app's monthly figures; `dry_run` previews without writing.
-   *  Maps to `POST /api/income-sources/:id/sync`. */
-  importShopSync(sourceId: string, body: IncomeSyncRequest): Promise<IncomeSyncResult>
   /** `vest` events near a record's RSU line. Maps to `GET /api/income/vest-candidates`. */
   listVestCandidates(recordId: string): Promise<VestCandidate[]>
   /** One profile's summary for a tax year. Maps to `GET /api/tax/summary/:tax_year?profile_id=`. */

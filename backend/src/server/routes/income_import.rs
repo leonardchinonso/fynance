@@ -245,7 +245,6 @@ fn employment_payload(profile_id: &str, draft: &TaxDocumentDraft) -> IncomeSourc
         },
         account_ids: Vec::new(),
         expense_category_map: Default::default(),
-        sync_kind: None,
         active: true,
         notes: None,
     }
@@ -263,7 +262,6 @@ fn unsaved_source(profile_id: &str, draft: &TaxDocumentDraft) -> IncomeSource {
         identifiers: p.identifiers,
         account_ids: p.account_ids,
         expense_category_map: p.expense_category_map,
-        sync_kind: None,
         active: true,
         notes: None,
         created_at: String::new(),
@@ -291,7 +289,6 @@ fn ensure_source(
                 identifiers: Some(identifiers),
                 account_ids: None,
                 expense_category_map: None,
-                sync_kind: None,
                 active: None,
                 notes: None,
             };

@@ -1,4 +1,4 @@
-# 30 - Income & tax V1: general income model, tax-document import, business income sync
+# 30 - Income & tax V1: general income model, tax-document import
 
 Status: active. Feature branch: `feat/tax-return-v1` (one branch, one PR to `master`).
 Supersedes the storage parts of plan 28 (the `employment_pay` table, its routes and its summary) and
@@ -22,9 +22,7 @@ profiles; "the shop app" is an external app that sells the partner's goods.
    accounts split), Gift Aid, a CGT link, and per-source check status.
 3. **Tax-document import** (payslips, P60s) through `/api/parse` → preview → commit (plan 29, now
    with real storage).
-4. **Business income sync**: Fynance pulls monthly figures from the shop app's token-protected
-   endpoint into self-employment records (the endpoint itself is a separate PR in the shop app's repo;
-   see the private notes).
+4. **Business costs from bank data** (see D3): imported income for a business is entered or imported as records; costs come from categorised bank outflows.
 5. **RSU vest linking**: a payslip's vest line links to the matching `vest` investment event; the
    app shows whether the vest's cost basis equals the value taxed as pay and offers to align it.
 6. The **Tax tab** rebuilt on the new model, still opt-in.
@@ -102,7 +100,6 @@ CREATE TABLE income_sources (
                                             -- self_employment {description?, accounting_basis: "cash"}
   account_ids TEXT NOT NULL DEFAULT '[]',   -- self_employment: business bank accounts
   expense_category_map TEXT NOT NULL DEFAULT '{}', -- self_employment: {category_id: line_type}
-  sync_kind TEXT,                     -- NULL | 'shop_app' (business income sync, section 8)
   active INTEGER NOT NULL DEFAULT 1,
   notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -118,8 +115,8 @@ CREATE TABLE income_records (
   currency TEXT NOT NULL DEFAULT 'GBP',
   transaction_ids TEXT NOT NULL DEFAULT '[]',  -- optional links to bank credits
   document_ids TEXT NOT NULL DEFAULT '[]',
-  origin TEXT NOT NULL DEFAULT 'manual',       -- manual | parse | shop_sync | adjustment
-  external_ref TEXT,                  -- shop_sync: period key "YYYY-MM-DD..YYYY-MM-DD"
+  origin TEXT NOT NULL DEFAULT 'manual',       -- manual | parse | adjustment
+  external_ref TEXT,                  -- optional external reference
   notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX idx_income_records_source_year ON income_records(source_id, tax_year);
@@ -227,7 +224,6 @@ PATCH  /api/income-checks/:id   DELETE /api/income-checks/:id
 POST   /api/income-sources/:id/year-end-adjustment  body {tax_year} -> 201 IncomeRecord;
        409 no_check | no_gap | adjustment_exists
 POST   /api/income-records/import                   (crew A2) body TaxDocumentsImportPayload -> TaxDocumentsImportResult
-POST   /api/income-sources/:id/sync                 (crew A3) body {from, to, dry_run} -> IncomeSyncResult
 GET    /api/income/vest-candidates?record_id=       (crew A1) -> { items: [VestCandidate] }
 GET    /api/tax/summary/:tax_year?profile_id=       -> TaxYearSummary (profile_id required: 400 missing_profile_id)
 ```
@@ -279,36 +275,6 @@ equals the line amount within £1; else `mismatch`. Aligning the cost basis is a
 the existing `PATCH /api/investments/:id` (set `price_per_share = vest_value / quantity` in the
 event's currency, converted back at the vest-date rate) behind a confirm dialog; no new backend route.
 
-## 8. Business income sync (crew A3, Fynance side)
-
-- Config: `FYNANCE_SHOP_SYNC_URL` and `FYNANCE_SHOP_SYNC_TOKEN` (add to `.env.example`, commented,
-  and `backend/RUNNING.md`). Missing → 400 `sync_not_configured`. Never log the token or the response
-  body at INFO.
-- `POST /api/income-sources/:id/sync {from: YYYY-MM-DD, to: YYYY-MM-DD, dry_run}`: source must be
-  `self_employment` with `sync_kind = 'shop_app'`. `reqwest` GET `<url>?from=&to=` with
-  `Authorization: Bearer`, timeouts like `importers/provider.rs`. Upstream non-200 → 502
-  `sync_upstream_error` with status code only.
-- Endpoint response contract (the shop-app PR implements exactly this):
-  ```json
-  { "basis": "order_date", "currency": "GBP", "generated_at": "...",
-    "periods": [ { "start": "2025-04-06", "end": "2025-04-30",
-      "sales_pence": 0, "refunds_pence": 0,
-      "platform_fees_pence": 0, "platform_postage_pence": 0,
-      "costing_materials_pence": 0, "costing_packaging_pence": 0, "costing_postage_pence": 0,
-      "costing_other_pence": 0,
-      "order_count": 0, "orders_missing_fee": 0, "orders_missing_costs": 0 } ],
-    "late_refunds": [ { "order_month": "2025-03", "refund_date": "2025-04-10", "amount_pence": 0 } ] }
-  ```
-  Periods are calendar months, with April split at the 6th.
-- Mapping: one record per period, `origin = shop_sync`, `external_ref = "start..end"`, pence → Decimal
-  pounds, zero amounts omitted. Upsert by `(source_id, origin, external_ref)`: replace line items
-  of an existing synced record; never touch `manual`/`parse` records. `dry_run` returns
-  `{created, updated, unchanged, periods: [{external_ref, status, line_items}], late_refunds,
-  warnings}` without writing; commit writes all in one SQLite transaction. Missing-fee/cost counts
-  become warnings.
-- Tests: a local `axum` test server (or `tokio::net::TcpListener` stub) serving canned JSON;
-  cover auth header sent, upsert idempotence, April split, non-200, not configured, wrong source type.
-
 ## 9. Tax-document import (crew A2; plan 29 Part A with real storage)
 
 Follow plan 29 Part A steps 1-12 with these changes:
@@ -335,17 +301,17 @@ Follow plan 29 Part A steps 1-12 with these changes:
 - Profile: tax is per taxpayer. Use the navbar `?profile=`; when "All profiles", show a profile
   picker on the page (CGT report's preselect pattern, `cgt_report_page.tsx:66-89`).
 - Sections: readiness checklist (per employment source: months covered and check status; per
-  business: months synced, unmapped expense categories; interest; Gift Aid; CGT link) → Employment
+  business: months recorded, unmapped expense categories; interest; Gift Aid; CGT link) → Employment
   cards (one per source: monthly table with SA102 columns from the line-type catalogue, totals row,
   check row with "Create year-end adjustment" when status is `gap`, RSU sub-table: link picker over
   vest candidates, match status, "Align cost basis" confirm) → Self-employment cards (monthly table,
-  "Sync from shop" with dry-run diff then confirm, late-refund notice, expense category mapping
+  expense category mapping
   editor over the business accounts' categories, totals, trading allowance note, info costings
   collapsed) → Interest → Gift Aid.
-- Dialogs: source add/edit (type, name, PAYE reference, business accounts, sync kind); record
+- Dialogs: source add/edit (type, name, PAYE reference, business accounts); record
   add/edit with a line-item editor filtered by source type; check add/edit.
 - Service methods in `service.ts` / `real_service.ts` / `mock_service.ts` with mutation prefixes
-  (`create|update|delete|import|commit|...`; name the sync call `importShopSync`), mock seed of
+  (`create|update|delete|import|commit|...`), mock seed of
   synthetic data covering every section. Delete the employment-pay methods and hooks.
 - Smoke: extend step 11a to open `/tax` in mock mode and assert an employment card, a check row and
   a business card on both viewports.
@@ -359,12 +325,10 @@ Follow plan 29 Part A steps 1-12 with these changes:
 
 | Crew | Branch off `feat/tax-return-v1` | Scope (owns) | Leaves alone | Starts after |
 |---|---|---|---|---|
-| **A1 core backend** | `feat/income-core` | migration block, `schema.sql`, `backend/src/income/` (new: `mod.rs`, `line_types.rs`, `summary.rs`, `vest.rs`), `storage/db.rs` income + document/transaction-reference changes, `model.rs` income types **plus the A2/A3 contract types** (`TaxDocumentsImportPayload/Result`, `IncomeSyncRequest/Result`), `server/routes/income.rs` + `tax.rs` summary route, route registration, docs.rs/api.html for its routes, removal of all employment-pay code, `backend/tests/income_*.rs`, bindings | parse code, sync HTTP client, frontend source | — (first). Push a **contract commit** (types + bindings) before the rest |
+| **A1 core backend** | `feat/income-core` | migration block, `schema.sql`, `backend/src/income/` (new: `mod.rs`, `line_types.rs`, `summary.rs`, `vest.rs`), `storage/db.rs` income + document/transaction-reference changes, `model.rs` income types **plus the A2/A3 contract types** (`TaxDocumentsImportPayload/Result`, `IncomeSyncRequest/Result`), `server/routes/income.rs` + `tax.rs` summary route, route registration, docs.rs/api.html for its routes, removal of all employment-pay code, `backend/tests/income_*.rs`, bindings | parse code, frontend source | — (first). Push a **contract commit** (types + bindings) before the rest |
 | **A2 tax-doc parse** | `feat/tax-doc-parse` | plan 29 Part A files, `server/routes/income_import.rs`, its docs entries | income core storage except calling it; frontend | A1 merged |
-| **A3 shop sync** | `feat/shop-sync` | `backend/src/income/sync.rs`, `server/routes/income_sync.rs`, `.env.example`, `RUNNING.md`, its docs entries, `backend/tests/income_sync.rs` | everything else | A2 merged (avoids docs/route-table conflicts) |
 | **B1 Tax page** | `feat/tax-page-v2` | `frontend/src/pages/Tax*.tsx`, `pages/tax/` (new), `hooks/use_tax_tab.ts`, `hooks/data/use_tax.ts` (rename ok), service files (tax methods only), mock seed, smoke step 11a, settings switch | import pages, bindings, backend | A1 contract commit |
 | **B2 import wizard** | `feat/tax-doc-ui` | plan 29 Part B files | Tax page files, backend | A2 contract types (in A1) and B1 merged (service files) |
-| **C shop-app endpoint** | in the shop app's repo, see private notes | the shop app only | Fynance | any time (parallel) |
 
 Check task (not a coder): **D CGT check**, local only, see private notes. Runs any time.
 
@@ -381,7 +345,7 @@ backend `cargo fmt --check`, `cargo +1.85 clippy --all-targets -- -D warnings`, 
 repo root `python scripts/check_api_docs.py`, `python scripts/check_pii.py`; frontend `npm test`,
 `npx tsc --noEmit`, `npm run build`, smoke script in mock mode. Review focus: P60/check never summed,
 taxable-vs-gross choice, YTD never summed, tax-year derivation at 5/6 April, document and transaction
-reference integrity on delete, double-count of business costs (D3), sync idempotence, no secrets in
+reference integrity on delete, double-count of business costs (D3), no secrets in
 logs, no real data anywhere. One fix pass, then one PR `feat/tax-return-v1` → `master` (close PR #136
 as superseded, linking the new PR).
 

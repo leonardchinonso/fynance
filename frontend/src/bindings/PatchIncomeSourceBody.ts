@@ -6,4 +6,4 @@ import type { IncomeSourceIdentifiers } from "./IncomeSourceIdentifiers";
  * Request body for `PATCH /api/income-sources/:id`. An absent key leaves the
  * stored value alone; an explicit `null` clears a nullable field.
  */
-export type PatchIncomeSourceBody = { name?: string, identifiers?: IncomeSourceIdentifiers, account_ids?: string[], expense_category_map?: { [key in string]?: IncomeLineType }, sync_kind?: string | null, active?: boolean, notes?: string | null, };
+export type PatchIncomeSourceBody = { name?: string, identifiers?: IncomeSourceIdentifiers, account_ids?: string[], expense_category_map?: { [key in string]?: IncomeLineType }, active?: boolean, notes?: string | null, };

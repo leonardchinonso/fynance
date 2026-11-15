@@ -115,8 +115,6 @@ import type { PatchIncomeRecordBody } from "@/bindings/PatchIncomeRecordBody"
 import type { IncomeCheck } from "@/bindings/IncomeCheck"
 import type { IncomeCheckPayload } from "@/bindings/IncomeCheckPayload"
 import type { PatchIncomeCheckBody } from "@/bindings/PatchIncomeCheckBody"
-import type { IncomeSyncRequest } from "@/bindings/IncomeSyncRequest"
-import type { IncomeSyncResult } from "@/bindings/IncomeSyncResult"
 import type { LineTypeInfo } from "@/bindings/LineTypeInfo"
 import type { VestCandidate } from "@/bindings/VestCandidate"
 import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
@@ -691,10 +689,6 @@ export class RealApiService implements ApiService {
       `${BASE}/income-sources/${encodeURIComponent(sourceId)}/year-end-adjustment`,
       { tax_year: taxYear },
     )
-  }
-
-  async importShopSync(sourceId: string, body: IncomeSyncRequest): Promise<IncomeSyncResult> {
-    return post<IncomeSyncResult>(`${BASE}/income-sources/${encodeURIComponent(sourceId)}/sync`, body)
   }
 
   async listVestCandidates(recordId: string): Promise<VestCandidate[]> {

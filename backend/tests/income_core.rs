@@ -238,7 +238,7 @@ async fn source_crud_and_delete_guard() {
         &app,
         Method::PATCH,
         &format!("/api/income-sources/{id}"),
-        Some(json!({ "sync_kind": "shop_app" })),
+        Some(json!({ "account_ids": ["any"] })),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

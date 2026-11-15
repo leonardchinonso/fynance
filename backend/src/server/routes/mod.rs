@@ -13,7 +13,6 @@ pub mod holdings;
 pub mod import_api;
 pub mod income;
 pub mod income_import;
-pub mod income_sync;
 pub mod ingestion;
 pub mod investments;
 pub mod parse;

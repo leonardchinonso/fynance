@@ -63,8 +63,6 @@ fn require_documents(db: &Db, ids: &[String]) -> Result<(), AppError> {
     Ok(())
 }
 
-const SYNC_KIND_SHOP_APP: &str = "shop_app";
-
 fn fx_with_history(db: &Db) -> Result<FxRateMap, AppError> {
     let fx = FxRateMap::new(db.get_currencies()?)?;
     let historical = db.get_exchange_rates_for_quote(fx.preferred())?;
@@ -155,12 +153,11 @@ fn validate_source_fields(
     source_type: IncomeSourceType,
     account_ids: &[String],
     map: &std::collections::BTreeMap<String, IncomeLineType>,
-    sync_kind: Option<&str>,
 ) -> Result<(), AppError> {
     let business = source_type == IncomeSourceType::SelfEmployment;
-    if !business && (!account_ids.is_empty() || !map.is_empty() || sync_kind.is_some()) {
+    if !business && (!account_ids.is_empty() || !map.is_empty()) {
         return Err(AppError::bad_request(
-            "account_ids, expense_category_map and sync_kind apply to self_employment sources only",
+            "account_ids and expense_category_map apply to self_employment sources only",
             "invalid_source_field",
         ));
     }
@@ -187,12 +184,6 @@ fn validate_source_fields(
             ));
         }
     }
-    if let Some(kind) = sync_kind.filter(|k| *k != SYNC_KIND_SHOP_APP) {
-        return Err(AppError::bad_request(
-            format!("sync_kind must be {SYNC_KIND_SHOP_APP:?}, got {kind:?}"),
-            "invalid_sync_kind",
-        ));
-    }
     Ok(())
 }
 
@@ -213,7 +204,6 @@ pub async fn create_source(
         body.source_type,
         &body.account_ids,
         &body.expense_category_map,
-        body.sync_kind.as_deref(),
     )?;
     let source = db.create_income_source(&body)?;
     Ok((StatusCode::CREATED, Json(source)))
@@ -228,7 +218,6 @@ pub async fn update_source(
         && body.identifiers.is_none()
         && body.account_ids.is_none()
         && body.expense_category_map.is_none()
-        && body.sync_kind.is_none()
         && body.active.is_none()
         && body.notes.is_none()
     {
@@ -253,7 +242,6 @@ pub async fn update_source(
         current.source_type,
         body.account_ids.as_deref().unwrap_or(&[]),
         body.expense_category_map.as_ref().unwrap_or(&empty_map),
-        body.sync_kind.as_ref().and_then(|o| o.as_deref()),
     )?;
     let source = db
         .update_income_source(&id, &body)?
