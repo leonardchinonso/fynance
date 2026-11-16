@@ -6,7 +6,9 @@ import type { LineTypeInfo } from "@/bindings/LineTypeInfo"
 import type { TaxYearSummary } from "@/bindings/TaxYearSummary"
 import type { VestCandidate } from "@/bindings/VestCandidate"
 import type { RemoteData } from "@/lib/remote_data"
+import { combineRemoteData } from "@/lib/remote_data"
 import { useQuery } from "@/hooks/use_query"
+import { useInvestments } from "./use_investments"
 
 /** The line-type catalogue the tables build their columns from. Session-stable. */
 export function useIncomeLineTypes(): [RemoteData<LineTypeInfo[]>, () => void] {
@@ -54,5 +56,22 @@ export function useTaxSummary(
 export function useVestCandidates(recordId: string): [RemoteData<VestCandidate[]>, () => void] {
   return useQuery(() => api.listVestCandidates(recordId), {
     tag: "vest-candidates", hard: [recordId], soft: [],
+  })
+}
+
+/**
+ * Earliest date (YYYY-MM-DD) across the profile's transactions and the
+ * investment ledger, or undefined when there is neither. The Tax year picker
+ * reaches back this far.
+ */
+export function useEarliestDataDate(profileId: string): RemoteData<string | undefined> {
+  const [txns] = useQuery(
+    () => api.getTransactions({ page: 1, limit: 1, sort: "date", sort_dir: "asc", profile_id: profileId || undefined }),
+    { tag: "earliest-transaction", hard: [profileId], soft: [], enabled: !!profileId },
+  )
+  const [events] = useInvestments()
+  return combineRemoteData([txns, events] as const, ([page, ledger]) => {
+    const dates = [page.data[0]?.date, ...ledger.map((e) => e.date)].filter((d): d is string => !!d)
+    return dates.length ? dates.map((d) => d.slice(0, 10)).sort()[0] : undefined
   })
 }

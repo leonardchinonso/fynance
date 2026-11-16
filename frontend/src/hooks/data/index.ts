@@ -22,6 +22,6 @@ export { useProfilesData } from "./use_profiles"
 export { useCurrencies } from "./use_currencies"
 export { useDocuments } from "./use_documents"
 export {
-  useIncomeChecks, useIncomeLineTypes, useIncomeRecords, useIncomeSources,
+  useEarliestDataDate, useIncomeChecks, useIncomeLineTypes, useIncomeRecords, useIncomeSources,
   useTaxSummary, useVestCandidates,
 } from "./use_tax"
