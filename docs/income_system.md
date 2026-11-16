@@ -301,7 +301,7 @@ a month of payslips was lost. Prefer adding the missing payslip if you have it.
 
 ## Where it shows in the app
 
-Everything is on the **Tax** page (`frontend/src/pages/Tax.tsx`, parts in `pages/tax/`).
+Everything is on the **Tax** report (Reports → Tax, `/reports/tax`; `frontend/src/pages/Tax.tsx`, parts in `pages/tax/`). It is always available: there is no Tax tab to switch on. A card at the top opens the capital gains report.
 
 | Section | What it shows |
 |---|---|
@@ -311,9 +311,6 @@ Everything is on the **Tax** page (`frontend/src/pages/Tax.tsx`, parts in `pages
 | Self-employment (one card per business) | Turnover, expenses, net profit, trading allowance hint, bank expenses with "Map expense categories", annual-accounts check block |
 | Interest and Gift Aid | Taxable and non-taxable interest per account (joint accounts are split by holder), and Gift Aid donations, taken from categorised transactions |
 | Dialogs | Source, record, check, expense mapping |
-
-**Settings switch**: Settings, Appearance, "Show Tax tab". The Tax tab also appears by itself once
-any income record exists (`hooks/use_tax_tab`).
 
 **Import wizard**: the Import page has an "Import tax documents" landing card that opens `/import/tax`
 (`frontend/src/pages/import/tax/`). The steps:

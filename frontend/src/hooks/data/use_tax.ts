@@ -24,8 +24,7 @@ export function useIncomeSources(profileId: string): [RemoteData<IncomeSource[]>
 }
 
 /**
- * Income records. With no `profileId` this lists every profile's records:
- * the navbar's tab-visibility check uses that, gated by `enabled`.
+ * Income records. With no `profileId` this lists every profile's records.
  * The Tax page filters by year client-side to derive its year picker.
  */
 export function useIncomeRecords(

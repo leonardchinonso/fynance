@@ -225,7 +225,7 @@ export function TaxImport() {
                 </Button>
                 <Button
                   className="bg-blue-600 text-white hover:bg-blue-600/90"
-                  onClick={() => navigate(profileParam ? `/tax?profile=${encodeURIComponent(profileParam)}` : "/tax")}
+                  onClick={() => navigate(profileParam ? `/reports/tax?profile=${encodeURIComponent(profileParam)}` : "/reports/tax")}
                 >
                   View tax records
                 </Button>
