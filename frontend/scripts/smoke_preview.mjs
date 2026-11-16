@@ -192,12 +192,12 @@ async function runView(browser, view) {
   // 10. Reports → CGT landing → generate → saved-report URL → history list.
   await page.goto(`${BASE}/reports`, { waitUntil: "domcontentloaded" })
   await page.getByRole("heading", { name: /^reports$/i }).waitFor({ timeout: 10000 })
-  await page.getByRole("button", { name: /^tax/i }).waitFor({ timeout: 5000 })
+  await page.getByRole("button", { name: /^tax\b/i }).waitFor({ timeout: 5000 })
   await page.getByText(/^documents$/i).first().waitFor({ timeout: 5000 })
   await page.getByText(/pick a report to generate/i).waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_9_reports_landing`)
 
-  await page.getByRole("button", { name: /^tax/i }).click()
+  await page.getByRole("button", { name: /^tax\b/i }).click()
   await page.waitForURL(/\/reports\/tax$/, { timeout: 5000 })
   await page.getByRole("link", { name: /capital gains report/i }).click()
   await page.waitForURL(/\/reports\/cgt$/, { timeout: 5000 })
@@ -250,6 +250,8 @@ async function runView(browser, view) {
   // 11a. Tax is always in Reports (no opt-in tab, no top-level /tax route).
   //      The Tax page itself: an employment card with its P60 check row, and a
   //      business card, all from the mock's synthetic income.
+  await page.goto(`${BASE}/tax?profile=x`, { waitUntil: "domcontentloaded" })
+  await page.waitForURL(/\/reports\/tax\?profile=x$/, { timeout: 5000 })
   await page.goto(`${BASE}/reports/tax`, { waitUntil: "domcontentloaded" })
   await page.getByRole("heading", { name: /^tax$/i }).waitFor({ timeout: 10000 })
   const employmentCard = page.locator("[data-testid='employment-card']").first()
@@ -258,7 +260,6 @@ async function runView(browser, view) {
   await employmentCard.locator("[data-testid='check-row']").getByText(/^P60$/).waitFor({ timeout: 15000 })
   const businessCard = page.locator("[data-testid='business-card']").first()
   await businessCard.waitFor({ timeout: 15000 })
-  await businessCard.getByRole("button", { name: /sync from shop/i }).waitFor({ timeout: 5000 })
   await shot(page, `preview_${label}_10b_tax_page`)
 
 

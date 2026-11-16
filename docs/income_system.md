@@ -312,9 +312,6 @@ Everything is on the **Tax** report (Reports → Tax, `/reports/tax`; `frontend/
 | Interest and Gift Aid | Taxable and non-taxable interest per account (joint accounts are split by holder), and Gift Aid donations, taken from categorised transactions |
 | Dialogs | Source, record, check, expense mapping |
 
-**Settings switch**: Settings, Appearance, "Show Tax tab". The Tax tab also appears by itself once
-any income record exists (`hooks/use_tax_tab`).
-
 **Import wizard**: the Import page has an "Import tax documents" landing card that opens `/import/tax`
 (`frontend/src/pages/import/tax/`). The steps:
 

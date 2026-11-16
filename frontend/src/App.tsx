@@ -58,6 +58,7 @@ function Layout() {
           <Route path="/budget" element={<BudgetPage />} />
           {/* Transactions merged into the Budget tab as a view. */}
           <Route path="/transactions" element={<Navigate to="/budget?view=table" replace />} />
+          <Route path="/tax" element={<LegacyTaxRedirect />} />
           <Route path="/reports/tax" element={<TaxPage />} />
           <Route path="/reports" element={<ReportsLanding />} />
           <Route path="/reports/documents" element={<DocumentsPage />} />
@@ -95,6 +96,11 @@ function Layout() {
       </main>
     </div>
   )
+}
+
+function LegacyTaxRedirect() {
+  const { search } = useLocation()
+  return <Navigate to={`/reports/tax${search}`} replace />
 }
 
 export default function App() {
